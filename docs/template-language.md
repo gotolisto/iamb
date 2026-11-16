@@ -23,8 +23,11 @@ that CI runs against the examples.
    are never parsed for macros.
 4. **Deterministic.** Given the same template, library, settings, clock, clipboard and form values,
    the output is identical on every platform.
-5. **Limited reach.** A template can type text, press a small set of keys, and wait. It cannot
-   press Ctrl, Alt, Cmd or Win shortcuts, run programs or read anything except the clipboard.
+5. **Limited reach, honestly stated.** A template can type text, press a small set of keys, wait,
+   and read the clipboard. It cannot press Ctrl, Alt, Cmd or Win shortcuts or run programs
+   itself. Typing is still powerful (text followed by Enter runs a command in a terminal), so
+   snippets written by other people are reviewed before use when they contain `{key}`, `{wait}`,
+   `{clipboard}` or a line break (architecture §8).
 
 ## 2. Grammar
 
@@ -110,7 +113,7 @@ Insert the current local date or time. They are the same macro with different de
 | `shift` | no | One or more shift terms separated by spaces | No shift |
 
 All `{date}` and `{time}` macros in one expansion, including nested snippets, use the same instant,
-captured once when the expansion starts.
+captured once when the abbreviation is matched, before any fill-in form is shown.
 
 Format specifiers (anything else after `%` is `E_BAD_FORMAT`; other characters are copied):
 
@@ -156,7 +159,8 @@ and time. A result outside the years 1 to 9999 is `E_DATE_RANGE`.
 
 ### 4.2 `{clipboard}`
 
-Insert the text on the clipboard at the moment of expansion.
+Insert the text that was on the clipboard when the abbreviation was matched (before any fill-in
+form is shown).
 
 | Attribute | Required | Value | Default |
 | --- | --- | --- | --- |
@@ -310,6 +314,8 @@ is saved, with `E_BAD_FORMAT`.
 A rich snippet's body is Markdown with the same macros. The rules above apply unchanged, with
 these additions:
 
+- Markdown is CommonMark with tables and strikethrough. Raw HTML is not interpreted, and links
+  may use only `http`, `https` and `mailto`.
 - Macros are found before Markdown is interpreted. Text inserted by `{date}`, `{time}`,
   `{clipboard}` and `{field}` is escaped so that it can never become formatting.
 - `{snippet}` naming a rich snippet inserts its Markdown; naming a plain snippet inserts its text,
@@ -326,7 +332,8 @@ version 1 of this specification are plain.
 
 - Abbreviation matching, trigger modes and case modes belong to the matcher (architecture §4.4).
   With the `adaptive` case mode, case changes apply to the `text` actions after rendering and never
-  to field values or clipboard content.
+  to field values or clipboard content. The renderer therefore marks those ranges in each text
+  action as verbatim; the example files do not show the marks.
 - How actions reach an application belongs to the platform injectors.
 - The look and behaviour of the fill-in form belong to the UX specification (task 3.1).
 
