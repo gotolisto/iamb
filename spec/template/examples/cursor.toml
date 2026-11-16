@@ -1,0 +1,102 @@
+# {cursor}: where the caret ends up. cursor_back counts the characters (extended grapheme
+# clusters) of typed text that follow the cursor position.
+
+[[example]]
+id = "cursor-01"
+macro = "cursor"
+note = "Caret returns inside the text"
+template = 'Hello {cursor}!'
+expect = { text = "Hello !", cursor_back = 1 }
+
+[[example]]
+id = "cursor-02"
+macro = "cursor"
+note = "At the end: present, zero moves"
+template = 'Hi{cursor}'
+expect = { text = "Hi", cursor_back = 0 }
+
+[[example]]
+id = "cursor-03"
+macro = "cursor"
+note = "At the start"
+template = '{cursor}abc'
+expect = { text = "abc", cursor_back = 3 }
+
+[[example]]
+id = "cursor-04"
+macro = "cursor"
+note = "The first cursor in output order wins; later ones are ignored"
+template = 'a{cursor}b{cursor}c'
+expect = { text = "abc", cursor_back = 2 }
+
+[[example]]
+id = "cursor-05"
+macro = "cursor"
+note = "A newline counts as one character"
+template = "Dear {cursor},\n\nBest"
+expect = { text = "Dear ,\n\nBest", cursor_back = 7 }
+
+[[example]]
+id = "cursor-06"
+macro = "cursor"
+note = "An emoji outside the basic plane is one character, not two code units"
+template = '{cursor}👍'
+expect = { text = "👍", cursor_back = 1 }
+
+[[example]]
+id = "cursor-07"
+macro = "cursor"
+note = "A flag (two code points) is one character"
+template = '{cursor}🇪🇸!'
+expect = { text = "🇪🇸!", cursor_back = 2 }
+
+[[example]]
+id = "cursor-08"
+macro = "cursor"
+note = "A cursor inside a nested snippet counts"
+template = '[{snippet abbr=";in"}]'
+ctx = { snippets = { ";in" = "x{cursor}y" } }
+expect = { text = "[xy]", cursor_back = 2 }
+
+[[example]]
+id = "cursor-09"
+macro = "cursor"
+note = "A cursor in a branch that is not taken does not count"
+template = 'a{if field="Flag"}{cursor}{endif}b'
+expect = { text = "ab", form = [{ name = "Flag", type = "toggle", default = "no" }] }
+
+[[example]]
+id = "cursor-10"
+macro = "cursor"
+note = "Keys before the cursor are fine"
+template = 'a{key name=tab}b{cursor}c'
+expect = { actions = [{ text = "a" }, { key = "tab" }, { text = "bc" }], cursor_back = 1 }
+
+[[example]]
+id = "cursor-11"
+macro = "cursor"
+note = "A wait after the cursor is fine; text on both sides of it counts"
+template = 'a{cursor}b{wait ms=100}c'
+expect = { actions = [{ text = "ab" }, { wait = 100 }, { text = "c" }], cursor_back = 2 }
+
+[[example]]
+id = "cursor-12"
+macro = "cursor"
+note = "Field values after the cursor count"
+template = '{cursor}{field name="Name"}'
+ctx = { values = { Name = "Ana" } }
+expect = { text = "Ana", cursor_back = 3, form = [{ name = "Name", type = "text", default = "" }] }
+
+[[example]]
+id = "cursor-13"
+macro = "cursor"
+note = "Error: a key press after the cursor makes the caret position unknowable"
+template = 'a{cursor}b{key name=enter}'
+expect = { error = "E_CURSOR_BEFORE_KEY" }
+
+[[example]]
+id = "cursor-14"
+macro = "cursor"
+note = "Error: cursor takes no attributes"
+template = '{cursor pos=1}'
+expect = { error = "E_UNKNOWN_ATTR" }

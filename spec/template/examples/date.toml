@@ -1,0 +1,187 @@
+# {date}: default context is now = 2026-03-18T14:05:09 (a Wednesday), locale en.
+
+[[example]]
+id = "date-01"
+macro = "date"
+note = "Default format"
+template = 'Today is {date}.'
+expect = { text = "Today is 2026-03-18." }
+
+[[example]]
+id = "date-02"
+macro = "date"
+note = "Custom numeric format"
+template = '{date fmt="%d/%m/%Y"}'
+expect = { text = "18/03/2026" }
+
+[[example]]
+id = "date-03"
+macro = "date"
+note = "Month name and unpadded day"
+template = '{date fmt="%B %-d, %Y"}'
+expect = { text = "March 18, 2026" }
+
+[[example]]
+id = "date-04"
+macro = "date"
+note = "Abbreviated names, day of year, two-digit year"
+template = '{date fmt="%a %b %j %y"}'
+expect = { text = "Wed Mar 077 26" }
+
+[[example]]
+id = "date-05"
+macro = "date"
+note = "Shift by days; bare attribute value"
+template = '{date shift=+1d}'
+expect = { text = "2026-03-19" }
+
+[[example]]
+id = "date-06"
+macro = "date"
+note = "Business days skip the weekend: Wed + 3 = Mon"
+template = '{date shift="+3bd"}'
+expect = { text = "2026-03-23" }
+
+[[example]]
+id = "date-07"
+macro = "date"
+note = "From a Saturday, +1 business day is Monday"
+template = '{date shift="+1bd" fmt="%A %Y-%m-%d"}'
+ctx = { now = "2026-03-21T10:00:00" }
+expect = { text = "Monday 2026-03-23" }
+
+[[example]]
+id = "date-08"
+macro = "date"
+note = "From a Monday, -1 business day is Friday"
+template = '{date shift="-1bd"}'
+ctx = { now = "2026-03-23T10:00:00" }
+expect = { text = "2026-03-20" }
+
+[[example]]
+id = "date-09"
+macro = "date"
+note = "+0bd never moves, even on a weekend"
+template = '{date shift="+0bd"}'
+ctx = { now = "2026-03-21T10:00:00" }
+expect = { text = "2026-03-21" }
+
+[[example]]
+id = "date-10"
+macro = "date"
+note = "Month arithmetic clamps to the last day of the month"
+template = '{date shift="+1mo"}'
+ctx = { now = "2026-01-31T09:00:00" }
+expect = { text = "2026-02-28" }
+
+[[example]]
+id = "date-11"
+macro = "date"
+note = "Clamp lands on 29 February in a leap year"
+template = '{date shift="+1mo"}'
+ctx = { now = "2024-01-31T09:00:00" }
+expect = { text = "2024-02-29" }
+
+[[example]]
+id = "date-12"
+macro = "date"
+note = "A year after 29 February is 28 February"
+template = '{date shift="+1y"}'
+ctx = { now = "2024-02-29T09:00:00" }
+expect = { text = "2025-02-28" }
+
+[[example]]
+id = "date-13"
+macro = "date"
+note = "Year rollover"
+template = '{date shift="+1d"}'
+ctx = { now = "2026-12-31T23:59:59" }
+expect = { text = "2027-01-01" }
+
+[[example]]
+id = "date-14"
+macro = "date"
+note = "Several terms apply left to right: last day of this month"
+template = '{date fmt="%Y-%m-%d" shift="+1mo -18d"}'
+expect = { text = "2026-03-31" }
+
+[[example]]
+id = "date-15"
+macro = "date"
+note = "Weeks, backwards"
+template = '{date shift="-2w"}'
+expect = { text = "2026-03-04" }
+
+[[example]]
+id = "date-16"
+macro = "date"
+note = "Names follow the context locale"
+template = '{date fmt="%A %-d de %B"}'
+ctx = { locale = "es" }
+expect = { text = "miércoles 18 de marzo" }
+
+[[example]]
+id = "date-17"
+macro = "date"
+note = "Region subtags are ignored; unknown locales fall back to English"
+template = '{date fmt="%b"} {date fmt="%a"}'
+ctx = { locale = "de-AT" }
+expect = { text = "Mär Mi" }
+
+[[example]]
+id = "date-18"
+macro = "date"
+note = "Unknown locale falls back to English"
+template = '{date fmt="%B"}'
+ctx = { locale = "pt" }
+expect = { text = "March" }
+
+[[example]]
+id = "date-19"
+macro = "date"
+note = "The default format comes from settings"
+template = '{date}'
+ctx = { date_format = "%d.%m.%Y" }
+expect = { text = "18.03.2026" }
+
+[[example]]
+id = "date-20"
+macro = "date"
+note = "%% is a literal percent sign"
+template = '{date fmt="100%% on %-m/%-d"}'
+expect = { text = "100% on 3/18" }
+
+[[example]]
+id = "date-21"
+macro = "date"
+note = "Error: unknown format specifier"
+template = '{date fmt="%Q"}'
+expect = { error = "E_BAD_FORMAT" }
+
+[[example]]
+id = "date-22"
+macro = "date"
+note = "Error: bare m is ambiguous; use mo or min"
+template = '{date shift="+1m"}'
+expect = { error = "E_BAD_SHIFT" }
+
+[[example]]
+id = "date-23"
+macro = "date"
+note = "Error: shift is not free text"
+template = '{date shift="tomorrow"}'
+expect = { error = "E_BAD_SHIFT" }
+
+[[example]]
+id = "date-24"
+macro = "date"
+note = "Error: result outside years 1 to 9999"
+template = '{date shift="+9999y"}'
+expect = { error = "E_DATE_RANGE" }
+
+[[example]]
+id = "date-25"
+macro = "date"
+note = "Error: unknown attribute"
+template = '{date format="%Y"}'
+expect = { error = "E_UNKNOWN_ATTR" }

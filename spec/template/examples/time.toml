@@ -1,0 +1,117 @@
+# {time}: the same macro as {date} with a different default format.
+
+[[example]]
+id = "time-01"
+macro = "time"
+note = "Default format"
+template = 'It is {time}.'
+expect = { text = "It is 14:05." }
+
+[[example]]
+id = "time-02"
+macro = "time"
+note = "12-hour clock"
+template = '{time fmt="%-I:%M %p"}'
+expect = { text = "2:05 PM" }
+
+[[example]]
+id = "time-03"
+macro = "time"
+note = "Seconds"
+template = '{time fmt="%H:%M:%S"}'
+expect = { text = "14:05:09" }
+
+[[example]]
+id = "time-04"
+macro = "time"
+note = "Shift by hours"
+template = '{time shift="+2h"}'
+expect = { text = "16:05" }
+
+[[example]]
+id = "time-05"
+macro = "time"
+note = "Shift by minutes"
+template = '{time shift="+30min"}'
+expect = { text = "14:35" }
+
+[[example]]
+id = "time-06"
+macro = "time"
+note = "Shift by seconds"
+template = '{time fmt="%H:%M:%S" shift="+90s"}'
+expect = { text = "14:06:39" }
+
+[[example]]
+id = "time-07"
+macro = "time"
+note = "A time shift can cross midnight and change the date"
+template = '{time fmt="%Y-%m-%d %H:%M" shift="+15min"}'
+ctx = { now = "2026-03-18T23:50:00" }
+expect = { text = "2026-03-19 00:05" }
+
+[[example]]
+id = "time-08"
+macro = "time"
+note = "Midnight hour is 12 AM"
+template = '{time fmt="%I:%M %p"}'
+ctx = { now = "2026-03-18T00:30:00" }
+expect = { text = "12:30 AM" }
+
+[[example]]
+id = "time-09"
+macro = "time"
+note = "Noon is 12 PM"
+template = '{time fmt="%-I %p"}'
+ctx = { now = "2026-03-18T12:00:00" }
+expect = { text = "12 PM" }
+
+[[example]]
+id = "time-10"
+macro = "time"
+note = "The default format comes from settings"
+template = '{time}'
+ctx = { time_format = "%-I:%M %p" }
+expect = { text = "2:05 PM" }
+
+[[example]]
+id = "time-11"
+macro = "time"
+note = "Date units and date specifiers work in {time}"
+template = '{time shift="-1d" fmt="%A %-H:%M"}'
+expect = { text = "Tuesday 14:05" }
+
+[[example]]
+id = "time-12"
+macro = "time"
+note = "Every date and time in one expansion uses the same instant"
+template = '{date} {time} / {time fmt="%S"}{time fmt="%S"}'
+expect = { text = "2026-03-18 14:05 / 0909" }
+
+[[example]]
+id = "time-13"
+macro = "time"
+note = "Error: a shift term needs a unit"
+template = '{time shift="+5"}'
+expect = { error = "E_BAD_SHIFT" }
+
+[[example]]
+id = "time-14"
+macro = "time"
+note = "Error: a lone percent sign"
+template = '{time fmt="%H:%"}'
+expect = { error = "E_BAD_FORMAT" }
+
+[[example]]
+id = "time-15"
+macro = "time"
+note = "Error: empty format"
+template = '{time fmt=""}'
+expect = { error = "E_BAD_VALUE" }
+
+[[example]]
+id = "time-16"
+macro = "time"
+note = "Error: the same attribute twice"
+template = '{time shift="+1h" shift="+2h"}'
+expect = { error = "E_DUPLICATE_ATTR" }

@@ -1,0 +1,99 @@
+# {key}: press a named key. Omitted shift means false, omitted times means 1.
+
+[[example]]
+id = "key-01"
+macro = "key"
+note = "Enter after text"
+template = 'ls -la{key name=enter}'
+expect = { actions = [{ text = "ls -la" }, { key = "enter" }] }
+
+[[example]]
+id = "key-02"
+macro = "key"
+note = "Move between form inputs"
+template = 'ana@example.org{key name=tab}Ana{key name=tab}Lee'
+expect = { actions = [{ text = "ana@example.org" }, { key = "tab" }, { text = "Ana" }, { key = "tab" }, { text = "Lee" }] }
+
+[[example]]
+id = "key-03"
+macro = "key"
+note = "Repeat"
+template = '{key name="tab" times="3"}x'
+expect = { actions = [{ key = "tab", times = 3 }, { text = "x" }] }
+
+[[example]]
+id = "key-04"
+macro = "key"
+note = "Shift is the only modifier"
+template = 'x{key name=tab shift=yes}'
+expect = { actions = [{ text = "x" }, { key = "tab", shift = true }] }
+
+[[example]]
+id = "key-05"
+macro = "key"
+note = "Adjacent key presses stay separate actions"
+template = '{key name=down}{key name=down}{key name=enter}'
+expect = { actions = [{ key = "down" }, { key = "down" }, { key = "enter" }] }
+
+[[example]]
+id = "key-06"
+macro = "key"
+note = "A newline in the text is text; {key name=enter} is a key press"
+template = "line one\nline two{key name=enter}"
+expect = { actions = [{ text = "line one\nline two" }, { key = "enter" }] }
+
+[[example]]
+id = "key-07"
+macro = "key"
+note = "Navigation keys, maximum repeat"
+template = '(){key name=left}{key name=pagedown times=50}'
+expect = { actions = [{ text = "()" }, { key = "left" }, { key = "pagedown", times = 50 }] }
+
+[[example]]
+id = "key-08"
+macro = "key"
+note = "Error: name is required"
+template = '{key}'
+expect = { error = "E_MISSING_ATTR" }
+
+[[example]]
+id = "key-09"
+macro = "key"
+note = "Error: unknown key"
+template = '{key name=f13}'
+expect = { error = "E_BAD_VALUE" }
+
+[[example]]
+id = "key-10"
+macro = "key"
+note = "Error: key names are lower case"
+template = '{key name=Enter}'
+expect = { error = "E_BAD_VALUE" }
+
+[[example]]
+id = "key-11"
+macro = "key"
+note = "Error: times must be 1 to 50"
+template = '{key name=tab times=0}'
+expect = { error = "E_BAD_VALUE" }
+
+[[example]]
+id = "key-12"
+macro = "key"
+note = "Error: times above the limit"
+template = '{key name=tab times=51}'
+expect = { error = "E_BAD_VALUE" }
+
+[[example]]
+id = "key-13"
+macro = "key"
+note = "Error: no modifiers other than shift exist"
+template = '{key name=enter ctrl=yes}'
+expect = { error = "E_UNKNOWN_ATTR" }
+
+[[example]]
+id = "key-14"
+macro = "key"
+note = "Error: shift takes yes or no"
+template = '{key name=tab shift=true}'
+expect = { error = "E_BAD_VALUE" }

@@ -1,0 +1,136 @@
+# Literal text, the macro recognition rule, {lbrace}, and combined cases.
+
+[[example]]
+id = "syntax-01"
+macro = "syntax"
+note = "Plain text is typed unchanged"
+template = "Kind regards,\nAna Lee"
+expect = { text = "Kind regards,\nAna Lee" }
+
+[[example]]
+id = "syntax-02"
+macro = "syntax"
+note = "An empty template produces no actions"
+template = ''
+expect = { actions = [] }
+
+[[example]]
+id = "syntax-03"
+macro = "syntax"
+note = "Braces that do not start a macro are literal: JSON needs no escaping"
+template = '{"name": "x", "tags": [{}], "n": {"a": 1}}'
+expect = { text = '{"name": "x", "tags": [{}], "n": {"a": 1}}' }
+
+[[example]]
+id = "syntax-04"
+macro = "syntax"
+note = "Unknown names are literal"
+template = 'Hello {name}, your {thing} is {ready}.'
+expect = { text = "Hello {name}, your {thing} is {ready}." }
+
+[[example]]
+id = "syntax-05"
+macro = "syntax"
+note = "Macro names are lower case and must be followed by } or white space"
+template = '{Date} {DATE} {dates} {date:x} { date} {date-x}'
+expect = { text = "{Date} {DATE} {dates} {date:x} { date} {date-x}" }
+
+[[example]]
+id = "syntax-06"
+macro = "syntax"
+note = "{lbrace} writes a brace, so a macro can be shown literally"
+template = 'Type {lbrace}date} to get {date}.'
+expect = { text = "Type {date} to get 2026-03-18." }
+
+[[example]]
+id = "syntax-07"
+macro = "syntax"
+note = "Lone braces and a closing brace are literal"
+template = 'a { b } c }{ d'
+expect = { text = "a { b } c }{ d" }
+
+[[example]]
+id = "syntax-08"
+macro = "syntax"
+note = "Line endings in the template are normalised to LF"
+template = "one\r\ntwo\rthree"
+expect = { text = "one\ntwo\nthree" }
+
+[[example]]
+id = "syntax-09"
+macro = "syntax"
+note = "White space, including line breaks, may separate attributes"
+template = "{date\n  fmt=\"%Y\"\n  shift=\"+1y\"\n}"
+expect = { text = "2027" }
+
+[[example]]
+id = "syntax-10"
+macro = "syntax"
+note = "In a quoted value only \\\" and \\\\ are escapes; any other backslash is literal"
+template = '{date fmt="%H\\%M \:%S \"q\""}'
+expect = { text = '14\05 \:09 "q"' }
+
+[[example]]
+id = "syntax-11"
+macro = "syntax"
+note = "Unicode text and macros mix freely"
+template = 'Señor {field name="Apellido"}: ¡gracias! 🎉'
+ctx = { values = { Apellido = "Núñez" } }
+expect = { text = "Señor Núñez: ¡gracias! 🎉", form = [{ name = "Apellido", type = "text", default = "" }] }
+
+[[example]]
+id = "syntax-12"
+macro = "syntax"
+note = "Everything together"
+template = "Hi {field name=\"Name\"},\n\n{if field=\"Late\"}Sorry for the delay. {endif}Your order ships {date fmt=\"%A\" shift=\"+2bd\"}.\n{cursor}\n{snippet abbr=\";sig\"}"
+ctx = { values = { Name = "Kim", Late = "yes" }, snippets = { ";sig" = "Ana, {time}" } }
+expect = { text = "Hi Kim,\n\nSorry for the delay. Your order ships Friday.\n\nAna, 14:05", cursor_back = 11, form = [{ name = "Name", type = "text", default = "" }, { name = "Late", type = "toggle", default = "no" }] }
+
+[[example]]
+id = "syntax-13"
+macro = "syntax"
+note = "Error: a quoted value that never ends"
+template = 'Today {date fmt="%Y} and more'
+expect = { error = "E_UNCLOSED_MACRO" }
+
+[[example]]
+id = "syntax-14"
+macro = "syntax"
+note = "Error: a macro that never ends"
+template = 'Today {date'
+expect = { error = "E_UNCLOSED_MACRO" }
+
+[[example]]
+id = "syntax-15"
+macro = "syntax"
+note = "Error: an attribute without a value"
+template = '{date fmt}'
+expect = { error = "E_BAD_SYNTAX" }
+
+[[example]]
+id = "syntax-16"
+macro = "syntax"
+note = "Error: no spaces around the equals sign"
+template = '{date fmt = "%Y"}'
+expect = { error = "E_BAD_SYNTAX" }
+
+[[example]]
+id = "syntax-17"
+macro = "syntax"
+note = "Error: attributes must be separated by white space"
+template = '{date fmt="%Y"shift="+1d"}'
+expect = { error = "E_BAD_SYNTAX" }
+
+[[example]]
+id = "syntax-18"
+macro = "syntax"
+note = "Error: text that is exactly a macro name in braces is a macro; write {lbrace}key} for a literal"
+template = 'const v = `${key}`;'
+expect = { error = "E_MISSING_ATTR" }
+
+[[example]]
+id = "syntax-19"
+macro = "syntax"
+note = "Error: lbrace, else and endif take no attributes"
+template = '{lbrace x=1}'
+expect = { error = "E_UNKNOWN_ATTR" }
