@@ -1,0 +1,25 @@
+[package]
+name = "iamb-bench"
+description = "Benchmark harness for the Iamb product KPIs: fixtures, latency recorder, result files."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+# Benches use criterion's own harness switch; the library has ordinary unit tests.
+bench = false
+
+[dev-dependencies]
+# Trimmed: no plotters, no rayon, no HTML reports, to keep builds fast.
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "sample"
+harness = false
+
+[lints]
+workspace = true
