@@ -1,6 +1,6 @@
 [package]
 name = "iamb-testkit"
-description = "Test-only helpers: a fake environment, scripted typing sessions for the engine, and the compatibility-matrix harness."
+description = "Test-only helpers: a fake environment, scripted typing sessions for the engine, the compatibility-matrix harness and the soak harness with its canary privacy scan."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -17,6 +17,13 @@ path = "src/lib.rs"
 name = "iamb-compat"
 path = "src/bin/iamb_compat.rs"
 
+# The soak harness (task 2.6) and the canary privacy scan (task 2.5): drives the service's
+# supervisor and worker on the mock platform for minutes to days. Never shipped.
+[[bin]]
+name = "iamb-soak"
+path = "src/bin/iamb_soak.rs"
+required-features = ["soak"]
+
 [lints]
 workspace = true
 
@@ -24,14 +31,19 @@ workspace = true
 # `store` lets `iamb-compat setup` import the fixture library through `iamb-store` (which bundles
 # SQLite, a C build). Cross-checking this crate for another OS from Linux needs
 # `--no-default-features --lib --bins`, because the C build wants that OS's tools.
-default = ["store"]
+default = ["store", "soak"]
 store = ["dep:iamb-store"]
+# `soak` builds `iamb_testkit::soak` and the `iamb-soak` binary on top of the service's library
+# (its supervisor and worker); it adds no feature to `iamb-service` itself.
+soak = ["store", "dep:iamb-service", "dep:iamb-ipc"]
 
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }
 getrandom = "0.4.3"
 iamb-core = { path = "../iamb-core" }
+iamb-ipc = { path = "../iamb-ipc", optional = true }
 iamb-platform = { path = "../iamb-platform" }
+iamb-service = { path = "../iamb-service", optional = true }
 iamb-store = { path = "../iamb-store", optional = true }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

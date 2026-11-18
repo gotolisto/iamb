@@ -153,12 +153,188 @@ only in a PR that says why, e.g. a new bench, an accepted slowdown or a runner i
    abbreviation). It types them as ordinary text, inside password fields, in excluded apps, and
    while paused.
 2. During the run: capture all network traffic of the machine (`tcpdump` on macOS, `pktmon` on
-   Windows) and all IPC frames (test build of `iamb-ipc` with a frame tap).
+   Windows) and all IPC frames (the soak harness serves the service endpoint through a tapping
+   endpoint wrapper, §5.5; on CI a dependency check replaces the capture).
 3. After the run: search for every canary, in UTF-8, UTF-16LE and Base64 forms, in the data root,
    logs, crash dumps, OS temp directories, the whole user profile, the IPC tap and the packet
    capture.
 4. Pass: 0 hits outside the probe window's own text and the driver's own input file. A worker memory
    dump taken after a boundary event is also scanned; hits there are reported, not gating.
+
+### 5.4 Running the harness (`iamb-soak`)
+
+`iamb-soak` (in `crates/iamb-testkit`, feature `soak`, on by default) is the driver and also
+starts the two service processes, so a run is three processes:
+
+| Process | Command | Runs |
+| --- | --- | --- |
+| Driver | `iamb-soak run …` | Seeds the library, types, edits, samples, kills, types the canaries, stops the service, scans, applies the rules |
+| Supervisor | `iamb-soak serve-supervisor` (started by the driver) | `iamb_service::supervisor::run` unchanged (lock, backoff 0/1/5/30 s, heartbeat 3 s), with `iamb-soak serve-worker` as its worker command |
+| Worker | `iamb-soak serve-worker` (started by the supervisor) | `iamb_service::worker::Worker` unchanged on the mock platform: heartbeat on standard output, exit when standard input ends, `logs/worker.log`, the real service endpoint through the IPC tap, plus the control endpoint |
+
+```sh
+# Build (release for real runs; the CI job does this)
+cargo build --release --locked -p iamb-testkit --bin iamb-soak
+
+# CI form: what the nightly job runs (about 31 min)
+target/release/iamb-soak run --duration 30m --out target/soak/nightly --net-check .
+
+# Short local smoke run (about 15 s; the cargo test below runs the same)
+target/debug/iamb-soak run --duration 12s --library 300 --keys-per-second 60 \
+  --sample-every 1s --edit-every 2s --canary-rounds 1 --out target/soak/smoke
+
+# Lab duration (72 h is the default); add the places only the lab can scan
+target/release/iamb-soak run --out soak-72h --scan "$HOME" --scan /path/to/capture.pcapng
+
+# Scan more places afterwards for the canaries of a run (exit status 1 on a hit)
+target/release/iamb-soak scan --canaries soak-72h/input/canaries.json \
+  --location profile="$HOME" --location capture=/path/to/capture.pcapng
+
+# The networking-crate check alone
+target/release/iamb-soak net-check --workspace .
+```
+
+`cargo test -p iamb-testkit --test soak` runs the 12-second smoke run through the binary, checks
+its files, that the tap holds the service's frames, and that a canary planted afterwards is
+found and reported by number, form and location only. It runs on Linux and is ignored on Windows
+and macOS (the CI soak is Linux-only; the harness compiles everywhere).
+
+| Flag of `run` | Default | Meaning |
+| --- | --- | --- |
+| `--duration` | `72h` | Run length (`30m`, `90s`, `1h30m`, …) |
+| `--out` | `target/soak/<unix ms>` | The run's directory; must not hold an earlier run. Keep it short (or relative): the Unix socket paths inside it are limited to about 100 bytes |
+| `--seed` | from the clock | Key stream, library and edits; printed and kept in the report. Canaries never come from it (OS generator) |
+| `--library` | `10000` | Fixture snippets (at most 17,576) |
+| `--keys-per-second` | `3` | Average typing rate; raise it for a short local run (60 for the smoke run) |
+| `--sample-every` | `60s` | Sample interval |
+| `--edit-every` | `60s` | One library edit through IPC (`GetSnippet`, `PutSnippet`, wait for the new revision) |
+| `--kill-every` | `auto` | Worker hard-kills: `auto`, `off`, or a duration (see the decisions below) |
+| `--canary-rounds` | `3` | Rounds at ⅙, ½ and ⅚ of the run; each types one canary per context |
+| `--net-check WORKSPACE` | off | Also run the networking-crate check (the nightly job passes `.`) |
+| `--scan PATH` | — | Another location to scan (repeatable) |
+| `--quiet` | off | No progress lines on standard error |
+
+Exit status: 0 every rule passed, 1 a rule failed, 2 the run could not be set up. Files under
+`--out` (the nightly job uploads the first four, the logs and `service-stderr.log` as the
+artifact `soak-<run id>`):
+
+| File | Holds |
+| --- | --- |
+| `samples.jsonl` | One line per sample (`iamb-soak-sample/1`): `t_ms`, `unix_ms`, `supervisor` and `worker` (`pid, alive, rss_kb, private_kb, cpu_ms, handles, threads`), `worker_life`, `life_started_ms`, running totals of expansions, keys, edits, kills |
+| `report.json` | `iamb-soak-report/1`: options, totals (keys, rate, expansions, edits, CPU, max memory, restarts the supervisor logged), every recovery (control, `Health` and probe times), unexpected events, the first 50 expansion failures (snippet number, shape, case mode; never field text), per canary its context and checks (never its text), the network check, every rule's verdict |
+| `canary-scan.json` | Locations with files and bytes scanned; hits as canary number, context, form, location, file and byte offset; unreadable files |
+| `summary.txt` | The verdicts in plain text (also printed) |
+| `input/canaries.json` | The driver's own input file: the only file the harness writes canaries to; not uploaded |
+| `work/data/` | The data root (`library.db`, `logs/supervisor.log`, `logs/worker.log`, `run/`) |
+| `work/tmp/` | `TMPDIR`, `TMP` and `TEMP` of the service processes |
+| `work/ipc-tap/` | `worker<pid>-conn<n>-in.bin` / `-out.bin`: every byte each service-endpoint connection read or wrote |
+| `work/service-stderr.log` | Standard error of the supervisor and every worker |
+
+### 5.5 Decisions in the harness
+
+- **Service processes.** The shipped `iamb-service --platform mock` cannot be typed into from
+  another process (its mock lives inside the worker) and its supervisor always starts its own
+  executable, so the soak binary hosts the service's library code instead: the supervisor loop
+  and the worker are the service's own, unchanged; only argument parsing and the two test hooks
+  below are the harness's. Nothing in `iamb-service`, `iamb-ipc` or `iamb-platform` changed.
+  Peers are checked with the same-user policy in every build (the soak binary is not the signed,
+  installed binary).
+- **IPC tap.** `MessageLog` sees only frame names and sizes, so the tap is a `LocalEndpoint`
+  wrapper (`soak::tap`) around the native endpoint that the worker serves on (the worker takes
+  any endpoint). It copies every byte of every accepted connection, one file per connection and
+  direction, so a frame is contiguous in the file and a canary split across two reads is still
+  found. It covers every frame of the service endpoint: hello, welcome, requests, responses,
+  events.
+- **Typing.** The worker also serves a control endpoint (`soak::control`, JSON lines; named like
+  a sync endpoint in a directory of its own) through which the driver types into the mock's
+  windows and reads their fields back: the stand-in for the OS keyboard and the probe window.
+  Its traffic is the driver's input; it is never written to a file. The mock desktop has an
+  ordinary editor, a password field and a window of an app the driver puts on the exclusion list
+  (`PutExclusion`).
+- **Key stream.** Units of 8 to 16 tokens in a cleared field, starting with a word; 30% of tokens
+  are abbreviations in a case variant their mode expands, 70% ordinary words (some capitalised,
+  some followed by `,` or `.`). One token in five is typed as a burst at five times the average
+  rate (15 keys/s at the default 3), the others with exponential gaps of mean 0.4 s, so the mean
+  is 3 keys/s; canaries are typed as bursts. After each abbreviation the driver waits for the
+  engine to settle and compares the whole field with the expected text; a mismatch is a failed
+  expansion and ends the unit.
+- **Fixture library.** Three shapes so that no abbreviation can fire inside a word, another
+  abbreviation or a canary: 60% `v` + three letters (delimiter, word start), 15% `v` + three
+  letters + `9` (delimiter, no word start), 25% `;k` + three letters (immediate); case modes
+  exact, insensitive and adaptive cycle within each shape; plain-text bodies of 20 to about 300
+  characters, some with a line break. Ordinary words never start with `v`.
+- **Window `W`.** The rules' "hour" is `W = D / 72`, at least five sample intervals and eight
+  edit intervals, at most `D / 4`: 1 h for the lab run, 7.5 min for the CI run. The edit floor is
+  measured, not guessed: with 10,000 snippets the worker's private memory is 37 MB before the
+  first library edit, about 49 MB after it, and flat at 57–60 MB from the fourth edit on (each
+  edit builds a new snapshot while the old one is in use; the allocator keeps the high-water
+  mark). A 2-minute window reported that climb as a 20 MB leak.
+- **Warm-up in both leak rules.** §5.2 calls hour 1 warm-up for rule 1. The harness applies the
+  same to rule 2: it compares the last `W` with `[W, 2W]` (hour 2 in the lab), not with hour 1,
+  which would charge the climb above to the 5 MB budget. Every worker life has its own warm-up
+  `W`; samples inside it count for neither leak rule nor for the handle and thread ranges.
+- **Leaks across kills.** A kill resets the worker's memory, which would hide a leak in a plain
+  slope. Rule 1 therefore uses the least-squares slope pooled within worker lives (one intercept
+  per life), times `D − W`.
+- **Kills.** `auto` spreads up to 12 kills (§5.1: every 6 h of 72 h) evenly between `W` + 4
+  samples after the start and `W` + 4 samples before the end, at least 65 s apart (a worker must
+  run 60 s before the supervisor restarts it with no delay; a closer kill would measure the 1 s
+  backoff). So the first and the last worker each keep a settled stretch for the leak rules. Lab:
+  12 kills, about every 6.4 h. CI: 7 kills, 70 s apart, between minutes 11.5 and 18.5. A run too
+  short for that stretch (the smoke run) gets one kill in the middle. §2.2 asks for 20 kills in
+  the lab: pass `--kill-every 3h` there (23 kills).
+- **Recovery time.** From the kill to: the control endpoint answering from a new process, then
+  IPC `Health` answering on a new connection, then a probe expansion (`probe vaaa ` typed, the
+  field checked). The probe time is the recovery time of the rule; all three are reported.
+  "Unexpected exit": the supervisor exits, the worker's pid changes without a kill, a connection
+  breaks outside a kill, or the supervisor's log counts more worker restarts than kills.
+- **Handles and threads.** Each must stay within the range seen in the first `W`, give or take
+  `max(2, 10%)`, except within `W` after a restart.
+- **Canary contexts.** Each round types one canary per context: `ordinary` (in a sentence),
+  `before-expansion` (directly followed by a no-word-start abbreviation, so the canary is in the
+  engine's buffer when an expansion fires), `secure-field`, `excluded-app` and `paused`. In the
+  last three an abbreviation is typed after the canary and must not expand, and `GetStatus` must
+  report the engine suspended (and paused); in the first two it must not be. A canary counts as
+  typed only when the field then holds exactly the expected text.
+- **Scan.** Forms: UTF-8, UTF-16LE, and Base64 of both (standard and URL-safe alphabets, at each
+  of the three alignments, only the characters that do not depend on neighbouring bytes).
+  Locations: the data root (library, WAL, logs, locks), the temp directory the service processes
+  used, the IPC tap, their standard error, the control directory, the samples file, and any
+  `--scan` path. A file that cannot be read fails the rule (0 hits cannot be claimed for it).
+  Scanning the driver's own input must find every canary (the rule `canary-scanner-control`), so
+  a broken scanner cannot pass. Hits are reported by canary number, context, form, location, file
+  and byte offset; no report, summary or progress line contains a canary or the bytes around it.
+- **Network.** CI cannot capture traffic. Instead the rule `no-networking-crate` runs
+  `cargo tree -p iamb-service -e normal --target all` and checks every package against the deny
+  list of `crates/iamb-service/tests/no_network.rs` (a unit test keeps the two lists equal). The
+  lab run adds the packet capture (below).
+- **Samples.** Linux: `/proc/<pid>/{status,stat,smaps_rollup,fd}`; private memory is
+  `Private_Clean + Private_Dirty`, CPU time in `USER_HZ` = 100 ticks. Windows: PowerShell
+  `Get-Process` (private bytes, handle count). macOS: `ps` and `lsof`; RSS only, so the lab
+  takes `phys_footprint` with `footprint` itself. The mock keeps a log of every injection; the
+  harness empties it at each unit so the mock's own bookkeeping does not grow the worker.
+
+What the CI form leaves to the lab run:
+
+| Lab only | Why | How |
+| --- | --- | --- |
+| Real OS layer typing into the probe window | Needs a desktop, the grants and the probe window of task 2.7, which does not exist yet; `iamb-soak` drives only the mock platform today | Until then a lab run is the mock-platform run on the lab machine (the service minus its OS layer) |
+| Packet capture of the whole machine | Not possible on hosted runners | `tcpdump` (macOS) or `pktmon` (Windows) for the whole run; scan the capture with `iamb-soak scan --location capture=…` or `run --scan` |
+| Crash dumps, the whole user profile | Too large and too shared on CI | `--scan "$HOME"` (or `%USERPROFILE%`) plus the OS crash-dump directories |
+| UI host restart every 24 h | No UI host yet | Add to the driver with task 3.x |
+| Disk quota of the data root full for 5 min | Needs a quota'd volume | Lab procedure |
+| Worker memory dump after a boundary event (reported, not gating) | Needs an OS dump tool | Lab procedure; scan the dump with `iamb-soak scan` |
+| Official memory numbers (private working set, `phys_footprint`) | Mock and shared runner | Lab |
+
+Measured on the build machine (Linux, 4 cores, release build, mock platform, the nightly job's
+command, seed 20261118): pass; 1801 s, 38 samples, 5,758 keys (3.2/s while typing), 318 of 318
+expansions correct, 29 edits, 7 kills recovered in 48–75 ms (probe expansion), 15 canaries in 5
+contexts typed and confirmed, 0 hits in 25 files (4.4 MB: data root, IPC tap, stderr, samples),
+no networking crate among 47 packages. Worker private memory 37 MB at start, flat at 57–58 MB
+from the fifth edit; leak slope 2.0 MB (limit 5), window difference 0.6 MB; supervisor 0.3 MB,
+flat. The 2.0 MB slope comes from nine settled samples in two lives: the CI rule detects a gross
+leak, not one near the limit, which is the lab's job. A 4-minute run with an edit every second
+(224 edits) stayed between 51 and 59 MB.
 
 ## 6. End-to-end latency measurement (lab)
 
