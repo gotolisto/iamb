@@ -1,0 +1,15 @@
+description = "Overflow clears the buffer"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "br"
+
+[[step]]
+overflow = true
+buffered = 0
+
+[[step]]
+type = "b "

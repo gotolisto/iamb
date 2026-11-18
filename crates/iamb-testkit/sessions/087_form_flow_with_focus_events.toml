@@ -1,0 +1,29 @@
+description = "The usual form flow: focus moves to the form and back; typing in between is not stored"
+
+[[snippet]]
+abbr = "dear"
+body = 'Dear {field name="Name"},'
+
+[[step]]
+type = "dear "
+expect = [{ form = "dear" }]
+
+[[step]]
+focus = "iamb"
+
+[[step]]
+secure = "own_window"
+
+[[step]]
+type = "Kim"
+buffered = 0
+
+[[step]]
+focus = "mail"
+
+[[step]]
+secure = "normal"
+
+[[step]]
+submit = { Name = "Kim" }
+expect = [{ delete = 5 }, { text = "Dear Kim,", verbatim = [[5, 8]] }, { text = " " }, { expanded = "dear" }]

@@ -1,0 +1,17 @@
+description = "An immediate snippet with word start does not fire mid-word"
+
+[[snippet]]
+abbr = "dd"
+body = "dear diary"
+trigger = "immediate"
+word_start = true
+
+[[step]]
+type = "add"
+
+[[step]]
+type = " d"
+
+[[step]]
+type = "d"
+expect = [{ delete = 2 }, { text = "dear diary" }, { expanded = "dd", chars_saved = 8 }]

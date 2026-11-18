@@ -1,0 +1,28 @@
+description = "Reopening a form whose snippet is gone is a diagnostic and forgets it"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[snippet]]
+abbr = "dear"
+body = 'Dear {field name="Name"},'
+
+[[step]]
+type = "dear "
+expect = [{ form = "dear" }]
+
+[[step]]
+submit = { Name = "Kim" }
+expect = [{ delete = 5 }, { text = "Dear Kim,", verbatim = [[5, 8]] }, { text = " " }, { expanded = "dear" }]
+
+[[step]]
+snapshot = [{ abbr = "brb", body = "be right back" }]
+
+[[step]]
+reopen = true
+expect = [{ diagnostic = "no_last_form", snippet = "dear" }]
+
+[[step]]
+reopen = true
+expect = [{ diagnostic = "no_last_form" }]

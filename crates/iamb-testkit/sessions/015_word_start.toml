@@ -1,0 +1,19 @@
+description = "Delimiter snippets need a word start by default"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "xbrb "
+
+[[step]]
+type = "x brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]
+
+[[step]]
+type = "(brb "
+
+[[step]]
+type = ".brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]

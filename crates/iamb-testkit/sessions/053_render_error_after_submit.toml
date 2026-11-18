@@ -1,0 +1,22 @@
+description = "Waits chosen through a form can exceed the limit; the error comes at submit"
+
+[[snippet]]
+abbr = "slow"
+body = 'x{if field="Slow"}{wait ms=10000}{wait ms=10000}{wait ms=10000}{wait ms=10000}{endif}'
+
+[[step]]
+type = "slow "
+expect = [{ form = "slow", fields = ["Slow"] }]
+
+[[step]]
+submit = { Slow = "yes" }
+expect = [{ diagnostic = "E_WAIT_TOTAL", snippet = "slow" }]
+form_open = false
+
+[[step]]
+reopen = true
+expect = [{ form = "slow", last_values = { Slow = "yes" } }]
+
+[[step]]
+submit = { Slow = "no" }
+expect = [{ text = "x" }, { expanded = "slow" }]

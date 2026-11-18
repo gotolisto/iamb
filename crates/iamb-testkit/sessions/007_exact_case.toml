@@ -1,0 +1,16 @@
+description = "Exact case only matches the abbreviation as written"
+
+[[snippet]]
+abbr = "BRB"
+body = "be right back"
+case_mode = "exact"
+
+[[step]]
+type = "brb "
+
+[[step]]
+type = "Brb "
+
+[[step]]
+type = "BRB "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "BRB" }]

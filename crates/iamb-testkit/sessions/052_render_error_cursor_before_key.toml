@@ -1,0 +1,9 @@
+description = "A key after the cursor fails at render"
+
+[[snippet]]
+abbr = "ck"
+body = 'a{cursor}{key name=tab}'
+
+[[step]]
+type = "ck "
+expect = [{ diagnostic = "E_CURSOR_BEFORE_KEY", snippet = "ck" }]

@@ -1,0 +1,10 @@
+description = "Adaptive case: all lower case expands as written"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back, OK?"
+case_mode = "adaptive"
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back, OK?" }, { text = " " }, { expanded = "brb" }]

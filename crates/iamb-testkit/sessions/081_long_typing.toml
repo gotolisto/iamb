@@ -1,0 +1,16 @@
+description = "Long typing keeps the last 65 characters; a word start after a space still works"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore"
+buffered = 65
+
+[[step]]
+type = " brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]
+
+[[step]]
+type = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxbrb "

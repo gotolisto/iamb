@@ -1,0 +1,18 @@
+description = "On one keystroke an immediate abbreviation ending in a delimiter beats a shorter delimiter one"
+
+[[snippet]]
+abbr = "sm)"
+body = "smile"
+trigger = "immediate"
+
+[[snippet]]
+abbr = "sm"
+body = "small"
+
+[[step]]
+type = "sm)"
+expect = [{ delete = 3 }, { text = "smile" }, { expanded = "sm)" }]
+
+[[step]]
+type = " sm."
+expect = [{ delete = 3 }, { text = "small" }, { text = "." }, { expanded = "sm" }]

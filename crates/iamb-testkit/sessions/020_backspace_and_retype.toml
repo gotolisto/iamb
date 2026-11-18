@@ -1,0 +1,16 @@
+description = "Backspace removes the last character; retyping completes the abbreviation"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "brx"
+
+[[step]]
+backspace = 1
+buffered = 2
+
+[[step]]
+type = "b "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]

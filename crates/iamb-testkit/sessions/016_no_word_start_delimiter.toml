@@ -1,0 +1,10 @@
+description = "A delimiter snippet without word start fires inside a word"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+word_start = false
+
+[[step]]
+type = "xbrb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]

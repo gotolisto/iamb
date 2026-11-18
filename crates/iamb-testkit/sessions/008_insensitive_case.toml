@@ -1,0 +1,13 @@
+description = "Insensitive case matches any case and expands as written"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "BrB "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]
+
+[[step]]
+type = "BRB "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]

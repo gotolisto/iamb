@@ -1,0 +1,18 @@
+description = "A fresh engine is suspended until the first focus verdict"
+focus_normal = false
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "brb "
+suspended = true
+buffered = 0
+
+[[step]]
+secure = "normal"
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]

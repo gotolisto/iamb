@@ -1,0 +1,15 @@
+description = "Line breaks in the body are text; CRLF in values is normalised"
+
+[[snippet]]
+abbr = "addr"
+body = """Kim Lee
+{field name="Street" type=area}
+Town"""
+
+[[step]]
+type = "addr "
+expect = [{ form = "addr" }]
+
+[[step]]
+submit = { Street = "1 Main St\r\nFlat 2" }
+expect = [{ delete = 5 }, { text = "Kim Lee\n1 Main St\nFlat 2\nTown", verbatim = [[8, 24]] }, { text = " " }, { expanded = "addr" }]

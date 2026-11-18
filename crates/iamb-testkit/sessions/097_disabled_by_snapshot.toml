@@ -1,0 +1,15 @@
+description = "Disabling a snippet in a new snapshot stops it from triggering"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+snapshot = [{ abbr = "brb", body = "be right back", enabled = false }]
+
+[[step]]
+type = "brb "
+
+[[step]]
+expand = "brb"
+expect = [{ text = "be right back" }, { expanded = "brb" }]

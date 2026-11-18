@@ -1,0 +1,28 @@
+description = "A focus change before the start marker disturbs the expansion; the buffer starts empty"
+auto_inject = false
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]
+
+[[step]]
+focus = "other"
+
+[[step]]
+secure = "normal"
+
+[[step]]
+type = "x"
+buffered = 1
+
+[[step]]
+inject = "start"
+buffered = 0
+
+[[step]]
+inject = "finish"
+state = "idle"

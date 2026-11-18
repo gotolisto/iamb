@@ -1,0 +1,31 @@
+description = "A new snapshot during injection does not disturb it"
+auto_inject = false
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[snippet]]
+abbr = "omw"
+body = "on my way"
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]
+
+[[step]]
+type = "om"
+
+[[step]]
+snapshot_changed = true
+
+[[step]]
+inject = "start"
+buffered = 2
+
+[[step]]
+inject = "finish"
+
+[[step]]
+type = "w "
+expect = [{ delete = 4 }, { text = "on my way" }, { text = " " }, { expanded = "omw" }]

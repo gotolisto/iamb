@@ -1,0 +1,17 @@
+description = "An excluded app suspends the engine"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+focus = "terminal"
+
+[[step]]
+secure = "excluded"
+expect = [{ diagnostic = "suspended_excluded_app", app = "terminal" }]
+
+[[step]]
+type = "brb "
+buffered = 0
+suspended = true

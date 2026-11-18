@@ -1,0 +1,10 @@
+description = "Adaptive case: a capital first letter capitalises the expansion"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+case_mode = "adaptive"
+
+[[step]]
+type = "Brb "
+expect = [{ delete = 4 }, { text = "Be right back" }, { text = " " }, { expanded = "brb" }]

@@ -1,0 +1,16 @@
+description = "A delimiter-mode snippet expands on space and the space is typed again"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "brb"
+expect = []
+
+[[step]]
+type = " "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb", chars_saved = 10 }]
+state = "idle"
+now_calls = 1
+clipboard_calls = 0

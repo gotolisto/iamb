@@ -16,7 +16,7 @@ interactive desktop on macOS), so CI uses generous thresholds and never reports 
 | Property | `proptest` | `crates/<crate>/tests/prop_*.rs` | CI, every PR (256 cases); nightly 10,000 cases | Must pass |
 | Template spec examples | TOML cases | `spec/template/examples/*.toml`; run by `crates/iamb-core/tests/template_spec.rs`, later by the mobile bindings | CI, every PR | Every case passes |
 | Fuzzing | `cargo-fuzz` (pinned nightly, the only nightly use) | `fuzz/` (its own workspace) target `template` (parse, resolve and render); later `rich_markdown`, `ipc_frame_decode`, `import_json` | Nightly, 10 min per target; corpus seeded from the spec examples | No crash, no hang over 1 s, no OOM over 512 MB |
-| Scripted typing sessions | `iamb-testkit::session` (scripted key stream, fake clock, expected actions) | `crates/iamb-core/tests/sessions/`, `crates/iamb-service/tests/` | CI, every PR | Must pass |
+| Scripted typing sessions | `iamb-testkit::session` (scripted key stream, fake clock, expected actions) | `crates/iamb-testkit/sessions/*.toml` (run by `crates/iamb-core/tests/engine_sessions.rs`), later `crates/iamb-service/tests/` | CI, every PR | Must pass |
 | Mutation sample | `cargo-mutants` on `iamb-core::matcher` | Config in `crates/iamb-core/.cargo/mutants.toml` | Manual at tasks 1.2 and 1.9; weekly afterwards | ≥ 80% mutants caught; every missed mutant reviewed |
 | IPC contract | `cargo test` with golden JSON | `crates/iamb-ipc/tests/contract/` (one golden file per message) | CI, every PR | Every message round-trips byte-for-byte; role and version rules tested |
 | Service vs. mock platform | `iamb-platform` mock + `iamb-testkit` | `crates/iamb-service/tests/` | CI, 3 OSes, every PR | Must pass |

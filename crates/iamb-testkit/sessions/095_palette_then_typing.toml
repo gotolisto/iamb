@@ -1,0 +1,27 @@
+description = "After a palette expansion the buffer starts afresh; the text before is not known"
+auto_inject = false
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[snippet]]
+abbr = "omw"
+body = "on my way"
+
+[[step]]
+type = "om"
+
+[[step]]
+expand = "brb"
+expect = [{ text = "be right back" }, { expanded = "brb" }]
+buffered = 1
+
+[[step]]
+inject = "start"
+
+[[step]]
+inject = "finish"
+
+[[step]]
+type = "w "

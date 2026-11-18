@@ -1,0 +1,14 @@
+description = "Adaptive upper case never changes field values (verbatim ranges)"
+
+[[snippet]]
+abbr = "hi"
+body = 'hi {field name="Name"}, welcome'
+case_mode = "adaptive"
+
+[[step]]
+type = "HI "
+expect = [{ form = "hi", fields = ["Name"] }]
+
+[[step]]
+submit = { Name = "kim" }
+expect = [{ delete = 3 }, { text = "HI kim, WELCOME", verbatim = [[3, 6]] }, { text = " " }, { expanded = "hi" }]

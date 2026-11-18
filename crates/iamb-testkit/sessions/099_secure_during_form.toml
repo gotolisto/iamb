@@ -1,0 +1,20 @@
+description = "Submitting into a window the focus thread calls secure still works: the user asked explicitly"
+
+[[snippet]]
+abbr = "pw"
+body = '{field name="Code"}'
+
+[[step]]
+type = "pw "
+expect = [{ form = "pw" }]
+
+[[step]]
+focus = "login"
+
+[[step]]
+secure = "secure"
+expect = [{ diagnostic = "suspended_secure_field", app = "login" }]
+
+[[step]]
+submit = { Code = "1234" }
+expect = [{ delete = 3 }, { text = "1234", verbatim = [[0, 4]] }, { text = " " }, { expanded = "pw" }]

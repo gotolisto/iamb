@@ -1,0 +1,32 @@
+description = "A palette request while an expansion is in flight is dropped"
+auto_inject = false
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[snippet]]
+abbr = "omw"
+body = "on my way"
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]
+
+[[step]]
+expand = "omw"
+expect = [{ diagnostic = "injection_busy", snippet = "omw" }]
+
+[[step]]
+inject = "start"
+
+[[step]]
+expand = "omw"
+expect = [{ diagnostic = "injection_busy", snippet = "omw" }]
+
+[[step]]
+inject = "finish"
+
+[[step]]
+expand = "omw"
+expect = [{ text = "on my way" }, { expanded = "omw" }]

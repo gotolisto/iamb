@@ -1,0 +1,9 @@
+description = "A palette request expands without deleting anything and without a delimiter"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+expand = "brb"
+expect = [{ text = "be right back" }, { expanded = "brb", chars_saved = 13 }]

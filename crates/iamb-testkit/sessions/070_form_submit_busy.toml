@@ -1,0 +1,43 @@
+description = "A form submitted while another expansion is in flight is dropped but remembered"
+auto_inject = false
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[snippet]]
+abbr = "dear"
+body = 'Dear {field name="Name"},'
+
+[[step]]
+expand = "dear"
+expect = [{ form = "dear" }]
+
+[[step]]
+expand = "brb"
+expect = [{ diagnostic = "form_open", snippet = "brb" }]
+
+[[step]]
+cancel = true
+
+[[step]]
+expand = "brb"
+expect = [{ text = "be right back" }, { expanded = "brb" }]
+
+[[step]]
+expand = "dear"
+expect = [{ form = "dear" }]
+
+[[step]]
+submit = { Name = "Kim" }
+expect = [{ diagnostic = "injection_busy", snippet = "dear" }]
+
+[[step]]
+inject = "start"
+
+[[step]]
+inject = "finish"
+
+[[step]]
+reopen = true
+expect = [{ form = "dear", last_values = { Name = "Kim" } }]

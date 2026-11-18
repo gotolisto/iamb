@@ -1,0 +1,10 @@
+description = "Rich snippets expand as plain templates through TypeText until task 3.8"
+
+[[snippet]]
+abbr = "md"
+body = "**bold** and _it_"
+kind = "rich"
+
+[[step]]
+type = "md "
+expect = [{ delete = 3 }, { text = "**bold** and _it_" }, { text = " " }, { expanded = "md" }]

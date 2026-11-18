@@ -1,0 +1,28 @@
+description = "Global pause suspends the engine; resuming starts from an empty buffer"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "br"
+
+[[step]]
+pause = true
+suspended = true
+buffered = 0
+
+[[step]]
+type = "brb "
+buffered = 0
+
+[[step]]
+pause = false
+suspended = false
+
+[[step]]
+type = "b "
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]

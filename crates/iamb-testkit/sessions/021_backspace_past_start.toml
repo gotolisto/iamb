@@ -1,0 +1,16 @@
+description = "Backspace on an empty buffer does nothing; typing afterwards matches from the start"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "br"
+
+[[step]]
+backspace = 5
+buffered = 0
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]

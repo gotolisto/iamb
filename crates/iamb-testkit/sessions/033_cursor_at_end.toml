@@ -1,0 +1,9 @@
+description = "A cursor at the very end moves nothing, and the delimiter is still not typed again"
+
+[[snippet]]
+abbr = "x1"
+body = "first{cursor}"
+
+[[step]]
+type = "x1 "
+expect = [{ delete = 3 }, { text = "first" }, { expanded = "x1" }]

@@ -1,0 +1,49 @@
+description = "Escape, arrows, clicks, navigation and shortcuts clear the buffer without firing"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "brb"
+
+[[step]]
+key = "escape"
+buffered = 0
+
+[[step]]
+type = " "
+
+[[step]]
+type = "brb"
+
+[[step]]
+key = "click"
+
+[[step]]
+type = " "
+
+[[step]]
+type = "br"
+
+[[step]]
+key = "arrow"
+
+[[step]]
+type = "b "
+
+[[step]]
+type = "brb"
+
+[[step]]
+key = "navigation"
+
+[[step]]
+key = "shortcut"
+
+[[step]]
+key = "other"
+
+[[step]]
+type = " "
+buffered = 1

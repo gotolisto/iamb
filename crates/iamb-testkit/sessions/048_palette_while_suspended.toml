@@ -1,0 +1,16 @@
+description = "Palette requests are explicit and work while typing is suspended"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+focus = "vault"
+
+[[step]]
+secure = "secure"
+expect = [{ diagnostic = "suspended_secure_field" }]
+
+[[step]]
+expand = "brb"
+expect = [{ text = "be right back" }, { expanded = "brb" }]

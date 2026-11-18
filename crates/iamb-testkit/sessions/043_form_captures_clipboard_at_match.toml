@@ -1,0 +1,21 @@
+description = "The clipboard is read once, at the match, before the form is shown"
+
+[env]
+clipboard = "one"
+
+[[snippet]]
+abbr = "cc"
+body = '{field name="To"}: {clipboard}'
+
+[[step]]
+type = "cc "
+expect = [{ form = "cc" }]
+clipboard_calls = 1
+
+[[step]]
+set_clipboard = "two"
+
+[[step]]
+submit = { To = "Kim" }
+expect = [{ delete = 3 }, { text = "Kim: one", verbatim = [[0, 3], [5, 8]] }, { text = " " }, { expanded = "cc" }]
+clipboard_calls = 1

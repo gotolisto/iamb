@@ -1,0 +1,20 @@
+description = "Palette requests for unknown or broken snippets are diagnostics"
+
+[[snippet]]
+abbr = "bad"
+body = '{date fmt="%Q"}'
+
+[[excluded]]
+abbr = "bad"
+reason = "E_BAD_FORMAT"
+
+[[step]]
+expand = "nosuch"
+expect = [{ diagnostic = "unknown_snippet", snippet = "nosuch" }]
+
+[[step]]
+expand = "bad"
+expect = [{ diagnostic = "E_BAD_FORMAT", snippet = "bad" }]
+
+[[step]]
+type = "bad "

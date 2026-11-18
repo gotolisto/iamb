@@ -1,0 +1,10 @@
+description = "An immediate snippet with a cursor"
+
+[[snippet]]
+abbr = "(("
+body = "({cursor})"
+trigger = "immediate"
+
+[[step]]
+type = "(("
+expect = [{ delete = 2 }, { text = "()" }, { caret_back = 1 }, { expanded = "((", chars_saved = 0 }]

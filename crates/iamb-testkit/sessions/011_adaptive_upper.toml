@@ -1,0 +1,19 @@
+description = "Adaptive case: all upper case upper-cases the expansion"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+case_mode = "adaptive"
+
+[[snippet]]
+abbr = "str"
+body = "straße"
+case_mode = "adaptive"
+
+[[step]]
+type = "BRB "
+expect = [{ delete = 4 }, { text = "BE RIGHT BACK" }, { text = " " }, { expanded = "brb" }]
+
+[[step]]
+type = "STR "
+expect = [{ delete = 4 }, { text = "STRASSE" }, { text = " " }, { expanded = "str" }]

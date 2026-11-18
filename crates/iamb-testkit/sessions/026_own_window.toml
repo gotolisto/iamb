@@ -1,0 +1,16 @@
+description = "Iamb's own windows suspend the engine without a diagnostic"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+focus = "iamb"
+
+[[step]]
+secure = "own_window"
+
+[[step]]
+type = "brb "
+buffered = 0
+suspended = true

@@ -1,0 +1,14 @@
+description = "Abbreviations typed inside or before other letters do not fire"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "subrb "
+
+[[step]]
+type = "brbx "
+
+[[step]]
+type = "brbrb "

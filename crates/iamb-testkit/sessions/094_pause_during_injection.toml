@@ -1,0 +1,29 @@
+description = "Keys while paused during injection are not stored and are not reported as interleaved"
+auto_inject = false
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]
+
+[[step]]
+inject = "start"
+
+[[step]]
+pause = true
+
+[[step]]
+type = "abc"
+
+[[step]]
+inject = "finish"
+
+[[step]]
+pause = false
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]

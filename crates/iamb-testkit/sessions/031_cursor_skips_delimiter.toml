@@ -1,0 +1,9 @@
+description = "With a cursor the delimiter is not typed again and the caret moves back"
+
+[[snippet]]
+abbr = "bold"
+body = "<b>{cursor}</b>"
+
+[[step]]
+type = "bold "
+expect = [{ delete = 5 }, { text = "<b></b>" }, { caret_back = 4 }, { expanded = "bold", chars_saved = 3 }]

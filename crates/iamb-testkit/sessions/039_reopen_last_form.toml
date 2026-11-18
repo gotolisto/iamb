@@ -1,0 +1,33 @@
+description = "ReopenLastForm shows the last submitted form pre-filled; it expands without deleting"
+
+[[snippet]]
+abbr = "dear"
+body = 'Dear {field name="Name"},'
+
+[[step]]
+reopen = true
+expect = [{ diagnostic = "no_last_form" }]
+
+[[step]]
+type = "dear "
+expect = [{ form = "dear" }]
+
+[[step]]
+submit = { Name = "Kim" }
+expect = [{ delete = 5 }, { text = "Dear Kim,", verbatim = [[5, 8]] }, { text = " " }, { expanded = "dear" }]
+
+[[step]]
+reopen = true
+expect = [{ form = "dear", fields = ["Name"], last_values = { Name = "Kim" } }]
+now_calls = 2
+
+[[step]]
+submit = { Name = "Lee" }
+expect = [{ text = "Dear Lee,", verbatim = [[5, 8]] }, { expanded = "dear", chars_saved = 9 }]
+
+[[step]]
+reopen = true
+expect = [{ form = "dear", last_values = { Name = "Lee" } }]
+
+[[step]]
+cancel = true

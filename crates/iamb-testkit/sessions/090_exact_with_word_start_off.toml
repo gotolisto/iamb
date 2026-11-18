@@ -1,0 +1,14 @@
+description = "Exact case and no word start together"
+
+[[snippet]]
+abbr = "TM"
+body = "™"
+trigger = "immediate"
+case_mode = "exact"
+
+[[step]]
+type = "brandtm"
+
+[[step]]
+type = "brandTM"
+expect = [{ delete = 2 }, { text = "™" }, { expanded = "TM", chars_saved = 0 }]

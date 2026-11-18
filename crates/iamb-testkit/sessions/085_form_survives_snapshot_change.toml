@@ -1,0 +1,24 @@
+description = "A form renders the template that was matched, even if the library changes while it is open"
+
+[[snippet]]
+abbr = "dear"
+body = 'Dear {field name="Name"},'
+
+[[step]]
+type = "dear "
+expect = [{ form = "dear" }]
+
+[[step]]
+snapshot = [{ abbr = "dear", body = 'Hi {field name="Name"}!' }]
+
+[[step]]
+submit = { Name = "Kim" }
+expect = [{ delete = 5 }, { text = "Dear Kim,", verbatim = [[5, 8]] }, { text = " " }, { expanded = "dear" }]
+
+[[step]]
+type = "dear "
+expect = [{ form = "dear", last_values = { Name = "Kim" } }]
+
+[[step]]
+submit = { Name = "Lee" }
+expect = [{ delete = 5 }, { text = "Hi Lee!", verbatim = [[3, 6]] }, { text = " " }, { expanded = "dear" }]

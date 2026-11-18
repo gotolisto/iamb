@@ -1,0 +1,26 @@
+description = "A sentence with several abbreviations, as a dry run would type it"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[snippet]]
+abbr = "omw"
+body = "on my way"
+
+[[snippet]]
+abbr = "ty"
+body = "thank you"
+trigger = "immediate"
+word_start = true
+
+[[step]]
+type = "Ok, ty"
+expect = [{ delete = 2 }, { text = "thank you" }, { expanded = "ty" }]
+
+[[step]]
+type = "! I am omw, brb."
+expect = [
+  { delete = 4 }, { text = "on my way" }, { text = "," }, { expanded = "omw" },
+  { delete = 4 }, { text = "be right back" }, { text = "." }, { expanded = "brb" },
+]
