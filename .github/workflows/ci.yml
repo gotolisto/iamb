@@ -61,6 +61,14 @@ jobs:
       - name: Build
         run: cargo build --workspace --all-targets --locked
       - name: Test
+        if: runner.os != 'Windows'
+        run: cargo test --workspace --locked
+      # Hosted Windows runners have an interactive desktop, so keyboard tests that need one
+      # must run there: IAMB_REQUIRE_DESKTOP turns their "skipped, no desktop" into a failure.
+      - name: Test (Windows, desktop required)
+        if: runner.os == 'Windows'
+        env:
+          IAMB_REQUIRE_DESKTOP: "1"
         run: cargo test --workspace --locked
       # Lints the code that only exists on this OS (iamb-platform-windows, iamb-platform-macos
       # and any `cfg` branch elsewhere), tests included. Linux is linted by the `lint` job.
