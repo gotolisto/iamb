@@ -47,6 +47,10 @@
 //!   the size of the distinct bodies. Cycle and depth checks follow the reference implementation's
 //!   depth-first order exactly, so the first error reported is the same; a body that already
 //!   resolved cleanly is re-checked only for depth, using its memoised height.
+//! - **Bounded forms.** A form has at most [`MAX_FORM_FIELDS`] fields (`E_FORM_TOO_LARGE`), and
+//!   a form is made from small summaries of the included bodies' forms rather than by walking
+//!   or copying them, so compiling a library costs time linear in its size whatever its shape
+//!   (review 1.9 follow-up N1).
 //! - **Bounded rendering.** Rendering walks only taken branches, but repeated inclusion can still
 //!   make the walk long (a library where each of 8 levels includes the next 50 times is 50^7
 //!   inclusions). Besides the 100,000-character limit, a render fails with `E_OUTPUT_TOO_LARGE`
@@ -91,6 +95,9 @@ pub use syntax::{Attribute, MacroName, Token};
 
 /// Maximum nesting of `{if}` inside one template body, and of `{snippet}` below the template.
 pub const MAX_DEPTH: usize = 8;
+/// Maximum number of fields in one resolved form, counting distinct names, nested snippets and
+/// implicit `{if}` toggles included (`E_FORM_TOO_LARGE`).
+pub const MAX_FORM_FIELDS: usize = 100;
 /// Maximum total of the waits that run in one expansion, in milliseconds.
 pub const MAX_WAIT_TOTAL_MS: u32 = 30_000;
 /// Maximum typed text of one expansion, in extended grapheme clusters.
@@ -354,8 +361,8 @@ impl Template {
     ///
     /// # Errors
     /// The first resolve error (`E_SNIPPET_NOT_FOUND`, `E_SNIPPET_CYCLE`, `E_TOO_DEEP`, a parse
-    /// error in a nested body, then `E_FIELD_CONFLICT`, then `E_FIELD_UNDEFINED`), with the
-    /// snippet whose body contains it.
+    /// error in a nested body, then `E_FORM_TOO_LARGE`, then `E_FIELD_CONFLICT`, then
+    /// `E_FIELD_UNDEFINED`), with the snippet whose body contains it.
     pub fn resolve(&self, snippets: &dyn SnippetSource) -> Result<Resolved, TemplateError> {
         resolve::Compiler::new(snippets).resolve(Arc::clone(&self.body))
     }
@@ -379,7 +386,7 @@ impl Resolved {
     /// The fill-in fields, in order of first appearance. Empty when there is nothing to ask.
     #[must_use]
     pub fn form(&self) -> &[FieldSpec] {
-        &self.form.fields
+        self.form.fields()
     }
 
     /// True when a `{clipboard}` appears anywhere in the resolved template (taken branch or not),

@@ -42,6 +42,7 @@ ATTRS = {
 MAX_DEPTH = 8
 MAX_WAIT_TOTAL = 30_000
 MAX_OUTPUT = 100_000
+MAX_FIELDS = 100
 BARE = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_+-.%:/")
 WS = " \t\n"
 
@@ -427,8 +428,20 @@ def walk(tree):
                 yield from walk(node["otherwise"])
 
 
+def field_names(tree):
+    """Distinct field names in order of first appearance ({field} and {if} alike)."""
+    names = []
+    for node in walk(tree):
+        name = node.get("name") if node["kind"] == "field" else node.get("field")
+        if node["kind"] in ("field", "if") and name not in names:
+            names.append(name)
+    return names
+
+
 def collect_form(tree):
     """Fields in order of first appearance; explicit definitions override implicit toggles."""
+    if len(field_names(tree)) > MAX_FIELDS:
+        raise TemplateError("E_FORM_TOO_LARGE")
     order, defs = [], {}
     for node in walk(tree):
         if node["kind"] == "field":
@@ -456,11 +469,26 @@ def collect_form(tree):
     return [{k: v for k, v in defs[n].items() if k not in ("implicit", "bare")} for n in order]
 
 
+def fit_value(spec: dict, value):
+    """The value of a field: the submitted one, corrected to fit the field (spec §4.5), or the
+    default when none was submitted."""
+    if value is None:
+        return spec["default"]
+    value = normalize_newlines(value)
+    if spec["type"] == "choice" and value not in spec["options"]:
+        return spec["default"]
+    if spec["type"] == "toggle":
+        return "yes" if value == "yes" else "no"
+    if spec["type"] == "text":
+        return value.replace("\n", " ")
+    return value
+
+
 def render(src: str, ctx: Ctx):
     tree = expand(parse(src), ctx, ())
     form = collect_form(tree)
     specs = {f["name"]: f for f in form}
-    values = {n: normalize_newlines(ctx.values.get(n, s["default"])) for n, s in specs.items()}
+    values = {n: fit_value(s, ctx.values.get(n)) for n, s in specs.items()}
     actions: list = []
     state = {"cursor_at": None, "wait": 0, "chars": 0}
 

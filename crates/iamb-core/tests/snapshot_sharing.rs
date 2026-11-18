@@ -28,28 +28,51 @@ fn budget(release_ms: u64) -> Duration {
     Duration::from_millis(release_ms * factor)
 }
 
-/// n leaves, one hub that includes all of them, n snippets that each include the hub: the
-/// review's shape. With `fields`, every leaf asks for its own field, so the hub's form has n
-/// fields and every user's form is the hub's.
-fn hub_library(n: u32, fields: bool) -> Vec<Snippet> {
+/// The library shapes of review 1.9 finding 2 and follow-up finding N1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Shape {
+    /// n plain leaves, one hub that includes them, n users `Dear all, {snippet abbr=hub}`.
+    Plain,
+    /// As `Plain`, but every leaf asks for its own field: the hub's form has n fields.
+    LeafFields,
+    /// As `LeafFields`, and every user has a field of its own (`Dear {field name=who}, …`).
+    OwnField,
+    /// As `LeafFields`, and every user starts with an `{if}` of its own.
+    OwnIf,
+    /// The leaves are split between two hubs; every user includes both.
+    TwoHubs,
+}
+
+/// `leaves` leaves, the hub(s), then `users` users, in that order.
+fn hub_library(shape: Shape, leaves: u32, users: u32) -> Vec<Snippet> {
     let mut v = Vec::new();
-    let mut hub = String::new();
-    for i in 0..n {
-        let leaf = if fields {
-            format!("{{field name=f{i}}}")
-        } else {
+    let (mut hub, mut hubb) = (String::new(), String::new());
+    for i in 0..leaves {
+        let leaf = if shape == Shape::Plain {
             "some leaf text".to_owned()
+        } else {
+            format!("{{field name=f{i}}}")
         };
         v.push(snippet(i, &format!("leaf{i}"), &leaf));
-        write!(hub, "{{snippet abbr=leaf{i}}}").expect("write to a string");
+        let to = if shape == Shape::TwoHubs && i % 2 == 1 {
+            &mut hubb
+        } else {
+            &mut hub
+        };
+        write!(to, "{{snippet abbr=leaf{i}}}").expect("write to a string");
     }
-    v.push(snippet(n, "hub", &hub));
-    for i in 0..n {
-        v.push(snippet(
-            n + 1 + i,
-            &format!("user{i}"),
-            "Dear all, {snippet abbr=hub}",
-        ));
+    v.push(snippet(leaves, "hub", &hub));
+    if shape == Shape::TwoHubs {
+        v.push(snippet(leaves + users + 1, "hubb", &hubb));
+    }
+    let body = match shape {
+        Shape::Plain | Shape::LeafFields => "Dear all, {snippet abbr=hub}",
+        Shape::OwnField => "Dear {field name=who}, {snippet abbr=hub}",
+        Shape::OwnIf => "{if field=f0}x{endif}{snippet abbr=hub}",
+        Shape::TwoHubs => "{snippet abbr=hub}{snippet abbr=hubb}",
+    };
+    for i in 0..users {
+        v.push(snippet(leaves + 1 + i, &format!("user{i}"), body));
     }
     v
 }
@@ -62,39 +85,105 @@ fn resident_mib() -> Option<u64> {
     Some(kib / 1024)
 }
 
-/// Before the fix this shape took 4.8 s and 2.4 GiB at 4,001 snippets (review 1.9 finding 2);
-/// now it is linear in both. The memory bound is checked where the OS reports the resident set
-/// (Linux); other tests of this binary run alongside, so it leaves generous room.
+/// Builds `library`, checks the time (200 ms in release) and memory bounds, and returns the
+/// snapshot. The memory bound is checked where the OS reports the resident set (Linux); other
+/// tests of this binary run alongside, so it leaves generous room.
+fn build_within_budget(label: &str, library: Vec<Snippet>) -> Snapshot {
+    let len = library.len();
+    let before = resident_mib();
+    let start = Instant::now();
+    let snapshot = Snapshot::build(library, EngineSettings::default());
+    let elapsed = start.elapsed();
+    let after = resident_mib();
+    eprintln!("{label}: {len} snippets built in {elapsed:?}");
+    assert!(snapshot.excluded().is_empty(), "{label}");
+    assert_eq!(snapshot.matcher().len(), len, "{label}");
+    assert!(elapsed < budget(200), "{label}: {elapsed:?}");
+    if let (Some(before), Some(after)) = (before, after) {
+        let grown = after.saturating_sub(before);
+        assert!(grown < 256, "{label}: resident set grew by {grown} MiB");
+    }
+    snapshot
+}
+
+/// What the snapshot compiled for the snippet at `index` of `library`: the number of form
+/// fields, or the error code.
+fn form_size(
+    snapshot: &Snapshot,
+    library: &[Snippet],
+    index: usize,
+) -> Result<usize, &'static str> {
+    snapshot
+        .compiled(library[index].meta.id)
+        .expect("compiled")
+        .as_ref()
+        .map(|r| r.form().len())
+        .map_err(TemplateError::code)
+}
+
+/// Before the fix of finding 2, the plain shape took 4.8 s and 2.4 GiB at 4,001 snippets; at
+/// 10,001 snippets the shapes of follow-up finding N1 (a field or an `{if}` in every user, or
+/// two hubs) took 10.6 s and 5.5 GiB. Each now builds in linear time: a form has at most 100
+/// fields (`E_FORM_TOO_LARGE`), and a form is made from the summaries of the included bodies,
+/// never by walking them again.
 #[test]
 fn shared_hub_library_builds_in_linear_time() {
-    // Without fields, and with a field in every leaf (the forms are shared too: 2,000 users
-    // each owning a copy of a 2,000-field form took 1.6 s and 700 MiB).
-    for fields in [false, true] {
-        let library = hub_library(2000, fields);
-        assert_eq!(library.len(), 4001);
-        let user = library[4000].meta.id;
-        let before = resident_mib();
-        let start = Instant::now();
-        let snapshot = Snapshot::build(library, EngineSettings::default());
-        let elapsed = start.elapsed();
-        let after = resident_mib();
-        assert!(snapshot.excluded().is_empty());
-        assert_eq!(snapshot.matcher().len(), 4001);
-        let form = snapshot
-            .compiled(user)
-            .expect("compiled")
-            .as_ref()
-            .expect("resolves");
-        assert_eq!(form.form().len(), if fields { 2000 } else { 0 });
-        assert!(elapsed < budget(200), "fields {fields}: {elapsed:?}");
-        if let (Some(before), Some(after)) = (before, after) {
-            let grown = after.saturating_sub(before);
-            assert!(
-                grown < 256,
-                "fields {fields}: resident set grew by {grown} MiB"
-            );
-        }
+    for (shape, users, form) in [
+        (Shape::Plain, 5000, Ok(0)),
+        (Shape::LeafFields, 5000, Err("E_FORM_TOO_LARGE")),
+        (Shape::OwnField, 5000, Err("E_FORM_TOO_LARGE")),
+        (Shape::OwnIf, 5000, Err("E_FORM_TOO_LARGE")),
+        (Shape::TwoHubs, 4999, Err("E_FORM_TOO_LARGE")),
+    ] {
+        let library = hub_library(shape, 5000, users);
+        assert_eq!(library.len(), 10_001);
+        let label = format!("{shape:?}");
+        let snapshot = build_within_budget(&label, library.clone());
+        assert_eq!(form_size(&snapshot, &library, 10_000), form, "{label}");
     }
+}
+
+/// The largest forms that resolve, copied into every template: a hub with exactly 100 fields
+/// and 10,000 users that each have a field of their own (half of them a new name, so 101
+/// fields and `E_FORM_TOO_LARGE`; half of them one of the hub's names, so 100 fields in a form
+/// the user owns), and the same with 100 leaves that all ask for one name (a form of one field
+/// that a walk would build by entering every leaf).
+#[test]
+fn largest_forms_build_in_linear_time() {
+    let mut library = hub_library(Shape::LeafFields, 100, 0);
+    for i in 0..10_000_u32 {
+        let own = if i % 2 == 0 {
+            "who".to_owned()
+        } else {
+            format!("f{}", i % 100)
+        };
+        library.push(snippet(
+            101 + i,
+            &format!("user{i}"),
+            &format!("Dear {{field name={own}}}, {{snippet abbr=hub}}"),
+        ));
+    }
+    let snapshot = build_within_budget("hub of 100 fields", library.clone());
+    assert_eq!(form_size(&snapshot, &library, 100), Ok(100));
+    assert_eq!(form_size(&snapshot, &library, 101), Err("E_FORM_TOO_LARGE"));
+    assert_eq!(form_size(&snapshot, &library, 102), Ok(100));
+
+    let mut library = Vec::new();
+    let mut hub = String::new();
+    for i in 0..5000_u32 {
+        library.push(snippet(i, &format!("leaf{i}"), "{field name=same}"));
+        write!(hub, "{{snippet abbr=leaf{i}}}").expect("write to a string");
+    }
+    library.push(snippet(5000, "hub", &hub));
+    for i in 0..5000_u32 {
+        library.push(snippet(
+            5001 + i,
+            &format!("user{i}"),
+            "Dear {field name=who}, {snippet abbr=hub}",
+        ));
+    }
+    let snapshot = build_within_budget("one name in 5,000 leaves", library.clone());
+    assert_eq!(form_size(&snapshot, &library, 10_000), Ok(2));
 }
 
 /// What the snapshot compiled for one snippet, in a comparable form.

@@ -64,7 +64,7 @@ held = false
 form_open = true
 
 [[step]]
-focus = "mail"
+focus = "editor"
 
 [[step]]
 submit = { Code = "5678" }
@@ -76,7 +76,7 @@ held = true
 
 [[step]]
 secure = "normal"
-expect = [{ diagnostic = "refused_composing", snippet = "pw", app = "mail" }]
+expect = [{ diagnostic = "refused_composing", snippet = "pw", app = "editor" }]
 held = false
 
 [[step]]
@@ -87,7 +87,7 @@ reopen = true
 expect = [{ form = "pw", fields = ["Code"], last_values = { Code = "5678" } }]
 
 [[step]]
-focus = "chat"
+focus = "editor"
 
 [[step]]
 submit = { Code = "0000" }

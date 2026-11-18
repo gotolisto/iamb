@@ -181,7 +181,7 @@ pub(crate) fn render(
     };
     let values: Vec<Cow<'_, str>> = res
         .form
-        .fields
+        .fields()
         .iter()
         .map(|spec| field_value(spec, values.get(&spec.name)))
         .collect();
@@ -373,9 +373,7 @@ impl Renderer<'_> {
     fn field(&self, at: &Expanded, slot: usize) -> usize {
         self.res
             .form
-            .index
-            .get(at.body.field_names[slot].as_str())
-            .copied()
+            .position(at.body.field_names[slot].as_str())
             .unwrap_or(0)
     }
 
@@ -401,7 +399,9 @@ impl Renderer<'_> {
     fn condition(&self, field: usize, cond: &Cond) -> bool {
         let value: &str = &self.values[field];
         match cond {
-            Cond::Truthy if self.res.form.fields[field].kind == FieldKind::Toggle => value == "yes",
+            Cond::Truthy if self.res.form.fields()[field].kind == FieldKind::Toggle => {
+                value == "yes"
+            }
             Cond::Truthy => !value.is_empty(),
             Cond::Is(x) => value == x,
             Cond::Not(x) => value != x,

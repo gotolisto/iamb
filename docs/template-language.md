@@ -6,7 +6,7 @@ A snippet body is a template: text that is typed as written, plus macros in brac
 replaced or acted on when the snippet expands. This document defines the grammar, every macro, and
 what happens on every error.
 
-The 166 examples in [`spec/template/examples/`](../spec/template/examples/) are part of this
+The 173 examples in [`spec/template/examples/`](../spec/template/examples/) are part of this
 specification. Where prose and an example disagree, that is a defect in the specification; the
 example is authoritative until it is fixed. The examples are the test suite for the parser and
 renderer (task 1.3) and run again on iOS and Android (task 6.2).
@@ -217,6 +217,8 @@ Ask the user for a value in the fill-in form and insert it.
 - Fields with the same name are one form field, asked once and inserted everywhere. If two
   definitions of one name differ in type or options, that is `E_FIELD_CONFLICT`; if they differ
   only in default, the first definition wins.
+- A form has at most 100 fields: counting distinct names, through nested snippets, and counting
+  the implicit toggles of `{if}` (§4.8), more than 100 is `E_FORM_TOO_LARGE`.
 - The form lists fields in order of first appearance in the resolved template, reading straight
   through nested snippets and through both branches of every `{if}`. Fields in a branch that ends
   up not being taken are still shown: the form does not change while it is open.
@@ -293,6 +295,7 @@ the position; it never reports what the user typed.
 | `E_SNIPPET_CYCLE` | A snippet includes itself, directly or indirectly | Resolve |
 | `E_FIELD_CONFLICT` | One field name defined with two types or option lists | Resolve |
 | `E_FIELD_UNDEFINED` | `{if}` with `is` or `not` on a field that has no `{field}` | Resolve |
+| `E_FORM_TOO_LARGE` | The form has more than 100 fields | Resolve |
 | `E_DATE_RANGE` | A shifted date falls outside the years 1 to 9999 | Render |
 | `E_CURSOR_BEFORE_KEY` | A key action follows the cursor in the output | Render |
 | `E_WAIT_TOTAL` | Waits that run total more than 30000 ms | Render |
@@ -310,6 +313,15 @@ What the user sees:
 `E_OUTPUT_TOO_LARGE` has no example file entry because of its size; it is covered by a unit test in
 task 1.3. A date-format or time-format setting that is itself invalid is rejected when the setting
 is saved, with `E_BAD_FORMAT`.
+
+Resolve errors are reported in this order: the expansion errors (`E_SNIPPET_NOT_FOUND`,
+`E_SNIPPET_CYCLE`, `E_TOO_DEEP` and parse errors in nested snippets, in source order), then
+`E_FORM_TOO_LARGE`, then `E_FIELD_CONFLICT`, then `E_FIELD_UNDEFINED`.
+
+**Limits.** Besides the nesting limits (8 levels), the output limit (100,000 characters) and the
+wait limit (30000 ms), one form may have at most 100 fields. No honest form needs more, and the
+limit bounds the work a library can cause: however many snippets include one another, building
+the forms of a library costs time proportional to its size.
 
 ## 6. Rich snippets
 
@@ -372,9 +384,9 @@ reference implementation.
 | `clipboard` | 10 | 2 |
 | `cursor` | 14 | 2 |
 | `snippet` | 16 | 8 |
-| `field` | 21 | 8 |
+| `field` | 27 | 10 |
 | `key` | 14 | 7 |
 | `wait` | 11 | 6 |
-| `if` | 20 | 8 |
+| `if` | 21 | 8 |
 | `syntax` | 19 | 7 |
-| Total | 166 | 57 |
+| Total | 173 | 59 |

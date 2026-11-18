@@ -277,9 +277,10 @@ for the focus thread's verdict: `normal` runs it; `secure`, `excluded`, `own_win
 refuses it with a `Diagnostic`, and a refused form submit keeps its values for `ReopenLastForm`. A
 request made when the state is already known and not normal, or while an input method is
 composing, is refused at once. Pause is different: it blocks typed abbreviations but allows a
-deliberate palette pick or form submit in a normal field. A waiting request belongs to one
-application (for a form, the one where the abbreviation was typed): a focus change to another
-application drops it. A newer request replaces a waiting one, and drops it even when the newer
+deliberate palette pick or form submit in a normal field. A request belongs to one
+application (for a form submit, the one where the form was opened; for a palette pick or reopen,
+the one focused when it was made): a focus change to another application drops it while it
+waits, and a request that arrives while another application has the focus is dropped at once. A newer request replaces a waiting one, and drops it even when the newer
 one is refused; cancelling a form drops its waiting submit; `Overflow` drops any waiting request.
 
 The engine sees focus events and requests in the order the service delivers them, and the two

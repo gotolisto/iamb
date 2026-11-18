@@ -21,7 +21,7 @@ expect = [{ diagnostic = "suspended_secure_field", app = "bank" }, { diagnostic 
 held = false
 
 [[step]]
-focus = "editor"
+focus = "bank"
 
 [[step]]
 secure = "normal"
@@ -29,6 +29,12 @@ secure = "normal"
 [[step]]
 type = "pw "
 expect = [{ form = "pw" }]
+
+[[step]]
+focus = "iamb"
+
+[[step]]
+secure = "own_window"
 
 [[step]]
 focus = "bank"

@@ -1,0 +1,64 @@
+description = "A held submit stays held while focus changes name the application where its abbreviation was matched, and runs there on the normal verdict; a held palette pick likewise"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[snippet]]
+abbr = "pw"
+body = '{field name="Code"}'
+
+[[step]]
+focus = "mail"
+
+[[step]]
+secure = "normal"
+
+[[step]]
+type = "pw "
+expect = [{ form = "pw", fields = ["Code"] }]
+
+[[step]]
+focus = "iamb"
+
+[[step]]
+secure = "own_window"
+
+[[step]]
+focus = "mail"
+
+[[step]]
+submit = { Code = "1234" }
+held = true
+form_open = false
+
+[[step]]
+focus = "mail"
+held = true
+
+[[step]]
+secure = "normal"
+expect = [{ delete = 3 }, { text = "1234", verbatim = [[0, 4]] }, { text = " " }, { expanded = "pw" }]
+held = false
+
+[[step]]
+focus = "palette"
+
+[[step]]
+secure = "own_window"
+
+[[step]]
+focus = "mail"
+
+[[step]]
+expand = "brb"
+held = true
+
+[[step]]
+focus = "mail"
+held = true
+
+[[step]]
+secure = "normal"
+expect = [{ text = "be right back" }, { expanded = "brb" }]
+held = false

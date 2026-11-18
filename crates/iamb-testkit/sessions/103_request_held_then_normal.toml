@@ -1,4 +1,4 @@
-description = "A palette pick that arrives after a focus change waits for the verdict and runs on normal; a second focus change keeps it held"
+description = "A palette pick that arrives after a focus change waits for the verdict and runs on normal; a repeated focus change to the same application keeps it held"
 
 [[snippet]]
 abbr = "brb"
@@ -19,7 +19,7 @@ held = true
 suspended = true
 
 [[step]]
-focus = "editor"
+focus = "mail"
 held = true
 
 [[step]]

@@ -156,12 +156,14 @@ pub enum Event {
         expansion: ExpansionId,
     },
     /// The search palette or the command-line tool asked to expand a snippet. The service keeps
-    /// the focus token; the engine does not need it.
+    /// the focus token; the engine does not need it, but expects the [`Event::FocusChanged`]
+    /// for the token's window to arrive first (see "Explicit requests" in the engine docs).
     ExpandRequest {
         /// The snippet to expand.
         snippet: Id,
     },
-    /// The user submitted a fill-in form; focus is back in the target window.
+    /// The user submitted a fill-in form; focus is back in the target window, and the service
+    /// has sent the [`Event::FocusChanged`] for that window first.
     FormSubmitted {
         /// The session from [`Action::ShowForm`].
         session: FormSessionId,
@@ -428,8 +430,10 @@ pub enum Reason {
     /// field is not confirmed as normal: the verdict, or composition, says why. A submitted
     /// form's values are still remembered, so it can be reopened.
     RefusedSuspended(SuspendReason),
-    /// An explicit request held until the focus verdict was dropped before the verdict arrived:
-    /// by `Overflow`, or because a newer explicit request replaced it.
+    /// An explicit request was dropped without running: a held one by `Overflow`, by a newer
+    /// explicit request (which replaces it), by `FormCancelled` for its session, or by a
+    /// `FocusChanged` naming another application; or a request that belongs to another
+    /// application than the focused one (then `app` names the focused one).
     RequestCancelled,
 }
 
@@ -483,7 +487,8 @@ pub struct Diagnostic {
     pub snippet: Option<Id>,
     /// The expansion involved, for injection diagnostics.
     pub expansion: Option<ExpansionId>,
-    /// The focused app, for suspension diagnostics.
+    /// The focused app, for suspension diagnostics, refused requests and requests dropped
+    /// because the focus is in another application.
     pub app: Option<AppId>,
 }
 

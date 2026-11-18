@@ -33,6 +33,8 @@ pub enum ErrorKind {
     FieldConflict,
     /// `E_FIELD_UNDEFINED`: `{if}` with `is` or `not` on a field that has no `{field}`.
     FieldUndefined,
+    /// `E_FORM_TOO_LARGE`: the resolved form has more than 100 fields.
+    FormTooLarge,
     /// `E_DATE_RANGE`: a shifted date falls outside the years 1 to 9999.
     DateRange,
     /// `E_CURSOR_BEFORE_KEY`: a key action follows the cursor in the output.
@@ -45,7 +47,7 @@ pub enum ErrorKind {
 
 impl ErrorKind {
     /// Every error kind, in the order of the spec's table.
-    pub const ALL: [ErrorKind; 18] = [
+    pub const ALL: [ErrorKind; 19] = [
         Self::UnclosedMacro,
         Self::BadSyntax,
         Self::UnknownAttr,
@@ -60,6 +62,7 @@ impl ErrorKind {
         Self::SnippetCycle,
         Self::FieldConflict,
         Self::FieldUndefined,
+        Self::FormTooLarge,
         Self::DateRange,
         Self::CursorBeforeKey,
         Self::WaitTotal,
@@ -84,6 +87,7 @@ impl ErrorKind {
             Self::SnippetCycle => "E_SNIPPET_CYCLE",
             Self::FieldConflict => "E_FIELD_CONFLICT",
             Self::FieldUndefined => "E_FIELD_UNDEFINED",
+            Self::FormTooLarge => "E_FORM_TOO_LARGE",
             Self::DateRange => "E_DATE_RANGE",
             Self::CursorBeforeKey => "E_CURSOR_BEFORE_KEY",
             Self::WaitTotal => "E_WAIT_TOTAL",
@@ -123,6 +127,7 @@ impl ErrorKind {
             Self::SnippetCycle => "a snippet includes itself",
             Self::FieldConflict => "one field name with two types or option lists",
             Self::FieldUndefined => "condition on a field that is not defined",
+            Self::FormTooLarge => "the form has more than 100 fields",
             Self::DateRange => "date outside the years 1 to 9999",
             Self::CursorBeforeKey => "a key press follows the cursor",
             Self::WaitTotal => "waits total more than 30000 ms",
@@ -195,7 +200,8 @@ impl TemplateError {
     /// Parse errors point at the offending character (`E_BAD_SYNTAX`), the attribute name
     /// (`E_UNKNOWN_ATTR`, `E_DUPLICATE_ATTR`), the start of the value (`E_BAD_VALUE`,
     /// `E_BAD_FORMAT`, `E_BAD_SHIFT`, and `E_UNCLOSED_MACRO` for a quoted value), or the `{` of
-    /// the macro (everything else). Resolve errors point at the `{snippet}`, `{field}` or `{if}`.
+    /// the macro (everything else). Resolve errors point at the `{snippet}`, `{field}` or `{if}`
+    /// (`E_FORM_TOO_LARGE`: the first `{field}` or `{if}` naming the 101st field).
     #[must_use]
     pub fn position(&self) -> Option<usize> {
         self.position

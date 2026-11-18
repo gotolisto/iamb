@@ -15,10 +15,10 @@ const GROUPS: [(&str, usize, usize); 10] = [
     ("clipboard", 10, 2),
     ("cursor", 14, 2),
     ("snippet", 16, 8),
-    ("field", 21, 8),
+    ("field", 27, 10),
     ("key", 14, 7),
     ("wait", 11, 6),
-    ("if", 20, 8),
+    ("if", 21, 8),
     ("syntax", 19, 7),
 ];
 
@@ -223,7 +223,7 @@ fn every_spec_example_passes() {
         }
     }
     assert!(failures.is_empty(), "failing examples:\n{failures}");
-    assert!(total >= 166, "only {total} examples");
+    assert!(total >= 173, "only {total} examples");
     for (group, count, errors) in GROUPS {
         let (n, e) = per_group.get(group).copied().unwrap_or_default();
         assert!(

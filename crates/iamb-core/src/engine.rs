@@ -72,9 +72,27 @@
 //!   app.
 //! - After `FocusChanged` and before the verdict (the UI host hands focus back before it sends
 //!   the request, often before the verdict for the target window has arrived), the request is
-//!   **held**: the next `SecureState` runs it (`Normal`) or refuses it (anything else). A second
-//!   `FocusChanged` keeps it held for the new verdict. `Overflow`, or a newer explicit request
-//!   (which replaces it), drops it with [`Reason::RequestCancelled`].
+//!   **held**: the next `SecureState` runs it (`Normal`) or refuses it (anything else).
+//! - Each request belongs to one application (review 1.9 follow-up N4). A submitted form
+//!   belongs to the application the form was opened for: where its abbreviation was matched,
+//!   or where the palette pick or reopen that opened it ran. A palette pick or reopen belongs to
+//!   the application the focus is in when it arrives, which for a held request is the one
+//!   named by the `FocusChanged` whose verdict is pending; if no `FocusChanged` has been seen
+//!   yet, it belongs to the first one after it. A request whose application is not the focused
+//!   one when it arrives, and a held request when a `FocusChanged` names another application,
+//!   is dropped with [`Reason::RequestCancelled`] naming the snippet and the application the
+//!   focus is in; a `FocusChanged` naming the same application keeps it held. So a submit
+//!   never deletes or types in an application other than its own.
+//! - The engine expects the service to send the `FocusChanged` for the window it hands focus
+//!   back to (and its verdict, when known) before it forwards the request from the UI host:
+//!   the request comes over IPC and the focus event from the focus thread, so only the service
+//!   can order them. A request that arrives first finds the verdict `OwnWindow` (the form or
+//!   palette still has focus) and is refused at once; its values are still remembered, so
+//!   `ReopenLastForm` works.
+//! - A newer explicit request always replaces a held one, whatever happens to the newer one
+//!   (it may be held, run or be refused at once): the held one is dropped with
+//!   [`Reason::RequestCancelled`]. `Overflow` drops it the same way, and so does
+//!   `FormCancelled` for the session whose submit is held.
 //! - A submitted form's values are remembered for `ReopenLastForm` when the submit arrives,
 //!   whether it then runs, is held, refused or cancelled; the form session closes at once.
 //!   [`Engine::forget_form_values`] also drops a held submit.
@@ -100,7 +118,8 @@
 //! session and emits only `ShowForm` (the abbreviation stays on screen; the buffer is cleared).
 //! While a session is open, any further typed match, palette request or reopen is dropped with
 //! [`Reason::FormOpen`]. `FormSubmitted` renders with the captured time and clipboard and emits
-//! the expansion; `FormCancelled` emits nothing; an answer for a session that is not open emits
+//! the expansion; `FormCancelled` emits nothing (or drops a held submit of that session, see
+//! above); an answer for a session that is neither open nor held emits
 //! [`Reason::UnknownFormSession`]. The values of each submitted form are kept in memory per
 //! snippet: every `ShowForm` carries them as `last_values`, and `ReopenLastForm` shows the most
 //! recently submitted form again (as a palette expansion: nothing is deleted). The service
@@ -255,6 +274,9 @@ enum Gate {
 
 struct FormSession {
     id: FormSessionId,
+    /// The application the form was opened for (where the abbreviation was matched, or where
+    /// the palette pick or reopen ran): a submit types only there.
+    app: Option<AppId>,
     /// The snapshot at match time: the form renders the template that was matched.
     snapshot: Snapshot,
     snippet: Id,
@@ -287,7 +309,9 @@ pub struct Engine {
     paused: bool,
     form: Option<FormSession>,
     flight: Option<Flight>,
-    held: Option<Held>,
+    /// The held request and the application it belongs to (`None`: not known yet; the first
+    /// `FocusChanged` decides).
+    held: Option<(Held, Option<AppId>)>,
     last_values: HashMap<Id, Sensitive<FormValues>>,
     last_form: Option<Id>,
     next_session: u64,
@@ -324,8 +348,18 @@ impl Engine {
             Event::FocusChanged(app) => {
                 self.clear_buffer();
                 self.focus = Focus::Awaiting;
+                let out = match self.held.take() {
+                    Some((held, Some(owner))) if owner != app => {
+                        self.cancelled(&held, Some(app.clone()))
+                    }
+                    Some((held, owner)) => {
+                        self.held = Some((held, owner.or_else(|| Some(app.clone()))));
+                        Vec::new()
+                    }
+                    None => Vec::new(),
+                };
                 self.app = Some(app);
-                Vec::new()
+                out
             }
             Event::SecureState(state) => {
                 self.clear_buffer();
@@ -338,7 +372,7 @@ impl Engine {
                     d.app.clone_from(&self.app);
                     out.push(Action::Diagnostic(d));
                 }
-                if let Some(held) = self.held.take() {
+                if let Some((held, _)) = self.held.take() {
                     out.extend(self.explicit(held, env));
                 }
                 out
@@ -357,7 +391,7 @@ impl Engine {
                 self.buffer.clear();
                 self.flight = None;
                 match self.held.take() {
-                    Some(held) => self.cancelled(&held),
+                    Some((held, _)) => self.cancelled(&held, None),
                     None => Vec::new(),
                 }
             }
@@ -369,6 +403,11 @@ impl Engine {
             Event::FormCancelled { session } => {
                 if self.form.take_if(|s| s.id == session).is_some() {
                     Vec::new()
+                } else if let Some((held, _)) = self.held.take_if(
+                    |(h, _)| matches!(h, Held::Submit { session: s, .. } if s.id == session),
+                ) {
+                    // The form was cancelled after its submit arrived (review 1.9 follow-up N7).
+                    self.cancelled(&held, None)
                 } else {
                     diagnostic(Diagnostic::new(Reason::UnknownFormSession))
                 }
@@ -386,7 +425,7 @@ impl Engine {
     pub fn forget_form_values(&mut self) {
         self.last_values.clear();
         self.last_form = None;
-        if matches!(self.held, Some(Held::Submit { .. })) {
+        if matches!(self.held, Some((Held::Submit { .. }, _))) {
             self.held = None;
         }
     }
@@ -639,32 +678,46 @@ impl Engine {
         }
     }
 
-    /// An explicit request: run it, hold it for the focus verdict (replacing a held one) or
-    /// refuse it (see the module docs).
+    /// An explicit request: run it, hold it for the focus verdict or refuse it; a held request
+    /// is dropped either way, since this one replaces it (see the module docs).
     fn explicit(&mut self, request: Held, env: &dyn Environment) -> Vec<Action> {
+        let mut out = match self.held.take() {
+            Some((older, _)) => self.cancelled(&older, None),
+            None => Vec::new(),
+        };
+        // A submit belongs to the application its form was opened for; a pick or reopen to the
+        // one the focus is in now.
+        let owner = match &request {
+            Held::Submit { session, .. } => session.app.clone().or_else(|| self.app.clone()),
+            Held::Expand(_) | Held::Reopen => self.app.clone(),
+        };
+        let elsewhere = matches!((&owner, &self.app), (Some(o), Some(a)) if o != a);
         match self.gate() {
-            Gate::Run => match request {
-                Held::Expand(snippet) => self.on_request(snippet, env),
-                Held::Submit { session, values } => self.submit(&session, &values),
-                Held::Reopen => self.on_reopen(env),
-            },
-            Gate::Hold => match self.held.replace(request) {
-                Some(older) => self.cancelled(&older),
-                None => Vec::new(),
-            },
             Gate::Refuse(reason) => {
                 let mut d = Diagnostic::new(Reason::RefusedSuspended(reason));
                 d.snippet = self.held_snippet(&request);
                 d.app.clone_from(&self.app);
-                vec![Action::Diagnostic(d)]
+                out.push(Action::Diagnostic(d));
             }
+            Gate::Run | Gate::Hold if elsewhere => {
+                out.extend(self.cancelled(&request, self.app.clone()));
+            }
+            Gate::Hold => self.held = Some((request, owner)),
+            Gate::Run => out.extend(match request {
+                Held::Expand(snippet) => self.on_request(snippet, env),
+                Held::Submit { session, values } => self.submit(&session, &values),
+                Held::Reopen => self.on_reopen(env),
+            }),
         }
+        out
     }
 
-    /// The diagnostic for a held request that was dropped before the verdict.
-    fn cancelled(&self, held: &Held) -> Vec<Action> {
+    /// The diagnostic for an explicit request dropped without running; `app` names the
+    /// application the focus moved to when that is why.
+    fn cancelled(&self, held: &Held, app: Option<AppId>) -> Vec<Action> {
         let mut d = Diagnostic::new(Reason::RequestCancelled);
         d.snippet = self.held_snippet(held);
+        d.app = app;
         vec![Action::Diagnostic(d)]
     }
 
@@ -768,6 +821,7 @@ impl Engine {
         let spec = resolved.form().to_vec();
         self.form = Some(FormSession {
             id,
+            app: self.app.clone(),
             snapshot,
             snippet,
             capture,

@@ -11,9 +11,12 @@
 //!    cleanly once has no missing snippet, no parse error and no cycle anywhere below it (a
 //!    cycle through it would have been found the first time), so depth is the only thing that
 //!    can differ between two inclusions.
-//! 2. The form, walking the same graph in the same order but entering each body only once: a
-//!    second visit could add no new field and cannot conflict with itself. Bodies with no field
-//!    and no `{if}` anywhere below them are not entered at all.
+//! 2. The form, in the order a walk of the same graph would find it (each body entered once,
+//!    in source order), but made from a [`Summary`] of each included body instead of a walk:
+//!    see [`Summary`] for why merging summaries finds what the walk finds. A form with more than
+//!    [`MAX_FORM_FIELDS`] distinct names is `E_FORM_TOO_LARGE` (reported before any other form
+//!    error, at the first `{field}` or `{if}` of the 101st name); otherwise the first
+//!    `E_FIELD_CONFLICT` in walk order, then the first `E_FIELD_UNDEFINED` in form order.
 //!
 //! # Sharing between resolves
 //!
@@ -22,6 +25,14 @@
 //! expanded cleanly is kept as one [`Expanded`] node that every later resolve links to. A
 //! library where many snippets include one hub that includes many others therefore costs time
 //! and memory linear in its size, not (snippets × included bodies).
+//!
+//! Every included body with form content gets one summary per compiler, made from its own
+//! events and its children's summaries, and holding at most [`MAX_FORM_FIELDS`] + 1 names. So
+//! the forms of a whole library cost time linear in its size: a template's form costs its own
+//! events plus at most [`MAX_FORM_FIELDS`] + 1 names per included body, however many fields
+//! lie below (review 1.9 follow-up N1: copying or walking the forms of included bodies made a
+//! library of 10,001 snippets take 10 s and 5.5 GiB). The fields themselves are made from the
+//! summary when first asked for.
 //!
 //! Forms are shared the same way where the form is the same: when a body's only form content is
 //! one included body (other `{snippet}`s below it ask nothing, and it has no `{field}` or `{if}`
@@ -40,9 +51,10 @@
 
 use super::error::{ErrorKind, TemplateError};
 use super::parse::{Body, FormEvent, parse_body};
-use super::{FieldKind, FieldSpec, MAX_DEPTH, Resolved, SnippetSource};
+use super::{FieldKind, FieldSpec, MAX_DEPTH, MAX_FORM_FIELDS, Resolved, SnippetSource};
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::hash::{BuildHasherDefault, Hasher};
+use std::sync::{Arc, OnceLock};
 
 /// A body that expanded cleanly, linked to the bodies its `{snippet}`s include. Shared by every
 /// template of a [`Compiler`] that includes it.
@@ -83,12 +95,72 @@ impl Expanded {
 
 /// The fill-in form of a resolved template: shared between templates whose form is the same
 /// included body's (see the [module docs](self)).
-#[derive(Debug, Default)]
+///
+/// A snapshot build compiles every template, and most forms are never shown, so the fields
+/// are made from the `{field}` and `{if}` events that define them when first asked for.
+#[derive(Default)]
 pub(crate) struct Form {
-    /// The fields, in order of first appearance.
-    pub(crate) fields: Vec<FieldSpec>,
+    /// For each field, in order: the body and event where it first appears, and the body and
+    /// event of the `{field}` that defines it (`None`: an implicit toggle).
+    source: Vec<(Event, Option<Event>)>,
+    fields: OnceLock<Vec<FieldSpec>>,
     /// Field name → index in `fields`.
-    pub(crate) index: HashMap<String, usize>,
+    index: OnceLock<HashMap<String, usize>>,
+}
+
+/// A `{field}` or `{if}` event of a body.
+type Event = (Arc<Expanded>, usize);
+
+impl std::fmt::Debug for Form {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Form")
+            .field("fields", &self.source.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Form {
+    /// The fields, in order of first appearance.
+    pub(crate) fn fields(&self) -> &[FieldSpec] {
+        self.fields.get_or_init(|| {
+            (self.source.iter())
+                .map(|((node, first), field)| {
+                    let name = match &node.body.form_events[*first] {
+                        FormEvent::Field { slot, .. } | FormEvent::If { slot, .. } => {
+                            node.body.field_names[*slot].clone()
+                        }
+                        FormEvent::Snippet(_) => String::new(),
+                    };
+                    let (kind, default) = match field
+                        .as_ref()
+                        .map(|(node, event)| &node.body.form_events[*event])
+                    {
+                        Some(FormEvent::Field { kind, default, .. }) => {
+                            (kind.clone(), default.clone())
+                        }
+                        _ => (FieldKind::Toggle, "no".to_owned()),
+                    };
+                    FieldSpec {
+                        name,
+                        kind,
+                        default,
+                    }
+                })
+                .collect()
+        })
+    }
+
+    /// The index in `fields` of the field `name`.
+    pub(crate) fn position(&self, name: &str) -> Option<usize> {
+        self.index
+            .get_or_init(|| {
+                (self.fields().iter().enumerate())
+                    .map(|(i, f)| (f.name.clone(), i))
+                    .collect()
+            })
+            .get(name)
+            .copied()
+    }
 }
 
 /// A form built for one shared body, kept with the body so that its address stays its key.
@@ -105,8 +177,15 @@ pub(crate) struct Compiler<'s> {
     clean: HashMap<String, Arc<Expanded>>,
     /// Included body → its form, for bodies whose form a template's form was taken from.
     forms: HashMap<*const Expanded, BuiltForm>,
+    /// Included body → the summary of its form content.
+    summaries: HashMap<*const Expanded, Arc<Summary>>,
+    /// The bodies summaries point into (this also keeps every summarised body alive, so its
+    /// address stays its key).
+    nodes: Nodes,
     /// The form of every template that asks nothing.
     empty: Arc<Form>,
+    /// The summary of every body with no form content.
+    no_summary: Arc<Summary>,
 }
 
 impl<'s> Compiler<'s> {
@@ -116,7 +195,10 @@ impl<'s> Compiler<'s> {
             lookups: HashMap::new(),
             clean: HashMap::new(),
             forms: HashMap::new(),
+            summaries: HashMap::new(),
+            nodes: Nodes::default(),
             empty: Arc::default(),
+            no_summary: Arc::default(),
         }
     }
 
@@ -183,13 +265,43 @@ impl<'s> Compiler<'s> {
         if let Some((_, done)) = self.forms.get(&key) {
             return done.clone();
         }
-        let done = match sole_form_child(node) {
-            Some(child) => self.form_of(&Arc::clone(child)),
-            None => build_form(node).map(Arc::new),
+        let done = if let Some(child) = sole_form_child(node) {
+            self.form_of(&Arc::clone(child))
+        } else {
+            let summary = self.summary_of(node);
+            form_from(&self.nodes, &summary).map(Arc::new)
         };
         // Only included bodies are shared; a template's own root is not included by anything.
         if node.abbr.is_some() {
             self.forms.insert(key, (Arc::clone(node), done.clone()));
+        }
+        done
+    }
+
+    /// The summary of the form content of `node`, made once per included body. A body whose
+    /// only form content is one included body has that body's summary.
+    fn summary_of(&mut self, node: &Arc<Expanded>) -> Arc<Summary> {
+        if !node.has_form {
+            return Arc::clone(&self.no_summary);
+        }
+        let key = Arc::as_ptr(node);
+        if let Some(done) = self.summaries.get(&key) {
+            return Arc::clone(done);
+        }
+        let done = if let Some(child) = sole_form_child(node) {
+            self.summary_of(&Arc::clone(child))
+        } else {
+            let children: Vec<Option<Arc<Summary>>> = node
+                .snippets
+                .iter()
+                .map(|c| c.has_form.then(|| self.summary_of(c)))
+                .collect();
+            let id = self.nodes.id(node);
+            Arc::new(summarize(&self.nodes, id, &children))
+        };
+        if node.abbr.is_some() {
+            self.nodes.id(node);
+            self.summaries.insert(key, Arc::clone(&done));
         }
         done
     }
@@ -309,113 +421,381 @@ impl Walk<'_, '_> {
     }
 }
 
-struct Entry {
-    spec: FieldSpec,
-    /// Created by a bare `{if}` and not (yet) replaced by a `{field}`.
-    implicit: bool,
-    /// For an implicit toggle: the first `{if}` on it with `is` or `not` (snippet, position).
-    conditioned_at: Option<(Option<String>, usize)>,
+/// The FNV-1a hash of a field name. Summaries find names by this hash and compare the names
+/// only when hashes are equal, so a collision costs a scan of at most
+/// [`MAX_FORM_FIELDS`] + 1 slots, never a wrong answer.
+fn name_hash(name: &str) -> u64 {
+    name.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    })
 }
 
+/// Hashes the name hashes a summary is indexed by: they are hashes already.
+#[derive(Clone, Copy, Default)]
+struct Prehashed(u64);
+
+impl Hasher for Prehashed {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0 << 8) | u64::from(b);
+        }
+    }
+
+    fn write_u64(&mut self, n: u64) {
+        self.0 = n;
+    }
+}
+
+/// The bodies summaries point into, by index, so that a summary is plain data that copies
+/// without touching reference counts.
 #[derive(Default)]
-struct FormBuilder {
-    entries: Vec<Entry>,
-    index: HashMap<String, usize>,
-    visited: HashSet<*const Expanded>,
+struct Nodes {
+    list: Vec<Arc<Expanded>>,
+    ids: HashMap<*const Expanded, usize>,
 }
 
-impl FormBuilder {
-    fn collect(&mut self, node: &Arc<Expanded>) -> Result<(), TemplateError> {
-        self.visited.insert(Arc::as_ptr(node));
-        let abbr = node.abbr.as_deref();
-        for ev in &node.body.form_events {
-            match ev {
-                FormEvent::Field {
-                    slot,
-                    kind,
-                    default,
-                    at,
-                } => {
-                    let name = &node.body.field_names[*slot];
-                    match self.index.get(name.as_str()) {
-                        None => {
-                            self.index.insert(name.clone(), self.entries.len());
-                            self.entries.push(Entry {
-                                spec: FieldSpec {
-                                    name: name.clone(),
-                                    kind: kind.clone(),
-                                    default: default.clone(),
-                                },
-                                implicit: false,
-                                conditioned_at: None,
-                            });
-                        }
-                        Some(&i) => {
-                            let entry = &mut self.entries[i];
-                            if entry.implicit {
-                                entry.spec.kind = kind.clone();
-                                entry.spec.default.clone_from(default);
-                                entry.implicit = false;
-                            } else if entry.spec.kind != *kind {
-                                return Err(TemplateError::at(ErrorKind::FieldConflict, *at)
-                                    .in_snippet(abbr));
-                            }
-                        }
-                    }
+impl Nodes {
+    fn id(&mut self, node: &Arc<Expanded>) -> usize {
+        let next = self.list.len();
+        let id = *self.ids.entry(Arc::as_ptr(node)).or_insert(next);
+        if id == next {
+            self.list.push(Arc::clone(node));
+        }
+        id
+    }
+}
+
+/// One `{field}` or `{if}` event of a body (`node` in [`Nodes`]), and where it falls in the
+/// walk of the body whose [`Summary`] holds it.
+#[derive(Clone, Copy)]
+struct At {
+    node: usize,
+    /// Index into the body's `form_events`; always a `Field` or an `If`.
+    event: usize,
+    /// Walk order among the events of one summary (only meaningful for `field` and `other`).
+    rank: usize,
+}
+
+impl At {
+    fn ranked(self, rank: usize) -> Self {
+        Self { rank, ..self }
+    }
+}
+
+/// Reads [`At`]s.
+#[derive(Clone, Copy)]
+struct View<'n>(&'n Nodes);
+
+impl<'n> View<'n> {
+    fn event(self, at: At) -> (&'n Expanded, &'n FormEvent) {
+        let node = &*self.0.list[at.node];
+        (node, &node.body.form_events[at.event])
+    }
+
+    /// The field slot and the position of the event.
+    fn slot_at(self, at: At) -> (usize, usize) {
+        match self.event(at).1 {
+            FormEvent::Field { slot, at, .. } | FormEvent::If { slot, at, .. } => (*slot, *at),
+            // An `At` is only made for a `Field` or an `If`.
+            FormEvent::Snippet(_) => (0, 0),
+        }
+    }
+
+    fn name(self, at: At) -> &'n str {
+        self.event(at).0.body.field_names[self.slot_at(at).0].as_str()
+    }
+
+    /// The type and default of a `{field}` event.
+    fn field(self, at: At) -> Option<(&'n FieldKind, &'n str)> {
+        match self.event(at).1 {
+            FormEvent::Field { kind, default, .. } => Some((kind, default.as_str())),
+            _ => None,
+        }
+    }
+
+    fn kind(self, at: Option<At>) -> Option<&'n FieldKind> {
+        at.and_then(|at| self.field(at)).map(|(kind, _)| kind)
+    }
+
+    fn error(self, at: At, kind: ErrorKind) -> TemplateError {
+        TemplateError::at(kind, self.slot_at(at).1).in_snippet(self.event(at).0.abbr.as_deref())
+    }
+}
+
+/// What the walk of one body found for one field name: enough to merge the body into any
+/// includer exactly as walking it there would (see [`Summary`]).
+#[derive(Clone, Copy)]
+struct Slot {
+    /// [`name_hash`] of the field name.
+    hash: u64,
+    /// The first event naming the field: where it joins the form.
+    first: At,
+    /// The first `{field}` defining it: its type and default are the form field's.
+    field: Option<At>,
+    /// The first `{field}` with a type or options other than `field`'s (`E_FIELD_CONFLICT`).
+    other: Option<At>,
+    /// The first `{if}` on it with `is` or `not` (`E_FIELD_UNDEFINED` when there is no `field`).
+    cond: Option<At>,
+}
+
+/// The form content of an expanded body, as a walk from that body finds it: one [`Slot`] per
+/// field name in order of first appearance, at most [`MAX_FORM_FIELDS`] + 1 of them (more
+/// than [`MAX_FORM_FIELDS`] means `E_FORM_TOO_LARGE`, and then only the first names matter).
+///
+/// A body's summary is made from its own events and the summaries of the bodies it includes,
+/// never by walking them again, so making every summary of a library costs time linear in its
+/// size. Merging an included body's summary gives what the walk in the includer finds, although
+/// that walk skips bodies it has already entered: the skipped bodies' names are already in the
+/// form, every `{field}` in them that did not cause a conflict has the type the form already
+/// has, and every `{if}` in them changes nothing that is still open; so for each name, the
+/// first `{field}` that conflicts, the first defining `{field}` and the first conditioned
+/// `{if}` are the same with or without them, and so is the order of the names that are new.
+/// A name that already has a conflict keeps the earlier one.
+///
+/// Ranks order the `field` and `other` events across names. An included body takes a block of
+/// its includer's ranks; when they grow past [`RANK_BOUND`] they are renumbered from 0, so they
+/// stay small however deep the inclusion.
+#[derive(Default)]
+struct Summary {
+    slots: Vec<Slot>,
+    /// Every rank in `slots` is below this.
+    ranks: usize,
+}
+
+/// The ranks of a summary are renumbered when they would reach beyond this (see [`Summary`]).
+const RANK_BOUND: usize = 4 * (MAX_FORM_FIELDS + 1);
+
+/// Builds the summary of one body.
+struct SummaryBuilder<'n> {
+    view: View<'n>,
+    slots: Vec<Slot>,
+    /// Name hash → the first slot with that hash.
+    index: HashMap<u64, usize, BuildHasherDefault<Prehashed>>,
+    /// The next rank; each merged body takes a block of ranks.
+    rank: usize,
+}
+
+impl<'n> SummaryBuilder<'n> {
+    fn new(nodes: &'n Nodes, capacity: usize) -> Self {
+        let capacity = capacity.min(MAX_FORM_FIELDS + 1);
+        Self {
+            view: View(nodes),
+            slots: Vec::with_capacity(capacity),
+            index: HashMap::with_capacity_and_hasher(capacity, BuildHasherDefault::default()),
+            rank: 0,
+        }
+    }
+
+    fn full(&self) -> bool {
+        self.slots.len() > MAX_FORM_FIELDS
+    }
+
+    /// The slot for `name` (whose hash is `new.hash`), or `None` after adding `new` as its slot.
+    fn slot(&mut self, name: &str, new: Slot) -> Option<&mut Slot> {
+        let next = self.slots.len();
+        let view = self.view;
+        let i = match self.index.get(&new.hash) {
+            None => {
+                self.index.insert(new.hash, next);
+                next
+            }
+            Some(&i) if view.name(self.slots[i].first) == name => i,
+            Some(_) => (self.slots.iter())
+                .position(|s| s.hash == new.hash && view.name(s.first) == name)
+                .unwrap_or(next),
+        };
+        if i == next {
+            self.slots.push(new);
+            return None;
+        }
+        Some(&mut self.slots[i])
+    }
+
+    fn field(&mut self, at: At) {
+        let at = at.ranked(self.rank);
+        self.rank += 1;
+        let view = self.view;
+        let name = view.name(at);
+        let new = Slot {
+            hash: name_hash(name),
+            first: at,
+            field: Some(at),
+            other: None,
+            cond: None,
+        };
+        if let Some(s) = self.slot(name, new) {
+            match s.field {
+                None => s.field = Some(at),
+                Some(f) if s.other.is_none() && view.kind(Some(f)) != view.kind(Some(at)) => {
+                    s.other = Some(at);
                 }
-                FormEvent::If { slot, bare, at } => {
-                    let name = &node.body.field_names[*slot];
-                    let conditioned = (!bare).then(|| (abbr.map(str::to_owned), *at));
-                    match self.index.get(name.as_str()) {
-                        None => {
-                            self.index.insert(name.clone(), self.entries.len());
-                            self.entries.push(Entry {
-                                spec: FieldSpec {
-                                    name: name.clone(),
-                                    kind: FieldKind::Toggle,
-                                    default: "no".to_owned(),
-                                },
-                                implicit: true,
-                                conditioned_at: conditioned,
-                            });
-                        }
-                        Some(&i) => {
-                            let entry = &mut self.entries[i];
-                            if entry.implicit && entry.conditioned_at.is_none() {
-                                entry.conditioned_at = conditioned;
-                            }
-                        }
-                    }
+                Some(_) => {}
+            }
+        }
+    }
+
+    fn cond(&mut self, at: At, bare: bool) {
+        let cond = (!bare).then_some(at);
+        let name = self.view.name(at);
+        let new = Slot {
+            hash: name_hash(name),
+            first: at,
+            field: None,
+            other: None,
+            cond,
+        };
+        if let Some(s) = self.slot(name, new)
+            && s.cond.is_none()
+        {
+            s.cond = cond;
+        }
+    }
+
+    /// Merges the summary of an included body, as walking that body here would.
+    fn merge(&mut self, child: &Summary) {
+        let base = self.rank;
+        let view = self.view;
+        let shift = |at: Option<At>| at.map(|a| a.ranked(base + a.rank));
+        for e in &child.slots {
+            if self.full() {
+                break;
+            }
+            let new = Slot {
+                field: shift(e.field),
+                other: shift(e.other),
+                ..*e
+            };
+            let Some(s) = self.slot(view.name(e.first), new) else {
+                continue;
+            };
+            match (s.field, e.field) {
+                // The form already has the field: the included body's first `{field}` of
+                // another type conflicts, or else its own first conflict does.
+                (Some(f), Some(ef)) if s.other.is_none() => {
+                    s.other = if view.kind(Some(f)) == view.kind(Some(ef)) {
+                        shift(e.other)
+                    } else {
+                        shift(e.field)
+                    };
                 }
-                FormEvent::Snippet(index) => {
-                    let child = &node.snippets[*index];
-                    if child.has_form && !self.visited.contains(&Arc::as_ptr(child)) {
-                        self.collect(child)?;
+                (Some(_), _) => {}
+                // An implicit toggle so far: the included body's first `{field}` defines it.
+                (None, Some(_)) => {
+                    s.field = shift(e.field);
+                    s.other = shift(e.other);
+                }
+                (None, None) => {
+                    if s.cond.is_none() {
+                        s.cond = e.cond;
                     }
                 }
             }
         }
-        Ok(())
+        self.rank = base + child.ranks;
+    }
+
+    fn finish(self) -> Summary {
+        let mut slots = self.slots;
+        slots.truncate(MAX_FORM_FIELDS + 1);
+        if self.rank <= RANK_BOUND {
+            return Summary {
+                slots,
+                ranks: self.rank,
+            };
+        }
+        // Renumber the ranks from 0, keeping their order: then they are below twice the
+        // number of slots, so below `RANK_BOUND`.
+        let mut ranks: Vec<usize> = slots
+            .iter()
+            .flat_map(|s| [s.field, s.other])
+            .filter_map(|a| a.map(|a| a.rank))
+            .collect();
+        ranks.sort_unstable();
+        ranks.dedup();
+        for s in &mut slots {
+            for at in [&mut s.field, &mut s.other].into_iter().flatten() {
+                at.rank = ranks.binary_search(&at.rank).unwrap_or_default();
+            }
+        }
+        Summary {
+            slots,
+            ranks: ranks.len(),
+        }
     }
 }
 
-/// Builds the form of the expanded body `root` by walking it.
-fn build_form(root: &Arc<Expanded>) -> Result<Form, TemplateError> {
-    let mut form = FormBuilder::default();
-    if root.has_form {
-        form.collect(root)?;
-    }
-    for entry in &form.entries {
-        if let (true, Some((abbr, at))) = (entry.implicit, &entry.conditioned_at) {
-            return Err(
-                TemplateError::at(ErrorKind::FieldUndefined, *at).in_snippet(abbr.as_deref())
-            );
+/// Summarises the body `node` (`id` in `nodes`) from its own events and `children`, the
+/// summaries of its included bodies (by snippet index; `None` for bodies with no form content).
+fn summarize(nodes: &Nodes, id: usize, children: &[Option<Arc<Summary>>]) -> Summary {
+    let node = &nodes.list[id];
+    let capacity = node.body.form_events.len()
+        + children
+            .iter()
+            .flatten()
+            .map(|c| c.slots.len())
+            .sum::<usize>();
+    let mut b = SummaryBuilder::new(nodes, capacity);
+    let mut merged: HashSet<*const Expanded> = HashSet::new();
+    for (event, ev) in node.body.form_events.iter().enumerate() {
+        if b.full() {
+            break;
+        }
+        let at = At {
+            node: id,
+            event,
+            rank: 0,
+        };
+        match ev {
+            FormEvent::Field { .. } => b.field(at),
+            FormEvent::If { bare, .. } => b.cond(at, *bare),
+            FormEvent::Snippet(index) => {
+                // A body entered once already adds nothing the second time.
+                let ptr = Arc::as_ptr(&node.snippets[*index]);
+                if let Some(child) = &children[*index]
+                    && merged.insert(ptr)
+                {
+                    b.merge(child);
+                }
+            }
         }
     }
-    let FormBuilder { entries, index, .. } = form;
+    b.finish()
+}
+
+/// The form a summary describes, or its first error: too many fields, then the first conflict
+/// in walk order, then the first implicit toggle that an `{if}` compares.
+fn form_from(nodes: &Nodes, summary: &Summary) -> Result<Form, TemplateError> {
+    let view = View(nodes);
+    if let Some(s) = summary.slots.get(MAX_FORM_FIELDS) {
+        return Err(view.error(s.first, ErrorKind::FormTooLarge));
+    }
+    if let Some(at) = summary
+        .slots
+        .iter()
+        .filter_map(|s| s.other)
+        .min_by_key(|a| a.rank)
+    {
+        return Err(view.error(at, ErrorKind::FieldConflict));
+    }
+    if let Some(at) = summary
+        .slots
+        .iter()
+        .find(|s| s.field.is_none() && s.cond.is_some())
+        .and_then(|s| s.cond)
+    {
+        return Err(view.error(at, ErrorKind::FieldUndefined));
+    }
+    let event = |at: At| (Arc::clone(&nodes.list[at.node]), at.event);
+    let source = (summary.slots.iter())
+        .map(|s| (event(s.first), s.field.map(event)))
+        .collect();
     Ok(Form {
-        fields: entries.into_iter().map(|e| e.spec).collect(),
-        index,
+        source,
+        ..Form::default()
     })
 }
 
@@ -423,8 +803,45 @@ fn build_form(root: &Arc<Expanded>) -> Result<Form, TemplateError> {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use std::fmt::Write as _;
 
-    /// The form as a plain walk from the root builds it, without taking it from a shared body.
+    /// `{field name=<prefix><k>}` for each `k` in `range`.
+    fn fields(prefix: &str, range: std::ops::Range<usize>) -> String {
+        range.fold(String::new(), |mut s, k| {
+            write!(s, "{{field name={prefix}{k}}}").expect("write to a string");
+            s
+        })
+    }
+
+    /// Every `{field}` and `{if}` event below `node`, each body entered once, in source order.
+    fn events(
+        node: &Arc<Expanded>,
+        nodes: &mut Nodes,
+        seen: &mut HashSet<*const Expanded>,
+        out: &mut Vec<At>,
+    ) {
+        seen.insert(Arc::as_ptr(node));
+        let id = nodes.id(node);
+        for (event, ev) in node.body.form_events.iter().enumerate() {
+            match ev {
+                FormEvent::Snippet(index) => {
+                    let child = &node.snippets[*index];
+                    if !seen.contains(&Arc::as_ptr(child)) {
+                        events(child, nodes, seen, out);
+                    }
+                }
+                _ => out.push(At {
+                    node: id,
+                    event,
+                    rank: 0,
+                }),
+            }
+        }
+    }
+
+    /// The form as a plain walk from the root builds it (the order of the reference
+    /// implementation): every body entered once, in source order; too many names first, then
+    /// the first conflict, then the first compared implicit toggle.
     fn walked(c: &mut Compiler<'_>, source: &str) -> Result<Vec<FieldSpec>, TemplateError> {
         let body = parse_body(source).map(Arc::new)?;
         let mut walk = Walk {
@@ -434,29 +851,105 @@ mod tests {
             reach: HashSet::new(),
         };
         let root = walk.expand(body, None, 0)?;
-        build_form(&root).map(|f| f.fields)
+        let mut nodes = Nodes::default();
+        let mut all = Vec::new();
+        events(&root, &mut nodes, &mut HashSet::new(), &mut all);
+        let view = View(&nodes);
+        let mut names: Vec<&str> = Vec::new();
+        for &at in &all {
+            if !names.contains(&view.name(at)) {
+                names.push(view.name(at));
+                if names.len() > MAX_FORM_FIELDS {
+                    return Err(view.error(at, ErrorKind::FormTooLarge));
+                }
+            }
+        }
+        // (spec, implicit, first conditioned `{if}`), in order of first appearance
+        let mut form: Vec<(FieldSpec, bool, Option<At>)> = Vec::new();
+        for &at in &all {
+            let name = view.name(at);
+            let i = form.iter().position(|(f, ..)| f.name == name);
+            match (view.field(at), i) {
+                (Some((kind, default)), None) => form.push((
+                    FieldSpec {
+                        name: name.to_owned(),
+                        kind: kind.clone(),
+                        default: default.to_owned(),
+                    },
+                    false,
+                    None,
+                )),
+                (Some((kind, default)), Some(i)) => {
+                    let (spec, implicit, _) = &mut form[i];
+                    if *implicit {
+                        spec.kind = kind.clone();
+                        default.clone_into(&mut spec.default);
+                        *implicit = false;
+                    } else if spec.kind != *kind {
+                        return Err(view.error(at, ErrorKind::FieldConflict));
+                    }
+                }
+                (None, i) => {
+                    let FormEvent::If { bare, .. } = view.event(at).1 else {
+                        continue;
+                    };
+                    let cond = (!bare).then_some(at);
+                    match i {
+                        None => form.push((
+                            FieldSpec {
+                                name: name.to_owned(),
+                                kind: FieldKind::Toggle,
+                                default: "no".to_owned(),
+                            },
+                            true,
+                            cond,
+                        )),
+                        Some(i) => {
+                            let (_, implicit, first) = &mut form[i];
+                            if *implicit && first.is_none() {
+                                *first = cond;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(&(_, _, Some(at))) = form
+            .iter()
+            .find(|(_, implicit, c)| *implicit && c.is_some())
+        {
+            return Err(view.error(at, ErrorKind::FieldUndefined));
+        }
+        Ok(form.into_iter().map(|(f, ..)| f).collect())
     }
 
     const N: usize = 8;
 
     /// Bodies that wrap each other (a lone `{snippet}`, possibly beside formless text and
-    /// snippets) as well as bodies with their own fields, `{if}`s and conflicts.
+    /// snippets) as well as bodies with their own fields, `{if}`s and conflicts, and bodies
+    /// with many fields, so that forms near and over the limit are common.
     fn arb_piece(i: usize) -> impl Strategy<Value = String> {
         let later = (i + 1).min(N - 1)..N;
         prop_oneof![
-            6 => later.prop_map(|j| format!("{{snippet abbr=s{j}}}")),
-            2 => Just("x{snippet abbr=plain}".to_owned()),
+            5 => later.prop_map(|j| format!("{{snippet abbr=s{j}}}")),
+            1 => Just("x{snippet abbr=plain}".to_owned()),
             1 => prop_oneof![Just("text"), Just("area")]
                 .prop_map(|t| format!("{{field name=F type={t}}}")),
             1 => Just("{if field=G is=a}y{endif}".to_owned()),
             1 => Just("{if field=H}z{endif}".to_owned()),
             1 => Just("{field name=G type=choice options=\"a|b\"}".to_owned()),
+            4 => (0..10usize, 25..60usize)
+                .prop_map(|(from, count)| fields("m", from * 12..from * 12 + count)),
+            2 => (0..150usize).prop_map(|k| {
+                format!("{{if field=m{k} not=a}}{{endif}}{{field name=m{k} type=area}}")
+            }),
+            2 => (0..150usize).prop_map(|k| format!("{{if field=m{k}}}{{endif}}")),
         ]
     }
 
     fn arb_library() -> impl Strategy<Value = HashMap<String, String>> {
         (0..N)
-            .map(|i| proptest::collection::vec(arb_piece(i), 0..3).prop_map(|p| p.concat()))
+            .map(|i| proptest::collection::vec(arb_piece(i), 0..4).prop_map(|p| p.concat()))
             .collect::<Vec<_>>()
             .prop_map(|bodies| {
                 let mut lib: HashMap<String, String> = bodies
@@ -472,8 +965,8 @@ mod tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(1000))]
 
-        /// A form taken from a shared body is the form a walk from the root builds, error,
-        /// snippet and position included, whatever was compiled before.
+        /// A form made from summaries, or taken from a shared body, is the form a walk from the
+        /// root builds, error, snippet and position included, whatever was compiled before.
         #[test]
         fn shared_forms_match_a_walk(lib in arb_library()) {
             let mut c = Compiler::new(&lib);
@@ -490,20 +983,24 @@ mod tests {
         }
     }
 
+    fn library(entries: &[(&str, &str)]) -> HashMap<String, String> {
+        entries
+            .iter()
+            .map(|&(k, v)| (k.to_owned(), v.to_owned()))
+            .collect()
+    }
+
     /// Every snippet that includes one hub with fields shares the hub's form.
     #[test]
     fn wrappers_share_one_form() {
-        let lib: HashMap<String, String> = [
+        let lib = library(&[
             ("hub", "{field name=A}{if field=B}b{endif}"),
             ("w1", "Dear {snippet abbr=hub}{snippet abbr=plain}"),
             ("w2", "{snippet abbr=hub} and {snippet abbr=hub}"),
             ("w3", "{snippet abbr=w1}"),
             ("own", "{field name=C}{snippet abbr=hub}"),
             ("plain", "text"),
-        ]
-        .into_iter()
-        .map(|(k, v)| (k.to_owned(), v.to_owned()))
-        .collect();
+        ]);
         let mut c = Compiler::new(&lib);
         let mut form = |name: &str| {
             c.resolve_snippet(name, &lib[name])
@@ -520,9 +1017,87 @@ mod tests {
             form("plain"),
         );
         assert!(Arc::ptr_eq(&w1, &w2) && Arc::ptr_eq(&w1, &w3));
-        assert_eq!(w1.fields, hub.fields);
+        assert_eq!(w1.fields(), hub.fields());
         assert!(!Arc::ptr_eq(&own, &w1));
-        assert_eq!(own.fields.len(), 3);
-        assert!(plain.fields.is_empty());
+        assert_eq!(own.fields().len(), 3);
+        assert!(plain.fields().is_empty());
+    }
+
+    /// A conflict found only in the includer's context: the included body is consistent on its
+    /// own, but its first `{field}` has another type than the includer's. And a body whose own
+    /// conflict comes after a field the includer already has with the first type.
+    #[test]
+    fn merged_conflicts_are_found_where_a_walk_finds_them() {
+        let lib = library(&[
+            ("a", "{field name=X type=area}{field name=Y}"),
+            ("b", "{field name=Y}{field name=Y type=area}"),
+            ("t1", "{field name=X}{snippet abbr=a}"),
+            ("t2", "{field name=Y}{snippet abbr=b}"),
+            ("t3", "{field name=Y type=area}{snippet abbr=b}"),
+            ("t4", "{if field=X not=1}{endif}{snippet abbr=a}"),
+            (
+                "t5",
+                "{if field=Q not=1}{endif}{snippet abbr=a}{snippet abbr=b}",
+            ),
+        ]);
+        let mut c = Compiler::new(&lib);
+        for (name, want) in [
+            ("t1", Some((ErrorKind::FieldConflict, Some("a"), 0))),
+            ("t2", Some((ErrorKind::FieldConflict, Some("b"), 14))),
+            ("t3", Some((ErrorKind::FieldConflict, Some("b"), 0))),
+            ("t4", None),
+            ("t5", Some((ErrorKind::FieldConflict, Some("b"), 14))),
+        ] {
+            let got = c.resolve_snippet(name, &lib[name]).and_then(|r| r);
+            let mut alone = Compiler::new(&lib);
+            assert_eq!(
+                got.as_ref()
+                    .map(|r| r.form().to_vec())
+                    .map_err(Clone::clone),
+                walked(&mut alone, &lib[name]),
+                "{name}"
+            );
+            let got = got
+                .err()
+                .map(|e| (e.kind(), e.snippet().map(str::to_owned), e.position()));
+            assert_eq!(
+                got,
+                want.map(|(k, s, p)| (k, s.map(str::to_owned), Some(p))),
+                "{name}"
+            );
+        }
+    }
+
+    /// The 101st distinct name is the error, at its first appearance; 100 are fine.
+    #[test]
+    fn form_limit_counts_distinct_names_across_snippets() {
+        let hundred = fields("f", 0..100);
+        let lib = library(&[
+            ("hub", &hundred),
+            (
+                "again",
+                "{snippet abbr=hub}{field name=f5}{if field=f7}x{endif}",
+            ),
+            ("more", "{snippet abbr=hub}{if field=extra}x{endif}"),
+            ("first", "{field name=extra}{snippet abbr=hub}"),
+        ]);
+        let mut c = Compiler::new(&lib);
+        let mut resolve = |name: &str| c.resolve_snippet(name, &lib[name]).and_then(|r| r);
+        assert_eq!(resolve("hub").expect("100 fields").form().len(), 100);
+        assert_eq!(resolve("again").expect("same names").form().len(), 100);
+        let e = resolve("more").expect_err("101 fields");
+        assert_eq!(
+            (e.kind(), e.snippet(), e.position()),
+            (ErrorKind::FormTooLarge, None, Some(18))
+        );
+        let e = resolve("first").expect_err("101 fields");
+        assert_eq!(
+            (e.kind(), e.snippet(), e.position()),
+            (
+                ErrorKind::FormTooLarge,
+                Some("hub"),
+                hundred.find("{field name=f99}")
+            )
+        );
     }
 }

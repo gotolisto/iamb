@@ -1,0 +1,35 @@
+description = "A newer explicit request always replaces a held one: when the newer one is refused at once (composing), the held one is dropped too, each with a diagnostic, and nothing is typed when the verdict arrives"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[snippet]]
+abbr = "omw"
+body = "on my way"
+
+[[step]]
+focus = "mail"
+
+[[step]]
+expand = "brb"
+held = true
+
+[[step]]
+compose = true
+
+[[step]]
+expand = "omw"
+expect = [{ diagnostic = "request_cancelled", snippet = "brb" }, { diagnostic = "refused_composing", snippet = "omw", app = "mail" }]
+held = false
+
+[[step]]
+compose = false
+
+[[step]]
+secure = "normal"
+state = "idle"
+
+[[step]]
+type = "x"
+buffered = 1
