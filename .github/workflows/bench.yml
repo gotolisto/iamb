@@ -38,6 +38,10 @@ jobs:
         run: cargo bench -p iamb-bench --locked --bench matcher -- --quick
       - name: Template benchmark (quick mode)
         run: cargo bench -p iamb-bench --locked --bench template -- --quick
+      - name: Store benchmark (quick mode)
+        run: cargo bench -p iamb-bench --locked --bench store -- --quick
+      - name: Engine benchmark (quick mode)
+        run: cargo bench -p iamb-bench --locked --bench engine -- --quick
       - name: Summary
         if: always()
         shell: bash

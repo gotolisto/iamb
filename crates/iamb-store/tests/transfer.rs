@@ -806,6 +806,109 @@ fn json_import_creates_folders_and_tags_only_for_written_snippets() -> TestResul
     Ok(())
 }
 
+/// Follow-up N5: a file with one new snippet in an existing folder (`Work / Email`) and with an
+/// existing tag creates no folder and no tag; the snippet lands in the existing folder and
+/// carries the existing tag. Fails when folders, or tags, are no longer reused by name.
+#[test]
+fn json_import_reuses_existing_folder_and_tag_by_name() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let (p1, p2) = (id(900), id(901));
+
+    // Source: Work / Email, tag "urgent", one snippet in the folder carrying the tag.
+    let mut src = Store::open_in_memory()?;
+    src.put_profile(&profile(p1, p1), T0)?;
+    let mut next = ids_from(0);
+    let work = put_folder(&mut src, &mut next, p1, None, "Work", None)?;
+    let email = put_folder(&mut src, &mut next, p1, Some(work), "Email", None)?;
+    let urgent = Tag {
+        meta: SyncMeta::new(next(), T0),
+        profile_id: p1,
+        name: "urgent".to_owned(),
+        color: None,
+    };
+    src.put_tag(&urgent, T0)?;
+    let new = Snippet::new_defaults(
+        SyncMeta::new(next(), T0),
+        email,
+        Abbreviation::new("newone")?,
+        "New",
+        "new body",
+        None,
+    );
+    src.put_snippet(&new, T0)?;
+    src.put_snippet_tag(
+        &SnippetTag {
+            meta: SyncMeta::new(next(), T0),
+            snippet_id: new.meta.id,
+            tag_id: urgent.meta.id,
+        },
+        T0,
+    )?;
+    let json = dir.path().join("lib.json");
+    transfer::export(&src, p1, &json, Format::Json)?;
+
+    // Target: the same folders and tag under other ids, and one older snippet.
+    let mut dst = Store::open_in_memory()?;
+    dst.put_profile(&profile(p2, p2), T0)?;
+    let mut next = ids_from(30_000);
+    let dst_work = put_folder(&mut dst, &mut next, p2, None, "Work", None)?;
+    let dst_email = put_folder(&mut dst, &mut next, p2, Some(dst_work), "Email", None)?;
+    let dst_urgent = Tag {
+        meta: SyncMeta::new(next(), T0),
+        profile_id: p2,
+        name: "urgent".to_owned(),
+        color: None,
+    };
+    dst.put_tag(&dst_urgent, T0)?;
+    dst.put_snippet(
+        &Snippet::new_defaults(
+            SyncMeta::new(next(), T0),
+            dst_email,
+            Abbreviation::new("old")?,
+            "Old",
+            "old body",
+            None,
+        ),
+        T0,
+    )?;
+    assert_eq!(counts(&dst)?, (2, 1, 1));
+
+    let summary = transfer::import(
+        &mut dst,
+        p2,
+        &json,
+        Format::Json,
+        T0,
+        &mut next,
+        OnConflict::Skip,
+    )?;
+    assert_eq!(
+        summary,
+        ImportSummary {
+            folders_created: 0,
+            snippets_imported: 1,
+            snippets_skipped: 0,
+            tags_created: 0,
+        }
+    );
+    assert_eq!(counts(&dst)?, (2, 1, 2), "no folder or tag was created");
+    let lib = dst.load_library()?;
+    let imported = lib
+        .snippets
+        .iter()
+        .find(|s| s.abbreviation.as_str() == "newone")
+        .ok_or("imported snippet")?;
+    assert_eq!(imported.folder_id, dst_email);
+    let links: Vec<_> = lib
+        .snippet_tags
+        .iter()
+        .filter(|l| l.snippet_id == imported.meta.id)
+        .collect();
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].tag_id, dst_urgent.meta.id);
+    Ok(())
+}
+
 /// Finding 11: names with separators, backslashes and surrounding spaces survive a CSV round
 /// trip, and export no longer fails on them.
 #[test]

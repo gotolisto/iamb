@@ -303,7 +303,9 @@ impl Store {
     /// Creates `data_dir` and `data_dir/run/` if missing, opens `library.db` in WAL mode with
     /// foreign keys on, and applies pending migrations. On Unix, directories it creates get mode
     /// `0700` and `library.db` (so also its WAL and shared-memory files) and the lock file mode
-    /// `0600`, so other users of the machine cannot read the library (architecture §8). On
+    /// `0600`; an existing data directory, `run/`, database, WAL, shared-memory and lock file
+    /// that is more permissive is tightened to the same modes, so other users of the machine cannot
+    /// read the library (architecture §8). On
     /// Windows the default per-user ACL of the parent applies.
     ///
     /// # Errors
@@ -313,19 +315,30 @@ impl Store {
     pub fn open_with_timeout(data_dir: &Path, timeout: Duration) -> Result<Self, StoreError> {
         let run = data_dir.join("run");
         create_private_dirs(&run)?;
+        tighten(data_dir, 0o700)?;
+        tighten(&run, 0o700)?;
         let lock_path = run.join("store.lock");
         let lock = take_lock(&lock_path, timeout)?;
+        tighten(&lock_path, 0o600)?;
         let db_path = data_dir.join(LIBRARY_FILE);
         // Create the file first so it gets mode 0600 on Unix; SQLite gives its `-wal` and
         // `-shm` files the mode of the database file.
         create_private_file(&db_path)?;
-        let conn = Connection::open(db_path)?;
+        tighten(&db_path, 0o600)?;
+        let conn = Connection::open(&db_path)?;
         let mode: String =
             conn.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get(0))?;
         if !mode.eq_ignore_ascii_case("wal") {
             return Err(StoreError::InvalidData(format!(
                 "could not enable WAL (journal mode is {mode})"
             )));
+        }
+        // Files left by an earlier build or another tool: the WAL and shared-memory files only
+        // exist once the database is open, and keep whatever mode they were created with.
+        for suffix in ["-wal", "-shm"] {
+            let mut name = db_path.clone().into_os_string();
+            name.push(suffix);
+            tighten(Path::new(&name), 0o600)?;
         }
         Self::finish(conn, Some(lock))
     }
@@ -869,6 +882,27 @@ fn create_private_file(path: &Path) -> std::io::Result<()> {
     options.open(path).map(drop)
 }
 
+/// On Unix, sets `path` to `mode` if group or others have any permission on it. A missing path
+/// is ignored. Does nothing on other platforms.
+#[cfg(unix)]
+fn tighten(path: &Path, mode: u32) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    match fs::metadata(path) {
+        Ok(meta) if meta.permissions().mode() & 0o077 != 0 => {
+            fs::set_permissions(path, fs::Permissions::from_mode(mode))
+        }
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+#[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)]
+fn tighten(_path: &Path, _mode: u32) -> std::io::Result<()> {
+    Ok(())
+}
+
 fn take_lock(path: &Path, timeout: Duration) -> Result<File, StoreError> {
     let mut file = OpenOptions::new();
     file.read(true).write(true).create(true).truncate(false);
@@ -941,4 +975,28 @@ impl WriteTx<'_> {
     }
 
     all_named_entity_methods!();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Store;
+
+    /// Review 1.9 row 17: the durability pragmas that make `SQLite` use `F_FULLFSYNC` on macOS
+    /// read back as 1 after [`Store::open`], and `synchronous` is FULL (2). They are per
+    /// connection, so they are read through the store's own connection.
+    #[test]
+    fn durability_pragmas_are_on_after_open() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let store = Store::open(dir.path())?;
+        let pragma = |name: &str| -> rusqlite::Result<i64> {
+            store
+                .conn
+                .query_row(&format!("PRAGMA {name}"), [], |r| r.get(0))
+        };
+        assert_eq!(pragma("fullfsync")?, 1, "fullfsync");
+        assert_eq!(pragma("checkpoint_fullfsync")?, 1, "checkpoint_fullfsync");
+        assert_eq!(pragma("synchronous")?, 2, "synchronous = FULL");
+        assert_eq!(pragma("foreign_keys")?, 1, "foreign_keys");
+        Ok(())
+    }
 }

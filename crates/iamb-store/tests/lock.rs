@@ -106,3 +106,56 @@ fn data_directory_and_files_are_private_on_unix() -> TestResult {
     assert_eq!(mode(&dir.join("run").join("store.lock"))?, 0o600, "lock");
     Ok(())
 }
+
+/// Review 1.9 row 16: a data directory and files made by an earlier build with loose modes are
+/// tightened when the store is opened: directories to 0700, `library.db`, its WAL and
+/// shared-memory files and `store.lock` to 0600. Fails when `Store::open` leaves them alone.
+#[cfg(unix)]
+#[test]
+fn existing_directory_and_files_are_tightened_on_unix() -> TestResult {
+    use std::os::unix::fs::PermissionsExt;
+
+    fn mode(path: &std::path::Path) -> std::io::Result<u32> {
+        Ok(std::fs::metadata(path)?.permissions().mode() & 0o777)
+    }
+    fn set(path: &std::path::Path, mode: u32) -> std::io::Result<()> {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+    }
+
+    let root = temp_dir();
+    let dir = root.path().join("data");
+    let db = dir.join("library.db");
+    let wal = dir.join("library.db-wal");
+    let shm = dir.join("library.db-shm");
+    let lock = dir.join("run").join("store.lock");
+
+    // A first run makes the files; a second connection keeps the WAL and shared-memory files
+    // alive after the store is dropped, as another process holding the database would.
+    let mut store = Store::open(&dir)?;
+    store.put_setting("k", "v")?;
+    let keeper = rusqlite::Connection::open(&db)?;
+    let _: i64 = keeper.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    drop(store);
+    assert!(
+        wal.exists() && shm.exists(),
+        "WAL and shm outlive the store"
+    );
+
+    // As an earlier build (or another tool) would have left them.
+    set(&dir, 0o755)?;
+    set(&dir.join("run"), 0o755)?;
+    for file in [&db, &wal, &shm, &lock] {
+        set(file, 0o644)?;
+    }
+
+    let store = Store::open(&dir)?;
+    assert_eq!(mode(&dir)?, 0o700, "data directory");
+    assert_eq!(mode(&dir.join("run"))?, 0o700, "run directory");
+    assert_eq!(mode(&db)?, 0o600, "library.db");
+    assert_eq!(mode(&wal)?, 0o600, "library.db-wal");
+    assert_eq!(mode(&shm)?, 0o600, "library.db-shm");
+    assert_eq!(mode(&lock)?, 0o600, "store.lock");
+    drop(store);
+    drop(keeper);
+    Ok(())
+}

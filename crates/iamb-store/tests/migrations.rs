@@ -302,3 +302,129 @@ fn a_newer_schema_is_refused() -> TestResult {
     ));
     Ok(())
 }
+
+/// Follow-up N6: a pair the migration leaves alone (`ος` keeps its old key next to `οσ`) stays
+/// editable. Changing the label or disabling either row must not fail the uniqueness check
+/// against the partner; changing the abbreviation to one another snippet uses still does.
+#[test]
+fn pair_left_alone_by_migration_stays_editable() -> TestResult {
+    let root = temp_dir();
+    let path = root.path().join(iamb_store::LIBRARY_FILE);
+    build_at(&path, 1)?;
+    {
+        let conn = Connection::open(&path)?;
+        conn.execute_batch(
+            "INSERT INTO snippet (id, created_at, updated_at, updated_by, rev, deleted_at, folder_id,
+                                  profile_id, abbreviation, abbreviation_key, label, kind, body,
+                                  trigger_mode, case_mode, word_start, enabled)
+             VALUES
+             (X'01900000000070008000000000000a51', 1, 1, NULL, 0, NULL, X'01900000000070008000000000000a10',
+              X'01900000000070008000000000000a01', 'ΟΣ', 'ος', '', 'plain', 'b', 'delimiter',
+              'insensitive', 1, 1),
+             (X'01900000000070008000000000000a52', 1, 1, NULL, 0, NULL, X'01900000000070008000000000000a10',
+              X'01900000000070008000000000000a01', 'οσ', 'οσ', '', 'plain', 'c', 'delimiter',
+              'insensitive', 1, 1);",
+        )?;
+    }
+    let mut store = Store::open(root.path())?;
+    for n in [0x51_u8, 0x52] {
+        let mut row = store.get_snippet(fid(n))?.ok_or("snippet")?;
+        row.label = format!("renamed {n}");
+        store.put(&row, Timestamp(10))?;
+        row.enabled = false;
+        store.put(&row, Timestamp(11))?;
+        let back = store.get_snippet(fid(n))?.ok_or("snippet")?;
+        assert_eq!(
+            (back.label.as_str(), back.enabled),
+            (&*format!("renamed {n}"), false)
+        );
+    }
+    drop(store);
+    let conn = Connection::open(&path)?;
+    assert_eq!(stored_key(&conn, 0x51)?, "ος", "the stored key is kept");
+    assert_eq!(stored_key(&conn, 0x52)?, "οσ");
+    drop(conn);
+
+    // Changing the text still goes through the check.
+    let mut store = Store::open(root.path())?;
+    let mut row = store.get_snippet(fid(0x52))?.ok_or("snippet")?;
+    row.abbreviation = iamb_core::model::Abbreviation::new(";SIG")?;
+    match store.put(&row, Timestamp(12)) {
+        Err(StoreError::AbbreviationConflict { existing, .. }) => assert_eq!(existing, fid(0x20)),
+        other => return Err(format!("expected a conflict, got {other:?}").into()),
+    }
+    Ok(())
+}
+
+/// Follow-up N2: migration 2 is linear. 10,000 live snippets of one profile whose keys contain a
+/// final sigma migrate in a few milliseconds instead of the 49 s the quadratic rule took. Bounds:
+/// 2 s in release, 30 s in debug. Also checks the outcome on the way: every key rewritten, none
+/// colliding, and the pairs that collide (one in a hundred) left alone.
+#[test]
+fn version_2_migrates_10000_sigma_keys_in_linear_time() -> TestResult {
+    let root = temp_dir();
+    let path = root.path().join(iamb_store::LIBRARY_FILE);
+    build_at(&path, 1)?;
+    {
+        let conn = Connection::open(&path)?;
+        // `λογος<i>` keeps the final form that version 1 stored. Every hundredth row has a twin
+        // `λογοσ<i>` (spelled with the medial letter), which makes both of the pair collide.
+        conn.execute_batch(
+            "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 9999)
+             INSERT INTO snippet (id, created_at, updated_at, updated_by, rev, deleted_at, folder_id,
+                                  profile_id, abbreviation, abbreviation_key, label, kind, body,
+                                  trigger_mode, case_mode, word_start, enabled)
+             SELECT randomblob(16), 1, 1, NULL, 0, NULL, X'01900000000070008000000000000a10',
+                    X'01900000000070008000000000000a01', 'λογος' || i, 'λογος' || i, '', 'plain',
+                    'x', 'delimiter', 'insensitive', 1, 1
+             FROM n;
+             INSERT INTO snippet (id, created_at, updated_at, updated_by, rev, deleted_at, folder_id,
+                                  profile_id, abbreviation, abbreviation_key, label, kind, body,
+                                  trigger_mode, case_mode, word_start, enabled)
+             SELECT randomblob(16), 1, 1, NULL, 0, NULL, X'01900000000070008000000000000a10',
+                    X'01900000000070008000000000000a01', 'λογοσ' || (i * 100), 'λογοσ' || (i * 100),
+                    '', 'plain', 'x', 'delimiter', 'insensitive', 1, 1
+             FROM (SELECT i FROM (WITH RECURSIVE m(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM m WHERE i < 99) SELECT i FROM m));",
+        )?;
+    }
+    let started = std::time::Instant::now();
+    let store = Store::open(root.path())?;
+    let took = started.elapsed();
+    drop(store);
+    let limit = if cfg!(debug_assertions) {
+        std::time::Duration::from_secs(30)
+    } else {
+        std::time::Duration::from_secs(2)
+    };
+    #[expect(clippy::print_stderr, reason = "the measured time is reported")]
+    {
+        eprintln!(
+            "migration 2, 10,100 live rows with final sigma: {:.3} s ({}, limit {} s)",
+            took.as_secs_f64(),
+            if cfg!(debug_assertions) {
+                "debug"
+            } else {
+                "release"
+            },
+            limit.as_secs()
+        );
+    }
+    assert!(took < limit, "migration took {took:?}, limit {limit:?}");
+
+    let conn = Connection::open(&path)?;
+    let left: i64 = conn.query_row(
+        "SELECT count(*) FROM snippet WHERE abbreviation_key LIKE '%ς%'",
+        [],
+        |r| r.get(0),
+    )?;
+    // The 100 rows that collide with a twin keep their old key; every other row is rewritten.
+    assert_eq!(left, 100);
+    let dups: i64 = conn.query_row(
+        "SELECT count(*) FROM (SELECT 1 FROM snippet WHERE deleted_at IS NULL
+         GROUP BY profile_id, replace(abbreviation_key, 'ς', 'σ') HAVING count(*) > 1)",
+        [],
+        |r| r.get(0),
+    )?;
+    assert_eq!(dups, 100, "the colliding pairs are the ones left alone");
+    Ok(())
+}
