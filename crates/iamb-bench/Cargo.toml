@@ -16,9 +16,14 @@ bench = false
 [dev-dependencies]
 # Trimmed: no plotters, no rayon, no HTML reports, to keep builds fast.
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
+iamb-core = { path = "../iamb-core" }
 
 [[bench]]
 name = "sample"
+harness = false
+
+[[bench]]
+name = "matcher"
 harness = false
 
 [lints]

@@ -390,6 +390,7 @@ name = "iamb-bench"
 version = "0.0.0"
 dependencies = [
  "criterion",
+ "iamb-core",
 ]
 
 [[package]]
