@@ -20,6 +20,19 @@
 //! - a key that yields no character (an arrow, a function key, a modifier) changes nothing:
 //!   `d` keeps waiting.
 //!
+//! # A character injected while a dead key waits
+//!
+//! A character another program injects arrives as the pseudo key `VK_PACKET`, the character in
+//! the event instead of on a key of the layout. The table plays no part: the system hands the
+//! character over by itself. What it does with a waiting `d` is not documented. The system's
+//! own stateful translation, given a dead key and then a `VK_PACKET`, returns the packet's
+//! character alone, without `d` (Windows CI, run 44331151855: a Spanish `` ` `` and then
+//! `VK_PACKET` gave U+0000 alone); whether `d` was dropped or still waits for the key after it
+//! was not observed, nor what an application that does not use the system's translation for
+//! `VK_PACKET` receives. So the listener does not guess:
+//! [`character_injected`](DeadKeys::character_injected) says a boundary is due, and `d` becomes
+//! uncertain, so that the next key that yields text is not guessed either.
+//!
 //! # Whether the stateless mode reads the system's dead key
 //!
 //! The documentation of the mode says the keyboard state "is not changed". It does not say
@@ -428,6 +441,16 @@ impl DeadKeys {
         if self.is_waiting() {
             self.set(State::Uncertain);
         }
+    }
+
+    /// A character another program injected (`VK_PACKET`) went by. True when a dead key was
+    /// waiting, or may have been: what the application received for the character is then
+    /// not known, and the listener reports a boundary instead (see the module documentation).
+    /// The waiting dead key becomes uncertain.
+    pub(crate) fn character_injected(&mut self) -> bool {
+        let waiting = self.is_waiting();
+        self.disturb();
+        waiting
     }
 
     /// Replaces the state, overwriting a waiting character first.
@@ -1021,6 +1044,29 @@ mod tests {
         assert_eq!(got(dead.resolve(&mut layout, &key(ACUTE))), Got::Held);
         dead.reset();
         assert_eq!(got(dead.resolve(&mut layout, &key(E))), text("e"));
+    }
+
+    #[test]
+    fn a_character_injected_while_a_dead_key_waits_is_not_guessed() {
+        let mut layout = FakeLayout::spanish();
+        let mut dead = DeadKeys::default();
+        assert!(
+            !dead.character_injected(),
+            "nothing waits: the character is the answer"
+        );
+        assert!(!dead.is_waiting());
+
+        assert_eq!(got(dead.resolve(&mut layout, &key(ACUTE))), Got::Held);
+        assert!(
+            dead.character_injected(),
+            "a dead key waits: a boundary is due"
+        );
+        // Whether the application still holds the ´ is not known: neither é nor e is guessed.
+        assert!(dead.is_waiting());
+        assert!(dead.character_injected(), "still uncertain");
+        assert_eq!(got(dead.resolve(&mut layout, &key(E))), Got::Unknown);
+        assert_eq!(got(dead.resolve(&mut layout, &key(E))), text("e"));
+        assert!(!dead.character_injected());
     }
 
     #[test]

@@ -343,7 +343,9 @@ Only the injector thread reads it, after it has seen its own start marker. The h
 itself never copies keys: it cannot know a trigger happened until the engine has matched, so a
 copy there would have to hold every key all the time, including keys the engine drops in secure
 fields. A boundary, an over-deleting Backspace, a 65th character, composition, overflow or a focus
-change cancels the expansion. The 2.8 privacy review checks this.
+change cancels the expansion. On Windows, so does a dead key still waiting when the start marker
+arrives: the listener reports it as a boundary just before `InjectionStarted`, because the target
+would spend the first Backspace on it. The 2.8 privacy review checks this.
 
 ### 4.7 Latency budget (plain text, up to 500 characters)
 

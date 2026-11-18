@@ -20,7 +20,7 @@ use super::deadkey::{
     Composition, DeadKeyTable, DeadKeys, KeyQuery, Layout, LayoutDeadKeys, MAX_UNITS, Probe,
     Resolved, Translation, Units, find_probe,
 };
-use super::keys;
+use super::keys::{self, KeyClass};
 use super::keystate::KeyState;
 use super::layouts::{Layouts, read_table};
 use super::os::{self, Hook, HookKind, Message};
@@ -409,9 +409,31 @@ fn the_kpi_translations_of_the_four_layouts() {
     }
 }
 
+/// True for the keys the pipeline translates with the layout, and so hands to the dead-key
+/// logic: those `keys::classify` calls `Named` or `Other`. The others never get there:
+///
+/// - `VK_PACKET` (0xE7) is not a key of the layout. Its character travels in the event (the
+///   hook's scan code, the high word of the application's `wParam`), so a `VK_PACKET` built
+///   from the layout carries U+0000, which no program sends; the system's translation returns
+///   that U+0000 by itself, and returned it alone after a waiting dead key (CI run
+///   44331151855). The pipeline gives `VK_PACKET` its own path, and the rule for it after a
+///   dead key is checked separately.
+/// - `VK_PROCESSKEY` (0xE5) and the input-method mode keys (0xF0 to 0xF6 in the range
+///   searched; the others are below Space) go to the input-method policy, never to the layout.
+/// - The state keys (Shift, Ctrl, Alt, the Windows keys, the lock keys) only update the
+///   picture of the keyboard.
+///
+/// Reserved and unassigned codes stay in: a driver may send them, `classify` calls them
+/// `Other`, and the pipeline translates them like any key, so the listener must be right
+/// about them too.
+fn the_pipeline_translates(vk: u32) -> bool {
+    matches!(keys::classify(vk), KeyClass::Named(_) | KeyClass::Other)
+}
+
 /// Every dead key of each layout followed by every key that types one character or is a dead
 /// key, and then a space: the listener reports exactly what the system's own stateful
-/// translation delivers.
+/// translation delivers. Then every dead key followed by a character another program injects
+/// (`VK_PACKET`): the listener does not guess (see `deadkey`).
 #[test]
 fn every_dead_key_sequence_of_the_four_layouts_matches_the_system() {
     let _alone = alone();
@@ -428,10 +450,19 @@ fn every_dead_key_sequence_of_the_four_layouts_matches_the_system() {
             layout.key(keys::VK_ESCAPE, NO_KEYS),
             layout.key(keys::VK_LEFT, NO_KEYS),
         ];
+        // Codes that are not keys of the layout but that the system translates anyway.
+        let mut not_keys = Vec::new();
         for held in [NO_KEYS, SHIFT, ALTGR, SHIFT_ALTGR] {
             for vk in 0x20..0xFF {
                 let key = layout.key(vk, held);
-                match os::translate(layout.handle, &key) {
+                let translation = os::translate(layout.handle, &key);
+                if !the_pipeline_translates(vk) {
+                    if translation != Translation::None && !not_keys.contains(&vk) {
+                        not_keys.push(vk);
+                    }
+                    continue;
+                }
+                match translation {
                     Translation::Dead(_) => {
                         dead_keys.push(key);
                         keys.push(key);
@@ -478,11 +509,97 @@ fn every_dead_key_sequence_of_the_four_layouts_matches_the_system() {
             }
         }
         eprintln!(
-            "{}: {} dead keys, {} table pairs, {sequences} sequences match the system",
+            "{}: {} dead keys, {} table pairs, {sequences} sequences match the system; \
+             left out as no key of the layout although the system translates them: {not_keys:x?}",
             layout.name,
             dead_keys.len(),
             table.len()
         );
+        a_packet_after_each_dead_key_is_not_guessed(&layout, &layouts, &dead_keys, space);
+    }
+}
+
+/// Every dead key of `layout`, then a character another program injects, then `space`. What
+/// the application receives for the character is not known while a dead key waits, so the
+/// listener reports a boundary for it, and does not guess the space either: the dead key may
+/// still be waiting for it. What the system's own translation delivers is printed, as evidence
+/// for the day the rule can be narrowed.
+fn a_packet_after_each_dead_key_is_not_guessed(
+    layout: &Loaded,
+    layouts: &Layouts,
+    dead_keys: &[KeyQuery],
+    space: KeyQuery,
+) {
+    let x_unit = unit('x');
+    let x = u32::from(x_unit);
+    let plain_space = unit_of_space(layout);
+    // The character as the system finds it in an application's message: in the high word of
+    // the virtual key (and, for good measure, in the scan code, as the hook sees it).
+    let packet = KeyQuery {
+        vk: keys::VK_PACKET | (x << 16),
+        scan: x,
+        keys: KeyState::holding(NO_KEYS),
+    };
+    let (mut alone, mut kept, mut dropped, mut other) = (0_usize, 0_usize, 0_usize, 0_usize);
+    for dead_key in dead_keys {
+        forget_stored_dead_key(layout);
+        let mut dead = DeadKeys::default();
+        let mut on = OnWindows {
+            layout: layout.handle,
+            layouts,
+        };
+        assert_eq!(
+            dead.resolve(&mut on, dead_key),
+            Resolved::Held,
+            "{}: dead key {:#x}",
+            layout.name,
+            dead_key.vk
+        );
+        assert!(
+            dead.character_injected(),
+            "{}: dead key {:#x} then VK_PACKET: a boundary, not a guessed character",
+            layout.name,
+            dead_key.vk
+        );
+        assert_eq!(
+            dead.resolve(&mut on, &space),
+            Resolved::Unknown,
+            "{}: dead key {:#x} then VK_PACKET then Space: not guessed",
+            layout.name,
+            dead_key.vk
+        );
+
+        let received = application_receives(layout, &[*dead_key, packet, space]);
+        let dead_char = match os::translate(layout.handle, dead_key) {
+            Translation::Dead(ch) => ch,
+            Translation::None | Translation::Text(_) => 0,
+        };
+        match (received[1].as_slice(), received[2].first()) {
+            ([ch], Some(&after)) if *ch == x_unit && after == plain_space => {
+                alone += 1;
+                dropped += 1;
+            }
+            ([ch], Some(&after)) if *ch == x_unit && after == dead_char => {
+                alone += 1;
+                kept += 1;
+            }
+            _ => other += 1,
+        }
+    }
+    forget_stored_dead_key(layout);
+    eprintln!(
+        "note: {}: a dead key then VK_PACKET: the system's translation delivered the packet's \
+         character alone {alone} times; the dead key was then dropped {dropped} times and still \
+         waited for the next key {kept} times; something else {other} times",
+        layout.name
+    );
+}
+
+/// What Space types on `layout` with nothing waiting.
+fn unit_of_space(layout: &Loaded) -> u16 {
+    match os::translate(layout.handle, &layout.key(keys::VK_SPACE, NO_KEYS)) {
+        Translation::Text(units) => units.as_slice().first().copied().unwrap_or(0),
+        Translation::None | Translation::Dead(_) => 0,
     }
 }
 

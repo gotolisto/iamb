@@ -11,10 +11,11 @@
 //!
 //! 1. **Iamb's own event** (injected, and its extra-info decodes as a
 //!    [`Marker`]): output is dropped, an injection marker is reported,
-//!    a self-test marker completes the self-test. An injected event *without* an Iamb marker
-//!    is somebody else's (a remote-control tool, an on-screen keyboard, a dictation program,
-//!    a key-remapping tool) and the application treats it exactly like a pressed key, so the
-//!    listener does too.
+//!    a self-test marker completes the self-test. A start marker that goes by while a dead key
+//!    waits is preceded by `Boundary(Other)` (see below). An injected event *without* an Iamb
+//!    marker is somebody else's (a remote-control tool, an on-screen keyboard, a dictation
+//!    program, a key-remapping tool) and the application treats it exactly like a pressed key,
+//!    so the listener does too.
 //! 2. **Every key, down or up, updates the picture of the keyboard**
 //!    ([`KeyTracker`]), which is checked against the physical keyboard after a pause, after a
 //!    modifier press, and whenever the system's own view of Alt and Ctrl (it sends a key as
@@ -23,7 +24,8 @@
 //! 3. A **state key** (Shift, Ctrl, Alt, the Windows key, a lock key) or an input-method mode
 //!    key is not reported.
 //! 4. A **`VK_PACKET`** key carries a character another program injected: it is reported as
-//!    that character.
+//!    that character. While a dead key waits, what the application received is not known
+//!    ([`DeadKeys::character_injected`]): `Boundary(Other)`.
 //! 5. A key that is one of Iamb's **registered hotkeys** is taken by the system and never
 //!    reaches the application: nothing is reported (the hotkey message follows).
 //! 6. A **command chord** is `Boundary(Shortcut)`: any key while a Windows key is held, while
@@ -38,6 +40,26 @@
 //!    application received, it reports `Boundary(Other)` and never a guessed character.
 //!
 //! A mouse button going down is `Boundary(Click)`.
+//!
+//! # A dead key pressed while an expansion is pending
+//!
+//! A dead key types nothing, so it is reported as nothing: the next key may compose a
+//! character of an abbreviation, and a boundary would clear the engine's buffer for no reason.
+//! But a dead key the application still holds when Iamb's output arrives takes the first
+//! injected key: the first Backspace of the deletion is spent on it (it inserts the accent and
+//! deletes it again), and one character of the abbreviation stays. The typed-characters
+//! hand-off cannot count it, because there is no `Char`.
+//!
+//! The listener knows when that is about to happen: Iamb's start marker goes by, and a dead key
+//! waits (or may wait, after something the listener could not follow). The start marker comes
+//! after every key the application handles before the output, and only while an expansion is
+//! in flight. So the listener reports `Boundary(Other)` right before `InjectionStarted`. In
+//! stream order the hand-off sees the boundary while it is still capturing and cancels
+//! ([`CancelReason::Boundary`](iamb_platform::CancelReason::Boundary)); the engine marks the
+//! expansion disturbed, as for any boundary typed after a trigger, and the injector sends
+//! nothing, so the dead key still waits in the application and in the listener. A dead key that
+//! composed with a following key before the marker (´ then e) leaves nothing waiting: the `é`
+//! is an ordinary character typed after the trigger, and the expansion goes ahead.
 //!
 //! # `AltGr`, and why Ctrl alone is a command
 //!
@@ -65,8 +87,8 @@ use super::deadkey::{
 };
 use super::ime::{Context, Ime, Step, is_input_method_layout};
 use super::keys::{
-    KeyClass, LLKHF_INJECTED, LLKHF_UP, LLMHF_INJECTED, VK_LSHIFT, VK_PACKET, VK_PROCESSKEY,
-    VK_RSHIFT, VK_SHIFT, WM_SYSKEYDOWN, classify, is_button_down,
+    KeyClass, LLKHF_INJECTED, LLKHF_UP, LLMHF_INJECTED, VK_LSHIFT, VK_PROCESSKEY, VK_RSHIFT,
+    VK_SHIFT, WM_SYSKEYDOWN, classify, is_button_down,
 };
 use super::keystate::{KeyState, KeyTracker, RESYNC_GAP_MS};
 
@@ -355,10 +377,11 @@ impl Pipeline {
     fn own(&mut self, marker: Marker, vk: u32, down: bool, host: &mut impl Host) {
         match marker {
             Marker::Output => {
-                // An injected key that is not a plain character goes through the
-                // application's translation like a pressed one and uses up a waiting dead
-                // key there, or does not: the listener cannot tell.
-                if down && vk != VK_PACKET && classify(vk) != KeyClass::State {
+                // An injected key goes through the application's translation like a pressed
+                // one and uses up a waiting dead key there, or does not: the listener cannot
+                // tell. That includes Iamb's own characters (`VK_PACKET`): what the system
+                // does with a waiting dead key then is not known either (see `deadkey`).
+                if down && classify(vk) != KeyClass::State {
                     self.dead.disturb();
                 }
             }
@@ -368,6 +391,11 @@ impl Pipeline {
                 // the marker: the marker is reported once.
                 if self.last_marker != Some(marker) && marker.listener_event(0).is_some() {
                     self.last_marker = Some(marker);
+                    if matches!(marker, Marker::InjectionStart(_)) && self.dead.is_waiting() {
+                        // The application would spend the first injected key on the dead key:
+                        // the boundary cancels the expansion (see the module documentation).
+                        boundary(host, BoundaryKind::Other);
+                    }
                     host.report(|seq| {
                         marker
                             .listener_event(seq)
@@ -379,6 +407,8 @@ impl Pipeline {
     }
 
     /// A character another program injected (`VK_PACKET`): one UTF-16 unit in the scan code.
+    /// The two halves of a character outside the Basic Multilingual Plane are one character:
+    /// it is decided when the second half arrives.
     fn packet(&mut self, scan: u32, host: &mut impl Host) {
         let unit = u16::try_from(scan & 0xFFFF).unwrap_or(0);
         let high = self.high_surrogate.take();
@@ -395,6 +425,12 @@ impl Pipeline {
             }
             _ => char::from_u32(u32::from(unit)),
         };
+        if self.dead.character_injected() {
+            // A dead key waits: whether the application received the character alone, after
+            // the dead character, or with the dead key still waiting, is not known.
+            boundary(host, BoundaryKind::Other);
+            return;
+        }
         match ch {
             Some('\r' | '\n') => named(host, KeyName::Enter),
             Some('\t') => named(host, KeyName::Tab),

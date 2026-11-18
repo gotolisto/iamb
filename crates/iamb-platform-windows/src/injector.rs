@@ -56,10 +56,9 @@
 //!   character, so the hand-off does not count it, and the application holds it pending: the
 //!   first Backspace of the deletion is spent cancelling it, and one character of the
 //!   abbreviation stays. Only the listener sees a pending dead key; the injector cannot ask
-//!   the target without disturbing its keyboard state. The remedy belongs in the listener's
-//!   reporting (a dead key pressed while an expansion is pending reported as an event that
-//!   cancels the hand-off); until then the case is rare (a dead key typed within a
-//!   millisecond or so of the trigger) and leaves visible, bounded damage.
+//!   the target without disturbing its keyboard state. The listener handles it: when the
+//!   start marker arrives while a dead key waits or may wait, it reports a boundary just
+//!   before `InjectionStarted`, the hand-off cancels, and nothing is sent.
 //! - **Backspace in some applications deletes a whole grapheme cluster**, others one UTF-16
 //!   unit. The engine counts characters; abbreviations are typed text, so this matters only
 //!   for characters typed after the trigger that are outside the Basic Multilingual Plane.

@@ -1,14 +1,14 @@
 //! Synthetic raw events through the pipeline, against a fake layout and a fake keyboard.
 
-use iamb_platform::SeqSource;
 use iamb_platform::core_types::ExpansionId;
+use iamb_platform::{CancelReason, HandoffStatus, SeqSource, TypedHandoff};
 
 use super::super::deadkey::testing::{FakeLayout, Raw, held};
 use super::super::keys::{
     VK_BACK, VK_CAPITAL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1, VK_F10, VK_HOME, VK_KANA,
-    VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LWIN, VK_NEXT, VK_NONE, VK_NUMLOCK, VK_PRIOR, VK_RCONTROL,
-    VK_RETURN, VK_RIGHT, VK_RMENU, VK_SPACE, VK_TAB, VK_UNASSIGNED, VK_UP, WM_KEYDOWN, WM_KEYUP,
-    WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_RBUTTONDOWN, WM_SYSKEYUP, WM_XBUTTONDOWN,
+    VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LWIN, VK_NEXT, VK_NONE, VK_NUMLOCK, VK_PACKET, VK_PRIOR,
+    VK_RCONTROL, VK_RETURN, VK_RIGHT, VK_RMENU, VK_SPACE, VK_TAB, VK_UNASSIGNED, VK_UP, WM_KEYDOWN,
+    WM_KEYUP, WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_RBUTTONDOWN, WM_SYSKEYUP, WM_XBUTTONDOWN,
 };
 use super::*;
 
@@ -699,21 +699,34 @@ fn an_injected_key_of_iambs_own_makes_a_waiting_dead_key_uncertain() {
     rig.tap(E);
     assert_eq!(rig.seen(), [OTHER, Char('e')]);
 
-    // Injected characters do not.
+    // Injected characters too: what the system does with a waiting dead key at a
+    // `VK_PACKET` is not known (see `deadkey`).
     rig.tap(ACUTE);
+    own_packet(&mut rig, 0x78);
+    rig.tap(E);
+    rig.tap(E);
+    assert_eq!(rig.seen(), [OTHER, Char('e')]);
+
+    // Without a dead key waiting, they change nothing.
+    own_packet(&mut rig, 0x78);
+    rig.tap(ACUTE);
+    rig.tap(E);
+    assert_eq!(rig.seen(), chars("é"));
+}
+
+/// A character Iamb injects itself: a press and a release of `VK_PACKET`, marked as output.
+fn own_packet(rig: &mut Rig, unit: u16) {
     for down in [true, false] {
         rig.feed(
             RawKey {
-                scan: 0x78,
+                scan: u32::from(unit),
                 flags: LLKHF_INJECTED | if down { 0 } else { LLKHF_UP },
-                extra: output,
+                extra: Marker::Output.encode(),
                 ..rig.raw(VK_PACKET, down)
             },
             false,
         );
     }
-    rig.tap(E);
-    assert_eq!(rig.seen(), chars("é"));
 }
 
 #[test]
@@ -750,6 +763,145 @@ fn characters_injected_by_other_programs_are_characters() {
     rig.packet(0x0061);
     rig.packet(0xDE00);
     assert_eq!(rig.seen(), chars("a"));
+}
+
+#[test]
+fn a_character_injected_while_a_dead_key_waits_is_a_boundary() {
+    let mut rig = Rig::german();
+    rig.tap(ACUTE);
+    // An on-screen keyboard types x. The system's own translation delivers it without the ´,
+    // but whether the ´ still waits, and what an application that translates on its own
+    // receives, is not known: no character is guessed.
+    rig.packet(0x0078);
+    assert_eq!(rig.seen(), [OTHER]);
+    // Nor for the key after it, which may or may not compose with the ´.
+    rig.tap(E);
+    rig.tap(E);
+    assert_eq!(rig.seen(), [OTHER, Char('e')]);
+
+    // A character outside the Basic Multilingual Plane is one boundary, decided at its second
+    // half.
+    rig.tap(ACUTE);
+    rig.packet(0xD83D);
+    assert_eq!(rig.seen(), []);
+    rig.packet(0xDE00);
+    assert_eq!(rig.seen(), [OTHER]);
+
+    // A control character is not the key it stands for either: an Enter after a ´ that may
+    // have been typed first is no delimiter.
+    rig.tap(E);
+    rig.tap(ACUTE);
+    rig.packet(0x000D);
+    rig.tap(E);
+    assert_eq!(rig.seen(), [OTHER, OTHER, OTHER]);
+
+    // Once nothing waits, injected characters are characters again.
+    rig.packet(0x00E9);
+    assert_eq!(rig.seen(), chars("é"));
+}
+
+// ---------------------------------------------------------------------------------------------
+// A dead key and an expansion in flight
+// ---------------------------------------------------------------------------------------------
+
+/// The start marker of `id`, posted as a press and a release, as the injector may.
+fn start_marker(rig: &mut Rig, id: u64) {
+    let marker = Marker::InjectionStart(ExpansionId::from_raw(id)).encode();
+    rig.injected(VK_UNASSIGNED, true, marker);
+    rig.injected(VK_UNASSIGNED, false, marker);
+}
+
+/// Feeds what the listener has reported and not yet handed to [`Rig::seen`] to `handoff`, in
+/// order, as the service's engine thread does: the hand-off is armed for expansion 1 before the
+/// event at index `armed_at` (the engine expands at the trigger).
+fn through_handoff(rig: &Rig, handoff: &TypedHandoff, armed_at: usize) {
+    for (i, event) in rig.host.events.iter().enumerate() {
+        if i == armed_at {
+            handoff.arm(ExpansionId::from_raw(1));
+        }
+        handoff.observe(event);
+    }
+}
+
+#[test]
+fn a_dead_key_pressed_while_an_expansion_is_pending_cancels_it() {
+    let mut rig = Rig::german();
+    // The abbreviation and its trigger; the engine expands at the space.
+    for vk in [K, VK_SPACE] {
+        rig.tap(vk);
+    }
+    // A dead key before the start marker: the application now holds it.
+    rig.tap(ACUTE);
+    start_marker(&mut rig, 1);
+    let handoff = TypedHandoff::new();
+    through_handoff(&rig, &handoff, 2);
+    assert_eq!(
+        rig.seen(),
+        [Char('k'), Char(' '), OTHER, Started(1)],
+        "the boundary comes once, right before the marker"
+    );
+    let expansion = ExpansionId::from_raw(1);
+    assert_eq!(
+        handoff.status(),
+        HandoffStatus::Cancelled(expansion, CancelReason::Boundary)
+    );
+    assert_eq!(
+        handoff.wait_sealed(expansion, std::time::Duration::ZERO),
+        Err(CancelReason::Boundary),
+        "the injector sends nothing"
+    );
+    // So the application still holds the ´, and so does the listener.
+    rig.tap(E);
+    assert_eq!(rig.seen(), chars("é"));
+}
+
+#[test]
+fn a_dead_key_that_composed_before_the_start_marker_lets_the_expansion_go_ahead() {
+    let mut rig = Rig::german();
+    for vk in [K, VK_SPACE, ACUTE, E] {
+        rig.tap(vk);
+    }
+    start_marker(&mut rig, 1);
+    let handoff = TypedHandoff::new();
+    through_handoff(&rig, &handoff, 2);
+    assert_eq!(rig.seen(), [Char('k'), Char(' '), Char('é'), Started(1)]);
+    let expansion = ExpansionId::from_raw(1);
+    assert_eq!(handoff.status(), HandoffStatus::Sealed(expansion));
+    assert_eq!(
+        handoff.read(expansion, |typed| typed.iter().collect::<String>()),
+        Ok("é".to_owned()),
+        "the é is typed again after the expansion"
+    );
+}
+
+#[test]
+fn a_dead_key_that_may_wait_at_the_start_marker_cancels_too() {
+    let mut rig = Rig::german();
+    rig.tap(ACUTE);
+    // A command in the middle of the sequence: the ´ may or may not still wait.
+    rig.chord(&[VK_LCONTROL], C);
+    start_marker(&mut rig, 1);
+    assert_eq!(rig.seen(), [Boundary(Shortcut), OTHER, Started(1)]);
+}
+
+#[test]
+fn a_dead_key_with_no_expansion_in_flight_reports_nothing() {
+    // The engine's buffer keeps the abbreviation typed so far: the ´ may compose a character
+    // of it.
+    let mut rig = Rig::german();
+    rig.tap(K);
+    rig.tap(ACUTE);
+    assert_eq!(rig.seen(), chars("k"));
+    rig.tap(E);
+    assert_eq!(rig.seen(), chars("é"));
+    // And with nothing waiting, a start marker is just the marker; so is the end marker
+    // while a dead key waits.
+    start_marker(&mut rig, 2);
+    rig.tap(ACUTE);
+    let end = Marker::InjectionEnd(ExpansionId::from_raw(2)).encode();
+    rig.injected(VK_UNASSIGNED, false, end);
+    rig.tap(E);
+    assert_eq!(rig.seen(), [Started(2), Finished(2), Char('é')]);
 }
 
 // ---------------------------------------------------------------------------------------------

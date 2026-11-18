@@ -77,6 +77,12 @@
 //! - **Dead keys** need the layout's file to be readable (a 64-bit process, a layout listed in
 //!   the registry). Without it, and for a layout first met while the hook is running until
 //!   its table has been read, a dead-key sequence is reported as `Boundary(Other)`.
+//! - **A character another program injects while a dead key waits** is reported as
+//!   `Boundary(Other)`, and so is the next key that types: what the application receives then
+//!   is not documented (`deadkey`).
+//! - **A dead key still waiting when an expansion's output is about to start** cancels the
+//!   expansion: the application would spend the first Backspace of the deletion on it
+//!   (`pipeline`).
 //! - **Input methods:** see `ime`.
 //!
 //! # Privacy (architecture §8)
