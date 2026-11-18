@@ -1,0 +1,78 @@
+# {clipboard}: plain-text clipboard content at the moment of expansion.
+
+[[example]]
+id = "clipboard-01"
+macro = "clipboard"
+note = "Inserted as is"
+template = 'See {clipboard} for details.'
+ctx = { clipboard = "https://example.org/a" }
+expect = { text = "See https://example.org/a for details." }
+
+[[example]]
+id = "clipboard-02"
+macro = "clipboard"
+note = "Empty or non-text clipboard gives an empty string, not an error"
+template = 'Link: {clipboard}'
+expect = { text = "Link: " }
+
+[[example]]
+id = "clipboard-03"
+macro = "clipboard"
+note = "Whitespace is kept by default"
+template = '[{clipboard}]'
+ctx = { clipboard = "  padded \n" }
+expect = { text = "[  padded \n]" }
+
+[[example]]
+id = "clipboard-04"
+macro = "clipboard"
+note = "trim=yes strips leading and trailing whitespace"
+template = '[{clipboard trim=yes}]'
+ctx = { clipboard = "  padded \n" }
+expect = { text = "[padded]" }
+
+[[example]]
+id = "clipboard-05"
+macro = "clipboard"
+note = "Line endings are normalised to LF"
+template = '{clipboard}'
+ctx = { clipboard = "one\r\ntwo\rthree" }
+expect = { text = "one\ntwo\nthree" }
+
+[[example]]
+id = "clipboard-06"
+macro = "clipboard"
+note = "Clipboard content is never parsed as a template"
+template = '{clipboard}'
+ctx = { clipboard = "{date} {snippet abbr=\"x\"}" }
+expect = { text = "{date} {snippet abbr=\"x\"}" }
+
+[[example]]
+id = "clipboard-07"
+macro = "clipboard"
+note = "Used twice, read once"
+template = '<a href="{clipboard}">{clipboard}</a>'
+ctx = { clipboard = "https://example.org" }
+expect = { text = "<a href=\"https://example.org\">https://example.org</a>" }
+
+[[example]]
+id = "clipboard-08"
+macro = "clipboard"
+note = "Unicode passes through"
+template = '{clipboard trim="no"}'
+ctx = { clipboard = "naïve 👍 日本" }
+expect = { text = "naïve 👍 日本" }
+
+[[example]]
+id = "clipboard-09"
+macro = "clipboard"
+note = "Error: trim takes yes or no"
+template = '{clipboard trim=maybe}'
+expect = { error = "E_BAD_VALUE" }
+
+[[example]]
+id = "clipboard-10"
+macro = "clipboard"
+note = "Error: unknown attribute"
+template = '{clipboard max=3}'
+expect = { error = "E_UNKNOWN_ATTR" }

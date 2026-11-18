@@ -1,0 +1,127 @@
+# {snippet}: insert another snippet by its abbreviation.
+
+[[example]]
+id = "snippet-01"
+macro = "snippet"
+note = "Simple nesting"
+template = "Thanks!\n{snippet abbr=\";sig\"}"
+ctx = { snippets = { ";sig" = "Best,\nAna" } }
+expect = { text = "Thanks!\nBest,\nAna" }
+
+[[example]]
+id = "snippet-02"
+macro = "snippet"
+note = "Two levels"
+template = '{snippet abbr="a"}'
+ctx = { snippets = { a = "A[{snippet abbr=\"b\"}]", b = "B" } }
+expect = { text = "A[B]" }
+
+[[example]]
+id = "snippet-03"
+macro = "snippet"
+note = "Abbreviations may contain any characters when quoted"
+template = '{snippet abbr="/a b}"}'
+ctx = { snippets = { "/a b}" = "ok" } }
+expect = { text = "ok" }
+
+[[example]]
+id = "snippet-04"
+macro = "snippet"
+note = "The same snippet twice is not a cycle"
+template = '{snippet abbr="x"}-{snippet abbr="x"}'
+ctx = { snippets = { x = "X" } }
+expect = { text = "X-X" }
+
+[[example]]
+id = "snippet-05"
+macro = "snippet"
+note = "A diamond is not a cycle"
+template = '{snippet abbr="b"}{snippet abbr="c"}'
+ctx = { snippets = { b = "b{snippet abbr=\"d\"}", c = "c{snippet abbr=\"d\"}", d = "!" } }
+expect = { text = "b!c!" }
+
+[[example]]
+id = "snippet-06"
+macro = "snippet"
+note = "Macros inside a nested snippet are evaluated"
+template = 'Sent {snippet abbr=";today"}'
+ctx = { snippets = { ";today" = "on {date fmt=\"%-d %b\"}" } }
+expect = { text = "Sent on 18 Mar" }
+
+[[example]]
+id = "snippet-07"
+macro = "snippet"
+note = "Fields with the same name in outer and nested snippets are one form field"
+template = 'Hi {field name="Name"}. {snippet abbr=";bye"}'
+ctx = { snippets = { ";bye" = "Bye {field name=\"Name\"}!" }, values = { Name = "Li" } }
+expect = { text = "Hi Li. Bye Li!", form = [{ name = "Name", type = "text", default = "" }] }
+
+[[example]]
+id = "snippet-08"
+macro = "snippet"
+note = "Eight levels of nesting are allowed"
+template = '{snippet abbr="s1"}'
+ctx = { snippets = { s1 = "1{snippet abbr=\"s2\"}", s2 = "2{snippet abbr=\"s3\"}", s3 = "3{snippet abbr=\"s4\"}", s4 = "4{snippet abbr=\"s5\"}", s5 = "5{snippet abbr=\"s6\"}", s6 = "6{snippet abbr=\"s7\"}", s7 = "7{snippet abbr=\"s8\"}", s8 = "8" } }
+expect = { text = "12345678" }
+
+[[example]]
+id = "snippet-09"
+macro = "snippet"
+note = "Error: nine levels are too deep"
+template = '{snippet abbr="s1"}'
+ctx = { snippets = { s1 = "1{snippet abbr=\"s2\"}", s2 = "2{snippet abbr=\"s3\"}", s3 = "3{snippet abbr=\"s4\"}", s4 = "4{snippet abbr=\"s5\"}", s5 = "5{snippet abbr=\"s6\"}", s6 = "6{snippet abbr=\"s7\"}", s7 = "7{snippet abbr=\"s8\"}", s8 = "8{snippet abbr=\"s9\"}", s9 = "9" } }
+expect = { error = "E_TOO_DEEP" }
+
+[[example]]
+id = "snippet-10"
+macro = "snippet"
+note = "Error: no snippet with that abbreviation"
+template = '{snippet abbr=";missing"}'
+expect = { error = "E_SNIPPET_NOT_FOUND" }
+
+[[example]]
+id = "snippet-11"
+macro = "snippet"
+note = "Error: lookup is case-sensitive"
+template = '{snippet abbr=";Sig"}'
+ctx = { snippets = { ";sig" = "Best" } }
+expect = { error = "E_SNIPPET_NOT_FOUND" }
+
+[[example]]
+id = "snippet-12"
+macro = "snippet"
+note = "Error: a snippet that includes itself"
+template = '{snippet abbr="a"}'
+ctx = { snippets = { a = "again {snippet abbr=\"a\"}" } }
+expect = { error = "E_SNIPPET_CYCLE" }
+
+[[example]]
+id = "snippet-13"
+macro = "snippet"
+note = "Error: an indirect loop"
+template = '{snippet abbr="a"}'
+ctx = { snippets = { a = "{snippet abbr=\"b\"}", b = "{snippet abbr=\"a\"}" } }
+expect = { error = "E_SNIPPET_CYCLE" }
+
+[[example]]
+id = "snippet-14"
+macro = "snippet"
+note = "Error: a loop hidden in a branch that would not be taken still fails"
+template = '{snippet abbr="a"}'
+ctx = { snippets = { a = "{if field=\"Flag\"}{snippet abbr=\"a\"}{endif}" } }
+expect = { error = "E_SNIPPET_CYCLE" }
+
+[[example]]
+id = "snippet-15"
+macro = "snippet"
+note = "Error: abbr is required"
+template = '{snippet}'
+expect = { error = "E_MISSING_ATTR" }
+
+[[example]]
+id = "snippet-16"
+macro = "snippet"
+note = "Error: an error inside a nested snippet fails the whole expansion"
+template = 'ok so far {snippet abbr="bad"}'
+ctx = { snippets = { bad = "{endif}" } }
+expect = { error = "E_UNBALANCED_IF" }

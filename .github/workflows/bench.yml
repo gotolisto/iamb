@@ -1,0 +1,57 @@
+name: Bench
+
+# Report-only: results are uploaded as an artifact and nothing fails on a slowdown yet.
+# Shared runners are too noisy to gate on; see docs/test-strategy.md, "Regression rule".
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  IAMB_BENCH_RUNNER: ci-ubuntu
+
+jobs:
+  bench:
+    name: bench (report only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Never blocks a merge, even if a bench crashes.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bench
+      - name: Sample benchmark (quick mode)
+        run: cargo bench -p iamb-bench --locked --bench sample -- --quick
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '### Benchmark results (report only)'
+            echo '```'
+            cat target/bench-results/*.jsonl 2>/dev/null || echo 'no results written'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-results-${{ github.run_id }}
+          path: |
+            target/bench-results/
+            target/criterion/**/new/estimates.json
+          if-no-files-found: warn
+          retention-days: 30

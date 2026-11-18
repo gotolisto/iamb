@@ -1,0 +1,148 @@
+# {if} ... {else} ... {endif}: conditions on fill-in fields.
+
+[[example]]
+id = "if-01"
+macro = "if"
+note = "A bare condition on an undefined field creates a toggle"
+template = 'Hello.{if field="VIP"} Thanks for being a VIP!{endif}'
+ctx = { values = { VIP = "yes" } }
+expect = { text = "Hello. Thanks for being a VIP!", form = [{ name = "VIP", type = "toggle", default = "no" }] }
+
+[[example]]
+id = "if-02"
+macro = "if"
+note = "The implicit toggle is off by default"
+template = 'Hello.{if field="VIP"} Thanks for being a VIP!{endif}'
+expect = { text = "Hello.", form = [{ name = "VIP", type = "toggle", default = "no" }] }
+
+[[example]]
+id = "if-03"
+macro = "if"
+note = "Else branch"
+template = '{if field="Formal"}Dear Sir or Madam{else}Hi there{endif},'
+expect = { text = "Hi there,", form = [{ name = "Formal", type = "toggle", default = "no" }] }
+
+[[example]]
+id = "if-04"
+macro = "if"
+note = "is compares the field value exactly"
+template = 'Plan: {field name="Plan" type=choice options="Free|Pro"}.{if field="Plan" is="Pro"} Priority support included.{endif}'
+ctx = { values = { Plan = "Pro" } }
+expect = { text = "Plan: Pro. Priority support included.", form = [{ name = "Plan", type = "choice", default = "Free", options = ["Free", "Pro"] }] }
+
+[[example]]
+id = "if-05"
+macro = "if"
+note = "not is the opposite; comparison is case-sensitive"
+template = '{field name="Plan" type=choice options="Free|Pro"}{if field="Plan" not="pro"}!{endif}'
+ctx = { values = { Plan = "Pro" } }
+expect = { text = "Pro!", form = [{ name = "Plan", type = "choice", default = "Free", options = ["Free", "Pro"] }] }
+
+[[example]]
+id = "if-06"
+macro = "if"
+note = "A bare condition on a text field is true when it is not empty; an explicit definition replaces the implicit toggle"
+template = '{if field="Note"}Note: {field name="Note"}{else}No note.{endif}'
+ctx = { values = { Note = "call back" } }
+expect = { text = "Note: call back", form = [{ name = "Note", type = "text", default = "" }] }
+
+[[example]]
+id = "if-07"
+macro = "if"
+note = "Empty text field is false"
+template = '{if field="Note"}Note: {field name="Note"}{else}No note.{endif}'
+expect = { text = "No note.", form = [{ name = "Note", type = "text", default = "" }] }
+
+[[example]]
+id = "if-08"
+macro = "if"
+note = "Nested conditions"
+template = '{if field="A"}a{if field="B"}b{else}-{endif}{else}x{endif}'
+ctx = { values = { A = "yes" } }
+expect = { text = "a-", form = [{ name = "A", type = "toggle", default = "no" }, { name = "B", type = "toggle", default = "no" }] }
+
+[[example]]
+id = "if-09"
+macro = "if"
+note = "A field may be defined after the condition that uses it"
+template = '{if field="Lang" is="es"}Hola{else}Hello{endif} ({field name="Lang" type=choice options="en|es"})'
+ctx = { values = { Lang = "es" } }
+expect = { text = "Hola (es)", form = [{ name = "Lang", type = "choice", default = "en", options = ["en", "es"] }] }
+
+[[example]]
+id = "if-10"
+macro = "if"
+note = "A toggle compares as yes or no"
+template = '{field name="Paid" type=toggle on="paid" off="unpaid"}{if field="Paid" is="no"} - reminder sent{endif}'
+expect = { text = "unpaid - reminder sent", form = [{ name = "Paid", type = "toggle", default = "no" }] }
+
+[[example]]
+id = "if-11"
+macro = "if"
+note = "Fields in a branch that is not taken still appear in the form"
+template = '{if field="Gift"}Message: {field name="Message"}{endif}Done'
+expect = { text = "Done", form = [{ name = "Gift", type = "toggle", default = "no" }, { name = "Message", type = "text", default = "" }] }
+
+[[example]]
+id = "if-12"
+macro = "if"
+note = "Eight levels of nesting are allowed"
+template = '{if field="T"}{if field="T"}{if field="T"}{if field="T"}{if field="T"}{if field="T"}{if field="T"}{if field="T"}deep{endif}{endif}{endif}{endif}{endif}{endif}{endif}{endif}'
+ctx = { values = { T = "yes" } }
+expect = { text = "deep", form = [{ name = "T", type = "toggle", default = "no" }] }
+
+[[example]]
+id = "if-13"
+macro = "if"
+note = "Error: nine levels are too deep"
+template = '{if field="T"}{if field="T"}{if field="T"}{if field="T"}{if field="T"}{if field="T"}{if field="T"}{if field="T"}{if field="T"}x{endif}{endif}{endif}{endif}{endif}{endif}{endif}{endif}{endif}'
+expect = { error = "E_TOO_DEEP" }
+
+[[example]]
+id = "if-14"
+macro = "if"
+note = "Error: missing endif"
+template = '{if field="A"}text'
+expect = { error = "E_UNBALANCED_IF" }
+
+[[example]]
+id = "if-15"
+macro = "if"
+note = "Error: else without if"
+template = 'a{else}b'
+expect = { error = "E_UNBALANCED_IF" }
+
+[[example]]
+id = "if-16"
+macro = "if"
+note = "Error: endif without if"
+template = 'a{endif}'
+expect = { error = "E_UNBALANCED_IF" }
+
+[[example]]
+id = "if-17"
+macro = "if"
+note = "Error: two else in one if"
+template = '{if field="A"}1{else}2{else}3{endif}'
+expect = { error = "E_UNBALANCED_IF" }
+
+[[example]]
+id = "if-18"
+macro = "if"
+note = "Error: is and not together"
+template = '{field name="P"}{if field="P" is="a" not="b"}x{endif}'
+expect = { error = "E_BAD_VALUE" }
+
+[[example]]
+id = "if-19"
+macro = "if"
+note = "Error: comparing a field that is never defined"
+template = '{if field="Plan" is="Pro"}x{endif}'
+expect = { error = "E_FIELD_UNDEFINED" }
+
+[[example]]
+id = "if-20"
+macro = "if"
+note = "Error: field is required"
+template = '{if}x{endif}'
+expect = { error = "E_MISSING_ATTR" }

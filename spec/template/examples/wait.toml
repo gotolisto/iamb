@@ -1,0 +1,78 @@
+# {wait}: pause before the next action, in milliseconds.
+
+[[example]]
+id = "wait-01"
+macro = "wait"
+note = "Pause between two pieces of text"
+template = 'a{wait ms=200}b'
+expect = { actions = [{ text = "a" }, { wait = 200 }, { text = "b" }] }
+
+[[example]]
+id = "wait-02"
+macro = "wait"
+note = "Let a page load after Enter"
+template = 'query{key name=enter}{wait ms="1500"}next'
+expect = { actions = [{ text = "query" }, { key = "enter" }, { wait = 1500 }, { text = "next" }] }
+
+[[example]]
+id = "wait-03"
+macro = "wait"
+note = "Smallest and largest single wait"
+template = '{wait ms=1}{wait ms=10000}'
+expect = { actions = [{ wait = 1 }, { wait = 10000 }] }
+
+[[example]]
+id = "wait-04"
+macro = "wait"
+note = "Waits may total exactly 30 seconds"
+template = '{wait ms=10000}{wait ms=10000}{wait ms=10000}'
+expect = { actions = [{ wait = 10000 }, { wait = 10000 }, { wait = 10000 }] }
+
+[[example]]
+id = "wait-05"
+macro = "wait"
+note = "A wait in a branch that is not taken does not count towards the total"
+template = '{wait ms=10000}{wait ms=10000}{wait ms=10000}{if field="Slow"}{wait ms=5000}{endif}'
+expect = { actions = [{ wait = 10000 }, { wait = 10000 }, { wait = 10000 }], form = [{ name = "Slow", type = "toggle", default = "no" }] }
+
+[[example]]
+id = "wait-06"
+macro = "wait"
+note = "Error: total above 30 seconds"
+template = '{wait ms=10000}{wait ms=10000}{wait ms=10000}{wait ms=1}'
+expect = { error = "E_WAIT_TOTAL" }
+
+[[example]]
+id = "wait-07"
+macro = "wait"
+note = "Error: zero"
+template = '{wait ms=0}'
+expect = { error = "E_BAD_VALUE" }
+
+[[example]]
+id = "wait-08"
+macro = "wait"
+note = "Error: above 10 seconds"
+template = '{wait ms=10001}'
+expect = { error = "E_BAD_VALUE" }
+
+[[example]]
+id = "wait-09"
+macro = "wait"
+note = "Error: not a whole number"
+template = '{wait ms=1.5}'
+expect = { error = "E_BAD_VALUE" }
+
+[[example]]
+id = "wait-10"
+macro = "wait"
+note = "Error: negative"
+template = '{wait ms=-5}'
+expect = { error = "E_BAD_VALUE" }
+
+[[example]]
+id = "wait-11"
+macro = "wait"
+note = "Error: ms is required"
+template = '{wait}'
+expect = { error = "E_MISSING_ATTR" }

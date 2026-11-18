@@ -1,0 +1,156 @@
+# {field}: a fill-in field. ctx.values holds what the user entered; a missing value means the
+# default was left unchanged.
+
+[[example]]
+id = "field-01"
+macro = "field"
+note = "Single-line text field"
+template = 'Hi {field name="Name"},'
+ctx = { values = { Name = "Ana" } }
+expect = { text = "Hi Ana,", form = [{ name = "Name", type = "text", default = "" }] }
+
+[[example]]
+id = "field-02"
+macro = "field"
+note = "Default value"
+template = 'Meet in {field name="City" default="Lisbon"}.'
+expect = { text = "Meet in Lisbon.", form = [{ name = "City", type = "text", default = "Lisbon" }] }
+
+[[example]]
+id = "field-03"
+macro = "field"
+note = "The same name twice is one field, inserted in both places"
+template = '{field name="Name"}, yes you, {field name="Name"}!'
+ctx = { values = { Name = "Sam" } }
+expect = { text = "Sam, yes you, Sam!", form = [{ name = "Name", type = "text", default = "" }] }
+
+[[example]]
+id = "field-04"
+macro = "field"
+note = "Multi-line field; line endings normalised"
+template = "Notes:\n{field name=\"Notes\" type=area}"
+ctx = { values = { Notes = "one\r\ntwo" } }
+expect = { text = "Notes:\none\ntwo", form = [{ name = "Notes", type = "area", default = "" }] }
+
+[[example]]
+id = "field-05"
+macro = "field"
+note = "Choice field: the first option is the default"
+template = 'Dear {field name="Title" type=choice options="Mr|Ms|Mx"} Lee'
+expect = { text = "Dear Mr Lee", form = [{ name = "Title", type = "choice", default = "Mr", options = ["Mr", "Ms", "Mx"] }] }
+
+[[example]]
+id = "field-06"
+macro = "field"
+note = "Choice field with an explicit default and a chosen value"
+template = '{field name="Plan" type=choice options="Free|Pro|Team" default="Pro"}'
+ctx = { values = { Plan = "Team" } }
+expect = { text = "Team", form = [{ name = "Plan", type = "choice", default = "Pro", options = ["Free", "Pro", "Team"] }] }
+
+[[example]]
+id = "field-07"
+macro = "field"
+note = "Toggle inserts its on text when checked"
+template = 'Order{field name="Rush" type=toggle on=" (rush)"} confirmed.'
+ctx = { values = { Rush = "yes" } }
+expect = { text = "Order (rush) confirmed.", form = [{ name = "Rush", type = "toggle", default = "no" }] }
+
+[[example]]
+id = "field-08"
+macro = "field"
+note = "Toggle is off by default and inserts its off text"
+template = 'Shipping: {field name="Express" type=toggle on="express" off="standard"}'
+expect = { text = "Shipping: standard", form = [{ name = "Express", type = "toggle", default = "no" }] }
+
+[[example]]
+id = "field-09"
+macro = "field"
+note = "Toggle default=yes"
+template = '{field name="Cc me" type=toggle default=yes on="cc" off="no cc"}'
+expect = { text = "cc", form = [{ name = "Cc me", type = "toggle", default = "yes" }] }
+
+[[example]]
+id = "field-10"
+macro = "field"
+note = "Form order is order of first appearance, including nested snippets"
+template = '{field name="B"}{snippet abbr="n"}{field name="A"}'
+ctx = { snippets = { n = "{field name=\"C\"}{field name=\"A\"}" }, values = { A = "a", B = "b", C = "c" } }
+expect = { text = "bcaa", form = [{ name = "B", type = "text", default = "" }, { name = "C", type = "text", default = "" }, { name = "A", type = "text", default = "" }] }
+
+[[example]]
+id = "field-11"
+macro = "field"
+note = "Entered values are never parsed as a template"
+template = '{field name="X"}'
+ctx = { values = { X = "{date} {cursor}" } }
+expect = { text = "{date} {cursor}", form = [{ name = "X", type = "text", default = "" }] }
+
+[[example]]
+id = "field-12"
+macro = "field"
+note = "Quotes and backslashes in a quoted value"
+template = '{field name="Q" default="say \"hi\" \\ bye"}'
+expect = { text = 'say "hi" \ bye', form = [{ name = "Q", type = "text", default = 'say "hi" \ bye' }] }
+
+[[example]]
+id = "field-13"
+macro = "field"
+note = "When one name has two defaults, the first definition wins"
+template = '{field name="N" default="first"}/{field name="N" default="second"}'
+expect = { text = "first/first", form = [{ name = "N", type = "text", default = "first" }] }
+
+[[example]]
+id = "field-14"
+macro = "field"
+note = "Error: name is required"
+template = '{field default="x"}'
+expect = { error = "E_MISSING_ATTR" }
+
+[[example]]
+id = "field-15"
+macro = "field"
+note = "Error: empty name"
+template = '{field name=""}'
+expect = { error = "E_BAD_VALUE" }
+
+[[example]]
+id = "field-16"
+macro = "field"
+note = "Error: unknown type"
+template = '{field name="Age" type=number}'
+expect = { error = "E_BAD_VALUE" }
+
+[[example]]
+id = "field-17"
+macro = "field"
+note = "Error: a choice needs options"
+template = '{field name="Size" type=choice}'
+expect = { error = "E_MISSING_ATTR" }
+
+[[example]]
+id = "field-18"
+macro = "field"
+note = "Error: the default of a choice must be one of its options"
+template = '{field name="Size" type=choice options="S|M|L" default="XL"}'
+expect = { error = "E_BAD_VALUE" }
+
+[[example]]
+id = "field-19"
+macro = "field"
+note = "Error: duplicate option"
+template = '{field name="Size" type=choice options="S|M|S"}'
+expect = { error = "E_BAD_VALUE" }
+
+[[example]]
+id = "field-20"
+macro = "field"
+note = "Error: options only apply to a choice"
+template = '{field name="Size" options="S|M"}'
+expect = { error = "E_UNKNOWN_ATTR" }
+
+[[example]]
+id = "field-21"
+macro = "field"
+note = "Error: one name defined with two types"
+template = '{field name="When"} {field name="When" type=toggle}'
+expect = { error = "E_FIELD_CONFLICT" }
