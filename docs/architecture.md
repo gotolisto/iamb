@@ -1,6 +1,6 @@
 # Iamb architecture
 
-Status: draft for approval, revised after independent review · Task 0.1 ·
+Status: approved by the owner on 2026-11-18 · Task 0.1 ·
 Decision records: [`docs/decisions/`](decisions/README.md) ·
 Review record: [`docs/reviews/0.1-architecture-review.md`](reviews/0.1-architecture-review.md)
 

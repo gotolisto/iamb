@@ -1,6 +1,6 @@
 # ADR-0015: Usage statistics stay on the device
 
-Status: proposed (awaiting owner approval)
+Status: accepted (approved by the owner on 2026-11-18)
 
 **Context.** Library health needs to know which snippets are unused, but usage counts reveal behaviour.
 

@@ -1,6 +1,6 @@
 # ADR-0016: Sync: a per-user change feed, last write wins per row, outbox on the device
 
-Status: proposed (awaiting owner approval)
+Status: accepted (approved by the owner on 2026-11-18)
 
 **Context.** Devices edit offline; two online devices must agree within 5 seconds; a newly shared folder must appear within 10 seconds; revoked content must disappear; no edit may be lost silently.
 

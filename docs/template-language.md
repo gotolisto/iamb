@@ -1,6 +1,6 @@
 # Iamb template language
 
-Status: draft for approval · Task 0.2 · Version 1
+Status: approved by the owner on 2026-11-18 · Task 0.2 · Version 1
 
 A snippet body is a template: text that is typed as written, plus macros in braces that are
 replaced or acted on when the snippet expands. This document defines the grammar, every macro, and

@@ -1,6 +1,6 @@
 # ADR-0019: Keys typed during an expansion are compensated or the expansion is abandoned
 
-Status: proposed (awaiting owner approval)
+Status: accepted (approved by the owner on 2026-11-18)
 
 **Context.** The listener only observes (ADR-0010). At normal typing speed the next key can reach the application after the trigger and before or during Iamb's delete and insert, which would delete the wrong characters or split the snippet.
 

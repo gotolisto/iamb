@@ -1,6 +1,6 @@
 # ADR-0005: OS code sits behind traits in per-OS crates
 
-Status: proposed (awaiting owner approval)
+Status: accepted (approved by the owner on 2026-11-18)
 
 **Context.** Windows and macOS keyboard code cannot be compiled or run on the Linux build machine, and it is the riskiest code in the project.
 

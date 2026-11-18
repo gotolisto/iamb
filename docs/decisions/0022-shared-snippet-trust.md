@@ -1,6 +1,6 @@
 # ADR-0022: Snippets from other people are reviewed before they can press keys or read the clipboard
 
-Status: proposed (awaiting owner approval)
+Status: accepted (approved by the owner on 2026-11-18)
 
 **Context.** Anyone with edit rights on a shared folder controls text that other members' machines will type. Text followed by Enter runs a command in a terminal; `{clipboard}` followed by Enter posts the clipboard into a chat.
 

@@ -1,6 +1,6 @@
 # ADR-0002: One Cargo workspace; crates named `iamb-*`
 
-Status: proposed (awaiting owner approval)
+Status: accepted (approved by the owner on 2026-11-18)
 
 **Context.** The name `iamb` is already taken on the public crate registry by an unrelated project.
 

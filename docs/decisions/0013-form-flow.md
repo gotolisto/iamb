@@ -1,6 +1,6 @@
 # ADR-0013: Forms delete the abbreviation only after submit; the focus holder hands focus back
 
-Status: proposed (awaiting owner approval)
+Status: accepted (approved by the owner on 2026-11-18)
 
 **Context.** A form interrupts typing; the user may cancel, and focus leaves the target app while the form is open. Operating systems let only the process that holds the foreground give it away, so a background service cannot restore focus.
 
