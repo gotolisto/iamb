@@ -28,7 +28,7 @@ All Rust crates live in one Cargo workspace under `crates/`, all named `iamb-*`
 | `iamb-core` | library | — | Data model, matcher, template parser and renderer, date math, Markdown rendering, fuzzy search, engine pipeline (events in, actions out) | I/O, clocks, threads, OS calls, `unsafe` |
 | `iamb-store` | library | core | SQLite schema and migrations, queries, usage statistics, sync outbox, attachment index, JSON and CSV import and export, library health | Network code, OS keyboard code |
 | `iamb-ipc` | library | core | Message types, framing, blocking local transport (Unix socket, Windows named pipe), peer verification, client and server helpers | Business logic, async code, network code |
-| `iamb-platform` | library | core | Traits `KeyListener`, `Injector`, `FocusInspector`, `ClipboardAccess`, `Hotkeys`, `Permissions`, `LoginItem`, `MemoryLock`; shared event types; an in-memory mock used by tests on every OS | OS calls |
+| `iamb-platform` | library | core | Traits `KeyListener`, `Injector`, `FocusInspector`, `ClipboardAccess`, `Hotkeys`, `Permissions`, `LoginItem`, `MemoryLock`, `LocalEndpoint`; the listener's event type, injection steps, markers and the typed-characters hand-off; an in-memory mock used by tests on every OS | OS calls |
 | `iamb-platform-windows` | library | platform | Windows implementations of the platform traits | Anything not behind the traits |
 | `iamb-platform-macos` | library | platform | macOS implementations of the platform traits | Anything not behind the traits |
 | `iamb-service` | binary | core, store, ipc, platform(+os) | The background service: listener → engine → injector, owns the store, serves IPC, supervises | Network code of any kind |
@@ -330,10 +330,15 @@ or form submit during one is refused with `InjectionBusy`. `Overflow` ends the f
 markers may have been dropped.
 
 The injector needs the characters typed after the trigger (`k` of them) to type them again. The
-engine never hands typed text out, so the worker's listener keeps them instead: from the trigger
-until the start marker it copies real `Char`s into a separate `Sensitive` buffer of at most 64
-characters, zeroed when the expansion ends, which only the injector thread reads, after it has
-seen its own start marker. Task 2.2 implements this and the 2.8 privacy review checks it.
+engine never hands typed text out, so the thread that feeds listener events to the engine keeps
+them instead (`iamb_platform::TypedHandoff`). It is armed when the engine emits `Expanded`, copies
+the real `Char`s it forwards from then until the start marker into a separate `Sensitive` buffer
+of at most 64 characters in one fixed, lockable allocation, and is zeroed when the expansion ends.
+Only the injector thread reads it, after it has seen its own start marker. The hook or tap thread
+itself never copies keys: it cannot know a trigger happened until the engine has matched, so a
+copy there would have to hold every key all the time, including keys the engine drops in secure
+fields. A boundary, an over-deleting Backspace, a 65th character, composition, overflow or a focus
+change cancels the expansion. The 2.8 privacy review checks this.
 
 ### 4.7 Latency budget (plain text, up to 500 characters)
 
@@ -352,14 +357,19 @@ seen its own start marker. Task 2.2 implements this and the 2.8 privacy review c
 
 | Trait | Methods (summary) | Used by | Windows | macOS |
 | --- | --- | --- | --- | --- |
-| `KeyListener` | `start(sink)`, `stop()`, `self_test()` | service | Low-level keyboard and mouse hooks on a message-loop thread; stateless layout-aware translation | Event tap; re-enables itself when the system disables it |
-| `Injector` | `delete_back`, `type_text`, `paste`, `press_key`, `move_caret`, `mark` | service | Synthesised Unicode input in atomic batches; clipboard paste with restore | Synthesised key events; pasteboard paste with restore |
-| `FocusInspector` | `focused_app()`, `secure_state(timeout)`, `focus_token()`, `restore_focus(token)`, `allow_foreground(pid)` | service, UI host | Foreground window, process, integrity level; password-field detection on a dedicated thread | Frontmost app, secure-input state, Accessibility focus |
-| `ClipboardAccess` | `read_text`, `snapshot`, `write(flavours, transient)`, `restore` | service | Clipboard API, with the formats that keep content out of clipboard history | Pasteboard API, with the transient and concealed markers |
-| `Hotkeys` | `register(id, chord)`, `unregister(id)` | service | OS hotkey API on the listener thread | OS hotkey API |
-| `Permissions` | `status()`, `open_settings(kind)` | service | Always granted | Accessibility and Input Monitoring, checked in the worker, which is the process that holds them |
-| `LoginItem` | `enable()`, `disable()`, `status()` | UI host | Per-user Run key | Login-item registration of the helper app |
-| `MemoryLock` | `lock(region)` | service | Keeps the keystroke buffer out of the page file | Same, out of swap |
+| `KeyListener` | `start(sink)`, `stop()`, `self_test(timeout)` | service | Low-level keyboard and mouse hooks on a message-loop thread; stateless layout-aware translation | Event tap; re-enables itself when the system disables it |
+| `Injector` | `inject(request, handoff)`: one call per expansion, which posts the start marker, applies the compensation of §4.6 and the steps, and posts the end marker | service | Synthesised Unicode input in atomic batches; clipboard paste with restore | Synthesised key events; pasteboard paste with restore |
+| `FocusInspector` | `focused_app()`, `secure_state(target, timeout)`, `focus_token()`, `restore_focus(token)`, `allow_foreground(pid)`, `watch(sink)`, `unwatch()` | service, UI host | Foreground window, process, integrity level; password-field detection on a dedicated thread | Frontmost app, secure-input state, Accessibility focus |
+| `ClipboardAccess` | `read_text`, `snapshot`, `write(content, transient)`, `restore` | service | Clipboard API, with the formats that keep content out of clipboard history | Pasteboard API, with the transient and concealed markers |
+| `Hotkeys` | `register(id, chord)`, `unregister(id)` | service | OS hotkey API on the listener thread | OS hotkey API on the listener's run loop |
+| `Permissions` | `permission_status()`, `open_settings(kind)` | service | Always granted | Accessibility and Input Monitoring, checked in the worker, which is the process that holds them |
+| `LoginItem` | `enable()`, `disable()`, `login_item_status()` | UI host | Per-user Run key | Login-item registration of the helper app |
+| `MemoryLock` | `lock(region)`, `unlock(region)` | service | Keeps the keystroke buffer and hand-off out of the page file | Same, out of swap |
+| `LocalEndpoint` | `bind(name, policy)`, `connect(name, policy, timeout)`; streams carry the verified peer | service, UI host, CLI, sync agent | Named pipe, first instance only, remote clients rejected, user SID checked | Unix socket in a user-only directory, peer uid checked |
+
+All traits are object safe and take `&self`, so the service holds one `Arc<dyn Platform>`. The
+OS crates are the only crates allowed `unsafe`, and every `unsafe` block carries a safety comment
+(lint-enforced).
 
 Every event the injector synthesises carries a marker (the extra-info field on Windows, the
 event-source user data on macOS) and the listener drops marked events, apart from reporting the
@@ -515,9 +525,9 @@ These hold for every phase and are what the Phase 2 privacy review checks
 [ADR-0022](decisions/0022-shared-snippet-trust.md)).
 
 1. Typed characters exist in exactly two places, both in locked memory: the engine's
-   66-character buffer, and, only while an expansion is in flight, the listener's copy of the
-   characters typed after its trigger (at most 64, for the injector to type again, §4.6), zeroed
-   when the expansion ends. No API returns either. They are never serialised, logged or sent over
+   66-character buffer, and, only while an expansion is in flight, the engine-feeding thread's
+   copy of the characters typed after its trigger (at most 64, for the injector to type again,
+   §4.6), zeroed when the expansion ends. No API returns either. They are never serialised, logged or sent over
    IPC.
 2. User-entered values (form values, clipboard content read for `{clipboard}`, palette queries,
    dry-run input) are never written to disk or logs. Form values are remembered only as described
