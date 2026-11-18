@@ -50,7 +50,9 @@ fn the_library_imports_cleanly_and_twice_adds_nothing() {
 fn each_snippet_expands_to_its_expected_text_with_the_fixed_date() {
     let dir = tempfile::tempdir().unwrap();
     import_fixtures(dir.path()).unwrap();
-    let store = Store::open(dir.path()).unwrap();
+    // Wait for the lock as the service and the command-line tool do: another test here spawns
+    // a process, and a child inherits the lock's descriptor between fork and exec.
+    let store = Store::open_with_timeout(dir.path(), std::time::Duration::from_secs(3)).unwrap();
     let profile = personal_profile(&store).unwrap().unwrap();
     let snapshot = snapshot_from_store(&store, profile).unwrap();
     let env = DryEnv {
