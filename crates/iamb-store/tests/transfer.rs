@@ -675,3 +675,269 @@ fn csv_export_has_header_and_quotes_multiline_bodies() -> TestResult {
     );
     Ok(())
 }
+
+/// Number of live folders and tags and the names of the tags, for the re-import tests.
+fn counts(store: &Store) -> Res<(usize, usize, usize)> {
+    let lib = store.load_library()?;
+    Ok((lib.folders.len(), lib.tags.len(), lib.snippets.len()))
+}
+
+/// Finding 7: importing the same JSON file again and again creates one copy of each folder and
+/// tag, and the summaries say so.
+#[test]
+fn json_reimport_reuses_folders_and_tags() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let (p1, p2) = (id(900), id(901));
+    let mut src = Store::open_in_memory()?;
+    src.put_profile(&profile(p1, p1), T0)?;
+    build_library(&mut src, p1)?;
+    let json = dir.path().join("lib.json");
+    transfer::export(&src, p1, &json, Format::Json)?;
+
+    let mut dst = Store::open_in_memory()?;
+    dst.put_profile(&profile(p2, p2), T0)?;
+    let mut next = ids_from(10_000);
+    let first = transfer::import(
+        &mut dst,
+        p2,
+        &json,
+        Format::Json,
+        T0,
+        &mut next,
+        OnConflict::Skip,
+    )?;
+    assert_eq!(
+        first,
+        ImportSummary {
+            folders_created: 6,
+            snippets_imported: 50,
+            snippets_skipped: 0,
+            tags_created: 3,
+        }
+    );
+    let after_first = dst.load_library()?;
+    for _ in 0..2 {
+        let again = transfer::import(
+            &mut dst,
+            p2,
+            &json,
+            Format::Json,
+            T0,
+            &mut next,
+            OnConflict::Skip,
+        )?;
+        assert_eq!(
+            again,
+            ImportSummary {
+                folders_created: 0,
+                snippets_imported: 0,
+                snippets_skipped: 50,
+                tags_created: 0,
+            }
+        );
+        assert_eq!(counts(&dst)?, (6, 3, 50));
+    }
+    assert_eq!(
+        dst.load_library()?,
+        after_first,
+        "a re-import changes nothing"
+    );
+    Ok(())
+}
+
+/// Finding 7: folders and tags of a file are reused when they exist, created only for the
+/// snippets that are written, and nothing at all is created when every snippet is skipped.
+#[test]
+fn json_import_creates_folders_and_tags_only_for_written_snippets() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let (p1, p2) = (id(900), id(901));
+    let mut src = Store::open_in_memory()?;
+    src.put_profile(&profile(p1, p1), T0)?;
+    build_library(&mut src, p1)?;
+    let json = dir.path().join("lib.json");
+    transfer::export(&src, p1, &json, Format::Json)?;
+    let abbreviations: Vec<String> = src
+        .load_library()?
+        .snippets
+        .iter()
+        .map(|s| s.abbreviation.as_str().to_owned())
+        .collect();
+
+    // The target already uses every abbreviation of the file, in another folder.
+    let mut dst = Store::open_in_memory()?;
+    dst.put_profile(&profile(p2, p2), T0)?;
+    let mut next = ids_from(20_000);
+    let pre = put_folder(&mut dst, &mut next, p2, None, "Pre", None)?;
+    for abbr in &abbreviations {
+        let snippet = Snippet::new_defaults(
+            SyncMeta::new(next(), T0),
+            pre,
+            Abbreviation::new(abbr)?,
+            "Existing",
+            "existing",
+            None,
+        );
+        dst.put_snippet(&snippet, T0)?;
+    }
+    let before = dst.load_library()?;
+    let summary = transfer::import(
+        &mut dst,
+        p2,
+        &json,
+        Format::Json,
+        T0,
+        &mut next,
+        OnConflict::Skip,
+    )?;
+    assert_eq!(
+        summary,
+        ImportSummary {
+            folders_created: 0,
+            snippets_imported: 0,
+            snippets_skipped: 50,
+            tags_created: 0,
+        }
+    );
+    assert_eq!(
+        dst.load_library()?,
+        before,
+        "a fully skipped import writes nothing"
+    );
+    Ok(())
+}
+
+/// Finding 11: names with separators, backslashes and surrounding spaces survive a CSV round
+/// trip, and export no longer fails on them.
+#[test]
+fn csv_round_trip_with_separators_in_names() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let (p1, p2) = (id(900), id(901));
+    let mut src = Store::open_in_memory()?;
+    src.put_profile(&profile(p1, p1), T0)?;
+    let mut next = ids_from(0);
+    let names = [
+        "R / D",
+        "ends with /",
+        " padded ",
+        "C:\\dir\\",
+        "TCP/IP",
+        "/ / /",
+        "back \\/ slash",
+    ];
+    let top = put_folder(&mut src, &mut next, p1, None, "Top / level", None)?;
+    let mut folders = vec![top];
+    for name in names {
+        folders.push(put_folder(&mut src, &mut next, p1, Some(top), name, None)?);
+    }
+    let tag_names = [
+        "a;b",
+        ";",
+        " spaced ",
+        "back\\slash",
+        "ends\\",
+        "x\\;y",
+        "plain",
+    ];
+    let mut tags = Vec::new();
+    for name in tag_names {
+        let tag_id = next();
+        let tag = Tag {
+            meta: SyncMeta::new(tag_id, T0),
+            profile_id: p1,
+            name: name.to_owned(),
+            color: None,
+        };
+        src.put_tag(&tag, T0)?;
+        tags.push(tag_id);
+    }
+    for (i, folder) in folders.iter().enumerate() {
+        let snippet_id = next();
+        let snippet = Snippet::new_defaults(
+            SyncMeta::new(snippet_id, T0),
+            *folder,
+            Abbreviation::new(&format!("s{i}"))?,
+            "",
+            "body",
+            None,
+        );
+        src.put_snippet(&snippet, T0)?;
+        // Every snippet carries all the awkward tags.
+        for tag in &tags {
+            let link = SnippetTag {
+                meta: SyncMeta::new(next(), T0),
+                snippet_id,
+                tag_id: *tag,
+            };
+            src.put_snippet_tag(&link, T0)?;
+        }
+    }
+
+    let first = dir.path().join("first.csv");
+    transfer::export(&src, p1, &first, Format::Csv)?;
+    let text = fs::read_to_string(&first)?;
+    assert!(text.contains("Top \\/ level / R \\/ D"), "{text}");
+
+    let mut dst = Store::open_in_memory()?;
+    dst.put_profile(&profile(p2, p2), T0)?;
+    let summary = transfer::import(
+        &mut dst,
+        p2,
+        &first,
+        Format::Csv,
+        T0,
+        &mut ids_from(10_000),
+        OnConflict::Fail,
+    )?;
+    assert_eq!(summary.snippets_imported, folders.len());
+    assert_eq!(summary.tags_created, tag_names.len());
+    assert_eq!(summary.folders_created, folders.len());
+
+    let lib = dst.load_library()?;
+    let mut got: Vec<&str> = lib.folders.iter().map(|f| f.name.as_str()).collect();
+    got.sort_unstable();
+    let mut want: Vec<&str> = names.to_vec();
+    want.push("Top / level");
+    want.sort_unstable();
+    assert_eq!(got, want);
+    let mut got: Vec<&str> = lib.tags.iter().map(|t| t.name.as_str()).collect();
+    got.sort_unstable();
+    let mut want: Vec<&str> = tag_names.to_vec();
+    want.sort_unstable();
+    assert_eq!(got, want);
+
+    let second = dir.path().join("second.csv");
+    transfer::export(&dst, p2, &second, Format::Csv)?;
+    assert_eq!(fs::read(&first)?, fs::read(&second)?);
+    Ok(())
+}
+
+/// Hand-made CSV files with a backslash that is not an escape keep it.
+#[test]
+fn csv_import_keeps_backslashes_that_are_not_escapes() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let p = id(900);
+    let mut store = Store::open_in_memory()?;
+    store.put_profile(&profile(p, p), T0)?;
+    let path = dir.path().join("hand.csv");
+    fs::write(
+        &path,
+        format!("{CSV_HEADER}\nhp,,body,C:\\temp / Sub,a\\b;c,,,,,\n"),
+    )?;
+    transfer::import(
+        &mut store,
+        p,
+        &path,
+        Format::Csv,
+        T0,
+        &mut ids_from(10),
+        OnConflict::Fail,
+    )?;
+    let lib = store.load_library()?;
+    let mut folders: Vec<&str> = lib.folders.iter().map(|f| f.name.as_str()).collect();
+    folders.sort_unstable();
+    assert_eq!(folders, ["C:\\temp", "Sub"]);
+    let mut tags: Vec<&str> = lib.tags.iter().map(|t| t.name.as_str()).collect();
+    tags.sort_unstable();
+    assert_eq!(tags, ["a\\b", "c"]);
+    Ok(())
+}

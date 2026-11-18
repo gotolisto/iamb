@@ -25,10 +25,9 @@ pub fn run(data_dir: &Path, args: &ExpandArgs) -> Result<ExitCode, CliError> {
     };
     let mut values = FormValues::new();
     for f in &args.field {
+        // The argument may hold user text, so it is never echoed.
         let Some((name, value)) = f.split_once('=') else {
-            return Err(CliError::new(format!(
-                "invalid --field {f:?}: use NAME=VALUE"
-            )));
+            return Err(CliError::new("invalid --field value, expected NAME=VALUE"));
         };
         values.insert(name, value);
     }

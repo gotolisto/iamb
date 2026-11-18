@@ -1,4 +1,6 @@
-//! Delivery KPI: 10,000 snippets load in under 100 ms (task 1.5).
+//! Delivery KPI: 10,000 snippets load in under 100 ms (task 1.5), measured as the test strategy
+//! defines it: open the store, load the library and build the engine snapshot, p95 of 30 runs.
+//! The limit is 100 ms in release builds and a generous 5 s in debug builds.
 //!
 //! Run the release figure with `cargo test -p iamb-store --release --locked load`.
 
@@ -8,15 +10,16 @@ use std::io::Write;
 use std::time::{Duration, Instant};
 
 use common::{Ids, T0, TestResult, folder, profile, snippet, snippet_tag, tag, temp_dir};
+use iamb_core::engine::{EngineSettings, Snapshot};
 use iamb_store::Store;
 
 const SNIPPETS: usize = 10_000;
 const FOLDERS: usize = 50;
 const TAGS: usize = 20;
-const RUNS: usize = 5;
+const RUNS: usize = 30;
 
 #[test]
-fn load_10000_snippets() -> TestResult {
+fn open_load_and_build_10000_snippets() -> TestResult {
     let root = temp_dir();
     {
         let mut store = Store::open(root.path())?;
@@ -51,21 +54,29 @@ fn load_10000_snippets() -> TestResult {
         })?;
     }
 
-    // Open as the worker would, then time the read.
-    let store = Store::open(root.path())?;
-    let mut best = Duration::MAX;
+    // The KPI as docs/test-strategy.md defines it: open the store, read everything, build the
+    // engine snapshot from the loaded snippets in a stable order. 30 runs, p95.
+    let mut times = Vec::with_capacity(RUNS);
     for _ in 0..RUNS {
         let started = Instant::now();
+        let store = Store::open(root.path())?;
         let lib = store.load_library()?;
+        let mut snippets = lib.snippets;
+        snippets.sort_by_key(|s| (s.meta.created_at, s.meta.id));
+        let snapshot = Snapshot::build(snippets, EngineSettings::default());
         let took = started.elapsed();
-        best = best.min(took);
-        assert_eq!(lib.snippets.len(), SNIPPETS);
+        times.push(took);
+        assert_eq!(snapshot.len(), SNIPPETS);
+        assert!(snapshot.excluded().is_empty());
         assert_eq!(lib.folders.len(), FOLDERS);
         assert_eq!(lib.tags.len(), TAGS);
         assert_eq!(lib.snippet_tags.len(), SNIPPETS / 2);
     }
+    times.sort();
+    // Nearest-rank 95th percentile: the 29th of 30 sorted values.
+    let p95 = times[(RUNS * 95).div_ceil(100) - 1];
     let limit = if cfg!(debug_assertions) {
-        Duration::from_secs(1)
+        Duration::from_secs(5)
     } else {
         Duration::from_millis(100)
     };
@@ -76,10 +87,12 @@ fn load_10000_snippets() -> TestResult {
     };
     writeln!(
         std::io::stderr().lock(),
-        "load_library: {SNIPPETS} snippets in {FOLDERS} folders, best of {RUNS}: {:.2} ms ({profile}, limit {} ms)",
-        best.as_secs_f64() * 1000.0,
+        "store/load/{SNIPPETS} (open + load_library + Snapshot::build): {SNIPPETS} snippets in {FOLDERS} folders, {RUNS} runs: p50 {:.2} ms, p95 {:.2} ms, max {:.2} ms ({profile}, limit {} ms)",
+        times[RUNS / 2].as_secs_f64() * 1000.0,
+        p95.as_secs_f64() * 1000.0,
+        times[RUNS - 1].as_secs_f64() * 1000.0,
         limit.as_millis()
     )?;
-    assert!(best < limit, "load_library took {best:?}, limit {limit:?}");
+    assert!(p95 < limit, "p95 was {p95:?}, limit {limit:?}");
     Ok(())
 }

@@ -301,7 +301,10 @@ impl Store {
     /// (architecture §6.3: the worker waits 5 s, the command-line tool 3 s).
     ///
     /// Creates `data_dir` and `data_dir/run/` if missing, opens `library.db` in WAL mode with
-    /// foreign keys on, and applies pending migrations.
+    /// foreign keys on, and applies pending migrations. On Unix, directories it creates get mode
+    /// `0700` and `library.db` (so also its WAL and shared-memory files) and the lock file mode
+    /// `0600`, so other users of the machine cannot read the library (architecture §8). On
+    /// Windows the default per-user ACL of the parent applies.
     ///
     /// # Errors
     ///
@@ -309,10 +312,14 @@ impl Store {
     /// [`StoreError::SchemaTooNew`]; I/O and `SQLite` errors.
     pub fn open_with_timeout(data_dir: &Path, timeout: Duration) -> Result<Self, StoreError> {
         let run = data_dir.join("run");
-        fs::create_dir_all(&run)?;
+        create_private_dirs(&run)?;
         let lock_path = run.join("store.lock");
         let lock = take_lock(&lock_path, timeout)?;
-        let conn = Connection::open(data_dir.join(LIBRARY_FILE))?;
+        let db_path = data_dir.join(LIBRARY_FILE);
+        // Create the file first so it gets mode 0600 on Unix; SQLite gives its `-wal` and
+        // `-shm` files the mode of the database file.
+        create_private_file(&db_path)?;
+        let conn = Connection::open(db_path)?;
         let mode: String =
             conn.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get(0))?;
         if !mode.eq_ignore_ascii_case("wal") {
@@ -342,6 +349,13 @@ impl Store {
         // update per expansion, on the store thread and off the typing path), so the extra
         // fsync costs nothing the user can notice; reads, including `load_library`, are
         // unaffected.
+        //
+        // On macOS a plain fsync does not make the drive flush its cache, so FULL alone does
+        // not survive power loss there. `fullfsync` and `checkpoint_fullfsync` make SQLite use
+        // `F_FULLFSYNC` for commits and checkpoints. The SQLite documentation says both pragmas
+        // only have an effect on macOS, so they are set on every platform.
+        conn.pragma_update(None, "fullfsync", "ON")?;
+        conn.pragma_update(None, "checkpoint_fullfsync", "ON")?;
         conn.pragma_update(None, "synchronous", "FULL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.busy_timeout(BUSY_TIMEOUT)?;
@@ -831,13 +845,39 @@ fn exclusion_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<AppExclusion> {
 }
 
 /// Opens (creating) the lock file and takes an exclusive lock on it, retrying until `timeout`.
+/// Creates `path` and missing parents. On Unix the new directories get mode `0700`.
+fn create_private_dirs(path: &Path) -> std::io::Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(path)
+}
+
+/// Makes sure the file exists. On Unix a new file gets mode `0600`; an existing one is kept.
+fn create_private_file(path: &Path) -> std::io::Result<()> {
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path).map(drop)
+}
+
 fn take_lock(path: &Path, timeout: Duration) -> Result<File, StoreError> {
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(path)?;
+    let mut file = OpenOptions::new();
+    file.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        file.mode(0o600);
+    }
+    let file = file.open(path)?;
     let deadline = Instant::now() + timeout;
     loop {
         match file.try_lock() {

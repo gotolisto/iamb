@@ -2,8 +2,9 @@
 
 use std::collections::BTreeMap;
 
+use iamb_core::model::Timestamp;
 use iamb_core::model::{Folder, Id};
-use iamb_store::ListOptions;
+use iamb_store::{ListOptions, StoreError, WriteTx};
 
 use crate::error::CliError;
 use crate::session::{Session, new_folder};
@@ -13,7 +14,7 @@ pub const SEP: &str = " / ";
 
 /// Splits and validates a user-typed folder path.
 pub fn parse_path(text: &str) -> Result<Vec<String>, CliError> {
-    let parts: Vec<String> = text.split('/').map(|s| s.trim().to_owned()).collect();
+    let parts: Vec<String> = text.split(SEP).map(|s| s.trim().to_owned()).collect();
     if parts.iter().any(String::is_empty) {
         return Err(CliError::new(format!(
             "invalid folder path {text:?}: use names separated by \" / \""
@@ -47,9 +48,34 @@ pub fn path_of(map: &BTreeMap<Id, Folder>, id: Id) -> String {
     names.join(SEP)
 }
 
-/// Finds the folder at `path`, creating missing levels. Returns its id.
-pub fn ensure_path(s: &mut Session, path: &[String]) -> Result<Id, CliError> {
-    let mut map = folder_map(s)?;
+/// The id of the folder at `path` if every level exists.
+pub fn find_path(map: &BTreeMap<Id, Folder>, path: &[String]) -> Option<Id> {
+    let mut parent: Option<Id> = None;
+    for name in path {
+        parent = Some(
+            map.values()
+                .find(|f| f.parent_id == parent && &f.name == name)?
+                .meta
+                .id,
+        );
+    }
+    parent
+}
+
+/// Finds the folder at `path`, creating missing levels inside the transaction `w`, so that a
+/// later failure in the same transaction leaves no new folders. Returns its id.
+pub fn ensure_path(
+    w: &mut WriteTx<'_>,
+    profile: Id,
+    now: Timestamp,
+    path: &[String],
+) -> Result<Id, StoreError> {
+    let mut map: BTreeMap<Id, Folder> = w
+        .list::<Folder>(ListOptions::LIVE)?
+        .into_iter()
+        .filter(|f| f.profile_id == profile)
+        .map(|f| (f.meta.id, f))
+        .collect();
     let mut parent: Option<Id> = None;
     for name in path {
         let found = map
@@ -61,13 +87,13 @@ pub fn ensure_path(s: &mut Session, path: &[String]) -> Result<Id, CliError> {
         } else {
             let position = i64::try_from(map.values().filter(|f| f.parent_id == parent).count())
                 .unwrap_or(i64::MAX);
-            let folder = new_folder(s.profile, parent, name, position, s.now);
-            s.store.put_folder(&folder, s.now)?;
+            let folder = new_folder(profile, parent, name, position, now);
+            w.put(&folder, now)?;
             let id = folder.meta.id;
             map.insert(id, folder);
             id
         };
         parent = Some(id);
     }
-    parent.ok_or_else(|| CliError::new("empty folder path"))
+    parent.ok_or_else(|| StoreError::InvalidData("empty folder path".to_owned()))
 }

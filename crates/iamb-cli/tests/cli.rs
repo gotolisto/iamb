@@ -378,21 +378,49 @@ fn env_var_is_used_without_flag() {
         .arg("list")
         .output()
         .unwrap();
+    assert!(
+        out.status.success(),
+        "list failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(!String::from_utf8_lossy(&out.stdout).contains("viaenv"));
+    // The command really ran against the directory from the flag.
+    assert!(other.path().join("library.db").exists());
+}
+
+/// The time `iamb list` takes in `dir`, process start included.
+fn timed_list(dir: &Path) -> (Output, Duration) {
+    let start = Instant::now();
+    let out = run(dir, &["list"]);
+    (out, start.elapsed())
 }
 
 #[test]
-fn held_lock_gives_try_again() {
+fn held_lock_gives_try_again_after_the_documented_wait() {
     let d = TempDir::new().unwrap();
     let _held = iamb_store::Store::open(d.path()).unwrap();
-    let start = Instant::now();
-    let err = fail(d.path(), &["list"]);
+    // What one run costs without the wait (process start, opening, first-use setup), so that
+    // the wait itself can be measured: total time minus this baseline.
+    let free = TempDir::new().unwrap();
+    let (baseline_out, baseline) = timed_list(free.path());
+    assert!(baseline_out.status.success());
+
+    let (out, total) = timed_list(d.path());
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8(out.stderr).unwrap();
     assert!(
-        start.elapsed() < Duration::from_secs(5),
-        "took {:?}",
-        start.elapsed()
+        err.starts_with("iamb: ") && err.contains("try again"),
+        "{err}"
     );
-    assert!(err.contains("try again"), "{err}");
+    let wait = total.saturating_sub(baseline);
+    assert!(
+        wait >= Duration::from_millis(2500),
+        "waited only {wait:?} (total {total:?}, baseline {baseline:?}): the 3 s wait is gone"
+    );
+    assert!(
+        wait <= Duration::from_millis(4500),
+        "waited {wait:?} (total {total:?}, baseline {baseline:?}): longer than 3 s"
+    );
 }
 
 fn expand(dir: &Path, args: &[&str]) -> Output {
@@ -445,10 +473,12 @@ fn expand_form_with_field_and_defaults() {
         "Hi Ada! \n"
     );
     assert_eq!(expand_ok(d.path(), &[";hi "]), "Hi Bob! \n");
-    assert_eq!(
-        expand(d.path(), &[";hi ", "--field", "oops"]).status.code(),
-        Some(1)
-    );
+    // An invalid --field is rejected without echoing it: it may hold user text.
+    let bad = expand(d.path(), &[";hi ", "--field", "my private text"]);
+    assert_eq!(bad.status.code(), Some(1));
+    let err = String::from_utf8(bad.stderr).unwrap();
+    assert_eq!(err, "iamb: invalid --field value, expected NAME=VALUE\n");
+    assert!(!err.contains("private"));
 }
 
 #[test]
@@ -501,4 +531,82 @@ fn expand_reports_template_error_code() {
             .unwrap()
             .contains("iamb: E_DATE_RANGE")
     );
+}
+
+#[test]
+fn folder_option_splits_on_space_slash_space_only() {
+    let d = TempDir::new().unwrap();
+    ok(d.path(), &["add", "ip1", "one", "--folder", "TCP/IP"]);
+    ok(
+        d.path(),
+        &["add", "ip2", "two", "--folder", "TCP/IP / Ports"],
+    );
+    // One folder named "TCP/IP", not "TCP" with a sub-folder "IP".
+    let json = ok(d.path(), &["list", "--json"]);
+    assert!(json.contains("\"folder\":\"TCP/IP\""), "{json}");
+    assert!(json.contains("\"folder\":\"TCP/IP / Ports\""), "{json}");
+    let exact = ok(d.path(), &["list", "--folder", "TCP/IP"]);
+    assert!(exact.contains("ip1") && exact.contains("ip2"), "{exact}");
+    let below = ok(d.path(), &["list", "--folder", "TCP/IP / Ports"]);
+    assert!(below.contains("ip2") && !below.contains("ip1"), "{below}");
+    let wrong = ok(d.path(), &["list", "--folder", "TCP"]);
+    assert!(!wrong.contains("ip1"), "{wrong}");
+    // A folder named like this survives a CSV round trip into another library.
+    let csv = d.path().join("lib.csv");
+    ok(d.path(), &["export", csv.to_str().unwrap()]);
+    let other = TempDir::new().unwrap();
+    ok(other.path(), &["import", csv.to_str().unwrap()]);
+    let again = ok(other.path(), &["list", "--json"]);
+    assert!(again.contains("\"folder\":\"TCP/IP\""), "{again}");
+}
+
+#[test]
+fn a_failed_add_leaves_no_new_folders() {
+    let d = TempDir::new().unwrap();
+    // Five levels are too deep: the first four must not be left behind.
+    let err = fail(
+        d.path(),
+        &[
+            "add",
+            "deep",
+            "body",
+            "--folder",
+            "Lvl1 / Lvl2 / Lvl3 / Lvl4 / Lvl5",
+        ],
+    );
+    assert!(err.contains("levels deep"), "{err}");
+    let json = d.path().join("lib.json");
+    ok(d.path(), &["export", json.to_str().unwrap()]);
+    let text = std::fs::read_to_string(&json).unwrap();
+    assert!(!text.contains("Lvl1"), "folders left behind: {text}");
+}
+
+#[test]
+fn add_applies_the_folder_prefix_before_the_conflict_check() {
+    // Make folder "P" carry the abbreviation prefix ";" by editing an exported file.
+    let src = TempDir::new().unwrap();
+    ok(src.path(), &["add", "zz", "zed", "--folder", "P"]);
+    let file = src.path().join("p.json");
+    ok(src.path(), &["export", file.to_str().unwrap()]);
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(text.contains("\"abbreviation_prefix\": null"), "{text}");
+    std::fs::write(
+        &file,
+        text.replace(
+            "\"abbreviation_prefix\": null",
+            "\"abbreviation_prefix\": \";\"",
+        ),
+    )
+    .unwrap();
+
+    let d = TempDir::new().unwrap();
+    ok(d.path(), &["add", "sig", "plain"]);
+    ok(d.path(), &["import", file.to_str().unwrap()]);
+    // ";sig" is free even though "sig" exists elsewhere.
+    ok(d.path(), &["add", "sig", "prefixed", "--folder", "P"]);
+    let list = ok(d.path(), &["list", "--folder", "P"]);
+    assert!(list.contains(";sig"), "{list}");
+    // The second one really conflicts, and the message names the prefixed abbreviation.
+    let err = fail(d.path(), &["add", "sig", "again", "--folder", "P"]);
+    assert!(err.contains("\";sig\""), "{err}");
 }
