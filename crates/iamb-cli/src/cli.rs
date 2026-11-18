@@ -44,6 +44,11 @@ pub enum Command {
     /// Export snippets to a JSON or CSV file.
     #[command(after_help = "Example:\n  iamb export library.csv --format csv")]
     Export(ExportArgs),
+    /// Dry-run: type text and print what the engine would produce.
+    #[command(
+        after_help = "Exit status: 0 if something expanded, 3 if nothing did, 1 on errors.\n\nExample:\n  iamb expand \"brb \"\n  iamb expand \";hi \" --field Name=Ada --now 2026-03-18T14:05:09 --show-cursor"
+    )]
+    Expand(ExpandArgs),
 }
 
 /// Trigger mode choices.
@@ -188,4 +193,27 @@ pub struct ExportArgs {
     /// File format (default: from the file extension).
     #[arg(long, value_enum)]
     pub format: Option<FormatArg>,
+}
+
+/// Arguments of `iamb expand`.
+#[derive(Debug, Args)]
+pub struct ExpandArgs {
+    /// The text to type, including the delimiter that fires a delimiter-mode snippet.
+    pub typed: String,
+    /// Fill-in value `NAME=VALUE` (repeatable); fields left out use their defaults.
+    #[arg(long, value_name = "NAME=VALUE")]
+    pub field: Vec<String>,
+    /// The clock, as `YYYY-MM-DDTHH:MM:SS` (default: the real time in UTC, since the local
+    /// offset is not available without extra dependencies).
+    #[arg(long, value_name = "DATETIME")]
+    pub now: Option<String>,
+    /// The clipboard text (default: empty clipboard).
+    #[arg(long, value_name = "TEXT")]
+    pub clipboard: Option<String>,
+    /// Show the caret as `|` in the output.
+    #[arg(long)]
+    pub show_cursor: bool,
+    /// Print the engine's actions, one per line, instead of the text.
+    #[arg(long)]
+    pub actions: bool,
 }

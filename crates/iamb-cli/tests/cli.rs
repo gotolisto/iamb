@@ -349,6 +349,7 @@ fn help_has_an_example_everywhere() {
         vec!["remove", "--help"],
         vec!["import", "--help"],
         vec!["export", "--help"],
+        vec!["expand", "--help"],
     ] {
         let out = run(d.path(), &args);
         assert!(out.status.success(), "{args:?}");
@@ -392,4 +393,112 @@ fn held_lock_gives_try_again() {
         start.elapsed()
     );
     assert!(err.contains("try again"), "{err}");
+}
+
+fn expand(dir: &Path, args: &[&str]) -> Output {
+    let mut all = vec!["expand"];
+    all.extend(args);
+    run(dir, &all)
+}
+
+fn expand_ok(dir: &Path, args: &[&str]) -> String {
+    let out = expand(dir, args);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).unwrap()
+}
+
+#[test]
+fn expand_plain_delimiter_and_immediate() {
+    let d = TempDir::new().unwrap();
+    ok(d.path(), &["add", "brb", "be right back"]);
+    ok(d.path(), &["add", "ty", "thanks", "--trigger", "immediate"]);
+    assert_eq!(expand_ok(d.path(), &["brb "]), "be right back \n");
+    assert_eq!(expand_ok(d.path(), &["say ty"]), "say thanks\n");
+    // A delimiter snippet waits for its delimiter.
+    assert_eq!(expand(d.path(), &["brb"]).status.code(), Some(3));
+}
+
+#[test]
+fn expand_date_macro_with_now() {
+    let d = TempDir::new().unwrap();
+    ok(d.path(), &["add", "dd", "{date fmt=\"%Y/%m/%d\"} {time}"]);
+    let out = expand_ok(d.path(), &["dd ", "--now", "2026-03-18T14:05:09"]);
+    assert_eq!(out, "2026/03/18 14:05 \n");
+    let bad = expand(d.path(), &["dd ", "--now", "yesterday"]);
+    assert_eq!(bad.status.code(), Some(1));
+}
+
+#[test]
+fn expand_form_with_field_and_defaults() {
+    let d = TempDir::new().unwrap();
+    ok(
+        d.path(),
+        &["add", ";hi", "Hi {field name=Name default=Bob}!"],
+    );
+    assert_eq!(
+        expand_ok(d.path(), &[";hi ", "--field", "Name=Ada"]),
+        "Hi Ada! \n"
+    );
+    assert_eq!(expand_ok(d.path(), &[";hi "]), "Hi Bob! \n");
+    assert_eq!(
+        expand(d.path(), &[";hi ", "--field", "oops"]).status.code(),
+        Some(1)
+    );
+}
+
+#[test]
+fn expand_clipboard() {
+    let d = TempDir::new().unwrap();
+    ok(d.path(), &["add", "cb", "[{clipboard}]"]);
+    assert_eq!(
+        expand_ok(d.path(), &["cb ", "--clipboard", "pasted"]),
+        "[pasted] \n"
+    );
+}
+
+#[test]
+fn expand_show_cursor_and_actions() {
+    let d = TempDir::new().unwrap();
+    ok(d.path(), &["add", "cur", "a{cursor}b"]);
+    ok(d.path(), &["add", "brb", "be right back"]);
+    assert_eq!(expand_ok(d.path(), &["cur ", "--show-cursor"]), "a|b\n");
+    assert_eq!(expand_ok(d.path(), &["cur "]), "ab\n");
+    let actions = expand_ok(d.path(), &["brb ", "--actions"]);
+    let lines: Vec<&str> = actions.lines().collect();
+    assert_eq!(lines[0], "delete-back 4");
+    assert_eq!(lines[1], "type-text \"be right back\"");
+    assert_eq!(lines[2], "type-text \" \"");
+    assert!(lines[3].starts_with("expanded "), "{actions}");
+}
+
+#[test]
+fn expand_nothing_exits_3() {
+    let d = TempDir::new().unwrap();
+    ok(d.path(), &["add", "brb", "be right back"]);
+    let out = expand(d.path(), &["hello "]);
+    assert_eq!(out.status.code(), Some(3));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "hello \n");
+}
+
+#[test]
+fn expand_reports_template_error_code() {
+    let d = TempDir::new().unwrap();
+    ok(d.path(), &["add", "bad", "{date fmt=\"%Q\"}"]);
+    ok(d.path(), &["add", "far", "{date shift=\"+9000y\"}"]);
+    let out = expand(d.path(), &["bad "]);
+    assert_eq!(out.status.code(), Some(3));
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert_eq!(err.trim(), "iamb: E_BAD_FORMAT");
+    let out = expand(d.path(), &["far "]);
+    assert_eq!(out.status.code(), Some(3));
+    assert!(
+        String::from_utf8(out.stderr)
+            .unwrap()
+            .contains("iamb: E_DATE_RANGE")
+    );
 }
