@@ -1,6 +1,6 @@
 # ADR-0017: Tauri 2 UI host: always resident, pre-warmed panels, preview through the service
 
-Status: proposed (awaiting owner approval)
+Status: accepted (approved by the owner on 2026-11-18)
 
 **Context.** The stack is fixed as Tauri 2 with React and TypeScript. The fill-in form must appear within 150 ms and the palette within 100 ms, which a cold web view cannot do. The editor needs the template parser and the whole library for live preview.
 

@@ -1,6 +1,6 @@
 # ADR-0004: The engine is a state machine: events in, actions out
 
-Status: proposed (awaiting owner approval)
+Status: accepted (approved by the owner on 2026-11-18)
 
 **Context.** Keyboard hooks, injection and forms differ on every platform, but the decision "what should happen for this keystroke" should not.
 

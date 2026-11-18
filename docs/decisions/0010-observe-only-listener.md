@@ -1,6 +1,6 @@
 # ADR-0010: The listener observes keys and never blocks or swallows them
 
-Status: proposed (awaiting owner approval)
+Status: accepted (approved by the owner on 2026-11-18)
 
 **Context.** A slow or crashed keyboard hook makes the whole computer feel broken, and operating systems remove hooks that respond slowly.
 

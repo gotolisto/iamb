@@ -1,6 +1,6 @@
 # ADR-0008: The service has no network code, checked four ways in CI
 
-Status: proposed (awaiting owner approval)
+Status: accepted (approved by the owner on 2026-11-18)
 
 **Context.** The product promise is that typed keys never leave the machine. A promise is stronger when it can be checked mechanically, and a crate deny list alone is not enough: the standard library and the Windows bindings both contain network APIs.
 

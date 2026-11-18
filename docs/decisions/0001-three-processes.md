@@ -1,6 +1,6 @@
 # ADR-0001: Three processes: service, UI host, sync agent
 
-Status: proposed (awaiting owner approval)
+Status: accepted (approved by the owner on 2026-11-18)
 
 **Context.** Expansion must keep working whatever the UI does, typed keys must never reach the network, and the service must idle under 20 MB.
 

@@ -1,6 +1,6 @@
 # ADR-0009: The service uses threads and channels, not an async runtime
 
-Status: proposed (awaiting owner approval)
+Status: accepted (approved by the owner on 2026-11-18)
 
 **Context.** The service handles one key at a time and a handful of local clients. It must idle near zero CPU and stay small.
 

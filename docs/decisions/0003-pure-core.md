@@ -1,6 +1,6 @@
 # ADR-0003: `iamb-core` is pure: no I/O, clock, threads or OS calls
 
-Status: proposed (awaiting owner approval)
+Status: accepted (approved by the owner on 2026-11-18)
 
 **Context.** The same engine must run in the desktop service, the command-line tool and the mobile keyboards, and its behaviour must be testable to the last character.
 

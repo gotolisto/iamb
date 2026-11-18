@@ -1,6 +1,6 @@
 # ADR-0020: The sync agent serves its own endpoint; sign-in happens in the browser
 
-Status: proposed (awaiting owner approval)
+Status: accepted (approved by the owner on 2026-11-18)
 
 **Context.** The UI must sign in, manage profiles and shares, and show sync state, but credentials must never pass through the process that sees keystrokes, and ideally not through the web view either.
 

@@ -1,6 +1,6 @@
 # ADR-0014: Profiles own folders; folders are shared to group profiles
 
-Status: proposed (awaiting owner approval)
+Status: accepted (approved by the owner on 2026-11-18)
 
 **Context.** Accounts are individual. Families and companies share selected folders, not whole libraries, and a company must be able to own content that outlives a member's departure. The model must work offline and sync row by row.
 

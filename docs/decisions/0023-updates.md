@@ -1,6 +1,6 @@
 # ADR-0023: The UI host applies updates; the supervisor stops and restarts the worker around them
 
-Status: proposed (awaiting owner approval)
+Status: accepted (approved by the owner on 2026-11-18)
 
 **Context.** The service has no network code, so it cannot fetch its own updates, and its binary cannot be replaced while it runs on Windows.
 

@@ -1,6 +1,6 @@
 # ADR-0012: Typed text lives only in a 64-character in-memory buffer; entered values are never stored
 
-Status: proposed (awaiting owner approval)
+Status: accepted (approved by the owner on 2026-11-18)
 
 **Context.** The privacy KPI is zero typed keys on disk, in logs or on the network. Form values, clipboard content and palette queries are also the user's words and deserve the same care.
 

@@ -1,4 +1,11 @@
 //! Pure engine: data model, matcher, template language, date math. No I/O, no OS code.
+//!
+//! See `docs/architecture.md` §4 for how the pieces fit together.
+
+pub mod datetime;
+pub mod matcher;
+pub mod model;
+pub mod template;
 
 /// Version of the `iamb-core` crate, taken from the workspace package version.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

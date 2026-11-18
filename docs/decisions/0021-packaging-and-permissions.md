@@ -1,6 +1,6 @@
 # ADR-0021: The macOS service is a signed helper app; permissions are checked in the worker
 
-Status: proposed (awaiting owner approval)
+Status: accepted (approved by the owner on 2026-11-18)
 
 **Context.** macOS grants Accessibility and Input Monitoring to the specific signed program that creates the event tap, and drops grants when that identity changes. Onboarding must show the true permission state.
 

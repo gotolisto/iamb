@@ -1,6 +1,6 @@
 # ADR-0011: A supervisor process restarts crashed and stuck workers
 
-Status: proposed (awaiting owner approval)
+Status: accepted (approved by the owner on 2026-11-18)
 
 **Context.** The service must restart in under 2 seconds after a crash on both systems. The login-item mechanisms differ and the Windows scheduler cannot restart that fast. A worker can also be alive but useless: a deadlocked thread, or a hook the OS removed silently.
 

@@ -1,6 +1,6 @@
 # ADR-0018: Rich snippets are Markdown plus attachments, rendered in the core
 
-Status: proposed (awaiting owner approval)
+Status: accepted (approved by the owner on 2026-11-18)
 
 **Context.** About 10% of snippets carry formatting, images or media, and must paste well into mail and document apps and fall back to plain text elsewhere. Rich content from other people must not be able to inject active content.
 

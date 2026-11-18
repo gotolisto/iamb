@@ -1,6 +1,6 @@
 # ADR-0007: SQLite in WAL mode; one writer, guarded by a lock file
 
-Status: proposed (awaiting owner approval)
+Status: accepted (approved by the owner on 2026-11-18)
 
 **Context.** A library is at most tens of thousands of small rows, must survive a kill during a write, and must load in under 100 ms.
 
