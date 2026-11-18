@@ -1,0 +1,10 @@
+{
+  "body": {
+    "query": {
+      "folder": "02020202-0202-0202-0202-020202020202"
+    },
+    "type": "list_snippets"
+  },
+  "id": 2,
+  "kind": "request"
+}

@@ -1,0 +1,10 @@
+{
+  "body": {
+    "entitlements": {
+      "shared_folders": "10"
+    },
+    "type": "set_entitlements"
+  },
+  "id": 40,
+  "kind": "request"
+}

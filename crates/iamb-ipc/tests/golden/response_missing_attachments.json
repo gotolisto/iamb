@@ -1,0 +1,13 @@
+{
+  "id": 21,
+  "kind": "response",
+  "result": {
+    "attachments": [
+      {
+        "profile": "09090909-0909-0909-0909-090909090909",
+        "sha256": "abababababababababababababababababababababababababababababababab"
+      }
+    ],
+    "type": "missing_attachments"
+  }
+}

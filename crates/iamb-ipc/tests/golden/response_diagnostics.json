@@ -1,0 +1,15 @@
+{
+  "id": 16,
+  "kind": "response",
+  "result": {
+    "entries": [
+      {
+        "at": 1763400000500,
+        "code": "injection_cancelled",
+        "expansion": 7,
+        "snippet": "01010101-0101-0101-0101-010101010101"
+      }
+    ],
+    "type": "diagnostics"
+  }
+}

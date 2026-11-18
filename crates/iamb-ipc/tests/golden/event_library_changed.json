@@ -1,0 +1,7 @@
+{
+  "body": {
+    "revision": 4
+  },
+  "kind": "event",
+  "topic": "library_changed"
+}

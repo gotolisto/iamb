@@ -1,0 +1,113 @@
+{
+  "folders": [
+    {
+      "created_at": 1795012934533,
+      "defaults": {
+        "abbreviation_prefix": null,
+        "case_mode": null,
+        "trigger": null
+      },
+      "deleted_at": null,
+      "id": "01a1ef1b-0000-7000-8000-f00000000001",
+      "member_permission": null,
+      "name": "Compatibility",
+      "parent_id": null,
+      "position": 0,
+      "profile_id": "01a1ef1b-0000-7000-8000-a00000000001",
+      "rev": 0,
+      "updated_at": 1795012934533,
+      "updated_by": null
+    }
+  ],
+  "format": "iamb-library",
+  "snippet_tags": [],
+  "snippets": [
+    {
+      "abbreviation": ";cpt1",
+      "body": "Kind regards, the Iamb team",
+      "case_mode": "exact",
+      "created_at": 1795012934533,
+      "deleted_at": null,
+      "enabled": true,
+      "folder_id": "01a1ef1b-0000-7000-8000-f00000000001",
+      "id": "01a1ef1b-0000-7000-8000-500000000001",
+      "kind": "plain",
+      "label": "Compatibility T1 short plain",
+      "rev": 0,
+      "trigger": "immediate",
+      "updated_at": 1795012934533,
+      "updated_by": null,
+      "word_start": false
+    },
+    {
+      "abbreviation": ";cpt2",
+      "body": "Line one of the compatibility sample, written in plain ASCII.\nLine two has commas, numbers like 42 and 2026, and (brackets).\nLine three holds \"quotes\" and an apostrophe: it's fine here.\nLine four is the middle of the sample and nothing special.\nLine five exists so the lines differ a little in length.\nLine six: the quick brown fox jumps over the lazy dog.\nLine seven is nearly the end of this text block, and one more line follows it.\nLine eight ends the sample with a final sentence of plain prose.",
+      "case_mode": "exact",
+      "created_at": 1795012934533,
+      "deleted_at": null,
+      "enabled": true,
+      "folder_id": "01a1ef1b-0000-7000-8000-f00000000001",
+      "id": "01a1ef1b-0000-7000-8000-500000000002",
+      "kind": "plain",
+      "label": "Compatibility T2 long plain",
+      "rev": 0,
+      "trigger": "immediate",
+      "updated_at": 1795012934533,
+      "updated_by": null,
+      "word_start": false
+    },
+    {
+      "abbreviation": ";cpt3",
+      "body": "Caf\u00e9 d\u00e9j\u00e0 vu \u2014 na\u00efve fa\u00e7ade, \u00c6r\u00f8sk\u00f8bing, \u65e5\u672c\u8a9e, \ud83d\udc4b\ud83c\udffd \ud83d\udc69\u200d\ud83d\udcbb \u2705",
+      "case_mode": "exact",
+      "created_at": 1795012934533,
+      "deleted_at": null,
+      "enabled": true,
+      "folder_id": "01a1ef1b-0000-7000-8000-f00000000001",
+      "id": "01a1ef1b-0000-7000-8000-500000000003",
+      "kind": "plain",
+      "label": "Compatibility T3 unicode",
+      "rev": 0,
+      "trigger": "immediate",
+      "updated_at": 1795012934533,
+      "updated_by": null,
+      "word_start": false
+    },
+    {
+      "abbreviation": ";cpt4",
+      "body": "Report for {date fmt=\"%Y-%m-%d\"}: {cursor} - done",
+      "case_mode": "exact",
+      "created_at": 1795012934533,
+      "deleted_at": null,
+      "enabled": true,
+      "folder_id": "01a1ef1b-0000-7000-8000-f00000000001",
+      "id": "01a1ef1b-0000-7000-8000-500000000004",
+      "kind": "plain",
+      "label": "Compatibility T4 template",
+      "rev": 0,
+      "trigger": "immediate",
+      "updated_at": 1795012934533,
+      "updated_by": null,
+      "word_start": false
+    },
+    {
+      "abbreviation": ";cpt5",
+      "body": "Release **bold** note with a [link](https://example.org/iamb).",
+      "case_mode": "exact",
+      "created_at": 1795012934533,
+      "deleted_at": null,
+      "enabled": true,
+      "folder_id": "01a1ef1b-0000-7000-8000-f00000000001",
+      "id": "01a1ef1b-0000-7000-8000-500000000005",
+      "kind": "rich",
+      "label": "Compatibility T5 rich",
+      "rev": 0,
+      "trigger": "immediate",
+      "updated_at": 1795012934533,
+      "updated_by": null,
+      "word_start": false
+    }
+  ],
+  "tags": [],
+  "version": 1
+}

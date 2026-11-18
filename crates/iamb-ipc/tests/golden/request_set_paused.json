@@ -1,0 +1,8 @@
+{
+  "body": {
+    "paused": true,
+    "type": "set_paused"
+  },
+  "id": 16,
+  "kind": "request"
+}

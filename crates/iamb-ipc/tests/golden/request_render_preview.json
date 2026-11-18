@@ -1,0 +1,11 @@
+{
+  "body": {
+    "source": "Hi {field name=Name}",
+    "type": "render_preview",
+    "values": {
+      "Name": "Ada"
+    }
+  },
+  "id": 27,
+  "kind": "request"
+}

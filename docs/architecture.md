@@ -27,13 +27,13 @@ All Rust crates live in one Cargo workspace under `crates/`, all named `iamb-*`
 | --- | --- | --- | --- | --- |
 | `iamb-core` | library | — | Data model, matcher, template parser and renderer, date math, Markdown rendering, fuzzy search, engine pipeline (events in, actions out) | I/O, clocks, threads, OS calls, `unsafe` |
 | `iamb-store` | library | core | SQLite schema and migrations, queries, usage statistics, sync outbox, attachment index, JSON and CSV import and export, library health | Network code, OS keyboard code |
-| `iamb-ipc` | library | core | Message types, framing, blocking local transport (Unix socket, Windows named pipe), peer verification, client and server helpers | Business logic, async code, network code |
-| `iamb-platform` | library | core | Traits `KeyListener`, `Injector`, `FocusInspector`, `ClipboardAccess`, `Hotkeys`, `Permissions`, `LoginItem`, `MemoryLock`; shared event types; an in-memory mock used by tests on every OS | OS calls |
+| `iamb-ipc` | library | core, platform (+os for the native endpoint) | Message types, framing, blocking local transport (Unix socket, Windows named pipe), peer verification, client and server helpers | Business logic, async code, network code |
+| `iamb-platform` | library | core | Traits `KeyListener`, `Injector`, `FocusInspector`, `ClipboardAccess`, `Hotkeys`, `Permissions`, `LoginItem`, `MemoryLock`, `LocalEndpoint`; the listener's event type, injection steps, markers and the typed-characters hand-off; an in-memory mock used by tests on every OS | OS calls |
 | `iamb-platform-windows` | library | platform | Windows implementations of the platform traits | Anything not behind the traits |
 | `iamb-platform-macos` | library | platform | macOS implementations of the platform traits | Anything not behind the traits |
 | `iamb-service` | binary | core, store, ipc, platform(+os) | The background service: listener → engine → injector, owns the store, serves IPC, supervises | Network code of any kind |
 | `iamb-sync` | library + thin binary | core, ipc | Sync agent: account session, push, pull, live updates, media transfer, account endpoint | Access to key events |
-| `iamb-cli` | binary `iamb` | core, store, ipc | Command-line tool: add, list, remove, import, dry-run expand | — |
+| `iamb-cli` | binary `iamb` | core, store, ipc, platform | Command-line tool: add, list, remove, import, dry-run expand | — |
 | `iamb-desktop` | binary | ipc, platform(+os) | Tauri shell (`apps/desktop/src-tauri`): tray icon, windows, focus hand-back, bridges UI commands to `iamb-ipc` | Engine or store logic |
 | `iamb-testkit` | library (dev) | core, platform | Scripted typing sessions, fake clock, fixture libraries, the spec example loader, compatibility harness | — |
 | `iamb-bench` | benches (dev) | core, store | Benchmark harness for the product KPIs | — |
@@ -89,6 +89,10 @@ The snapshot is immutable and shared through an atomically swapped pointer. It h
 set, the reference set (§4.4), the search index and the engine settings (delimiters, date and time
 formats, locale, excluded apps). Usage-statistics writes and sync bookkeeping do not produce a new
 snapshot.
+
+On macOS the worker's main thread runs the application event loop, because the listener's
+keyboard-layout reads and the hotkey registrations must happen on the main thread and hotkey
+presses are dispatched by that loop; the threads above run beside it.
 
 The listener is observe-only: it never blocks, delays or swallows a key
 ([ADR-0010](decisions/0010-observe-only-listener.md)). Work in the hook callback is bounded:
@@ -177,7 +181,7 @@ Rules for the listener that the events rely on:
 The buffer lives only in memory, holds at most 66 characters (the 64-character maximum abbreviation,
 the character before it for the word-start rule, and one delimiter), is held in a page locked
 against swapping (the engine keeps the buffer in its own heap allocation and exposes that
-allocation's address range so the service can lock it; task 2.6 adds the accessor), and is
+allocation's address range, `Engine::buffer_region()`, so the service can lock it), and is
 overwritten with zeros when cleared. While the
 engine is suspended, `Char` events are dropped without being stored
 ([ADR-0012](decisions/0012-keystroke-privacy.md)). After a focus change the engine stays suspended
@@ -327,13 +331,21 @@ The protocol between the engine and the injector, per expansion:
 Every `Expanded` must be answered by `InjectionStarted` then `InjectionFinished`, or by
 `InjectionCancelled`, even for an empty expansion. Only one expansion is in flight; a palette pick
 or form submit during one is refused with `InjectionBusy`. `Overflow` ends the flight, since the
-markers may have been dropped.
+markers may have been dropped; a late `InjectionFinished` or `InjectionCancelled` for an expansion
+forgotten this way is ignored silently.
 
 The injector needs the characters typed after the trigger (`k` of them) to type them again. The
-engine never hands typed text out, so the worker's listener keeps them instead: from the trigger
-until the start marker it copies real `Char`s into a separate `Sensitive` buffer of at most 64
-characters, zeroed when the expansion ends, which only the injector thread reads, after it has
-seen its own start marker. Task 2.2 implements this and the 2.8 privacy review checks it.
+engine never hands typed text out, so the thread that feeds listener events to the engine keeps
+them instead (`iamb_platform::TypedHandoff`). It is armed when the engine emits `Expanded`, copies
+the real `Char`s it forwards from then until the start marker into a separate `Sensitive` buffer
+of at most 64 characters in one fixed, lockable allocation, and is zeroed when the expansion ends.
+Only the injector thread reads it, after it has seen its own start marker. The hook or tap thread
+itself never copies keys: it cannot know a trigger happened until the engine has matched, so a
+copy there would have to hold every key all the time, including keys the engine drops in secure
+fields. A boundary, an over-deleting Backspace, a 65th character, composition, overflow or a focus
+change cancels the expansion. So does a dead key still waiting when the start marker arrives: the
+listener reports it as a boundary just before `InjectionStarted`, because the target would spend
+the first Backspace on it. The 2.8 privacy review checks this.
 
 ### 4.7 Latency budget (plain text, up to 500 characters)
 
@@ -352,14 +364,19 @@ seen its own start marker. Task 2.2 implements this and the 2.8 privacy review c
 
 | Trait | Methods (summary) | Used by | Windows | macOS |
 | --- | --- | --- | --- | --- |
-| `KeyListener` | `start(sink)`, `stop()`, `self_test()` | service | Low-level keyboard and mouse hooks on a message-loop thread; stateless layout-aware translation | Event tap; re-enables itself when the system disables it |
-| `Injector` | `delete_back`, `type_text`, `paste`, `press_key`, `move_caret`, `mark` | service | Synthesised Unicode input in atomic batches; clipboard paste with restore | Synthesised key events; pasteboard paste with restore |
-| `FocusInspector` | `focused_app()`, `secure_state(timeout)`, `focus_token()`, `restore_focus(token)`, `allow_foreground(pid)` | service, UI host | Foreground window, process, integrity level; password-field detection on a dedicated thread | Frontmost app, secure-input state, Accessibility focus |
-| `ClipboardAccess` | `read_text`, `snapshot`, `write(flavours, transient)`, `restore` | service | Clipboard API, with the formats that keep content out of clipboard history | Pasteboard API, with the transient and concealed markers |
-| `Hotkeys` | `register(id, chord)`, `unregister(id)` | service | OS hotkey API on the listener thread | OS hotkey API |
-| `Permissions` | `status()`, `open_settings(kind)` | service | Always granted | Accessibility and Input Monitoring, checked in the worker, which is the process that holds them |
-| `LoginItem` | `enable()`, `disable()`, `status()` | UI host | Per-user Run key | Login-item registration of the helper app |
-| `MemoryLock` | `lock(region)` | service | Keeps the keystroke buffer out of the page file | Same, out of swap |
+| `KeyListener` | `start(sink)`, `stop()`, `self_test(timeout)` | service | Low-level keyboard and mouse hooks on a message-loop thread; stateless layout-aware translation | Event tap; re-enables itself when the system disables it |
+| `Injector` | `inject(request, handoff)`: one call per expansion, which posts the start marker, applies the compensation of §4.6 and the steps, and posts the end marker; `configure(settings_json)`: the user's per-app settings (default: accepts only the empty string) | service | Synthesised Unicode input in atomic batches; clipboard paste with restore; per-app strategy table keyed by executable name, settings add `paste_keys` and `batch_delay_ms` | Synthesised key events; pasteboard paste with restore; per-app strategy table keyed by bundle identifier, settings add `chunk_units` and more line breaks |
+| `FocusInspector` | `focused_app()`, `secure_state(target, timeout)`, `focus_token()`, `restore_focus(token)`, `allow_foreground(pid)`, `watch(sink)`, `unwatch()` | service, UI host | Foreground window, process, integrity level; password-field detection on a dedicated thread | Frontmost app, secure-input state, Accessibility focus |
+| `ClipboardAccess` | `read_text`, `snapshot`, `write(content, transient)`, `restore` | service | Clipboard API, with the formats that keep content out of clipboard history | Pasteboard API, with the transient and concealed markers |
+| `Hotkeys` | `register(id, chord)`, `unregister(id)` | service | OS hotkey API on the listener thread | OS hotkey API on the listener's run loop |
+| `Permissions` | `permission_status()`, `open_settings(kind)` | service | Always granted | Accessibility and Input Monitoring, checked in the worker, which is the process that holds them |
+| `LoginItem` | `enable()`, `disable()`, `login_item_status()` | UI host | Per-user Run key | Login-item registration of the helper app |
+| `MemoryLock` | `lock(region)`, `unlock(region)` | service | Keeps the keystroke buffer and hand-off out of the page file | Same, out of swap |
+| `LocalEndpoint` | `bind(name, policy)`, `connect(name, policy, timeout)`; streams carry the verified peer | service, UI host, CLI, sync agent | Named pipe, first instance only, remote clients rejected, user SID checked | Unix socket in a user-only directory, peer uid checked |
+
+All traits are object safe and take `&self`, so the service holds one `Arc<dyn Platform>`. The
+OS crates are the only crates allowed `unsafe`, and every `unsafe` block carries a safety comment
+(lint-enforced).
 
 Every event the injector synthesises carries a marker (the extra-info field on Windows, the
 event-source user data on macOS) and the listener drops marked events, apart from reporting the
@@ -368,8 +385,19 @@ injection markers, so Iamb never reacts to its own output.
 Injection into a window running at a higher privilege level than Iamb is refused by Windows; the
 focus thread detects such windows, reports `unknown`, and a `Diagnostic` says why.
 
-The mock implementation in `iamb-platform` records injected actions and replays scripted key
-streams, including keys interleaved with injection. All service logic is tested against it on
+The user's per-app injection settings are one JSON string in the `injection_overrides` setting,
+in one format on both systems ([ADR-0025](decisions/0025-per-app-injection-settings.md)): shared
+fields (`method`, `paste_threshold`, `line_break`, `key_delay_ms`, `paste_wait_ms`) plus a few
+that only one system has. The format is parsed in one place, `iamb_platform::injection_settings`,
+which both OS crates call; unknown fields, out-of-range values and the other system's fields or
+line breaks are errors. The service hands the setting to `Injector::configure` at start and
+whenever it changes. A value the injector refuses is answered to the client that wrote it with
+an `invalid` error and is not stored; one already in the store (written while the service was
+stopped) is logged, without its text. Either way the previous settings stay in force.
+
+The mock implementation in `iamb-platform` records injected actions and the settings strings it
+was configured with, and replays scripted key streams, including keys interleaved with
+injection. All service logic is tested against it on
 Linux, Windows and macOS; only the thin OS crates need real machines.
 
 ## 6. Messaging between processes
@@ -483,7 +511,7 @@ Device-local tables, never synced:
 | Table | Purpose |
 | --- | --- |
 | `usage` | Per snippet: expansion count, last used, characters saved |
-| `setting` | Delimiters, hotkeys, date and time formats, locale, pause state, start at login, per-app injection overrides |
+| `setting` | Delimiters, hotkeys, date and time formats, locale, pause state, start at login, per-app injection overrides (`injection_overrides`, ADR-0025) |
 | `app_exclusion` | Apps where Iamb does not expand or buffer |
 | `approval` | Per snippet received from someone else: the revision the user approved (§8) |
 | `outbox` | Pending local changes for the sync agent, in order, each with the revision it was based on |
@@ -515,9 +543,9 @@ These hold for every phase and are what the Phase 2 privacy review checks
 [ADR-0022](decisions/0022-shared-snippet-trust.md)).
 
 1. Typed characters exist in exactly two places, both in locked memory: the engine's
-   66-character buffer, and, only while an expansion is in flight, the listener's copy of the
-   characters typed after its trigger (at most 64, for the injector to type again, §4.6), zeroed
-   when the expansion ends. No API returns either. They are never serialised, logged or sent over
+   66-character buffer, and, only while an expansion is in flight, the engine-feeding thread's
+   copy of the characters typed after its trigger (at most 64, for the injector to type again,
+   §4.6), zeroed when the expansion ends. No API returns either. They are never serialised, logged or sent over
    IPC.
 2. User-entered values (form values, clipboard content read for `{clipboard}`, palette queries,
    dry-run input) are never written to disk or logs. Form values are remembered only as described

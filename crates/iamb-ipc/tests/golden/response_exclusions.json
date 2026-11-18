@@ -1,0 +1,14 @@
+{
+  "id": 18,
+  "kind": "response",
+  "result": {
+    "exclusions": [
+      {
+        "app_id": "org.example.bank",
+        "created_at": 1763400000000,
+        "display_name": "Bank"
+      }
+    ],
+    "type": "exclusions"
+  }
+}

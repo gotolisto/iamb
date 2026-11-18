@@ -1,0 +1,11 @@
+{
+  "id": 7,
+  "kind": "response",
+  "result": {
+    "folders_created": 2,
+    "snippets_imported": 10,
+    "snippets_skipped": 1,
+    "tags_created": 0,
+    "type": "imported"
+  }
+}

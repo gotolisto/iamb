@@ -9,8 +9,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Pull requests share one group so a new push cancels the old run. Manual runs each get their own
+# group, so several can be started at once on `main` to measure runner spread for the baseline
+# (docs/test-strategy.md §3).
 concurrency:
-  group: bench-${{ github.ref }}
+  group: bench-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:

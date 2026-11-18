@@ -1,0 +1,8 @@
+{
+  "body": {
+    "session": 2,
+    "type": "form_cancel"
+  },
+  "id": 24,
+  "kind": "request"
+}

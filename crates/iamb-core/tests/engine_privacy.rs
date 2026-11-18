@@ -14,6 +14,7 @@ use iamb_core::engine::{
     Action, AppId, BoundaryKind, Engine, EngineSettings, Event, ExpansionId, FormSessionId,
     SecureState, Snapshot,
 };
+use iamb_core::matcher::KEY_BUFFER_CAPACITY;
 use iamb_core::model::{Abbreviation, Id, Snippet, SyncMeta, Timestamp};
 use iamb_core::sensitive::Sensitive;
 use iamb_core::template::FormValues;
@@ -204,4 +205,71 @@ fn nothing_typed_while_suspended_is_stored() {
         assert_eq!(engine.buffered_len(), 0);
     }
     assert_eq!(env.now_calls(), 0);
+}
+
+/// The service locks the keystroke buffer's allocation against swapping (architecture §4.1):
+/// the range the engine reports covers a whole buffer and stays the same across events,
+/// expansions, overflow, a snapshot change and a move of the engine value.
+#[test]
+fn buffer_region_is_non_empty_and_stable() {
+    let snapshot = Snapshot::build(
+        [
+            snippet(1, "brb", "be right back"),
+            snippet(2, "sig", r#"Regards, {field name="Name"}"#),
+        ],
+        EngineSettings::default(),
+    );
+    let env = FakeEnv::default();
+    let mut engine = Engine::new(snapshot.clone());
+    let region = engine.buffer_region();
+    let (address, len) = region;
+    assert_ne!(address, 0);
+    assert!(
+        len >= KEY_BUFFER_CAPACITY * std::mem::size_of::<char>(),
+        "{len} bytes cannot hold {KEY_BUFFER_CAPACITY} characters"
+    );
+    assert_eq!(address % std::mem::align_of::<char>(), 0);
+
+    let mut events = vec![
+        Event::FocusChanged(AppId(APP.to_owned())),
+        Event::SecureState(SecureState::Normal),
+    ];
+    events.extend("x brb ".chars().map(|ch| Event::char(ch, 0)));
+    events.extend([
+        Event::InjectionStarted {
+            expansion: ExpansionId::from_raw(1),
+            seq: 0,
+        },
+        Event::InjectionFinished {
+            expansion: ExpansionId::from_raw(1),
+            seq: 0,
+        },
+        Event::Backspace { seq: 0 },
+        Event::Boundary {
+            kind: BoundaryKind::Enter,
+            seq: 0,
+        },
+        Event::Overflow,
+        Event::SnapshotChanged(snapshot),
+    ]);
+    events.extend("sig ".chars().map(|ch| Event::char(ch, 0)));
+    events.push(Event::FormCancelled {
+        session: FormSessionId::from_raw(1),
+    });
+    // More characters than the buffer holds, so the oldest fall off.
+    events.extend(std::iter::repeat_n('a', KEY_BUFFER_CAPACITY * 2).map(|ch| Event::char(ch, 0)));
+    for event in events {
+        engine.handle(event, &env);
+        assert_eq!(engine.buffer_region(), region);
+    }
+    assert!(engine.buffered_len() > 0);
+
+    let moved = Box::new(engine);
+    assert_eq!(
+        moved.buffer_region(),
+        region,
+        "moving the engine moves no typed text"
+    );
+    let moved = *moved;
+    assert_eq!(moved.buffer_region(), region);
 }

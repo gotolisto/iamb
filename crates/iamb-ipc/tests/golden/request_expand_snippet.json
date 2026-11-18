@@ -1,0 +1,12 @@
+{
+  "body": {
+    "focus": {
+      "pid": 100,
+      "window": 3
+    },
+    "id": "01010101-0101-0101-0101-010101010101",
+    "type": "expand_snippet"
+  },
+  "id": 17,
+  "kind": "request"
+}

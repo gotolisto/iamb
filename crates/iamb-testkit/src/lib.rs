@@ -2,8 +2,11 @@
 //! and the scripted typing sessions of task 1.6.
 //!
 //! - [`env::FakeEnv`]: a fixed clock and an optional clipboard that count their calls.
+//! - [`compat`]: the compatibility-matrix harness of task 2.7 (the `iamb-compat` binary); its
+//!   fixtures are in `crates/iamb-testkit/fixtures/`.
 //! - [`session`]: the TOML session format, a loader and a runner. The sessions live in
 //!   `crates/iamb-testkit/sessions/`; `crates/iamb-core/tests/engine_sessions.rs` runs them all.
 
+pub mod compat;
 pub mod env;
 pub mod session;

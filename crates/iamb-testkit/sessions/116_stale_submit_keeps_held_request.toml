@@ -1,0 +1,137 @@
+description = "A submit for a form session that is no longer open (its submit was already dropped because the focus had moved to another application) is not a request: it emits unknown_form_session and leaves a held palette pick alone, which still belongs to the application focused when it was made, stays held when the focus returns to that application, and runs only there. Steps 1 to 10 are the property-test counterexample in crates/iamb-core/tests/engine_props.proptest-regressions; palette picks reach disabled snippets"
+auto_inject = false
+
+[[snippet]]
+abbr = "b"
+body = "x"
+enabled = false
+
+[[snippet]]
+abbr = "A"
+body = 'Hi {field name="N"}!'
+enabled = false
+
+# 1-2: a palette pick opens a form; its submit types (the expansion stays in flight).
+[[step]]
+expand = "A"
+expect = [{ form = "A", fields = ["N"] }]
+
+[[step]]
+submit = { N = "v" }
+expect = [{ text = "Hi v!", verbatim = [[3, 4]] }, { expanded = "A" }]
+state = "pending"
+
+# 3-5: a second form is opened for app1.
+[[step]]
+focus = "app1"
+
+[[step]]
+secure = "normal"
+
+[[step]]
+expand = "A"
+expect = [{ form = "A", fields = ["N"], last_values = { N = "v" } }]
+
+# 6-7: its submit arrives with app0 focused, so it is dropped at once and the session closes.
+[[step]]
+focus = "app0"
+
+[[step]]
+submit = { N = "w" }
+expect = [{ diagnostic = "request_cancelled", snippet = "A", app = "app0" }]
+held = false
+form_open = false
+
+# 8: a palette pick in app0 waits for the verdict; it belongs to app0.
+[[step]]
+expand = "zzz"
+held = true
+
+# 9: the same closed session answered again: not a request, the pick stays held for app0.
+[[step]]
+submit = { N = "w" }
+expect = [{ diagnostic = "unknown_form_session" }]
+held = true
+form_open = false
+
+# 10: a focus change to app0, the pick's own application, keeps it held.
+[[step]]
+focus = "app0"
+held = true
+
+# The verdict runs it in app0 (an id in no library, so only a diagnostic).
+[[step]]
+secure = "normal"
+expect = [{ diagnostic = "unknown_snippet", snippet = "zzz" }]
+held = false
+
+[[step]]
+inject = "start"
+
+[[step]]
+inject = "finish"
+state = "idle"
+
+# The same sequence with a pick that types: it types in app0, where it was made.
+[[step]]
+focus = "app1"
+
+[[step]]
+secure = "normal"
+
+[[step]]
+expand = "A"
+expect = [{ form = "A", fields = ["N"], last_values = { N = "w" } }]
+
+[[step]]
+focus = "app0"
+
+[[step]]
+submit = { N = "u" }
+expect = [{ diagnostic = "request_cancelled", snippet = "A", app = "app0" }]
+held = false
+
+[[step]]
+expand = "b"
+held = true
+
+[[step]]
+submit = { N = "u" }
+expect = [{ diagnostic = "unknown_form_session" }]
+held = true
+
+[[step]]
+focus = "app0"
+held = true
+
+[[step]]
+secure = "normal"
+expect = [{ text = "x" }, { expanded = "b" }]
+held = false
+state = "pending"
+
+# A move to another application drops a held pick even after a stale answer.
+[[step]]
+inject = "cancel"
+expect = [{ diagnostic = "injection_cancelled", snippet = "b" }]
+
+[[step]]
+focus = "app1"
+
+[[step]]
+expand = "b"
+held = true
+
+[[step]]
+submit = { N = "u" }
+expect = [{ diagnostic = "unknown_form_session" }]
+held = true
+
+[[step]]
+focus = "app0"
+expect = [{ diagnostic = "request_cancelled", snippet = "b", app = "app0" }]
+held = false
+
+[[step]]
+secure = "normal"
+state = "idle"

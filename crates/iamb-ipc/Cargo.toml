@@ -1,0 +1,33 @@
+[package]
+name = "iamb-ipc"
+description = "Iamb's local messaging: message types, framing, roles, and blocking client and server helpers over a verified local endpoint."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+# Blocking only, no async runtime and no networking crate (ADR-0006, ADR-0008, ADR-0009).
+[dependencies]
+iamb-core = { path = "../iamb-core" }
+iamb-platform = { path = "../iamb-platform" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+
+# The native endpoint (`iamb_ipc::native_endpoint`): the OS crate on Windows and macOS. Linux
+# has its own std-only endpoint in this crate (`src/linux.rs`).
+[target.'cfg(windows)'.dependencies]
+iamb-platform-windows = { path = "../iamb-platform-windows" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+iamb-platform-macos = { path = "../iamb-platform-macos" }
+
+[dev-dependencies]
+tempfile = "3.27.0"

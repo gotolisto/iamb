@@ -1,0 +1,8 @@
+{
+  "body": {
+    "kind": "input_monitoring",
+    "type": "open_permission_settings"
+  },
+  "id": 20,
+  "kind": "request"
+}

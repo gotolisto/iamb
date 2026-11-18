@@ -36,8 +36,9 @@
 //! # The keystroke buffer
 //!
 //! The engine owns the [`KeyBuffer`] (66 characters: one before the abbreviation, 64 and a
-//! delimiter; boxed, so moving the engine does not copy typed characters). Per event
-//! (architecture §4.1):
+//! delimiter; boxed, so moving the engine does not copy typed characters, and
+//! [`Engine::buffer_region`] gives the service the allocation's address range to lock against
+//! swapping). Per event (architecture §4.1):
 //!
 //! | Event | Buffer |
 //! | --- | --- |
@@ -96,6 +97,16 @@
 //! - A submitted form's values are remembered for `ReopenLastForm` when the submit arrives,
 //!   whether it then runs, is held, refused or cancelled; the form session closes at once.
 //!   [`Engine::forget_form_values`] also drops a held submit.
+//! - A form answer (`FormSubmitted` or `FormCancelled`) for a session that is not open is not a
+//!   request: the session was already answered or never shown, so the answer carries nothing
+//!   the user asked for now. It emits [`Reason::UnknownFormSession`] and changes nothing; in
+//!   particular it neither replaces nor drops a held request (the one exception is
+//!   `FormCancelled` for the session whose submit is held, above). The architecture says "a
+//!   newer request replaces a waiting one" without saying whether a stale answer counts; this
+//!   reading is the safe one, because the held request still belongs to its own application
+//!   and runs only there, so keeping it can never type into an application it did not belong
+//!   to (review of the property-test counterexample in
+//!   `tests/engine_props.proptest-regressions`).
 //!
 //! # Expansion
 //!
@@ -147,6 +158,14 @@
 //!    │ Overflow (markers may have been dropped): clear buffer, forget the expansion
 //! ```
 //!
+//! - **Forgotten** (after `Overflow`). The engine remembers the ids of the expansions it forgot
+//!   (the most recent [`FORGOTTEN_EXPANSIONS`]). The service still answers every expansion, so
+//!   a late `InjectionFinished` or `InjectionCancelled` for one of them is ignored silently, with
+//!   no diagnostic and no change to the buffer, and ends the protocol for that id (a second
+//!   answer for it is unexpected again). A late `InjectionStarted` for it is still
+//!   [`Reason::UnexpectedInjectionEvent`]: the engine no longer tracks that injection, so it
+//!   cannot tell keys typed between the markers apart, and the diagnostic records that.
+//!
 //! - **Pending** (between the trigger and the start marker). Real keys are already in the
 //!   application after the abbreviation; the injector counts them (`k`), deletes `n + k`, types
 //!   the expansion and types the `k` characters again. The engine stores them as usual, so when
@@ -165,7 +184,9 @@
 //!   later ones in the same window are dropped unstored.
 //! - A marker or cancellation that does not name the expansion in flight emits
 //!   [`Reason::UnexpectedInjectionEvent`] and changes nothing, except `InjectionFinished` for the
-//!   pending expansion (its start marker was lost), which ends the flight and clears the buffer.
+//!   pending expansion (its start marker was lost), which ends the flight and clears the buffer,
+//!   and `InjectionFinished` or `InjectionCancelled` for a forgotten expansion (above), which is
+//!   ignored silently.
 //! - `ExpandRequest`, `FormSubmitted` and `ReopenLastForm` that would emit an expansion while
 //!   one is in flight (when they run, after the focus gate) are dropped with
 //!   [`Reason::InjectionBusy`] (a submitted form's values are
@@ -190,6 +211,12 @@ use crate::matcher::{CasePattern, KeyBuffer};
 use crate::model::Id;
 use crate::sensitive::Sensitive;
 use crate::template::{FormValues, KeyName, RenderContext, RenderedAction, Resolved};
+
+/// How many expansions forgotten because of `Overflow` the engine remembers, so that their late
+/// injector answers are ignored silently (see the [module docs](self)). Only one expansion is
+/// in flight at a time, so this bounds a run of overflows, each forgetting a new expansion,
+/// before the injector answers any of them.
+pub const FORGOTTEN_EXPANSIONS: usize = 8;
 
 /// Everything the engine needs from outside (architecture §4.3).
 pub trait Environment {
@@ -309,6 +336,9 @@ pub struct Engine {
     paused: bool,
     form: Option<FormSession>,
     flight: Option<Flight>,
+    /// Expansions forgotten because of `Overflow` whose injector answer has not arrived yet,
+    /// oldest first, at most [`FORGOTTEN_EXPANSIONS`].
+    forgotten: Vec<ExpansionId>,
     /// The held request and the application it belongs to (`None`: not known yet; the first
     /// `FocusChanged` decides).
     held: Option<(Held, Option<AppId>)>,
@@ -331,6 +361,7 @@ impl Engine {
             paused: false,
             form: None,
             flight: None,
+            forgotten: Vec::new(),
             held: None,
             last_values: HashMap::new(),
             last_form: None,
@@ -389,7 +420,14 @@ impl Engine {
             }
             Event::Overflow => {
                 self.buffer.clear();
-                self.flight = None;
+                if let Some(Flight::Pending { id, .. } | Flight::Injecting { id, .. }) =
+                    self.flight.take()
+                {
+                    if self.forgotten.len() == FORGOTTEN_EXPANSIONS {
+                        self.forgotten.remove(0);
+                    }
+                    self.forgotten.push(id);
+                }
                 match self.held.take() {
                     Some((held, _)) => self.cancelled(&held, None),
                     None => Vec::new(),
@@ -462,6 +500,23 @@ impl Engine {
             Some(Flight::Pending { id, .. }) => InjectionState::Pending(id),
             Some(Flight::Injecting { id, .. }) => InjectionState::Injecting(id),
         }
+    }
+
+    /// The address range of the keystroke buffer's heap allocation, as `(address, length in
+    /// bytes)`, so the service can lock it in memory against swapping (architecture §4.1,
+    /// ADR-0012). Read it, never write through it: it exposes where the buffer is, not what it
+    /// holds.
+    ///
+    /// The buffer is allocated once in [`Engine::new`] and never replaced or reallocated, so the
+    /// range stays the same for the engine's whole life, also when the engine value is moved.
+    /// It is never empty.
+    #[must_use]
+    pub fn buffer_region(&self) -> (usize, usize) {
+        let buffer: &KeyBuffer = &self.buffer;
+        (
+            std::ptr::from_ref(buffer).addr(),
+            std::mem::size_of_val(buffer),
+        )
     }
 
     /// Number of characters in the keystroke buffer (never its content). Includes the NUL
@@ -635,7 +690,7 @@ impl Engine {
                 self.buffer.clear();
                 unexpected(expansion)
             }
-            _ => unexpected(expansion),
+            _ => self.forgotten_answer(expansion),
         }
     }
 
@@ -652,7 +707,20 @@ impl Engine {
                         .with_expansion(id),
                 )
             }
-            _ => unexpected(expansion),
+            _ => self.forgotten_answer(expansion),
+        }
+    }
+
+    /// `InjectionFinished` or `InjectionCancelled` for an expansion not in flight: ignored
+    /// silently (and the id forgotten for good) if `Overflow` made the engine forget it,
+    /// unexpected otherwise.
+    fn forgotten_answer(&mut self, expansion: ExpansionId) -> Vec<Action> {
+        match self.forgotten.iter().position(|&e| e == expansion) {
+            Some(i) => {
+                self.forgotten.remove(i);
+                Vec::new()
+            }
+            None => unexpected(expansion),
         }
     }
 

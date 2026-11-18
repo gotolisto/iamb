@@ -1,0 +1,5 @@
+{
+  "body": {},
+  "kind": "event",
+  "topic": "settings_changed"
+}

@@ -1,0 +1,44 @@
+# Expected results of the compatibility snippets (task 2.7), one entry per snippet type.
+# `compat.json` holds the same snippets in the import format; a test imports it and checks that
+# the engine's dry run produces exactly `expected` (with {date} = 2026-03-18 and the caret at
+# {caret}), so this file cannot drift from the fixture. `compat-expected.txt` is generated from
+# it (`iamb-compat expected`) and checked by the same test.
+#
+# expected     the field's text after the expansion. `{date}` stands for the local date in the
+#              fixed format %Y-%m-%d (10 characters); `{caret}` marks the caret and is not text.
+#              Without `{caret}` the caret is at the end.
+# single_line  the expected text on a one-line field (newlines dropped), where it differs.
+# rich_checks  what to look for on a rich surface (T5); the image is pending task 3.8.
+
+[[type]]
+id = "T1"
+name = "short plain"
+abbreviation = ";cpt1"
+expected = "Kind regards, the Iamb team"
+
+[[type]]
+id = "T2"
+name = "long plain"
+abbreviation = ";cpt2"
+expected = "Line one of the compatibility sample, written in plain ASCII.\nLine two has commas, numbers like 42 and 2026, and (brackets).\nLine three holds \"quotes\" and an apostrophe: it's fine here.\nLine four is the middle of the sample and nothing special.\nLine five exists so the lines differ a little in length.\nLine six: the quick brown fox jumps over the lazy dog.\nLine seven is nearly the end of this text block, and one more line follows it.\nLine eight ends the sample with a final sentence of plain prose."
+single_line = "Line one of the compatibility sample, written in plain ASCII.Line two has commas, numbers like 42 and 2026, and (brackets).Line three holds \"quotes\" and an apostrophe: it's fine here.Line four is the middle of the sample and nothing special.Line five exists so the lines differ a little in length.Line six: the quick brown fox jumps over the lazy dog.Line seven is nearly the end of this text block, and one more line follows it.Line eight ends the sample with a final sentence of plain prose."
+
+[[type]]
+id = "T3"
+name = "unicode"
+abbreviation = ";cpt3"
+expected = "Caf\U000000E9 d\U000000E9j\U000000E0 vu \U00002014 na\U000000EFve fa\U000000E7ade, \U000000C6r\U000000F8sk\U000000F8bing, \U000065E5\U0000672C\U00008A9E, \U0001F44B\U0001F3FD \U0001F469\U0000200D\U0001F4BB \U00002705"
+
+[[type]]
+id = "T4"
+name = "template"
+abbreviation = ";cpt4"
+expected = "Report for {date}: {caret} - done"
+
+[[type]]
+id = "T5"
+name = "rich"
+abbreviation = ";cpt5"
+expected = "Release **bold** note with a [link](https://example.org/iamb)."
+rich = true
+rich_checks = ["a bold run (the word bold)", "a link whose address is exactly https://example.org/iamb", "one 16x16 image (pending task 3.8: imports carry no attachments yet)"]

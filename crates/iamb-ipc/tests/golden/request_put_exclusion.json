@@ -1,0 +1,10 @@
+{
+  "body": {
+    "app_id": "org.example.bank",
+    "display_name": "Bank",
+    "excluded": true,
+    "type": "put_exclusion"
+  },
+  "id": 32,
+  "kind": "request"
+}

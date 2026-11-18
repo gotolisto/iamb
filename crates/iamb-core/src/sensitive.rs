@@ -49,6 +49,21 @@ impl<T> Sensitive<T> {
         &self.0
     }
 
+    /// The wrapped value, mutably. Every call site is a place where sensitive data is read or
+    /// changed; keep the value out of logs and diagnostics.
+    ///
+    /// ```
+    /// use iamb_core::sensitive::Sensitive;
+    ///
+    /// let mut value = Sensitive::new(String::from("ab"));
+    /// value.expose_mut().push('c');
+    /// assert_eq!(value.expose(), "abc");
+    /// ```
+    #[must_use]
+    pub const fn expose_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+
     /// Unwraps the value.
     #[must_use]
     pub fn into_inner(self) -> T {

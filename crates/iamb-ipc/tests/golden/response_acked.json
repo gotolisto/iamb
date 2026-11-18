@@ -1,0 +1,8 @@
+{
+  "id": 20,
+  "kind": "response",
+  "result": {
+    "count": 3,
+    "type": "acked"
+  }
+}

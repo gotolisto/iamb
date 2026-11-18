@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "not_permitted",
+    "message": "not for this role"
+  },
+  "id": 9,
+  "kind": "response"
+}

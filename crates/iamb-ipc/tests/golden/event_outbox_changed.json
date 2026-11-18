@@ -1,0 +1,7 @@
+{
+  "body": {
+    "pending": 2
+  },
+  "kind": "event",
+  "topic": "outbox_changed"
+}

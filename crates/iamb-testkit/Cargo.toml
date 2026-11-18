@@ -1,6 +1,6 @@
 [package]
 name = "iamb-testkit"
-description = "Test-only helpers: a fake environment and scripted typing sessions for the engine."
+description = "Test-only helpers: a fake environment, scripted typing sessions for the engine, and the compatibility-matrix harness."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,10 +11,40 @@ publish = false
 [lib]
 path = "src/lib.rs"
 
+# The compatibility harness (task 2.7): walks the owner through the 20-app matrix on a real
+# machine. Never shipped.
+[[bin]]
+name = "iamb-compat"
+path = "src/bin/iamb_compat.rs"
+
 [lints]
 workspace = true
 
+[features]
+# `store` lets `iamb-compat setup` import the fixture library through `iamb-store` (which bundles
+# SQLite, a C build). Cross-checking this crate for another OS from Linux needs
+# `--no-default-features --lib --bins`, because the C build wants that OS's tools.
+default = ["store"]
+store = ["dep:iamb-store"]
+
 [dependencies]
+clap = { version = "4.6.7", features = ["derive"] }
+getrandom = "0.4.3"
 iamb-core = { path = "../iamb-core" }
+iamb-platform = { path = "../iamb-platform" }
+iamb-store = { path = "../iamb-store", optional = true }
 serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
 toml = "1.2.1"
+
+# The clipboard of the real machine. These crates are empty on every other system.
+[target.'cfg(windows)'.dependencies]
+iamb-platform-windows = { path = "../iamb-platform-windows" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+iamb-platform-macos = { path = "../iamb-platform-macos" }
+
+[dev-dependencies]
+# The dry-run expansion of `iamb expand`, so a test checks the fixtures through the same code.
+iamb-cli = { path = "../iamb-cli" }
+tempfile = "3.27.0"

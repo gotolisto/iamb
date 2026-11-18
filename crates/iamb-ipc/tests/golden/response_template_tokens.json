@@ -1,0 +1,14 @@
+{
+  "id": 14,
+  "kind": "response",
+  "result": {
+    "tokens": [
+      {
+        "end": 3,
+        "kind": "text",
+        "start": 0
+      }
+    ],
+    "type": "template_tokens"
+  }
+}
