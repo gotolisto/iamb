@@ -71,11 +71,19 @@ pub fn select(choice: PlatformChoice) -> Result<Arc<dyn Platform>, String> {
 }
 
 #[cfg(windows)]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "one signature for every system; only the fallback branch can fail"
+)]
 fn native() -> Result<Arc<dyn Platform>, String> {
     Ok(Arc::new(iamb_platform_windows::Platform::new()))
 }
 
 #[cfg(target_os = "macos")]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "one signature for every system; only the fallback branch can fail"
+)]
 fn native() -> Result<Arc<dyn Platform>, String> {
     Ok(Arc::new(iamb_platform_macos::Platform::new()))
 }

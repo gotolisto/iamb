@@ -96,10 +96,12 @@ fn a_read_times_out_and_close_wakes_accept() {
         Arc::from(p.bind(&n, PeerPolicy::SameUser).expect("binds"));
     let accepted = {
         let listener = Arc::clone(&listener);
-        thread::spawn(move || listener.accept().map(|_| ()))
+        thread::spawn(move || listener.accept())
     };
     let client = p.connect(&n, PeerPolicy::SameUser, T).expect("connects");
-    assert_eq!(accepted.join().expect("thread"), Ok(()));
+    // Keep the server's end open: dropping it would close the pipe, and the client's read
+    // would then see end-of-file instead of waiting for data.
+    let _server = accepted.join().expect("thread").expect("accepts");
     client
         .set_read_timeout(Some(Duration::from_millis(100)))
         .expect("timeout");
