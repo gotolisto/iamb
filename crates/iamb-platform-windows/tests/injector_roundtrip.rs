@@ -145,8 +145,8 @@ fn shift_enter_from_the_strategy_table_still_breaks_the_line() {
     let _alone = alone();
     let Some(desk) = Desk::open() else { return };
     desk.platform
-        .set_injection_settings(&format!(
-            r#"{{"apps": {{"{APP}": {{"line_break": "shift_enter"}}}}}}"#
+        .configure(&format!(
+            r#"{{"apps": {{"{APP}": {{"line_break": "shift+enter"}}}}}}"#
         ))
         .expect("valid overrides");
     let Some((outcome, got)) = desk.run("x", vec![text("a\nb")], &[], "xa\r\nb") else {
@@ -325,8 +325,8 @@ fn clipboard_is_restored_after_every_one_of_fifty_pastes() {
     drop(clip);
     // A paste strategy: every text step goes through the clipboard.
     desk.platform
-        .set_injection_settings(&format!(
-            r#"{{"apps": {{"{APP}": {{"typing": "paste"}}}}}}"#
+        .configure(&format!(
+            r#"{{"apps": {{"{APP}": {{"method": "paste"}}}}}}"#
         ))
         .expect("valid overrides");
 

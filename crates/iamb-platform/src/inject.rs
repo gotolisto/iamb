@@ -30,7 +30,7 @@ use iamb_core::model::Id;
 use iamb_core::template::KeyName;
 
 use crate::clipboard::ClipboardContent;
-use crate::error::PlatformError;
+use crate::error::{self, PlatformError};
 use crate::handoff::{CancelReason, TypedHandoff};
 
 /// One thing to send to the focused application.
@@ -302,9 +302,38 @@ impl InjectionOutcome {
 ///
 /// A `Paste` step, and text the strategy sends by paste, use the OS crate's own clipboard
 /// code: snapshot, transient write, paste shortcut, restore (§8 rule 8).
+///
+/// # Settings
+///
+/// [`configure`](Self::configure) takes the user's per-application settings in the format of
+/// [`injection_settings`](crate::injection_settings) (ADR-0025). The service calls it at start
+/// and whenever the setting changes; an injection that is already running finishes with the
+/// settings it started with.
 pub trait Injector: Send + Sync {
     /// Sends one expansion. See the trait docs for the protocol.
     fn inject(&self, request: &InjectionRequest, typed: &TypedHandoff) -> InjectionOutcome;
+
+    /// Replaces the user's per-application settings with `settings_json`, the value of the
+    /// [`INJECTION_SETTINGS_KEY`](crate::INJECTION_SETTINGS_KEY) setting (empty when it is not
+    /// set). The OS crates read it with
+    /// [`InjectionSettings::parse`](crate::InjectionSettings::parse) and layer it over their
+    /// built-in strategy tables.
+    ///
+    /// The default is for an injector that takes no settings: it accepts the empty string and
+    /// refuses anything else.
+    ///
+    /// # Errors
+    ///
+    /// [`PlatformError::Invalid`] naming what was wrong (never quoting the settings), or, from
+    /// the default, [`PlatformError::Unsupported`]. On an error the settings in force stay as
+    /// they were.
+    fn configure(&self, settings_json: &str) -> error::Result<()> {
+        if settings_json.is_empty() {
+            Ok(())
+        } else {
+            Err(PlatformError::Unsupported)
+        }
+    }
 }
 
 #[cfg(test)]

@@ -55,8 +55,9 @@
 //!
 //! [`strategy`] holds the per-application table (bundle identifier → typing method, paste
 //! threshold, line-break key, key delay, paste wait, chunk size) with a reason per built-in
-//! entry, and reads the user's overrides from the settings JSON
-//! (`Platform::set_injection_settings`).
+//! entry. The user's overrides arrive through
+//! [`Injector::configure`](iamb_platform::Injector::configure) in the format both systems
+//! share (`iamb_platform::injection_settings`, ADR-0025).
 //!
 //! # Failures
 //!
@@ -73,7 +74,6 @@
 //! hand-off into a stack buffer, chunked, posted and zeroed. Nothing here logs.
 
 pub(crate) mod chunk;
-pub(crate) mod json;
 pub(crate) mod plan;
 pub(crate) mod run;
 pub(crate) mod segment;

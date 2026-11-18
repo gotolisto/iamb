@@ -10,7 +10,7 @@
 //! only the fields it names:
 //!
 //! 1. [`Strategy::DEFAULT`];
-//! 2. the user's `"default"` entry from settings;
+//! 2. the user's `"defaults"` entry from settings;
 //! 3. the built-in entry for the application ([`BUILT_IN`]), so a general user default cannot
 //!    switch a terminal to pasting by accident;
 //! 4. the user's entry for the application;
@@ -18,44 +18,43 @@
 //!
 //! # User overrides
 //!
-//! Settings keep the overrides as a JSON string (the service stores it; this module parses
-//! it):
+//! The service hands the `injection_overrides` setting to
+//! [`Injector::configure`](iamb_platform::Injector::configure). It is read with
+//! [`InjectionSettings::parse`] in its Windows dialect: the format both systems share (`method`,
+//! `paste_threshold`, `line_break` `enter` or `shift+enter`, `key_delay_ms`, `paste_wait_ms`),
+//! documented in `iamb_platform::injection_settings`, plus two fields of this system:
+//!
+//! | Field | Values | Meaning |
+//! | --- | --- | --- |
+//! | `paste_keys` | `"ctrl+v"`, `"shift+insert"` | the paste shortcut |
+//! | `batch_delay_ms` | 0 to 10 000 | pause between batches |
 //!
 //! ```json
 //! {
-//!   "default": { "paste_threshold": 400 },
+//!   "defaults": { "paste_threshold": 400 },
 //!   "apps": {
-//!     "myeditor.exe": { "typing": "keys", "line_break": "shift_enter" },
+//!     "myeditor.exe": { "method": "keys", "line_break": "shift+enter" },
 //!     "slowremote":   { "key_delay_ms": 5, "batch_delay_ms": 30, "paste_wait_ms": 400 }
 //!   }
 //! }
 //! ```
 //!
-//! | Field | Values | Meaning |
-//! | --- | --- | --- |
-//! | `typing` | `"auto"`, `"keys"`, `"paste"` | `auto`: Unicode key events, a paste above `paste_threshold` characters; `keys`: never paste text (a rich paste types its plain text); `paste`: always paste |
-//! | `paste_threshold` | 0 to 1 000 000 | characters of one text step above which `auto` pastes |
-//! | `line_break` | `"enter"`, `"shift_enter"` | the key a typed line break presses |
-//! | `paste_keys` | `"ctrl_v"`, `"shift_insert"` | the paste shortcut |
-//! | `key_delay_ms` | 0 to 10 000 | pause after every key (gives up the single batch) |
-//! | `batch_delay_ms` | 0 to 10 000 | pause between batches |
-//! | `paste_wait_ms` | 0 to 10 000 | how long the application gets to read a paste before the clipboard is restored |
-//!
-//! Unknown fields and values out of range are errors, so a typo is reported and not ignored.
-//! The clipboard is always restored after a paste (§8 rule 8); no field turns that off.
+//! `method` `keys` also types a rich paste's plain text; a key delay gives up the single batch.
+//! Unknown fields, macOS-only fields and values, and values out of range are errors, so a typo
+//! is reported and not ignored. The clipboard is always restored after a paste (§8 rule 8); no
+//! field turns that off.
 
-use iamb_platform::{InjectionOverrides, PlatformError, TextMethod};
-
-use super::json::{self, Json};
+use iamb_platform::{
+    InjectionEntry, InjectionMethod, InjectionOverrides, InjectionSettings, LineBreakChoice,
+    PasteShortcut, SettingsDialect, SettingsError, TextMethod,
+};
 
 /// Characters of one text step above which `auto` pastes.
 pub(crate) const DEFAULT_PASTE_THRESHOLD: usize = 200;
 /// How long a target gets to read a paste before the clipboard is restored.
 pub(crate) const DEFAULT_PASTE_WAIT_MS: u32 = 150;
-/// The longest delay a setting may ask for.
-pub(crate) const MAX_DELAY_MS: u32 = 10_000;
-/// The largest paste threshold a setting may ask for.
-pub(crate) const MAX_PASTE_THRESHOLD: usize = 1_000_000;
+/// The longest key delay a setting, or a request, may ask for.
+pub(crate) const MAX_DELAY_MS: u32 = SettingsDialect::Windows.key_delay_ms().max;
 
 /// How text steps are sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -251,12 +250,7 @@ pub(crate) const BUILT_IN: &[BuiltIn] = &[
 /// The executable name in the form the table compares: the file name only, lower case,
 /// without `.exe`.
 pub(crate) fn normalize_app(name: &str) -> String {
-    let file = name.rsplit(['\\', '/']).next().unwrap_or(name).trim();
-    let lower = file.to_lowercase();
-    match lower.strip_suffix(".exe") {
-        Some(stem) => stem.to_owned(),
-        None => lower,
-    }
+    SettingsDialect::Windows.app_key(name)
 }
 
 /// The built-in entry for an application, if any.
@@ -277,44 +271,22 @@ pub(crate) struct StrategyTable {
 
 impl StrategyTable {
     /// The built-in table, with no user overrides.
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
         Self::default()
     }
 
     /// The built-in table with the user's overrides from settings (see the module docs). An
     /// empty or blank string means no overrides.
-    pub(crate) fn from_settings(settings: &str) -> Result<Self, PlatformError> {
-        if settings.trim().is_empty() {
-            return Ok(Self::new());
-        }
-        let invalid = |context| PlatformError::Invalid { context };
-        let root = json::parse(settings).map_err(invalid)?;
-        let Json::Object(members) = root else {
-            return Err(invalid("strategy overrides: expected a JSON object"));
+    pub(crate) fn from_settings(settings: &str) -> Result<Self, SettingsError> {
+        let parsed = InjectionSettings::parse(settings, SettingsDialect::Windows)?;
+        let mut table = Self {
+            user_default: patch(&parsed.defaults)?,
+            user_apps: Vec::with_capacity(parsed.apps.len()),
         };
-        let mut table = Self::new();
-        for (key, value) in &members {
-            match key.as_str() {
-                "default" => table.user_default = patch(value)?,
-                "apps" => {
-                    let Json::Object(apps) = value else {
-                        return Err(invalid("strategy overrides: \"apps\" must be an object"));
-                    };
-                    for (app, value) in apps {
-                        let name = normalize_app(app);
-                        if name.is_empty() {
-                            return Err(invalid("strategy overrides: empty application name"));
-                        }
-                        if table.user_apps.iter().any(|(n, _)| *n == name) {
-                            return Err(invalid(
-                                "strategy overrides: the same application is named twice",
-                            ));
-                        }
-                        table.user_apps.push((name, patch(value)?));
-                    }
-                }
-                _ => return Err(invalid("strategy overrides: unknown top-level field")),
-            }
+        for (app, entry) in &parsed.apps {
+            // `parse` keys the entries with `normalize_app`.
+            table.user_apps.push((app.clone(), patch(entry)?));
         }
         Ok(table)
     }
@@ -345,81 +317,38 @@ impl StrategyTable {
     }
 }
 
-/// One entry of the user's overrides.
-fn patch(value: &Json) -> Result<Patch, PlatformError> {
-    let invalid = |context| PlatformError::Invalid { context };
-    let Json::Object(fields) = value else {
-        return Err(invalid("strategy overrides: an entry must be an object"));
-    };
-    let mut patch = Patch::EMPTY;
-    for (field, value) in fields {
-        match field.as_str() {
-            "typing" => {
-                patch.typing = Some(match text(value)? {
-                    "auto" => Typing::Auto,
-                    "keys" => Typing::Keys,
-                    "paste" => Typing::Paste,
-                    _ => return Err(invalid("strategy overrides: unknown \"typing\" value")),
-                });
-            }
-            "line_break" => {
-                patch.line_break = Some(match text(value)? {
-                    "enter" => LineBreak::Enter,
-                    "shift_enter" => LineBreak::ShiftEnter,
-                    _ => return Err(invalid("strategy overrides: unknown \"line_break\" value")),
-                });
-            }
-            "paste_keys" => {
-                patch.paste_keys = Some(match text(value)? {
-                    "ctrl_v" => PasteKeys::CtrlV,
-                    "shift_insert" => PasteKeys::ShiftInsert,
-                    _ => return Err(invalid("strategy overrides: unknown \"paste_keys\" value")),
-                });
-            }
-            "paste_threshold" => {
-                let n = whole(value, MAX_PASTE_THRESHOLD as u64)?;
-                patch.paste_threshold =
-                    Some(usize::try_from(n).map_err(|_| invalid("strategy overrides: too big"))?);
-            }
-            "key_delay_ms" => patch.key_delay_ms = Some(delay(value)?),
-            "batch_delay_ms" => patch.batch_delay_ms = Some(delay(value)?),
-            "paste_wait_ms" => patch.paste_wait_ms = Some(delay(value)?),
-            _ => return Err(invalid("strategy overrides: unknown field in an entry")),
+/// One entry of the user's overrides as a layer of the table.
+fn patch(entry: &InjectionEntry) -> Result<Patch, SettingsError> {
+    let line_break = match entry.line_break {
+        None => None,
+        Some(LineBreakChoice::Enter) => Some(LineBreak::Enter),
+        Some(LineBreakChoice::ShiftEnter) => Some(LineBreak::ShiftEnter),
+        // The Windows dialect refuses these; a table cannot press them.
+        Some(
+            LineBreakChoice::OptionEnter
+            | LineBreakChoice::ControlOptionEnter
+            | LineBreakChoice::Paste,
+        ) => {
+            return Err(SettingsError::new(
+                "this \"line_break\" value exists on macOS only (expected enter or shift+enter)",
+            ));
         }
-    }
-    Ok(patch)
-}
-
-fn text(value: &Json) -> Result<&str, PlatformError> {
-    match value {
-        Json::String(s) => Ok(s),
-        _ => Err(PlatformError::Invalid {
-            context: "strategy overrides: expected a string value",
+    };
+    Ok(Patch {
+        typing: entry.method.map(|method| match method {
+            InjectionMethod::Auto => Typing::Auto,
+            InjectionMethod::Keys => Typing::Keys,
+            InjectionMethod::Paste => Typing::Paste,
         }),
-    }
-}
-
-/// A whole number from 0 to `max`.
-fn whole(value: &Json, max: u64) -> Result<u64, PlatformError> {
-    let invalid = PlatformError::Invalid {
-        context: "strategy overrides: expected a whole number in range",
-    };
-    let Json::Number(n) = *value else {
-        return Err(invalid);
-    };
-    if n.fract() != 0.0 || !(0.0..=1e15).contains(&n) {
-        return Err(invalid);
-    }
-    // Whole and within 0..=1e15, so the conversion is exact.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let n = n as u64;
-    if n > max { Err(invalid) } else { Ok(n) }
-}
-
-fn delay(value: &Json) -> Result<u32, PlatformError> {
-    let n = whole(value, u64::from(MAX_DELAY_MS))?;
-    u32::try_from(n).map_err(|_| PlatformError::Invalid {
-        context: "strategy overrides: delay too long",
+        paste_threshold: entry.paste_threshold,
+        line_break,
+        paste_keys: entry.paste_keys.map(|keys| match keys {
+            PasteShortcut::CtrlV => PasteKeys::CtrlV,
+            PasteShortcut::ShiftInsert => PasteKeys::ShiftInsert,
+        }),
+        key_delay_ms: entry.key_delay_ms,
+        batch_delay_ms: entry.batch_delay_ms,
+        paste_wait_ms: entry.paste_wait_ms,
     })
 }
 
@@ -522,11 +451,11 @@ mod tests {
     fn user_overrides_layer_over_the_table() {
         let table = StrategyTable::from_settings(
             r#"{
-                "default": { "paste_threshold": 50, "typing": "paste" },
+                "defaults": { "paste_threshold": 50, "method": "paste" },
                 "apps": {
-                    "Notepad.EXE": { "line_break": "shift_enter", "paste_wait_ms": 300 },
+                    "Notepad.EXE": { "line_break": "shift+enter", "paste_wait_ms": 300 },
                     "cmd": { "key_delay_ms": 4 },
-                    "slack.exe": { "line_break": "enter", "paste_keys": "shift_insert" }
+                    "slack.exe": { "line_break": "enter", "paste_keys": "shift+insert" }
                 }
             }"#,
         )
@@ -580,33 +509,38 @@ mod tests {
 
     #[test]
     fn bad_overrides_are_reported() {
+        // The full list of refusals is tested with the shared format in `iamb-platform`;
+        // these are the ones that matter on Windows.
         for bad in [
             "[]",
             "nonsense",
-            r#"{"defaults": {}}"#,
+            // The shape of earlier development builds (ADR-0025).
+            r#"{"default": {}}"#,
+            r#"{"apps": {"a": {"typing": "keys"}}}"#,
+            r#"{"apps": {"a": {"line_break": "shift_enter"}}}"#,
+            r#"{"apps": {"a": {"paste_keys": "shift_insert"}}}"#,
+            // macOS-only fields and line breaks.
+            r#"{"apps": {"a": {"chunk_units": 4}}}"#,
+            r#"{"apps": {"a": {"line_break": "option+enter"}}}"#,
+            r#"{"apps": {"a": {"line_break": "paste"}}}"#,
             r#"{"apps": []}"#,
             r#"{"apps": {"": {}}}"#,
             r#"{"apps": {"a.exe": {}, "A": {}}}"#,
             r#"{"apps": {"a": 1}}"#,
-            r#"{"apps": {"a": {"typing": "fast"}}}"#,
-            r#"{"apps": {"a": {"typing": 1}}}"#,
-            r#"{"apps": {"a": {"line_break": "ctrl_enter"}}}"#,
-            r#"{"apps": {"a": {"paste_keys": "ctrl_shift_v"}}}"#,
+            r#"{"apps": {"a": {"method": "fast"}}}"#,
+            r#"{"apps": {"a": {"method": 1}}}"#,
+            r#"{"apps": {"a": {"line_break": "ctrl+enter"}}}"#,
+            r#"{"apps": {"a": {"paste_keys": "ctrl+shift+v"}}}"#,
             r#"{"apps": {"a": {"paste_wait_ms": -1}}}"#,
             r#"{"apps": {"a": {"paste_wait_ms": 1.5}}}"#,
             r#"{"apps": {"a": {"paste_wait_ms": 10001}}}"#,
+            r#"{"apps": {"a": {"batch_delay_ms": 10001}}}"#,
             r#"{"apps": {"a": {"paste_threshold": 1000001}}}"#,
             r#"{"apps": {"a": {"paste_threshold": "200"}}}"#,
             r#"{"apps": {"a": {"restore": false}}}"#,
-            r#"{"default": {"typo": 1}}"#,
+            r#"{"defaults": {"typo": 1}}"#,
         ] {
-            assert!(
-                matches!(
-                    StrategyTable::from_settings(bad),
-                    Err(PlatformError::Invalid { .. })
-                ),
-                "accepted {bad}"
-            );
+            assert!(StrategyTable::from_settings(bad).is_err(), "accepted {bad}");
         }
     }
 
@@ -615,17 +549,20 @@ mod tests {
         let err = StrategyTable::from_settings(r#"{"apps": {"private-app": {"x": 1}}}"#)
             .expect_err("unknown field");
         assert!(!err.to_string().contains("private"));
+        let err = iamb_platform::PlatformError::from(err);
+        assert!(!err.to_string().contains("private"));
     }
 
     #[test]
     fn largest_values_are_accepted() {
         let table = StrategyTable::from_settings(
-            r#"{"default": {"paste_threshold": 1000000, "key_delay_ms": 10000,
-                "batch_delay_ms": 0, "paste_wait_ms": 10000, "typing": "auto"}}"#,
+            r#"{"defaults": {"paste_threshold": 1000000, "key_delay_ms": 10000,
+                "batch_delay_ms": 10000, "paste_wait_ms": 10000, "method": "auto"}}"#,
         )
         .expect("valid");
         let s = table.resolve(None, &InjectionOverrides::default());
-        assert_eq!(s.paste_threshold, MAX_PASTE_THRESHOLD);
+        assert_eq!(s.paste_threshold, 1_000_000);
+        assert_eq!(s.batch_delay_ms, 10_000);
         assert_eq!(s.key_delay_ms, MAX_DELAY_MS);
         assert_eq!(s.paste_wait_ms, MAX_DELAY_MS);
     }

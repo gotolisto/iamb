@@ -1446,3 +1446,38 @@ fn keys_typed_from_two_threads_keep_one_order() {
     assert_eq!(os.text(window), Some(reported));
     assert_eq!(os.caret(window), Some(40));
 }
+
+#[test]
+fn configure_records_every_call_and_keeps_the_last_valid_settings() {
+    let os = MockPlatform::new();
+    assert_eq!(os.injection_settings(), "");
+    let good = r#"{"apps": {"editor.exe": {"method": "keys"}}}"#;
+    assert_eq!(os.configure(good), Ok(()));
+    assert_eq!(os.injection_settings(), good);
+    // A macOS-only field is refused in the default (Windows) dialect; the settings stay.
+    let mac_only = r#"{"defaults": {"chunk_units": 4}}"#;
+    assert!(matches!(
+        os.configure(mac_only),
+        Err(PlatformError::Invalid { .. })
+    ));
+    assert_eq!(os.injection_settings(), good);
+    os.set_settings_dialect(SettingsDialect::MacOs);
+    assert_eq!(os.configure(mac_only), Ok(()));
+    assert_eq!(os.injection_settings(), mac_only);
+    assert_eq!(os.configure(""), Ok(()));
+    assert_eq!(os.injection_settings(), "");
+    assert_eq!(os.configured(), [good, mac_only, mac_only, ""]);
+}
+
+#[test]
+fn an_injector_without_settings_accepts_only_the_empty_string() {
+    struct Plain;
+    impl Injector for Plain {
+        fn inject(&self, _: &InjectionRequest, _: &TypedHandoff) -> InjectionOutcome {
+            InjectionOutcome::Finished { retyped: 0 }
+        }
+    }
+    assert_eq!(Plain.configure(""), Ok(()));
+    assert_eq!(Plain.configure("{}"), Err(PlatformError::Unsupported));
+    assert_eq!(Plain.configure(" "), Err(PlatformError::Unsupported));
+}

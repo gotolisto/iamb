@@ -361,7 +361,7 @@ fn a_paste_strategy_from_settings_is_used() {
     };
     let platform = Platform::new();
     platform
-        .set_injection_settings(r#"{"apps": {"com.apple.TextEdit": {"method": "paste"}}}"#)
+        .configure(r#"{"apps": {"com.apple.TextEdit": {"method": "paste"}}}"#)
         .expect("valid settings");
     let saved = platform.snapshot().expect("snapshot");
     platform

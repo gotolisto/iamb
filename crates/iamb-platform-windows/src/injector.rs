@@ -6,7 +6,6 @@
 //! | Module | Runs on | Does |
 //! | --- | --- | --- |
 //! | `strategy` | every system | the per-application strategy table and the user's overrides |
-//! | `json` | every system | reads the overrides from settings |
 //! | `plan` | every system | steps to key events and batches: UTF-16, line breaks, type or paste, pacing, held modifiers |
 //! | `run` | every system | one expansion, start marker to end marker, against a small `Desk` trait |
 //! | `os` | Windows | `SendInput`, the modifier keys, the paste through the clipboard |
@@ -38,8 +37,10 @@
 //!
 //! # User overrides
 //!
-//! The service passes the overrides it keeps in settings to
-//! `Platform::set_injection_settings`; `strategy` documents the format.
+//! The service passes the `injection_overrides` setting to
+//! [`Injector::configure`](iamb_platform::Injector::configure). The format is the one both
+//! systems share (`iamb_platform::injection_settings`, ADR-0025); `strategy` documents the
+//! fields only Windows has.
 //!
 //! # Failures
 //!
@@ -79,7 +80,6 @@
 // systems they exist for their tests.
 #![cfg_attr(not(windows), allow(dead_code))]
 
-mod json;
 mod plan;
 mod run;
 mod strategy;
@@ -111,19 +111,20 @@ mod windows {
         in_flight: Mutex<()>,
     }
 
-    impl Platform {
-        /// Replaces the user's per-application injection overrides with those in `settings`,
-        /// a JSON object as the service keeps it in settings (an empty string clears them).
-        /// The format is documented with the strategy table (`injector::strategy`).
+    impl Injector for Platform {
+        /// Replaces the user's per-application injection overrides with `settings_json`, in
+        /// the shared format of `iamb_platform::injection_settings` read as its Windows
+        /// dialect (an empty string clears them). An expansion being sent keeps the strategy
+        /// it started with.
         ///
         /// # Errors
         ///
         /// [`Invalid`](iamb_platform::PlatformError::Invalid) when the settings are not valid
-        /// overrides (malformed JSON, an unknown field or value, a value out of range); the
-        /// overrides in force stay as they were. The error names what was wrong and quotes
-        /// nothing from the settings.
-        pub fn set_injection_settings(&self, settings: &str) -> Result<()> {
-            let table = StrategyTable::from_settings(settings)?;
+        /// (malformed JSON, an unknown field or value, a macOS-only field or line break, a
+        /// value out of range); the overrides in force stay as they were. The error names
+        /// what was wrong and quotes nothing from the settings.
+        fn configure(&self, settings_json: &str) -> Result<()> {
+            let table = StrategyTable::from_settings(settings_json)?;
             *self
                 .injector
                 .table
@@ -131,9 +132,7 @@ mod windows {
                 .unwrap_or_else(PoisonError::into_inner) = table;
             Ok(())
         }
-    }
 
-    impl Injector for Platform {
         fn inject(&self, request: &InjectionRequest, typed: &TypedHandoff) -> InjectionOutcome {
             let _one_at_a_time = self
                 .injector
@@ -161,22 +160,48 @@ mod windows {
 
     #[cfg(test)]
     mod tests {
-        use iamb_platform::PlatformError;
+        use std::sync::PoisonError;
 
+        use iamb_platform::{InjectionOverrides, Injector, PlatformError};
+
+        use super::super::strategy::Typing;
         use crate::Platform;
+
+        fn typing_for(platform: &Platform, app: &str) -> Typing {
+            platform
+                .injector
+                .table
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .resolve(Some(app), &InjectionOverrides::default())
+                .typing
+        }
 
         #[test]
         fn overrides_are_validated_and_kept() {
             let platform = Platform::new();
             assert_eq!(
-                platform.set_injection_settings(r#"{"apps": {"x.exe": {"typing": "keys"}}}"#),
+                platform.configure(r#"{"apps": {"x.exe": {"method": "keys"}}}"#),
                 Ok(())
             );
+            assert_eq!(typing_for(&platform, "x.exe"), Typing::Keys);
             assert!(matches!(
-                platform.set_injection_settings("{"),
+                platform.configure("{"),
                 Err(PlatformError::Invalid { .. })
             ));
-            assert_eq!(platform.set_injection_settings(""), Ok(()));
+            // The old Windows shape and macOS-only fields are refused; the settings stay.
+            for refused in [
+                r#"{"apps": {"x.exe": {"typing": "paste"}}}"#,
+                r#"{"apps": {"x.exe": {"method": "paste", "chunk_units": 2}}}"#,
+            ] {
+                assert!(matches!(
+                    platform.configure(refused),
+                    Err(PlatformError::Invalid { .. })
+                ));
+            }
+            assert_eq!(typing_for(&platform, "x.exe"), Typing::Keys);
+            assert_eq!(platform.configure(""), Ok(()));
+            assert_eq!(typing_for(&platform, "x.exe"), Typing::Auto);
         }
     }
 }

@@ -20,7 +20,8 @@
 //! [`Platform`] is all of them together. Every public item is re-exported at the crate root;
 //! the modules are public for their documentation, which holds the reasoning: [`listener`]
 //! (why the listener has its own event type), [`inject`] (why steps and not engine actions,
-//! and the injector's protocol), [`handoff`] (who writes and who reads the characters typed
+//! and the injector's protocol), [`injection_settings`] (the one format of the per-app
+//! injection settings, ADR-0025), [`handoff`] (who writes and who reads the characters typed
 //! after a trigger), [`marker`] (the marker encoding), [`focus`], [`endpoint`], [`mock`].
 //!
 //! # Design rules
@@ -35,9 +36,10 @@
 //!   have a `Debug` that shows sizes only; errors carry no user data.
 //! - **Shared decisions live here.** Marker encoding ([`Marker`]), named-key classification
 //!   ([`ListenerEvent::named_key`]), the overflow rule ([`OverflowSink`]), compensation for
-//!   keys typed after a trigger ([`compensate`]), the focus verdict ([`verdict`]) and peer
-//!   verification ([`PeerPolicy::check`]) are pure functions in this crate, so both OS crates
-//!   and the mock behave alike.
+//!   keys typed after a trigger ([`compensate`]), the focus verdict ([`verdict`]), the format
+//!   of the injection settings ([`InjectionSettings::parse`]) and peer verification
+//!   ([`PeerPolicy::check`]) are pure functions in this crate, so both OS crates and the mock
+//!   behave alike.
 
 pub mod clipboard;
 pub mod endpoint;
@@ -46,6 +48,7 @@ pub mod focus;
 pub mod handoff;
 pub mod hotkeys;
 pub mod inject;
+pub mod injection_settings;
 pub mod listener;
 pub mod login_item;
 pub mod marker;
@@ -73,6 +76,10 @@ pub use hotkeys::{Chord, ChordError, HotkeyId, HotkeyKey, Hotkeys, Modifiers};
 pub use inject::{
     Compensated, ExpansionBatch, InjectionOutcome, InjectionOverrides, InjectionRequest,
     InjectionStep, Injector, TextMethod, compensate, split_actions,
+};
+pub use injection_settings::{
+    INJECTION_SETTINGS_KEY, InjectionEntry, InjectionMethod, InjectionSettings, LineBreakChoice,
+    MAX_APPS, PasteShortcut, SettingsBounds, SettingsDialect, SettingsError,
 };
 pub use listener::{
     ChannelSink, DEFAULT_EVENT_CAPACITY, EventSink, KeyListener, ListenerEvent, OverflowSink,

@@ -365,7 +365,7 @@ the first Backspace on it. The 2.8 privacy review checks this.
 | Trait | Methods (summary) | Used by | Windows | macOS |
 | --- | --- | --- | --- | --- |
 | `KeyListener` | `start(sink)`, `stop()`, `self_test(timeout)` | service | Low-level keyboard and mouse hooks on a message-loop thread; stateless layout-aware translation | Event tap; re-enables itself when the system disables it |
-| `Injector` | `inject(request, handoff)`: one call per expansion, which posts the start marker, applies the compensation of §4.6 and the steps, and posts the end marker | service | Synthesised Unicode input in atomic batches; clipboard paste with restore | Synthesised key events; pasteboard paste with restore |
+| `Injector` | `inject(request, handoff)`: one call per expansion, which posts the start marker, applies the compensation of §4.6 and the steps, and posts the end marker; `configure(settings_json)`: the user's per-app settings (default: accepts only the empty string) | service | Synthesised Unicode input in atomic batches; clipboard paste with restore; per-app strategy table keyed by executable name, settings add `paste_keys` and `batch_delay_ms` | Synthesised key events; pasteboard paste with restore; per-app strategy table keyed by bundle identifier, settings add `chunk_units` and more line breaks |
 | `FocusInspector` | `focused_app()`, `secure_state(target, timeout)`, `focus_token()`, `restore_focus(token)`, `allow_foreground(pid)`, `watch(sink)`, `unwatch()` | service, UI host | Foreground window, process, integrity level; password-field detection on a dedicated thread | Frontmost app, secure-input state, Accessibility focus |
 | `ClipboardAccess` | `read_text`, `snapshot`, `write(content, transient)`, `restore` | service | Clipboard API, with the formats that keep content out of clipboard history | Pasteboard API, with the transient and concealed markers |
 | `Hotkeys` | `register(id, chord)`, `unregister(id)` | service | OS hotkey API on the listener thread | OS hotkey API on the listener's run loop |
@@ -385,8 +385,19 @@ injection markers, so Iamb never reacts to its own output.
 Injection into a window running at a higher privilege level than Iamb is refused by Windows; the
 focus thread detects such windows, reports `unknown`, and a `Diagnostic` says why.
 
-The mock implementation in `iamb-platform` records injected actions and replays scripted key
-streams, including keys interleaved with injection. All service logic is tested against it on
+The user's per-app injection settings are one JSON string in the `injection_overrides` setting,
+in one format on both systems ([ADR-0025](decisions/0025-per-app-injection-settings.md)): shared
+fields (`method`, `paste_threshold`, `line_break`, `key_delay_ms`, `paste_wait_ms`) plus a few
+that only one system has. The format is parsed in one place, `iamb_platform::injection_settings`,
+which both OS crates call; unknown fields, out-of-range values and the other system's fields or
+line breaks are errors. The service hands the setting to `Injector::configure` at start and
+whenever it changes. A value the injector refuses is answered to the client that wrote it with
+an `invalid` error and is not stored; one already in the store (written while the service was
+stopped) is logged, without its text. Either way the previous settings stay in force.
+
+The mock implementation in `iamb-platform` records injected actions and the settings strings it
+was configured with, and replays scripted key streams, including keys interleaved with
+injection. All service logic is tested against it on
 Linux, Windows and macOS; only the thin OS crates need real machines.
 
 ## 6. Messaging between processes
@@ -500,7 +511,7 @@ Device-local tables, never synced:
 | Table | Purpose |
 | --- | --- |
 | `usage` | Per snippet: expansion count, last used, characters saved |
-| `setting` | Delimiters, hotkeys, date and time formats, locale, pause state, start at login, per-app injection overrides |
+| `setting` | Delimiters, hotkeys, date and time formats, locale, pause state, start at login, per-app injection overrides (`injection_overrides`, ADR-0025) |
 | `app_exclusion` | Apps where Iamb does not expand or buffer |
 | `approval` | Per snippet received from someone else: the revision the user approved (§8) |
 | `outbox` | Pending local changes for the sync agent, in order, each with the revision it was based on |

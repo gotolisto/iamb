@@ -29,20 +29,18 @@ pub(crate) struct State {
     table: RwLock<StrategyTable>,
 }
 
-impl Platform {
-    /// Replaces the user's per-application injection settings with `settings_json` (the
-    /// format is in the docs of the crate's strategy module; an empty string clears them).
-    /// The built-in table stays underneath. On error the previous settings stay in force.
+impl Injector for Platform {
+    /// Replaces the user's per-application injection settings with `settings_json`, in the
+    /// shared format of `iamb_platform::injection_settings` read as its macOS dialect (an
+    /// empty string clears them). The built-in table stays underneath. An expansion being sent
+    /// keeps the strategy it started with.
     ///
     /// # Errors
     ///
-    /// [`PlatformError::Invalid`] naming what was wrong (never the settings' content).
-    pub fn set_injection_settings(&self, settings_json: &str) -> Result<()> {
-        let table = StrategyTable::with_user_settings(settings_json).map_err(|error| {
-            PlatformError::Invalid {
-                context: error.what,
-            }
-        })?;
+    /// [`PlatformError::Invalid`] naming what was wrong (never the settings' content). On
+    /// error the previous settings stay in force.
+    fn configure(&self, settings_json: &str) -> Result<()> {
+        let table = StrategyTable::with_user_settings(settings_json)?;
         *self
             .injector
             .table
@@ -50,9 +48,7 @@ impl Platform {
             .unwrap_or_else(PoisonError::into_inner) = table;
         Ok(())
     }
-}
 
-impl Injector for Platform {
     fn inject(&self, request: &InjectionRequest, typed: &TypedHandoff) -> InjectionOutcome {
         let strategy = self
             .injector
@@ -308,13 +304,19 @@ mod tests {
     fn settings_are_validated_and_kept_on_error() {
         let platform = Platform::new();
         assert_eq!(
-            platform.set_injection_settings(r#"{"apps": {"com.example.A": {"chunk_units": 3}}}"#),
+            platform.configure(r#"{"apps": {"com.example.A": {"chunk_units": 3}}}"#),
             Ok(())
         );
         assert_eq!(
-            platform.set_injection_settings(r#"{"apps": {"com.example.A": {"chunk_units": 0}}}"#),
+            platform.configure(r#"{"apps": {"com.example.A": {"chunk_units": 0}}}"#),
             Err(PlatformError::Invalid {
-                context: "\"chunk_units\" out of range"
+                context: "\"chunk_units\" must be a whole number from 1 to 20"
+            })
+        );
+        assert_eq!(
+            platform.configure(r#"{"apps": {"com.example.A": {"paste_keys": "ctrl+v"}}}"#),
+            Err(PlatformError::Invalid {
+                context: "\"paste_keys\" is a Windows-only field"
             })
         );
         let kept = platform
@@ -329,7 +331,7 @@ mod tests {
                 &iamb_platform::InjectionOverrides::default(),
             );
         assert_eq!(kept.chunk_units, 3);
-        assert_eq!(platform.set_injection_settings(""), Ok(()));
+        assert_eq!(platform.configure(""), Ok(()));
     }
 
     #[test]

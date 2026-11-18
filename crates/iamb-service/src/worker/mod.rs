@@ -36,6 +36,7 @@
 
 mod engine;
 mod handlers;
+mod injection;
 mod ipc;
 mod store;
 mod threads;
@@ -541,6 +542,12 @@ impl Worker {
         let (watchdog_stop, watchdog_rx) = channel::<()>();
 
         let snapshot = first_view.snapshot.clone();
+        // The injector gets the user's per-app settings before anything can be injected.
+        let injection = injection::InjectionSettings::start(
+            Arc::clone(&platform) as Arc<dyn iamb_platform::Injector>,
+            Arc::clone(&logger),
+            &first_view.settings,
+        );
         let shared = Arc::new(Shared {
             logger: Arc::clone(&logger),
             view: SharedView::new(first_view),
@@ -569,7 +576,7 @@ impl Worker {
         {
             let shared = Arc::clone(&shared);
             spawn("store", &mut threads, move || {
-                store::run(&shared, store_db, profile, &store_rx);
+                store::run(&shared, store_db, profile, injection, &store_rx);
             })?;
         }
         {

@@ -158,13 +158,13 @@ abbreviation, a clipboard not restored). For each failing cell choose one of thr
 it with `iamb-compat exception`, which writes an exception record into the results file:
 
 1. **A per-app override.** Try a different injection strategy for that app: type instead of paste
-   or the other way round, a key delay, `shift+enter` for chat apps, a longer paste wait. The format
-   is documented at the top of `crates/iamb-platform-windows/src/injector/strategy.rs` and
-   `crates/iamb-platform-macos/src/injector/strategy.rs` (the two formats differ), and the service
-   hands the settings text to the platform. If the service of your build does not take the setting
-   yet, the override goes into the built-in table `BUILT_IN` of that file instead, as a change
-   with a test. Then run the cell again with `iamb-compat run --os <os> --app <ID> --again`. It
-   counts as a pass only if the full re-run passes:
+   or the other way round, a key delay, `shift+enter` for chat apps, a longer paste wait. The
+   overrides are one JSON text in the setting `injection_overrides`, in the same format on both
+   systems (see "Per-app overrides" below). Then run the cell again with
+   `iamb-compat run --os <os> --app <ID> --again`. It counts as a pass only if the full re-run
+   passes. An override that every user of the app needs also goes into the built-in table
+   `BUILT_IN` of `crates/iamb-platform-windows/src/injector/strategy.rs` or
+   `crates/iamb-platform-macos/src/injector/strategy.rs`, as a change with a test.
 
    ```sh
    iamb-compat exception --os windows --cell W9/T2 --resolution override \
@@ -178,6 +178,51 @@ it with `iamb-compat exception`, which writes an exception record into the resul
 
 Run `iamb-compat report` again: "Failures that still need an override or an issue" must say
 `none`.
+
+## Per-app overrides
+
+One JSON object. `defaults` applies to every app, and each entry under `apps` to one app,
+changing only the fields it names. The app id is the executable name on Windows (`EXCEL.EXE` or
+`excel`, any case) and the bundle identifier on macOS (`com.microsoft.Excel`).
+
+```json
+{
+  "defaults": { "paste_threshold": 400 },
+  "apps": {
+    "slack.exe": { "line_break": "shift+enter" },
+    "com.microsoft.Word": { "method": "keys", "key_delay_ms": 5 }
+  }
+}
+```
+
+| Field | Values | Windows | macOS |
+| --- | --- | --- | --- |
+| `method` | `auto` (keys, a paste above `paste_threshold`), `keys`, `paste` | yes | yes |
+| `paste_threshold` | characters, 0 to 1000000 | yes | yes |
+| `line_break` | `enter`, `shift+enter` | yes | yes, and also `option+enter`, `control+option+enter`, `paste` |
+| `key_delay_ms` | pause between keys | 0 to 10000 | 0 to 1000 |
+| `paste_wait_ms` | time the app gets to read a paste | 0 to 10000 | 20 to 5000 |
+| `paste_keys` | `ctrl+v`, `shift+insert` | yes | no |
+| `batch_delay_ms` | pause between input batches, 0 to 10000 | yes | no |
+| `chunk_units` | UTF-16 units per key event, 1 to 20 | no | yes |
+
+A field the system does not have, a misspelt field and a value out of range make the service
+refuse the whole text; the previous overrides stay in force. Older texts written by development
+builds (`default`, `typing`, `shift_enter`, `return`) are refused too.
+
+There is no settings screen yet. Write the setting with any SQLite tool while the service is
+stopped (Ctrl+C in its window), then start it again (step 4 on Windows, step 5 on macOS):
+
+```sh
+sqlite3 ~/iamb-compat/library.db
+sqlite> INSERT INTO setting (key, value) VALUES ('injection_overrides', '{"apps": {"slack.exe": {"line_break": "shift+enter"}}}')
+   ...> ON CONFLICT (key) DO UPDATE SET value = excluded.value;
+```
+
+On Windows the file is `C:\iamb-compat\library.db`. The worker log
+(`logs/worker.log` in the data folder) then says `injection settings applied`, or
+`the injection_overrides setting was refused` with the reason. To remove all overrides, delete
+the row: `DELETE FROM setting WHERE key = 'injection_overrides';`.
 
 ## Delivering the result
 

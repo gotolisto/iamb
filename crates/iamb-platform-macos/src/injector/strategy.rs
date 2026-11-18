@@ -11,10 +11,10 @@
 //! | --- | --- | --- |
 //! | `method` | `auto`: key events, or a paste above `paste_threshold`; `keys`: always key events; `paste`: always a paste | `auto` |
 //! | `paste_threshold` | `auto` pastes text with more characters (Unicode scalar values) than this | 300 |
-//! | `line_break` | how a line break in typed text is sent: `return`, `shift+return`, `option+return`, `control+option+return`, or `paste` (text with a line break is pasted whole) | `return` |
+//! | `line_break` | how a line break in typed text is sent: `enter`, `shift+enter`, `option+enter`, `control+option+enter` (each presses Return), or `paste` (text with a line break is pasted whole) | `enter` |
 //! | `key_delay_ms` | pause between two synthetic key presses, for applications that drop fast input | 0 |
 //! | `paste_wait_ms` | how long the pasted content stays on the pasteboard after the paste shortcut before the previous content is put back | 250 |
-//! | `chunk_units` | the most UTF-16 code units in one key event (1–20) | 20 |
+//! | `chunk_units` | the most UTF-16 code units in one key event (1–20); macOS only | 20 |
 //!
 //! # Precedence
 //!
@@ -26,21 +26,26 @@
 //!
 //! # The user's settings
 //!
-//! A JSON object; every member is optional and unknown names are an error:
+//! The service hands the `injection_overrides` setting to
+//! [`Injector::configure`](iamb_platform::Injector::configure). It is read with
+//! [`InjectionSettings::parse`] in its macOS dialect: the format both systems share
+//! (`iamb_platform::injection_settings`, ADR-0025), with `chunk_units` and the macOS line
+//! breaks. Every member is optional and unknown names are an error:
 //!
 //! ```json
 //! {
 //!   "defaults": { "paste_threshold": 500 },
 //!   "apps": {
 //!     "com.example.SlowEditor": { "key_delay_ms": 4, "chunk_units": 1 },
-//!     "com.example.Chat": { "line_break": "shift+return", "method": "paste" }
+//!     "com.example.Chat": { "line_break": "shift+enter", "method": "paste" }
 //!   }
 //! }
 //! ```
 //!
 //! Limits: `paste_threshold` at most 1,000,000; `key_delay_ms` at most 1,000; `paste_wait_ms`
 //! 20 to 5,000 (a paste needs the content on the pasteboard long enough for the application
-//! to read it); `chunk_units` 1 to 20; at most 1,000 application entries.
+//! to read it); `chunk_units` 1 to 20; at most 1,000 application entries. The Windows-only
+//! fields (`paste_keys`, `batch_delay_ms`) are errors here.
 //!
 //! # The built-in table
 //!
@@ -50,11 +55,11 @@
 
 use std::time::Duration;
 
-use iamb_platform::InjectionOverrides;
-use iamb_platform::TextMethod;
 use iamb_platform::core_types::AppId;
-
-use super::json::{self, JsonError, Value};
+use iamb_platform::{
+    InjectionEntry, InjectionMethod, InjectionOverrides, InjectionSettings, LineBreakChoice,
+    SettingsDialect, SettingsError, TextMethod,
+};
 
 /// How `TypeText` is sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,16 +122,15 @@ pub(crate) enum LineBreak {
     Paste,
 }
 
-impl LineBreak {
-    fn parse(name: &str) -> Option<Self> {
-        Some(match name {
-            "return" => Self::Return(Mods::NONE),
-            "shift+return" => Self::Return(Mods::SHIFT),
-            "option+return" => Self::Return(Mods::OPTION),
-            "control+option+return" => Self::Return(Mods::CONTROL_OPTION),
-            "paste" => Self::Paste,
-            _ => return None,
-        })
+impl From<LineBreakChoice> for LineBreak {
+    fn from(choice: LineBreakChoice) -> Self {
+        match choice {
+            LineBreakChoice::Enter => Self::Return(Mods::NONE),
+            LineBreakChoice::ShiftEnter => Self::Return(Mods::SHIFT),
+            LineBreakChoice::OptionEnter => Self::Return(Mods::OPTION),
+            LineBreakChoice::ControlOptionEnter => Self::Return(Mods::CONTROL_OPTION),
+            LineBreakChoice::Paste => Self::Paste,
+        }
     }
 }
 
@@ -290,33 +294,6 @@ pub(crate) const BUILT_IN: &[BuiltIn] = &[
     },
 ];
 
-/// The most application entries the user's settings may hold.
-const MAX_USER_APPS: usize = 1000;
-
-/// Why the user's settings were not accepted. Carries no part of the settings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct SettingsError {
-    /// What was wrong.
-    pub(crate) what: &'static str,
-    /// The byte offset in the document, when the JSON itself was malformed.
-    pub(crate) at: Option<usize>,
-}
-
-impl SettingsError {
-    const fn new(what: &'static str) -> Self {
-        Self { what, at: None }
-    }
-}
-
-impl From<JsonError> for SettingsError {
-    fn from(error: JsonError) -> Self {
-        Self {
-            what: error.what,
-            at: Some(error.at),
-        }
-    }
-}
-
 /// The table: built-in rows and the user's settings.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct StrategyTable {
@@ -326,6 +303,7 @@ pub(crate) struct StrategyTable {
 
 impl StrategyTable {
     /// The built-in table without user settings.
+    #[cfg(test)]
     pub(crate) fn built_in() -> Self {
         Self::default()
     }
@@ -333,41 +311,15 @@ impl StrategyTable {
     /// The built-in table with the user's settings (see the module docs for the format). An
     /// empty or all-blank string means no settings.
     pub(crate) fn with_user_settings(settings: &str) -> Result<Self, SettingsError> {
-        if settings.trim().is_empty() {
-            return Ok(Self::built_in());
-        }
-        let Value::Object(members) = json::parse(settings)? else {
-            return Err(SettingsError::new("settings must be a JSON object"));
-        };
-        let mut table = Self::built_in();
-        for (name, value) in &members {
-            match name.as_str() {
-                "defaults" => table.user_defaults = patch(value)?,
-                "apps" => {
-                    let Value::Object(apps) = value else {
-                        return Err(SettingsError::new("\"apps\" must be an object"));
-                    };
-                    if apps.len() > MAX_USER_APPS {
-                        return Err(SettingsError::new("too many application entries"));
-                    }
-                    for (bundle_id, value) in apps {
-                        if bundle_id.is_empty() {
-                            return Err(SettingsError::new("empty bundle identifier"));
-                        }
-                        if table
-                            .user_apps
-                            .iter()
-                            .any(|(known, _)| known.eq_ignore_ascii_case(bundle_id))
-                        {
-                            return Err(SettingsError::new("bundle identifier listed twice"));
-                        }
-                        table.user_apps.push((bundle_id.clone(), patch(value)?));
-                    }
-                }
-                _ => return Err(SettingsError::new("unknown top-level member")),
-            }
-        }
-        Ok(table)
+        let parsed = InjectionSettings::parse(settings, SettingsDialect::MacOs)?;
+        Ok(Self {
+            user_defaults: patch(&parsed.defaults),
+            user_apps: parsed
+                .apps
+                .iter()
+                .map(|(bundle_id, entry)| (bundle_id.clone(), patch(entry)))
+                .collect(),
+        })
     }
 
     /// The strategy for an expansion into `app` with the request's `overrides`.
@@ -401,72 +353,24 @@ impl StrategyTable {
     }
 }
 
-const MAX_THRESHOLD: u64 = 1_000_000;
-const MAX_KEY_DELAY_MS: u32 = 1000;
-const MIN_PASTE_WAIT_MS: u64 = 20;
-const MAX_PASTE_WAIT_MS: u64 = 5000;
+/// The longest key delay a setting, or a request, may ask for.
+const MAX_KEY_DELAY_MS: u32 = SettingsDialect::MacOs.key_delay_ms().max;
 
-fn number(value: &Value, max: u64, what: &'static str) -> Result<u64, SettingsError> {
-    value
-        .as_u64()
-        .filter(|n| *n <= max)
-        .ok_or(SettingsError::new(what))
-}
-
-fn patch(value: &Value) -> Result<Patch, SettingsError> {
-    let Value::Object(fields) = value else {
-        return Err(SettingsError::new("a strategy must be an object"));
-    };
-    let mut patch = Patch::default();
-    for (name, value) in fields {
-        match name.as_str() {
-            "method" => {
-                patch.method = Some(match value {
-                    Value::String(s) if s == "auto" => Method::Auto,
-                    Value::String(s) if s == "keys" => Method::Keys,
-                    Value::String(s) if s == "paste" => Method::Paste,
-                    _ => return Err(SettingsError::new("\"method\" must be auto, keys or paste")),
-                });
-            }
-            "paste_threshold" => {
-                let n = number(value, MAX_THRESHOLD, "\"paste_threshold\" out of range")?;
-                patch.paste_threshold = Some(usize::try_from(n).unwrap_or(usize::MAX));
-            }
-            "line_break" => {
-                let Value::String(name) = value else {
-                    return Err(SettingsError::new("\"line_break\" must be a string"));
-                };
-                patch.line_break = Some(
-                    LineBreak::parse(name)
-                        .ok_or(SettingsError::new("unknown \"line_break\" value"))?,
-                );
-            }
-            "key_delay_ms" => {
-                let n = number(
-                    value,
-                    u64::from(MAX_KEY_DELAY_MS),
-                    "\"key_delay_ms\" out of range",
-                )?;
-                patch.key_delay_ms = Some(u32::try_from(n).unwrap_or(MAX_KEY_DELAY_MS));
-            }
-            "paste_wait_ms" => {
-                let n = number(value, MAX_PASTE_WAIT_MS, "\"paste_wait_ms\" out of range")?;
-                if n < MIN_PASTE_WAIT_MS {
-                    return Err(SettingsError::new("\"paste_wait_ms\" out of range"));
-                }
-                patch.paste_wait_ms = Some(u32::try_from(n).unwrap_or(u32::MAX));
-            }
-            "chunk_units" => {
-                let n = number(value, 20, "\"chunk_units\" out of range")?;
-                if n == 0 {
-                    return Err(SettingsError::new("\"chunk_units\" out of range"));
-                }
-                patch.chunk_units = Some(u8::try_from(n).unwrap_or(20));
-            }
-            _ => return Err(SettingsError::new("unknown strategy field")),
-        }
+/// One entry of the user's settings as a layer of the table. The macOS dialect refuses the
+/// Windows-only fields, so there are none to drop.
+fn patch(entry: &InjectionEntry) -> Patch {
+    Patch {
+        method: entry.method.map(|method| match method {
+            InjectionMethod::Auto => Method::Auto,
+            InjectionMethod::Keys => Method::Keys,
+            InjectionMethod::Paste => Method::Paste,
+        }),
+        paste_threshold: entry.paste_threshold,
+        line_break: entry.line_break.map(LineBreak::from),
+        key_delay_ms: entry.key_delay_ms,
+        paste_wait_ms: entry.paste_wait_ms,
+        chunk_units: entry.chunk_units,
     }
-    Ok(patch)
 }
 
 #[cfg(test)]
@@ -539,7 +443,7 @@ mod tests {
                 "apps": {
                     "com.tinyspeck.slackmacgap": { "method": "keys" },
                     "com.example.Slow": { "chunk_units": 1, "paste_wait_ms": 800 },
-                    "com.microsoft.word": { "method": "auto", "line_break": "option+return" }
+                    "com.microsoft.word": { "method": "auto", "line_break": "option+enter" }
                 }
             }"#,
         )
@@ -580,11 +484,11 @@ mod tests {
     #[test]
     fn every_line_break_name() {
         for (name, expected) in [
-            ("return", LineBreak::Return(Mods::NONE)),
-            ("shift+return", LineBreak::Return(Mods::SHIFT)),
-            ("option+return", LineBreak::Return(Mods::OPTION)),
+            ("enter", LineBreak::Return(Mods::NONE)),
+            ("shift+enter", LineBreak::Return(Mods::SHIFT)),
+            ("option+enter", LineBreak::Return(Mods::OPTION)),
             (
-                "control+option+return",
+                "control+option+enter",
                 LineBreak::Return(Mods::CONTROL_OPTION),
             ),
             ("paste", LineBreak::Paste),
@@ -609,64 +513,52 @@ mod tests {
 
     #[test]
     fn bad_settings_are_refused_with_a_reason_and_no_content() {
+        // The full list of refusals is tested with the shared format in `iamb-platform`;
+        // these are the ones that matter on macOS.
         let cases: &[(&str, &str)] = &[
-            ("[]", "settings must be a JSON object"),
-            (r#"{"colour": 1}"#, "unknown top-level member"),
-            (r#"{"apps": []}"#, "\"apps\" must be an object"),
-            (r#"{"apps": {"": {}}}"#, "empty bundle identifier"),
+            ("[]", "injection settings must be a JSON object"),
+            (
+                r#"{"colour": 1}"#,
+                "unknown top-level member (expected \"defaults\" or \"apps\")",
+            ),
             (
                 r#"{"apps": {"a.b": {}, "A.B": {}}}"#,
-                "bundle identifier listed twice",
+                "the same application is listed twice",
             ),
-            (r#"{"defaults": 3}"#, "a strategy must be an object"),
-            (r#"{"defaults": {"speed": 1}}"#, "unknown strategy field"),
+            (r#"{"defaults": {"speed": 1}}"#, "unknown field in an entry"),
             (
                 r#"{"defaults": {"method": "fast"}}"#,
                 "\"method\" must be auto, keys or paste",
             ),
+            // The line-break names of earlier development builds (ADR-0025).
             (
-                r#"{"defaults": {"method": 1}}"#,
-                "\"method\" must be auto, keys or paste",
+                r#"{"defaults": {"line_break": "shift+return"}}"#,
+                "unknown \"line_break\" value (expected enter, shift+enter, option+enter, \
+                 control+option+enter or paste)",
             ),
             (
-                r#"{"defaults": {"line_break": "enter"}}"#,
-                "unknown \"line_break\" value",
+                r#"{"defaults": {"paste_keys": "ctrl+v"}}"#,
+                "\"paste_keys\" is a Windows-only field",
             ),
             (
-                r#"{"defaults": {"line_break": 1}}"#,
-                "\"line_break\" must be a string",
-            ),
-            (
-                r#"{"defaults": {"paste_threshold": -1}}"#,
-                "\"paste_threshold\" out of range",
-            ),
-            (
-                r#"{"defaults": {"paste_threshold": 1000001}}"#,
-                "\"paste_threshold\" out of range",
+                r#"{"defaults": {"batch_delay_ms": 10}}"#,
+                "\"batch_delay_ms\" is a Windows-only field",
             ),
             (
                 r#"{"defaults": {"key_delay_ms": 1001}}"#,
-                "\"key_delay_ms\" out of range",
-            ),
-            (
-                r#"{"defaults": {"key_delay_ms": 1.5}}"#,
-                "\"key_delay_ms\" out of range",
+                "\"key_delay_ms\" must be a whole number from 0 to 1000",
             ),
             (
                 r#"{"defaults": {"paste_wait_ms": 5}}"#,
-                "\"paste_wait_ms\" out of range",
-            ),
-            (
-                r#"{"defaults": {"paste_wait_ms": 6000}}"#,
-                "\"paste_wait_ms\" out of range",
+                "\"paste_wait_ms\" must be a whole number from 20 to 5000",
             ),
             (
                 r#"{"defaults": {"chunk_units": 0}}"#,
-                "\"chunk_units\" out of range",
+                "\"chunk_units\" must be a whole number from 1 to 20",
             ),
             (
                 r#"{"defaults": {"chunk_units": 21}}"#,
-                "\"chunk_units\" out of range",
+                "\"chunk_units\" must be a whole number from 1 to 20",
             ),
         ];
         for (settings, what) in cases {
@@ -678,12 +570,5 @@ mod tests {
         }
         let malformed = StrategyTable::with_user_settings("{\"apps\": ").expect_err("malformed");
         assert_eq!(malformed.at, Some(9));
-        let many: Vec<String> = (0..=MAX_USER_APPS)
-            .map(|i| format!("\"a.{i}\": {{}}"))
-            .collect();
-        assert_eq!(
-            StrategyTable::with_user_settings(&format!("{{\"apps\": {{{}}}}}", many.join(","))),
-            Err(SettingsError::new("too many application entries"))
-        );
     }
 }

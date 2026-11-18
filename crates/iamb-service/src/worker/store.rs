@@ -1,7 +1,8 @@
 //! The store thread: owns the `SQLite` connection (and so `run/store.lock`), performs every
 //! write, records usage, and after a change to library content or settings builds the next
-//! [`View`] and tells the engine (`SnapshotChanged`) and the clients (`LibraryChanged`,
-//! `SettingsChanged`). Usage records do not rebuild anything (ADR-0007).
+//! [`View`] and tells the engine (`SnapshotChanged`), the injector (a changed
+//! `injection_overrides` setting, [`injection`](super::injection)) and the clients
+//! (`LibraryChanged`, `SettingsChanged`). Usage records do not rebuild anything (ADR-0007).
 
 use std::collections::hash_map::RandomState;
 use std::hash::BuildHasher;
@@ -12,6 +13,7 @@ use iamb_core::model::Id;
 use iamb_ipc::EventBody;
 use iamb_store::{Store, StoreError};
 
+use super::injection::InjectionSettings;
 use super::{EngineMsg, FocusMsg, Shared, WakeCounters};
 use crate::clock;
 use crate::library::{View, build_view, ensure_personal_profile};
@@ -34,6 +36,8 @@ pub(crate) fn new_id() -> Id {
 pub(crate) struct StoreCtx {
     pub store: Store,
     pub profile: Id,
+    /// The injector's per-app settings, applied from the `injection_overrides` setting.
+    pub injection: InjectionSettings,
     library_changed: bool,
     settings_changed: bool,
 }
@@ -106,10 +110,17 @@ pub(crate) fn initial_view(store: &mut Store) -> Result<(Id, View), StoreError> 
 }
 
 /// The thread's loop.
-pub(crate) fn run(shared: &Shared, store: Store, profile: Id, rx: &Receiver<StoreMsg>) {
+pub(crate) fn run(
+    shared: &Shared,
+    store: Store,
+    profile: Id,
+    injection: InjectionSettings,
+    rx: &Receiver<StoreMsg>,
+) {
     let mut ctx = StoreCtx {
         store,
         profile,
+        injection,
         library_changed: false,
         settings_changed: false,
     };
@@ -154,6 +165,9 @@ fn publish(shared: &Shared, ctx: &mut StoreCtx) {
     match build_view(&ctx.store, ctx.profile, revision) {
         Ok(view) => {
             let snapshot = view.snapshot.clone();
+            if settings {
+                ctx.injection.follow(&view.settings);
+            }
             shared.view.set(view);
             shared.to_engine(EngineMsg::Snapshot(snapshot));
             if library {

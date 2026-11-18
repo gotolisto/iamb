@@ -1,7 +1,7 @@
-//! A small, strict JSON reader for the user's injection overrides (RFC 8259).
+//! A small, strict JSON reader for the injection settings (RFC 8259).
 //!
-//! The overrides arrive from settings as a JSON string. This crate has no JSON dependency, and
-//! the document is tiny (a few dozen fields), so a reader of about two hundred lines is enough:
+//! The settings arrive as a JSON string. This crate has no JSON dependency, and the document is
+//! tiny (a few dozen fields), so a reader of about two hundred lines is enough:
 //! objects, arrays, strings with every escape, `true`, `false`, `null`, and numbers. Limits
 //! keep a damaged setting from costing memory or stack: at most [`MAX_INPUT`] bytes and
 //! [`MAX_DEPTH`] levels of nesting. Duplicate object keys are an error, because which one wins
@@ -11,7 +11,7 @@
 
 use std::fmt;
 
-/// The longest overrides document accepted, in bytes.
+/// The longest settings document accepted, in bytes.
 pub(crate) const MAX_INPUT: usize = 64 * 1024;
 /// The deepest nesting accepted.
 pub(crate) const MAX_DEPTH: usize = 16;
@@ -58,7 +58,7 @@ impl fmt::Display for JsonError {
 pub(crate) fn parse(input: &str) -> Result<Value, JsonError> {
     if input.len() > MAX_INPUT {
         return Err(JsonError {
-            what: "document too long",
+            what: "the settings are longer than 64 KiB",
             at: MAX_INPUT,
         });
     }
@@ -108,13 +108,13 @@ impl Reader<'_> {
             self.at += word.len();
             Ok(value)
         } else {
-            Err(self.error("unknown literal"))
+            Err(self.error("malformed JSON: unknown literal"))
         }
     }
 
     fn value(&mut self, depth: usize) -> Result<Value, JsonError> {
         if depth > MAX_DEPTH {
-            return Err(self.error("nested too deeply"));
+            return Err(self.error("malformed JSON: nested too deeply"));
         }
         self.skip_space();
         match self.peek() {
@@ -125,8 +125,8 @@ impl Reader<'_> {
             Some(b'f') => self.literal("false", Value::Bool(false)),
             Some(b'n') => self.literal("null", Value::Null),
             Some(b'-' | b'0'..=b'9') => self.number(),
-            Some(_) => Err(self.error("unexpected character")),
-            None => Err(self.error("unexpected end")),
+            Some(_) => Err(self.error("malformed JSON: unexpected character")),
+            None => Err(self.error("malformed JSON: unexpected end")),
         }
     }
 
@@ -141,13 +141,13 @@ impl Reader<'_> {
         loop {
             self.skip_space();
             if self.peek() != Some(b'"') {
-                return Err(self.error("expected a key"));
+                return Err(self.error("malformed JSON: expected a key"));
             }
             let key_at = self.at;
             let key = self.string()?;
             if fields.iter().any(|(k, _)| *k == key) {
                 return Err(JsonError {
-                    what: "duplicate key",
+                    what: "malformed JSON: duplicate key",
                     at: key_at,
                 });
             }
@@ -162,7 +162,7 @@ impl Reader<'_> {
                     self.at += 1;
                     return Ok(Value::Object(fields));
                 }
-                _ => return Err(self.error("expected ',' or '}'")),
+                _ => return Err(self.error("malformed JSON: expected ',' or '}'")),
             }
         }
     }
@@ -184,7 +184,7 @@ impl Reader<'_> {
                     self.at += 1;
                     return Ok(Value::Array(items));
                 }
-                _ => return Err(self.error("expected ',' or ']'")),
+                _ => return Err(self.error("malformed JSON: expected ',' or ']'")),
             }
         }
     }
@@ -205,12 +205,12 @@ impl Reader<'_> {
         let int_start = self.at;
         let int_len = self.digits();
         if int_len == 0 || (int_len > 1 && self.bytes[int_start] == b'0') {
-            return Err(self.error("malformed number"));
+            return Err(self.error("malformed JSON: bad number"));
         }
         if self.peek() == Some(b'.') {
             self.at += 1;
             if self.digits() == 0 {
-                return Err(self.error("malformed number"));
+                return Err(self.error("malformed JSON: bad number"));
             }
         }
         if matches!(self.peek(), Some(b'e' | b'E')) {
@@ -219,11 +219,11 @@ impl Reader<'_> {
                 self.at += 1;
             }
             if self.digits() == 0 {
-                return Err(self.error("malformed number"));
+                return Err(self.error("malformed JSON: bad number"));
             }
         }
         let text = std::str::from_utf8(&self.bytes[start..self.at])
-            .map_err(|_| self.error("malformed number"))?;
+            .map_err(|_| self.error("malformed JSON: bad number"))?;
         Ok(Value::Number(text.to_owned()))
     }
 
@@ -231,12 +231,12 @@ impl Reader<'_> {
         let digits = self
             .bytes
             .get(self.at..self.at + 4)
-            .ok_or_else(|| self.error("short \\u escape"))?;
+            .ok_or_else(|| self.error("malformed JSON: short \\u escape"))?;
         let mut value = 0;
         for &d in digits {
             let nibble = char::from(d)
                 .to_digit(16)
-                .ok_or_else(|| self.error("bad \\u escape"))?;
+                .ok_or_else(|| self.error("malformed JSON: bad \\u escape"))?;
             value = value * 16 + nibble;
         }
         self.at += 4;
@@ -257,7 +257,7 @@ impl Reader<'_> {
             // The input is a `str` and the stops are ASCII, so the run is valid UTF-8.
             out.push_str(
                 std::str::from_utf8(&self.bytes[start..self.at])
-                    .map_err(|_| self.error("invalid text"))?,
+                    .map_err(|_| self.error("malformed JSON: invalid text"))?,
             );
             match self.peek() {
                 Some(b'"') => {
@@ -266,7 +266,9 @@ impl Reader<'_> {
                 }
                 Some(b'\\') => {
                     self.at += 1;
-                    let escape = self.peek().ok_or_else(|| self.error("unexpected end"))?;
+                    let escape = self
+                        .peek()
+                        .ok_or_else(|| self.error("malformed JSON: unexpected end"))?;
                     self.at += 1;
                     let c = match escape {
                         b'"' => '"',
@@ -278,12 +280,12 @@ impl Reader<'_> {
                         b'r' => '\r',
                         b't' => '\t',
                         b'u' => self.unicode_escape()?,
-                        _ => return Err(self.error("bad escape")),
+                        _ => return Err(self.error("malformed JSON: bad escape")),
                     };
                     out.push(c);
                 }
-                Some(_) => return Err(self.error("control character in string")),
-                None => return Err(self.error("unterminated string")),
+                Some(_) => return Err(self.error("malformed JSON: control character in string")),
+                None => return Err(self.error("malformed JSON: unterminated string")),
             }
         }
     }
@@ -292,18 +294,18 @@ impl Reader<'_> {
         let first = self.hex4()?;
         let code = if (0xD800..0xDC00).contains(&first) {
             if !self.bytes[self.at..].starts_with(b"\\u") {
-                return Err(self.error("lone surrogate"));
+                return Err(self.error("malformed JSON: lone surrogate"));
             }
             self.at += 2;
             let second = self.hex4()?;
             if !(0xDC00..0xE000).contains(&second) {
-                return Err(self.error("lone surrogate"));
+                return Err(self.error("malformed JSON: lone surrogate"));
             }
             0x10000 + ((first - 0xD800) << 10) + (second - 0xDC00)
         } else {
             first
         };
-        char::from_u32(code).ok_or_else(|| self.error("lone surrogate"))
+        char::from_u32(code).ok_or_else(|| self.error("malformed JSON: lone surrogate"))
     }
 }
 
@@ -387,6 +389,10 @@ mod tests {
             "1 2",
             "{\"a\":1,\"a\":2}",
             "[1 2]",
+            "{\"a\":1}{",
+            "'single'",
+            "\"\\ud800\\u0041\"",
+            "\"tab\there\"",
         ] {
             assert!(parse(bad).is_err(), "{bad:?} must be rejected");
         }
@@ -395,18 +401,27 @@ mod tests {
     #[test]
     fn limits_depth_and_size() {
         let deep = format!("{}{}", "[".repeat(MAX_DEPTH + 2), "]".repeat(MAX_DEPTH + 2));
-        assert_eq!(parse(&deep).map_err(|e| e.what), Err("nested too deeply"));
+        assert_eq!(
+            parse(&deep).map_err(|e| e.what),
+            Err("malformed JSON: nested too deeply")
+        );
         let fine = format!("{}{}", "[".repeat(MAX_DEPTH), "]".repeat(MAX_DEPTH));
         assert!(parse(&fine).is_ok());
         let long = format!("\"{}\"", "a".repeat(MAX_INPUT));
-        assert_eq!(parse(&long).map_err(|e| e.what), Err("document too long"));
+        assert_eq!(
+            parse(&long).map_err(|e| e.what),
+            Err("the settings are longer than 64 KiB")
+        );
     }
 
     #[test]
     fn errors_name_the_place_not_the_content() {
         let error = parse("{\"secret\": nope}").expect_err("invalid");
-        assert_eq!(error.what, "unknown literal");
+        assert_eq!(error.what, "malformed JSON: unknown literal");
         assert_eq!(error.at, 11);
-        assert_eq!(error.to_string(), "unknown literal at byte 11");
+        assert_eq!(
+            error.to_string(),
+            "malformed JSON: unknown literal at byte 11"
+        );
     }
 }

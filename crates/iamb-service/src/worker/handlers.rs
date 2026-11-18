@@ -19,6 +19,7 @@ use iamb_ipc::{
     ResponseBody, Role, SearchHit, ShadowedEntry, TransferFormat, WireAction, WireDiagnostic,
     WireExclusion, WireValues,
 };
+use iamb_platform::INJECTION_SETTINGS_KEY;
 use iamb_store::transfer::{self, Format, OnConflict, TransferError};
 use iamb_store::{AppExclusion, StoreError};
 
@@ -438,17 +439,30 @@ fn put_setting(shared: &Shared, view: &View, key: String, value: Option<String>)
         None => next.remove(&key),
     };
     engine_settings(&next).map_err(|m| err(ErrorCode::Invalid, m))?;
+    let for_injector = key == INJECTION_SETTINGS_KEY;
     write(shared, move |ctx| {
-        match &value {
-            Some(v) => ctx
-                .store
-                .put_setting(&key, v)
-                .map_err(|e| store_error(&e))?,
-            None => {
-                ctx.store
-                    .delete_setting(&key)
-                    .map_err(|e| store_error(&e))?;
+        // The injector checks its settings by taking them (ADR-0025): a refusal is the
+        // client's error, and nothing is stored.
+        let before = for_injector.then(|| ctx.injection.checkpoint());
+        if for_injector {
+            ctx.injection
+                .try_apply(value.as_deref().unwrap_or(""))
+                .map_err(|e| {
+                    err(
+                        ErrorCode::Invalid,
+                        format!("invalid {INJECTION_SETTINGS_KEY} setting: {e}"),
+                    )
+                })?;
+        }
+        let stored = match &value {
+            Some(v) => ctx.store.put_setting(&key, v),
+            None => ctx.store.delete_setting(&key).map(|_| ()),
+        };
+        if let Err(e) = stored {
+            if let Some(before) = before {
+                ctx.injection.restore(before);
             }
+            return Err(store_error(&e));
         }
         ctx.settings_changed();
         Ok(())

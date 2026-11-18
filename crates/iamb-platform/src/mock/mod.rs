@@ -83,6 +83,7 @@ use crate::hotkeys::{Chord, HotkeyId, Hotkeys};
 use crate::inject::{
     InjectionOutcome, InjectionRequest, InjectionStep, Injector, TextMethod, compensate,
 };
+use crate::injection_settings::{InjectionSettings, SettingsDialect};
 use crate::listener::{EventSink, KeyListener, ListenerEvent, SeqSource};
 use crate::login_item::{LoginItem, LoginItemStatus};
 use crate::marker::Marker;
@@ -311,6 +312,9 @@ struct Desk {
     waited_ms: u64,
     self_tests: u32,
     synthetic_events: usize,
+    settings_dialect: SettingsDialect,
+    configured: Vec<String>,
+    injection_settings: String,
 }
 
 impl Desk {
@@ -341,6 +345,9 @@ impl Desk {
             waited_ms: 0,
             self_tests: 0,
             synthetic_events: 0,
+            settings_dialect: SettingsDialect::Windows,
+            configured: Vec::new(),
+            injection_settings: String::new(),
         }
     }
 
@@ -721,6 +728,25 @@ impl MockPlatform {
         self.desk().synthetic_events
     }
 
+    /// Which system's variant of the injection settings format
+    /// [`configure`](Injector::configure) accepts ([`SettingsDialect::Windows`] unless set).
+    pub fn set_settings_dialect(&self, dialect: SettingsDialect) {
+        self.desk().settings_dialect = dialect;
+    }
+
+    /// Every string [`configure`](Injector::configure) was given, accepted or not, in order.
+    #[must_use]
+    pub fn configured(&self) -> Vec<String> {
+        self.desk().configured.clone()
+    }
+
+    /// The injection settings in force: the last string `configure` accepted (empty at
+    /// first).
+    #[must_use]
+    pub fn injection_settings(&self) -> String {
+        self.desk().injection_settings.clone()
+    }
+
     // -----------------------------------------------------------------------------------------
     // Clipboard, hotkeys, permissions, login item, memory
     // -----------------------------------------------------------------------------------------
@@ -1006,6 +1032,17 @@ impl MockPlatform {
 }
 
 impl Injector for MockPlatform {
+    /// Records `settings_json`, reads it with [`InjectionSettings::parse`] in the dialect of
+    /// [`set_settings_dialect`](MockPlatform::set_settings_dialect), and keeps it when it is
+    /// valid. The mock's output does not depend on the settings.
+    fn configure(&self, settings_json: &str) -> Result<()> {
+        let mut desk = self.desk();
+        desk.configured.push(settings_json.to_owned());
+        InjectionSettings::parse(settings_json, desk.settings_dialect)?;
+        settings_json.clone_into(&mut desk.injection_settings);
+        Ok(())
+    }
+
     fn inject(&self, request: &InjectionRequest, typed: &TypedHandoff) -> InjectionOutcome {
         let expansion = request.expansion;
         let refusal = {
