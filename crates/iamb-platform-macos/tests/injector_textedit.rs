@@ -74,6 +74,21 @@ struct Document {
 
 static TURN: Mutex<()> = Mutex::new(());
 
+/// Why `TextEdit` could not be controlled, once the first test found out. A machine that does not
+/// let this process control `TextEdit` answers only after an `AppleEvent` timeout; the other tests
+/// skip at once instead of each waiting for it again.
+static CANNOT_CONTROL: Mutex<Option<String>> = Mutex::new(None);
+
+fn cannot_control_skip(test: &str, why: &str) {
+    skip(
+        test,
+        &format!(
+            "TextEdit could not be controlled ({why}). Allow the terminal or IDE that runs \
+             `cargo test` to control TextEdit in System Settings, Privacy & Security, Automation"
+        ),
+    );
+}
+
 impl Document {
     /// Opens a document, or says why the test is skipped.
     fn open(test: &str) -> Option<Self> {
@@ -87,22 +102,27 @@ impl Document {
             );
             return None;
         }
+        let mut known = CANNOT_CONTROL
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(why) = known.as_deref() {
+            cannot_control_skip(test, why);
+            return None;
+        }
+        // A short AppleEvent timeout: without the Automation grant the default is two minutes.
         if let Err(why) = osascript(&[
+            "with timeout of 15 seconds",
             "tell application \"TextEdit\"",
             "activate",
             "make new document",
             "end tell",
+            "end timeout",
         ]) {
-            skip(
-                test,
-                &format!(
-                    "TextEdit could not be controlled ({why}). Allow the terminal or IDE that \
-                     runs `cargo test` to control TextEdit in System Settings, Privacy & \
-                     Security, Automation"
-                ),
-            );
+            cannot_control_skip(test, &why);
+            *known = Some(why);
             return None;
         }
+        drop(known);
         let document = Self { _turn: turn };
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
