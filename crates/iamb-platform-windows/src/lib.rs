@@ -38,14 +38,12 @@
 //! - Shared decisions are not made here: marker values, named-key classification, the
 //!   overflow rule, compensation and peer verification are functions of `iamb-platform`.
 
-#[cfg(windows)]
 mod clipboard;
 #[cfg(windows)]
 mod endpoint;
 #[cfg(windows)]
 mod focus;
 mod hotkeys;
-#[cfg(windows)]
 mod injector;
 mod listener;
 #[cfg(windows)]

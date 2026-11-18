@@ -1,66 +1,224 @@
-//! The clipboard. **Task 2.2** fills this file (with `injector.rs`).
+//! The clipboard (architecture §5, §8 rules 2 and 8; the trait docs of
+//! [`ClipboardAccess`](iamb_platform::ClipboardAccess)).
 //!
-//! What it must do (architecture §5, §8 rules 2 and 8; the trait docs of
-//! [`ClipboardAccess`]):
+//! # Parts
 //!
-//! - `read_text` returns the Unicode text on the clipboard, if any.
-//! - `snapshot` copies every format that can be copied (not the ones rendered on demand, and
-//!   not above a size limit; the snapshot then says it is incomplete); `restore` puts them
-//!   back.
-//! - `write` puts plain text, HTML (in the clipboard's HTML format, with its header) and a
-//!   file list on the clipboard. With `transient`, it also sets the formats that keep the
-//!   content out of the clipboard history and out of cloud clipboard sync; `restore` sets
-//!   them too.
-//! - Another program can hold the clipboard open: retry briefly, then report
-//!   [`Os`](iamb_platform::PlatformError::Os). Never log clipboard content.
+//! | Module | Runs on | Does |
+//! | --- | --- | --- |
+//! | `formats` | every system | which formats a snapshot copies; text and file-list encodings; the retry around the clipboard's lock |
+//! | `html` | every system | the HTML format with its header of byte offsets |
+//! | `paste` | every system | snapshot, transient write, paste shortcut, wait, restore, and what each failure does |
+//! | `os` | Windows | each system call behind a small safe function |
+//!
+//! # Behaviour
+//!
+//! - `read_text`: the Unicode text, CR LF turned into LF (the engine's line ending).
+//! - `snapshot`: every format whose data is global memory (text, HTML, RTF, device-independent
+//!   bitmaps, file lists, and the registered formats applications put there), byte for byte;
+//!   formats that are handles to system objects are left out and the snapshot says it is
+//!   incomplete (`formats` has the rules and the limits).
+//! - `write`: plain text (CR LF line endings), HTML in the HTML format, files as a file list.
+//!   With `transient`, also the three markers that keep content out of clipboard monitors,
+//!   the clipboard history and the cloud clipboard.
+//! - `restore`: the snapshot's formats, always with the three markers: putting the user's
+//!   content back must not add it to the history a second time. An empty snapshot empties
+//!   the clipboard.
+//! - Another program can hold the clipboard: opening is retried for about a tenth of a second,
+//!   then [`Os`](iamb_platform::PlatformError::Os) names `OpenClipboard`.
+//!
+//! # Privacy
+//!
+//! Nothing here logs. Errors carry the name of a system call and its code. Bytes read for
+//! `read_text` are overwritten before they are freed; snapshot bytes live in
+//! [`Sensitive`](iamb_platform::core_types::Sensitive).
 
-use iamb_platform::core_types::Sensitive;
-use iamb_platform::{ClipboardAccess, ClipboardContent, ClipboardSnapshot, PlatformError, Result};
+// The parts that run on every system are only called from the Windows-only parts; on other
+// systems they exist for their tests.
+#![cfg_attr(not(windows), allow(dead_code))]
 
-use crate::Platform;
+pub(crate) mod formats;
+pub(crate) mod html;
+pub(crate) mod paste;
 
-/// The clipboard's state: the registered format identifiers.
-#[derive(Debug, Default)]
-pub(crate) struct State {}
+#[cfg(windows)]
+mod os;
 
-impl ClipboardAccess for Platform {
-    fn read_text(&self) -> Result<Option<Sensitive<String>>> {
-        let State {} = &self.clipboard;
-        Err(PlatformError::Unsupported)
+#[cfg(windows)]
+pub(crate) use windows::{State, restore_now, sequence, snapshot_now, write_now};
+
+#[cfg(windows)]
+mod windows {
+    use std::time::Instant;
+
+    use iamb_platform::core_types::Sensitive;
+    use iamb_platform::{
+        ClipboardAccess, ClipboardContent, ClipboardFlavour, ClipboardFormat, ClipboardSnapshot,
+        PlatformError, Result,
+    };
+
+    use super::formats::{
+        CF_HDROP, CF_UNICODETEXT, FIRST_REGISTERED, HISTORY_MARKERS, MAX_FLAVOUR_BYTES,
+        MAX_SNAPSHOT_BYTES, SNAPSHOT_TIME_LIMIT, Treatment, file_list, text_from_unicode,
+        treatment, unicode_text,
+    };
+    use super::html;
+    use super::os::{self, Data, MemoryFormat, Open};
+    use crate::Platform;
+
+    /// The clipboard keeps no state: format numbers are registered on use (the system
+    /// answers from its atom table).
+    #[derive(Debug, Default)]
+    pub(crate) struct State {}
+
+    /// Overwrites bytes that held clipboard content before they are freed.
+    fn wipe(mut bytes: Vec<u8>) {
+        bytes.fill(0);
+        std::hint::black_box(&mut bytes);
     }
 
-    fn snapshot(&self) -> Result<ClipboardSnapshot> {
-        Err(PlatformError::Unsupported)
+    fn put_markers(open: &Open) -> Result<()> {
+        for (name, data) in HISTORY_MARKERS {
+            open.put(os::register(name)?, &data)?;
+        }
+        Ok(())
     }
 
-    fn write(&self, _content: &ClipboardContent, _transient: bool) -> Result<()> {
-        Err(PlatformError::Unsupported)
+    /// Everything on the clipboard that can be copied.
+    pub(crate) fn snapshot_now() -> Result<ClipboardSnapshot> {
+        let open = os::open()?;
+        let present = open.formats()?;
+        let started = Instant::now();
+        let mut total = 0usize;
+        let mut complete = true;
+        let mut flavours = Vec::new();
+        for &format in &present {
+            let name = if format >= FIRST_REGISTERED {
+                os::format_name(format)
+            } else {
+                None
+            };
+            match treatment(format, &present, name.as_deref()) {
+                Treatment::Ignore => continue,
+                Treatment::Skip => {
+                    complete = false;
+                    continue;
+                }
+                Treatment::Copy => {}
+            }
+            let Some(memory) = MemoryFormat::new(format, &present, name.as_deref()) else {
+                complete = false;
+                continue;
+            };
+            if started.elapsed() > SNAPSHOT_TIME_LIMIT {
+                complete = false;
+                continue;
+            }
+            let limit = MAX_FLAVOUR_BYTES.min(MAX_SNAPSHOT_BYTES.saturating_sub(total));
+            match open.read(memory, limit) {
+                Data::Bytes(bytes) => {
+                    total += bytes.len();
+                    flavours.push(ClipboardFlavour {
+                        format: name.map_or(ClipboardFormat::Id(format), ClipboardFormat::Name),
+                        data: Sensitive::new(bytes),
+                    });
+                }
+                Data::Missing | Data::TooBig => complete = false,
+            }
+        }
+        Ok(ClipboardSnapshot::new(flavours, complete))
     }
 
-    fn restore(&self, _snapshot: ClipboardSnapshot) -> Result<()> {
-        Err(PlatformError::Unsupported)
+    /// Writes `content`; returns the clipboard's sequence number after the write.
+    pub(crate) fn write_now(content: &ClipboardContent, transient: bool) -> Result<u32> {
+        let html_format = match &content.html {
+            Some(_) => Some(os::register(html::FORMAT_NAME)?),
+            None => None,
+        };
+        let open = os::open()?;
+        open.empty()?;
+        if transient {
+            put_markers(&open)?;
+        }
+        if let Some(text) = &content.text {
+            let data = unicode_text(text);
+            let put = open.put(CF_UNICODETEXT, &data);
+            wipe(data);
+            put?;
+        }
+        if let (Some(fragment), Some(format)) = (&content.html, html_format) {
+            let data = html::encode(fragment);
+            let put = open.put(format, &data);
+            wipe(data);
+            put?;
+        }
+        if !content.files.is_empty() {
+            use std::os::windows::ffi::OsStrExt;
+            let paths: Vec<Vec<u16>> = content
+                .files
+                .iter()
+                .map(|p| p.as_os_str().encode_wide().collect())
+                .collect();
+            open.put(CF_HDROP, &file_list(&paths))?;
+        }
+        drop(open);
+        Ok(sequence())
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+    /// Puts a snapshot back, with the history markers.
+    pub(crate) fn restore_now(snapshot: &ClipboardSnapshot) -> Result<()> {
+        // Register first, so that a failure leaves the clipboard as it is.
+        let mut formats = Vec::with_capacity(snapshot.flavours().len());
+        for flavour in snapshot.flavours() {
+            formats.push(match &flavour.format {
+                ClipboardFormat::Id(id) => *id,
+                ClipboardFormat::Name(name) => os::register(name)?,
+            });
+        }
+        let open = os::open()?;
+        open.empty()?;
+        if snapshot.is_empty() {
+            return Ok(());
+        }
+        put_markers(&open)?;
+        // Put back as much as possible; report the first failure.
+        let mut first_error: Option<PlatformError> = None;
+        for (flavour, format) in snapshot.flavours().iter().zip(formats) {
+            if let Err(error) = open.put(format, flavour.data.expose()) {
+                first_error.get_or_insert(error);
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
 
-    #[test]
-    fn not_implemented_yet() {
-        let platform = Platform::new();
-        assert!(matches!(
-            platform.read_text(),
-            Err(PlatformError::Unsupported)
-        ));
-        assert_eq!(platform.snapshot(), Err(PlatformError::Unsupported));
-        assert_eq!(
-            platform.write(&ClipboardContent::text("x"), true),
-            Err(PlatformError::Unsupported)
-        );
-        assert_eq!(
-            platform.restore(ClipboardSnapshot::default()),
-            Err(PlatformError::Unsupported)
-        );
+    /// The clipboard's sequence number.
+    pub(crate) fn sequence() -> u32 {
+        os::sequence()
+    }
+
+    impl ClipboardAccess for Platform {
+        fn read_text(&self) -> Result<Option<Sensitive<String>>> {
+            let State {} = &self.clipboard;
+            let open = os::open()?;
+            match open.read(MemoryFormat::UNICODE_TEXT, MAX_FLAVOUR_BYTES) {
+                Data::Bytes(bytes) => {
+                    let text = text_from_unicode(&bytes);
+                    wipe(bytes);
+                    Ok(Some(Sensitive::new(text)))
+                }
+                Data::Missing | Data::TooBig => Ok(None),
+            }
+        }
+
+        fn snapshot(&self) -> Result<ClipboardSnapshot> {
+            snapshot_now()
+        }
+
+        fn write(&self, content: &ClipboardContent, transient: bool) -> Result<()> {
+            write_now(content, transient).map(|_| ())
+        }
+
+        fn restore(&self, snapshot: ClipboardSnapshot) -> Result<()> {
+            restore_now(&snapshot)
+        }
     }
 }
