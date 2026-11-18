@@ -1,0 +1,10 @@
+description = "chars_saved counts grapheme clusters of the rendered text minus the typed abbreviation"
+
+[[snippet]]
+abbr = "ty"
+body = "👍🏽 ok 🇪🇸"
+trigger = "immediate"
+
+[[step]]
+type = "ty"
+expect = [{ delete = 2 }, { text = "👍🏽 ok 🇪🇸" }, { expanded = "ty", chars_saved = 4 }]

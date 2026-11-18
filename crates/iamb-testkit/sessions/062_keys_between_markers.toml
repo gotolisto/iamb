@@ -1,0 +1,37 @@
+description = "Real keys between the markers clear the buffer and record one diagnostic"
+auto_inject = false
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]
+
+[[step]]
+inject = "start"
+
+[[step]]
+type = "x"
+expect = [{ diagnostic = "typed_during_injection", snippet = "brb" }]
+buffered = 0
+
+[[step]]
+type = "yz"
+buffered = 0
+
+[[step]]
+backspace = 1
+
+[[step]]
+key = "click"
+
+[[step]]
+inject = "finish"
+state = "idle"
+buffered = 0
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]

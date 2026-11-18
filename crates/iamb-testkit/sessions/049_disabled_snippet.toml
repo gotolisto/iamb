@@ -1,0 +1,21 @@
+description = "A disabled snippet does not trigger but can be referenced and requested"
+
+[[snippet]]
+abbr = "sig"
+body = "Kim Lee"
+enabled = false
+
+[[snippet]]
+abbr = "thx"
+body = 'Thanks, {snippet abbr="sig"}'
+
+[[step]]
+type = "sig "
+
+[[step]]
+type = "thx "
+expect = [{ delete = 4 }, { text = "Thanks, Kim Lee" }, { text = " " }, { expanded = "thx" }]
+
+[[step]]
+expand = "sig"
+expect = [{ text = "Kim Lee" }, { expanded = "sig" }]

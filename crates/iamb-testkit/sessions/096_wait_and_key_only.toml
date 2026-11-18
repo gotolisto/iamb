@@ -1,0 +1,19 @@
+description = "A template with no text: chars_saved is 0 and nothing precedes the caret"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[snippet]]
+abbr = "nl"
+body = '{key name=enter times=2}'
+trigger = "immediate"
+
+[[step]]
+type = "nl"
+expect = [{ delete = 2 }, { key = "enter", times = 2 }, { expanded = "nl", chars_saved = 0 }]
+buffered = 0
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]

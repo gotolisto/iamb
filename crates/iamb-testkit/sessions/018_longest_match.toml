@@ -1,0 +1,27 @@
+description = "When several abbreviations end at the caret the longest wins"
+
+[[snippet]]
+abbr = "b"
+body = "bee"
+word_start = false
+
+[[snippet]]
+abbr = "rb"
+body = "arby"
+word_start = false
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]
+
+[[step]]
+type = "xrb "
+expect = [{ delete = 3 }, { text = "arby" }, { text = " " }, { expanded = "rb" }]
+
+[[step]]
+type = "b "
+expect = [{ delete = 2 }, { text = "bee" }, { text = " " }, { expanded = "b" }]

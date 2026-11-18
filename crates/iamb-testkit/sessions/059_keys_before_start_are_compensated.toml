@@ -1,0 +1,34 @@
+description = "Keys typed between the trigger and the start marker end up in the buffer after the expansion"
+auto_inject = false
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[snippet]]
+abbr = "omw"
+body = "on my way"
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]
+state = "pending"
+
+[[step]]
+type = "om"
+state = "pending"
+buffered = 2
+
+[[step]]
+inject = "start"
+state = "injecting"
+buffered = 2
+
+[[step]]
+inject = "finish"
+state = "idle"
+buffered = 2
+
+[[step]]
+type = "w "
+expect = [{ delete = 4 }, { text = "on my way" }, { text = " " }, { expanded = "omw" }]

@@ -13,7 +13,14 @@ name = "iamb"
 path = "src/main.rs"
 
 [dependencies]
+clap = { version = "4.6.7", features = ["derive"] }
+getrandom = "0.4.3"
 iamb-core = { path = "../iamb-core" }
+iamb-store = { path = "../iamb-store" }
+
+[dev-dependencies]
+iamb-store = { path = "../iamb-store" }
+tempfile = "3.27.0"
 
 [lints]
 workspace = true

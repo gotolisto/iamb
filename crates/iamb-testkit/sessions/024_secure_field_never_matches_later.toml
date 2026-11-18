@@ -1,0 +1,34 @@
+description = "Characters typed in a secure field are never stored, so they never match afterwards"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+focus = "browser"
+
+[[step]]
+secure = "secure"
+expect = [{ diagnostic = "suspended_secure_field", app = "browser" }]
+suspended = true
+
+[[step]]
+type = "br"
+buffered = 0
+
+[[step]]
+backspace = 1
+
+[[step]]
+key = "enter"
+
+[[step]]
+secure = "normal"
+
+[[step]]
+type = "b "
+buffered = 2
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]

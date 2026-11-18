@@ -1,0 +1,48 @@
+description = "Markers and cancellations for other expansions change nothing"
+auto_inject = false
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+inject = "start"
+expansion = 7
+expect = [{ diagnostic = "unexpected_injection_event" }]
+
+[[step]]
+inject = "cancel"
+expansion = 7
+expect = [{ diagnostic = "unexpected_injection_event" }]
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]
+
+[[step]]
+inject = "start"
+expansion = 99
+expect = [{ diagnostic = "unexpected_injection_event" }]
+state = "pending"
+
+[[step]]
+inject = "finish"
+expansion = 99
+expect = [{ diagnostic = "unexpected_injection_event" }]
+
+[[step]]
+inject = "start"
+state = "injecting"
+
+[[step]]
+inject = "start"
+expect = [{ diagnostic = "unexpected_injection_event" }]
+state = "injecting"
+
+[[step]]
+inject = "finish"
+state = "idle"
+
+[[step]]
+inject = "finish"
+expect = [{ diagnostic = "unexpected_injection_event" }]

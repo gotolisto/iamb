@@ -1,0 +1,22 @@
+description = "Overflow can drop markers, so it forgets the expansion in flight"
+auto_inject = false
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]
+
+[[step]]
+overflow = true
+state = "idle"
+
+[[step]]
+inject = "start"
+expect = [{ diagnostic = "unexpected_injection_event" }]
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]

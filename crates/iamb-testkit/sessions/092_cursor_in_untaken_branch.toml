@@ -1,0 +1,21 @@
+description = "A cursor in a branch not taken does not count: the delimiter is typed again"
+
+[[snippet]]
+abbr = "maybe"
+body = 'a{if field="C"}{cursor}{endif}b'
+
+[[step]]
+type = "maybe "
+expect = [{ form = "maybe", fields = ["C"] }]
+
+[[step]]
+submit = { C = "no" }
+expect = [{ delete = 6 }, { text = "ab" }, { text = " " }, { expanded = "maybe" }]
+
+[[step]]
+type = "maybe "
+expect = [{ form = "maybe", last_values = { C = "no" } }]
+
+[[step]]
+submit = { C = "yes" }
+expect = [{ delete = 6 }, { text = "ab" }, { caret_back = 1 }, { expanded = "maybe" }]

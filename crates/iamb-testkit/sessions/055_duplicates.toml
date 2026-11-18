@@ -1,0 +1,37 @@
+description = "On a case-folded clash the first snippet wins; the loser neither triggers nor resolves"
+
+[[snippet]]
+abbr = "BRB"
+body = "first"
+
+[[snippet]]
+abbr = "brb"
+body = "second"
+
+[[snippet]]
+abbr = "ref"
+body = '{snippet abbr="BRB"}'
+
+[[snippet]]
+abbr = "refloser"
+body = '{snippet abbr="brb"}'
+
+[[excluded]]
+abbr = "brb"
+reason = "duplicate"
+
+[[excluded]]
+abbr = "refloser"
+reason = "E_SNIPPET_NOT_FOUND"
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "first" }, { text = " " }, { expanded = "BRB" }]
+
+[[step]]
+type = "ref "
+expect = [{ delete = 4 }, { text = "first" }, { text = " " }, { expanded = "ref" }]
+
+[[step]]
+expand = "brb"
+expect = [{ diagnostic = "unknown_snippet", snippet = "brb" }]

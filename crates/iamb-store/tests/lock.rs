@@ -79,3 +79,30 @@ fn data_survives_reopen() -> TestResult {
     assert_eq!(store.get_setting("k")?.as_deref(), Some("v"));
     Ok(())
 }
+
+/// Finding 16: private data directory and files on Unix.
+#[cfg(unix)]
+#[test]
+fn data_directory_and_files_are_private_on_unix() -> TestResult {
+    use std::os::unix::fs::PermissionsExt;
+
+    fn mode(path: &std::path::Path) -> std::io::Result<u32> {
+        Ok(std::fs::metadata(path)?.permissions().mode() & 0o777)
+    }
+
+    let root = temp_dir();
+    let dir = root.path().join("nested").join("data");
+    let mut store = Store::open(&dir)?;
+    // Write something so that the WAL and shared-memory files exist.
+    store.put_setting("k", "v")?;
+    assert_eq!(mode(&dir)?, 0o700, "data directory");
+    assert_eq!(mode(&dir.join("run"))?, 0o700, "run directory");
+    assert_eq!(mode(&dir.join("library.db"))?, 0o600, "library.db");
+    for name in ["library.db-wal", "library.db-shm"] {
+        let path = dir.join(name);
+        assert!(path.exists(), "{name} should exist while the store is open");
+        assert_eq!(mode(&path)?, 0o600, "{name}");
+    }
+    assert_eq!(mode(&dir.join("run").join("store.lock"))?, 0o600, "lock");
+    Ok(())
+}

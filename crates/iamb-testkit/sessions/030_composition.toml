@@ -1,0 +1,20 @@
+description = "Input-method composition suspends the engine"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+compose = true
+suspended = true
+
+[[step]]
+type = "brb "
+buffered = 0
+
+[[step]]
+compose = false
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]

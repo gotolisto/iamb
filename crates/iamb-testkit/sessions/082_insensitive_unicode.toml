@@ -1,0 +1,17 @@
+description = "Case folding works beyond ASCII, including final sigma"
+
+[[snippet]]
+abbr = "äöü"
+body = "umlauts"
+
+[[snippet]]
+abbr = "οδος"
+body = "street"
+
+[[step]]
+type = "ÄÖÜ "
+expect = [{ delete = 4 }, { text = "umlauts" }, { text = " " }, { expanded = "äöü" }]
+
+[[step]]
+type = "ΟΔΟΣ "
+expect = [{ delete = 5 }, { text = "street" }, { text = " " }, { expanded = "οδος" }]

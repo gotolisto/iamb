@@ -1,0 +1,31 @@
+description = "A Backspace that deletes into the expansion before the start marker disturbs it"
+auto_inject = false
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]
+
+[[step]]
+type = "x"
+
+[[step]]
+backspace = 1
+buffered = 0
+
+[[step]]
+backspace = 1
+
+[[step]]
+type = "q"
+buffered = 1
+
+[[step]]
+inject = "start"
+buffered = 0
+
+[[step]]
+inject = "finish"

@@ -8,6 +8,25 @@
 //! JSON is the lossless format. It is one document with a `format` and `version` header and the
 //! model types' own serde form for `folders`, `snippets`, `tags` and `snippet_tags`. CSV carries
 //! snippets only, with folders and tags written as text, for spreadsheets and hand editing.
+//!
+//! # CSV escaping
+//!
+//! The `folder` cell joins folder names with `" / "` (space, slash, space) and the `tags` cell
+//! joins tag names with `;`. A name may itself contain those characters, so each name is escaped
+//! when written and unescaped when read. A backslash followed by a backslash, a slash, a
+//! semicolon or a whitespace character stands for that character alone; a backslash followed by
+//! anything else (or at the end of the cell) is an ordinary backslash, so hand-made files with
+//! Windows paths keep working. On export:
+//!
+//! - `\` becomes `\\` in every name;
+//! - in a folder name, a `/` that follows a space becomes `\/`, so `R / D` is written `R \/ D`
+//!   and never reads as two levels (a `/` not after a space, as in `TCP/IP`, is left alone);
+//! - in a tag name, `;` becomes `\;`;
+//! - leading and trailing whitespace becomes `\` plus the character, because import trims
+//!   unescaped whitespace around each name.
+//!
+//! An empty name cannot be written and fails the export. On import, names are split at the
+//! unescaped separators, trimmed (escaped whitespace is kept) and unescaped.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -242,8 +261,8 @@ impl From<StoreError> for TransferError {
 /// # Errors
 ///
 /// [`TransferError::Io`] if the file cannot be written; [`TransferError::InvalidValue`] for CSV if
-/// a folder or tag name cannot be written as text (it would not survive an import: it contains
-/// the separator, is empty, or has surrounding spaces); [`TransferError::Store`] on store errors.
+/// a folder or tag name is empty (separators and surrounding spaces are escaped, see the module
+/// docs); [`TransferError::Store`] on store errors.
 pub fn export(
     store: &Store,
     profile: Id,
@@ -262,7 +281,10 @@ pub fn export(
 /// Reads a file written by [`export`] (or a hand-made CSV) into `profile`.
 ///
 /// Every imported row gets a fresh id from `new_id` and the time `now`. JSON keeps folder, tag
-/// and link structure by remapping ids. CSV creates folders from the `folder` paths (reusing a
+/// and link structure by remapping ids; a live folder with the same name under the same parent,
+/// and a live tag with the same name, are reused rather than created again, and folders and tags
+/// are created only for snippets that are written (an import that skips every snippet creates
+/// nothing), so importing one file twice adds nothing the second time. CSV creates folders from the `folder` paths (reusing a
 /// live folder of the same name at the same level), creates tags by name when missing, and fills
 /// missing optional columns from [`Snippet::new_defaults`]. A UTF-8 byte-order mark and CRLF line
 /// endings are accepted.
@@ -559,11 +581,8 @@ fn encode_csv(lib: &Library) -> Result<(Vec<u8>, ExportSummary), TransferError> 
         let folder = csv_folder_cell(path)?;
         let mut names = tags_of.get(&s.meta.id).cloned().unwrap_or_default();
         names.sort_unstable();
-        for name in &names {
-            check_tag_name(name)?;
-        }
+        let tags = csv_tags_cell(&names)?;
         links += names.len();
-        let tags = names.join(&TAG_SEPARATOR.to_string());
         writer
             .write_record([
                 s.abbreviation.as_str(),
@@ -594,29 +613,90 @@ fn encode_csv(lib: &Library) -> Result<(Vec<u8>, ExportSummary), TransferError> 
 
 /// The `folder` cell for a path. Names must survive the import's trimming and splitting.
 fn csv_folder_cell(path: &[String]) -> Result<String, TransferError> {
+    let mut escaped = Vec::with_capacity(path.len());
     for name in path {
-        if name.is_empty() || name.trim() != name || name.contains(FOLDER_SEPARATOR) {
+        if name.is_empty() {
             return Err(invalid(
-                &format!("folder {name:?}"),
-                format!(
-                    "a folder name must not be empty, have surrounding spaces or contain {FOLDER_SEPARATOR:?}, so it cannot be written to CSV"
-                ),
+                "folder \"\"",
+                "a folder name must not be empty, so it cannot be written to CSV",
             ));
         }
+        escaped.push(escape_name(name, |prev, c| c == '/' && prev == Some(' ')));
     }
-    Ok(path.join(FOLDER_SEPARATOR))
+    Ok(escaped.join(FOLDER_SEPARATOR))
 }
 
-fn check_tag_name(name: &str) -> Result<(), TransferError> {
-    if name.is_empty() || name.trim() != name || name.contains(TAG_SEPARATOR) {
-        return Err(invalid(
-            &format!("tag {name:?}"),
-            format!(
-                "a tag name must not be empty, have surrounding spaces or contain {TAG_SEPARATOR:?}, so it cannot be written to CSV"
-            ),
-        ));
+fn csv_tags_cell(names: &[&str]) -> Result<String, TransferError> {
+    let mut escaped = Vec::with_capacity(names.len());
+    for name in names {
+        if name.is_empty() {
+            return Err(invalid(
+                "tag \"\"",
+                "a tag name must not be empty, so it cannot be written to CSV",
+            ));
+        }
+        escaped.push(escape_name(name, |_, c| c == TAG_SEPARATOR));
     }
-    Ok(())
+    Ok(escaped.join(&TAG_SEPARATOR.to_string()))
+}
+
+/// Escapes one name for a CSV cell (see the module docs). `special(previous, c)` says whether
+/// `c` needs a backslash in front of it besides the backslash itself and the edge whitespace.
+fn escape_name(name: &str, special: impl Fn(Option<char>, char) -> bool) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    let mut out = String::with_capacity(name.len() + 2);
+    let mut previous = None;
+    for (i, &c) in chars.iter().enumerate() {
+        let edge = c.is_whitespace() && (i == 0 || i + 1 == chars.len());
+        if c == '\\' || edge || special(previous, c) {
+            out.push('\\');
+        }
+        out.push(c);
+        previous = Some(c);
+    }
+    out
+}
+
+/// Whether a backslash in front of `c` is an escape.
+fn escapable(c: char) -> bool {
+    c == '\\' || c == '/' || c == TAG_SEPARATOR || c.is_whitespace()
+}
+
+/// Splits `text` at the unescaped occurrences of `separator`, trims unescaped whitespace around
+/// each part and removes the escapes.
+fn split_escaped(text: &str, separator: &str) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let sep: Vec<char> = separator.chars().collect();
+    let mut parts: Vec<Vec<(char, bool)>> = vec![Vec::new()];
+    let mut i = 0;
+    while let Some(&c) = chars.get(i) {
+        if c == '\\'
+            && let Some(&next) = chars.get(i + 1)
+            && escapable(next)
+        {
+            if let Some(p) = parts.last_mut() {
+                p.push((next, true));
+            }
+            i += 2;
+        } else if chars[i..].starts_with(&sep) {
+            parts.push(Vec::new());
+            i += sep.len();
+        } else {
+            if let Some(p) = parts.last_mut() {
+                p.push((c, false));
+            }
+            i += 1;
+        }
+    }
+    parts
+        .into_iter()
+        .map(|part| {
+            let keep = |&(c, escaped): &(char, bool)| escaped || !c.is_whitespace();
+            let start = part.iter().position(keep).unwrap_or(part.len());
+            let end = part.iter().rposition(keep).map_or(start, |e| e + 1);
+            part[start..end].iter().map(|&(c, _)| c).collect()
+        })
+        .collect()
 }
 
 const fn trigger_text(t: Trigger) -> &'static str {
@@ -784,6 +864,76 @@ impl JsonPlan {
     }
 }
 
+impl JsonPlan {
+    /// Ids (in the file) of the folders the import has to have: those that hold a written
+    /// snippet or lie above one, and, unless every snippet was skipped, branches that hold no
+    /// snippet at all in the file (so an empty folder survives a round trip).
+    fn needed_folders(&self, admitted: &[bool], fully_skipped: bool) -> HashSet<Id> {
+        let parent: HashMap<Id, Option<Id>> = self
+            .doc
+            .folders
+            .iter()
+            .map(|f| (f.meta.id, f.parent_id))
+            .collect();
+        let with_ancestors = |start: Id, into: &mut HashSet<Id>| {
+            let mut cur = Some(start);
+            while let Some(id) = cur {
+                if !into.insert(id) {
+                    break;
+                }
+                cur = parent.get(&id).copied().flatten();
+            }
+        };
+        let mut needed = HashSet::new();
+        let mut occupied = HashSet::new();
+        for (s, &ok) in self.doc.snippets.iter().zip(admitted) {
+            with_ancestors(s.folder_id, &mut occupied);
+            if ok {
+                with_ancestors(s.folder_id, &mut needed);
+            }
+        }
+        if !fully_skipped {
+            for f in &self.doc.folders {
+                if !occupied.contains(&f.meta.id) {
+                    with_ancestors(f.meta.id, &mut needed);
+                }
+            }
+        }
+        needed
+    }
+
+    /// Ids (in the file) of the tags the import has to have: those linked to a written snippet
+    /// and, unless every snippet was skipped, tags with no link in the file.
+    fn needed_tags(&self, admitted: &[bool], fully_skipped: bool) -> HashSet<Id> {
+        let ok: HashSet<Id> = self
+            .doc
+            .snippets
+            .iter()
+            .zip(admitted)
+            .filter(|&(_, &ok)| ok)
+            .map(|(s, _)| s.meta.id)
+            .collect();
+        let linked: HashSet<Id> = self.doc.links.iter().map(|l| l.tag_id).collect();
+        let mut needed: HashSet<Id> = self
+            .doc
+            .links
+            .iter()
+            .filter(|l| ok.contains(&l.snippet_id))
+            .map(|l| l.tag_id)
+            .collect();
+        if !fully_skipped {
+            needed.extend(
+                self.doc
+                    .tags
+                    .iter()
+                    .map(|t| t.meta.id)
+                    .filter(|id| !linked.contains(id)),
+            );
+        }
+        needed
+    }
+}
+
 /// Indices of `folders` ordered so that every folder comes after its parent.
 fn parent_first(folders: &[Folder]) -> Result<Vec<usize>, TransferError> {
     let mut order = Vec::with_capacity(folders.len());
@@ -842,49 +992,92 @@ fn write_json(
 ) -> Result<ImportSummary, TransferError> {
     let now = ctx.now;
     let mut summary = ImportSummary::default();
+
+    // Decide which snippets are written first, so that folders and tags are created only for
+    // what the import really adds.
+    let mut taken = profile_abbreviations(w, ctx.profile)?;
+    let mut admitted = Vec::with_capacity(plan.doc.snippets.len());
+    for (i, src) in plan.doc.snippets.iter().enumerate() {
+        let location = format!("snippets[{i}]");
+        let ok = admit(ctx.on_conflict, &taken, &src.abbreviation, &location)?;
+        if ok {
+            taken.insert(src.abbreviation.fold_key(), plan.snippets[&src.meta.id]);
+        } else {
+            summary.snippets_skipped += 1;
+        }
+        admitted.push(ok);
+    }
+    let fully_skipped = summary.snippets_skipped > 0 && !admitted.contains(&true);
+    let needed_folders = plan.needed_folders(&admitted, fully_skipped);
+    let needed_tags = plan.needed_tags(&admitted, fully_skipped);
+
+    // Folders: reuse a live folder with the same name under the same (mapped) parent.
+    let existing = Folders::load(w, ctx.profile)?;
+    let mut folder_ids: HashMap<Id, Id> = HashMap::new();
     for &i in &plan.folder_order {
         let src = &plan.doc.folders[i];
+        if !needed_folders.contains(&src.meta.id) {
+            continue;
+        }
         let location = format!("folders[{i}]");
+        let parent_id = src
+            .parent_id
+            .map(|p| lookup(&folder_ids, p, &location))
+            .transpose()?;
+        if let Some(&id) = existing.by_key.get(&(parent_id, src.name.clone())) {
+            folder_ids.insert(src.meta.id, id);
+            continue;
+        }
+        let id = lookup(&plan.folders, src.meta.id, &location)?;
         let folder = Folder {
-            meta: SyncMeta::new(lookup(&plan.folders, src.meta.id, &location)?, now),
+            meta: SyncMeta::new(id, now),
             profile_id: ctx.profile,
-            parent_id: src
-                .parent_id
-                .map(|p| lookup(&plan.folders, p, &location))
-                .transpose()?,
+            parent_id,
             name: src.name.clone(),
             position: src.position,
             member_permission: src.member_permission,
             defaults: src.defaults.clone(),
         };
         at(w.put(&folder, now), &location)?;
+        folder_ids.insert(src.meta.id, id);
         summary.folders_created += 1;
     }
+
+    // Tags: reuse a tag with the same name.
+    let live_tags = load_tags(w, ctx.profile)?;
+    let mut tag_ids: HashMap<Id, Id> = HashMap::new();
     for (i, src) in plan.doc.tags.iter().enumerate() {
+        if !needed_tags.contains(&src.meta.id) {
+            continue;
+        }
         let location = format!("tags[{i}]");
+        if let Some(&id) = live_tags.get(&src.name) {
+            tag_ids.insert(src.meta.id, id);
+            continue;
+        }
+        let id = lookup(&plan.tags, src.meta.id, &location)?;
         let tag = Tag {
-            meta: SyncMeta::new(lookup(&plan.tags, src.meta.id, &location)?, now),
+            meta: SyncMeta::new(id, now),
             profile_id: ctx.profile,
             name: src.name.clone(),
             color: src.color.clone(),
         };
         at(w.put(&tag, now), &location)?;
+        tag_ids.insert(src.meta.id, id);
         summary.tags_created += 1;
     }
-    let mut taken = profile_abbreviations(w, ctx.profile)?;
+
     let mut written: HashSet<Id> = HashSet::new();
     for (i, src) in plan.doc.snippets.iter().enumerate() {
-        let location = format!("snippets[{i}]");
-        if !admit(ctx.on_conflict, &taken, &src.abbreviation, &location)? {
-            summary.snippets_skipped += 1;
+        if !admitted[i] {
             continue;
         }
+        let location = format!("snippets[{i}]");
         let id = lookup(&plan.snippets, src.meta.id, &location)?;
         let mut snippet = src.clone();
         snippet.meta = SyncMeta::new(id, now);
-        snippet.folder_id = lookup(&plan.folders, src.folder_id, &location)?;
+        snippet.folder_id = lookup(&folder_ids, src.folder_id, &location)?;
         at(w.put(&snippet, now), &location)?;
-        taken.insert(src.abbreviation.fold_key(), id);
         written.insert(src.meta.id);
         summary.snippets_imported += 1;
     }
@@ -896,7 +1089,7 @@ fn write_json(
         let row = SnippetTag {
             meta: SyncMeta::new(new_id(), now),
             snippet_id: lookup(&plan.snippets, link.snippet_id, &location)?,
-            tag_id: lookup(&plan.tags, link.tag_id, &location)?,
+            tag_id: lookup(&tag_ids, link.tag_id, &location)?,
         };
         at(w.put(&row, now), &location)?;
     }
@@ -1074,14 +1267,10 @@ fn parse_row(
 
 /// The folder path in a `folder` cell; an empty cell means [`DEFAULT_FOLDER`].
 fn folder_segments(text: &str, location: &str) -> Result<Vec<String>, TransferError> {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
+    if text.trim().is_empty() {
         return Ok(vec![DEFAULT_FOLDER.to_owned()]);
     }
-    let segments: Vec<String> = trimmed
-        .split(FOLDER_SEPARATOR)
-        .map(|s| s.trim().to_owned())
-        .collect();
+    let segments = split_escaped(text, FOLDER_SEPARATOR);
     if segments.iter().any(String::is_empty) {
         return Err(invalid(location, "folder path has an empty folder name"));
     }
@@ -1097,13 +1286,9 @@ fn folder_segments(text: &str, location: &str) -> Result<Vec<String>, TransferEr
 /// The distinct tag names in a `tags` cell, trimmed; empty names are dropped.
 fn tag_names(text: &str) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
-    for name in text
-        .split(TAG_SEPARATOR)
-        .map(str::trim)
-        .filter(|n| !n.is_empty())
-    {
-        if !names.iter().any(|t| t == name) {
-            names.push(name.to_owned());
+    for name in split_escaped(text, &TAG_SEPARATOR.to_string()) {
+        if !name.is_empty() && !names.contains(&name) {
+            names.push(name);
         }
     }
     names

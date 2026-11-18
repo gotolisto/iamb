@@ -1,0 +1,28 @@
+description = "The delimiter set is a setting; whitespace still counts as a word start"
+
+[settings]
+delimiters = "#"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "brb "
+
+[[step]]
+type = "brb#"
+expect = [{ delete = 4 }, { text = "be right back" }, { text = "#" }, { expanded = "brb" }]
+
+[[step]]
+type = "xbrb#"
+
+[[step]]
+type = " brb#"
+expect = [{ delete = 4 }, { text = "be right back" }, { text = "#" }, { expanded = "brb" }]
+
+[[step]]
+type = "brb"
+
+[[step]]
+key = "enter"

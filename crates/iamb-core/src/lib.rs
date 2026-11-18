@@ -3,8 +3,10 @@
 //! See `docs/architecture.md` §4 for how the pieces fit together.
 
 pub mod datetime;
+pub mod engine;
 pub mod matcher;
 pub mod model;
+pub mod sensitive;
 pub mod template;
 
 /// Version of the `iamb-core` crate, taken from the workspace package version.

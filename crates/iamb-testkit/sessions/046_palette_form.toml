@@ -1,0 +1,13 @@
+description = "A palette request for a form snippet shows the form; submit types without deleting"
+
+[[snippet]]
+abbr = "dear"
+body = 'Dear {field name="Name"},'
+
+[[step]]
+expand = "dear"
+expect = [{ form = "dear" }]
+
+[[step]]
+submit = { Name = "Kim" }
+expect = [{ text = "Dear Kim,", verbatim = [[5, 8]] }, { expanded = "dear" }]

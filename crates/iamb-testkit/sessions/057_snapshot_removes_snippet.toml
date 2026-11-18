@@ -1,0 +1,27 @@
+description = "A snippet removed mid-word no longer fires; one added mid-word does"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "br"
+
+[[step]]
+snapshot = []
+
+[[step]]
+type = "b "
+
+[[step]]
+type = "om"
+
+[[step]]
+snapshot = [{ abbr = "omw", body = "on my way" }]
+
+[[step]]
+type = "w "
+expect = [{ delete = 4 }, { text = "on my way" }, { text = " " }, { expanded = "omw" }]
+
+[[step]]
+snapshot_changed = true

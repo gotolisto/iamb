@@ -1,0 +1,13 @@
+description = "An immediate snippet fires on its last character; nothing is typed again"
+
+[[snippet]]
+abbr = ";sig"
+body = "Best regards"
+trigger = "immediate"
+
+[[step]]
+type = ";si"
+
+[[step]]
+type = "g"
+expect = [{ delete = 4 }, { text = "Best regards" }, { expanded = ";sig", chars_saved = 8 }]

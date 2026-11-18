@@ -1,0 +1,18 @@
+description = "The injector can abandon an expansion part-way"
+auto_inject = false
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]
+
+[[step]]
+inject = "start"
+
+[[step]]
+inject = "cancel"
+expect = [{ diagnostic = "injection_cancelled", snippet = "brb" }]
+state = "idle"

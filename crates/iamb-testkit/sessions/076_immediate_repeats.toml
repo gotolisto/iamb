@@ -1,0 +1,14 @@
+description = "An immediate snippet without word start can fire right after its own expansion"
+
+[[snippet]]
+abbr = "ty"
+body = "thank you"
+trigger = "immediate"
+
+[[step]]
+type = "ty"
+expect = [{ delete = 2 }, { text = "thank you" }, { expanded = "ty" }]
+
+[[step]]
+type = "ty"
+expect = [{ delete = 2 }, { text = "thank you" }, { expanded = "ty" }]

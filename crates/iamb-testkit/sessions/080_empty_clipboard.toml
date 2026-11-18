@@ -1,0 +1,13 @@
+description = "An empty clipboard inserts nothing and is not an error"
+
+[[snippet]]
+abbr = "cb"
+body = 'a{clipboard}b'
+
+[[step]]
+type = "cb "
+expect = [{ delete = 3 }, { text = "ab" }, { text = " " }, { expanded = "cb", chars_saved = 0 }]
+clipboard_calls = 1
+
+[[step]]
+clear_clipboard = true

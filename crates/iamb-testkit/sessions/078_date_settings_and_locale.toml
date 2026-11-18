@@ -1,0 +1,18 @@
+description = "Date and time formats and the locale come from the snapshot settings"
+
+[settings]
+date_format = "%d/%m/%Y"
+time_format = "%-I:%M %p"
+locale = "de"
+
+[env]
+now = "2026-03-18T14:05:09"
+
+[[snippet]]
+abbr = "dt"
+body = '{date} {time} {date fmt="%A, %-d. %B" shift="+1d"}'
+
+[[step]]
+type = "dt "
+expect = [{ delete = 3 }, { text = "18/03/2026 2:05 PM Donnerstag, 19. März" }, { text = " " }, { expanded = "dt" }]
+now_calls = 1

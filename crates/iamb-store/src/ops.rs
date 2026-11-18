@@ -1,6 +1,16 @@
 //! Generic row operations, shared by [`Store`](crate::Store) and [`WriteTx`](crate::WriteTx).
 //!
 //! Every function takes a `&Connection`; writers are always called inside a transaction.
+//!
+//! # Open questions for the sync design (task 4.1)
+//!
+//! Soft delete is unchanged in Phase 1; these four edges need a rule before sync (review 1.9,
+//! finding 22):
+//!
+//! - Deleting a snippet, tag or profile leaves its link, share and folder rows live (reads filter them out).
+//! - `put` on a deleted folder restores it but not the rows the delete cascaded to.
+//! - A purge can remove rows that still have unsent outbox entries.
+//! - One conflicting row fails a whole `apply_remote` batch.
 
 use std::fmt::Write as _;
 

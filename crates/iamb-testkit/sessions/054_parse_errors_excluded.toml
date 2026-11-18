@@ -1,0 +1,41 @@
+description = "Snippets whose template does not parse or resolve are excluded from matching"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[snippet]]
+abbr = "bad"
+body = "{date"
+
+[[snippet]]
+abbr = "lost"
+body = '{snippet abbr="nowhere"}'
+
+[[snippet]]
+abbr = "loop"
+body = '{snippet abbr="loop"}'
+
+[[snippet]]
+abbr = "offbad"
+body = "{date"
+enabled = false
+
+[[excluded]]
+abbr = "bad"
+reason = "E_UNCLOSED_MACRO"
+
+[[excluded]]
+abbr = "lost"
+reason = "E_SNIPPET_NOT_FOUND"
+
+[[excluded]]
+abbr = "loop"
+reason = "E_SNIPPET_CYCLE"
+
+[[step]]
+type = "bad lost loop offbad "
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]

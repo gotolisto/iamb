@@ -1,0 +1,22 @@
+description = "Choice values are verbatim; toggle text is template text and follows adaptive case"
+
+[[snippet]]
+abbr = "ord"
+body = '{field name="Size" type=choice options="small|large"} {field name="Gift" type=toggle on="wrapped" off="plain"}'
+case_mode = "adaptive"
+
+[[step]]
+type = "ORD "
+expect = [{ form = "ord", fields = ["Size", "Gift"] }]
+
+[[step]]
+submit = { Size = "large", Gift = "yes" }
+expect = [{ delete = 4 }, { text = "large WRAPPED", verbatim = [[0, 5]] }, { text = " " }, { expanded = "ord" }]
+
+[[step]]
+type = "ord "
+expect = [{ form = "ord", last_values = { Size = "large", Gift = "yes" } }]
+
+[[step]]
+submit = {}
+expect = [{ delete = 4 }, { text = "small plain", verbatim = [[0, 5]] }, { text = " " }, { expanded = "ord" }]

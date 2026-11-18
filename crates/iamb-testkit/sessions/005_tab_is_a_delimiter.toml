@@ -1,0 +1,12 @@
+description = "Tab counts as the delimiter tab before it clears; it is pressed again"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "brb"
+
+[[step]]
+key = "tab"
+expect = [{ delete = 4 }, { text = "be right back" }, { key = "tab" }, { expanded = "brb" }]

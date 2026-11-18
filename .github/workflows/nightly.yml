@@ -1,0 +1,81 @@
+name: Nightly
+
+# Long-running checks from docs/test-strategy.md that are too slow for every pull request:
+# a 10-minute fuzz run of the template engine and the matcher mutation sample.
+# Report only for now; a failure shows on the run and its artifacts, and never blocks a merge.
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz-template:
+    name: fuzz (template, 10 min)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nightly toolchain and cargo-fuzz
+        run: |
+          rustup toolchain install nightly --profile minimal
+          cargo +nightly install cargo-fuzz --locked
+      - name: Seed the corpus from the spec examples
+        run: python3 -I spec/template/seed_fuzz_corpus.py fuzz/corpus/template
+      - name: Fuzz for 10 minutes (no crash, no input over 1 s, no OOM over 512 MB)
+        working-directory: fuzz
+        run: >
+          cargo +nightly fuzz run template corpus/template --
+          -max_total_time=600 -timeout=1 -rss_limit_mb=512
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-artifacts-${{ github.run_id }}
+          path: fuzz/artifacts/
+          retention-days: 30
+
+  mutants-matcher:
+    name: mutation sample (matcher)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: mutants
+      - name: Install cargo-mutants
+        run: cargo mutants --version || cargo install cargo-mutants --locked
+      - name: Run the matcher sample (gate 80% of viable mutants caught)
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo mutants -p iamb-core -f crates/iamb-core/src/matcher.rs \
+            -f 'crates/iamb-core/src/matcher/*.rs' --timeout 120 -j 2 | tee mutants.log || true
+          python3 -I - <<'PY'
+          import json, sys
+          o = json.load(open("mutants.out/outcomes.json"))
+          counts = {}
+          for x in o["outcomes"]:
+              s = x["summary"]
+              counts[s] = counts.get(s, 0) + 1
+          caught, missed = counts.get("CaughtMutant", 0), counts.get("MissedMutant", 0)
+          viable = caught + missed + counts.get("Timeout", 0)
+          print(counts)
+          rate = caught / viable if viable else 0
+          print(f"caught {caught} of {viable} viable ({rate:.1%})")
+          sys.exit(0 if rate >= 0.8 else 1)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutants-${{ github.run_id }}
+          path: mutants.out/
+          retention-days: 30

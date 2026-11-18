@@ -1,0 +1,17 @@
+description = "An unknown focus state keeps the engine suspended"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+focus = "elevated"
+
+[[step]]
+secure = "unknown"
+expect = [{ diagnostic = "suspended_unknown_focus", app = "elevated" }]
+
+[[step]]
+type = "brb "
+buffered = 0
+suspended = true

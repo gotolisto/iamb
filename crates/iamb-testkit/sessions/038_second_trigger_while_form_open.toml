@@ -1,0 +1,34 @@
+description = "A second match while a form is open is dropped with a diagnostic"
+
+[[snippet]]
+abbr = "dear"
+body = 'Dear {field name="Name"},'
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "dear "
+expect = [{ form = "dear" }]
+
+[[step]]
+type = "brb "
+expect = [{ diagnostic = "form_open", snippet = "brb" }]
+buffered = 0
+
+[[step]]
+type = "dear "
+expect = [{ diagnostic = "form_open", snippet = "dear" }]
+
+[[step]]
+expand = "brb"
+expect = [{ diagnostic = "form_open", snippet = "brb" }]
+
+[[step]]
+reopen = true
+expect = [{ diagnostic = "form_open" }]
+
+[[step]]
+submit = { Name = "Kim" }
+expect = [{ delete = 5 }, { text = "Dear Kim,", verbatim = [[5, 8]] }, { text = " " }, { expanded = "dear" }]

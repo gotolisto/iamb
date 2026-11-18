@@ -1,0 +1,21 @@
+description = "Nested snippets render in place, fields join one form"
+
+[[snippet]]
+abbr = "greet"
+body = 'Hello {field name="Name"}'
+
+[[snippet]]
+abbr = "sign"
+body = "Regards, Kim"
+
+[[snippet]]
+abbr = "mail"
+body = '{snippet abbr="greet"}! {snippet abbr="greet"}? {snippet abbr="sign"}'
+
+[[step]]
+type = "mail "
+expect = [{ form = "mail", fields = ["Name"] }]
+
+[[step]]
+submit = { Name = "Lee" }
+expect = [{ delete = 5 }, { text = "Hello Lee! Hello Lee? Regards, Kim", verbatim = [[6, 9], [17, 20]] }, { text = " " }, { expanded = "mail" }]

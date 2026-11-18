@@ -1,0 +1,19 @@
+description = "A finish marker for the pending expansion (start marker lost) ends the flight and clears"
+auto_inject = false
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]
+
+[[step]]
+type = "x"
+
+[[step]]
+inject = "finish"
+expect = [{ diagnostic = "unexpected_injection_event" }]
+state = "idle"
+buffered = 0

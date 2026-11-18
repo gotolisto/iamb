@@ -1,0 +1,21 @@
+description = "Cancel has no side effects and closes the session"
+
+[[snippet]]
+abbr = "dear"
+body = 'Dear {field name="Name"},'
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "dear "
+expect = [{ form = "dear" }]
+
+[[step]]
+cancel = true
+form_open = false
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]

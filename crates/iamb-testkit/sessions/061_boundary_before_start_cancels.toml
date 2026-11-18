@@ -1,0 +1,30 @@
+description = "A boundary among the keys before the start marker: the injector cancels and the engine clears"
+auto_inject = false
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]
+
+[[step]]
+type = "a"
+
+[[step]]
+key = "arrow"
+
+[[step]]
+type = "b"
+buffered = 1
+
+[[step]]
+inject = "cancel"
+expect = [{ diagnostic = "injection_cancelled", snippet = "brb" }]
+state = "idle"
+buffered = 0
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]

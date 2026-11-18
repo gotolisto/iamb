@@ -1,0 +1,22 @@
+description = "A secure verdict and then a normal one for the same app; nothing from the secure period survives"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "b"
+
+[[step]]
+secure = "secure"
+expect = [{ diagnostic = "suspended_secure_field" }]
+buffered = 0
+
+[[step]]
+type = "r"
+
+[[step]]
+secure = "normal"
+
+[[step]]
+type = "b "

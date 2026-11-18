@@ -1,0 +1,27 @@
+description = "The clipboard is read only for templates that use it, once per expansion"
+
+[env]
+clipboard = "copied"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[snippet]]
+abbr = "cb"
+body = '[{clipboard}] [{clipboard trim=yes}]'
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]
+clipboard_calls = 0
+now_calls = 1
+
+[[step]]
+set_clipboard = "  pad  "
+
+[[step]]
+type = "cb "
+expect = [{ delete = 3 }, { text = "[  pad  ] [pad]", verbatim = [[1, 8], [11, 14]] }, { text = " " }, { expanded = "cb" }]
+clipboard_calls = 1
+now_calls = 2

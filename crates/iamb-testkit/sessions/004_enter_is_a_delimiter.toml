@@ -1,0 +1,13 @@
+description = "Enter counts as the delimiter newline before it clears; it is pressed again"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "brb"
+
+[[step]]
+key = "enter"
+expect = [{ delete = 4 }, { text = "be right back" }, { key = "enter" }, { expanded = "brb" }]
+buffered = 0

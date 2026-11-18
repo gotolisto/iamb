@@ -1,0 +1,24 @@
+description = "forget_form_values drops the remembered values"
+
+[[snippet]]
+abbr = "dear"
+body = 'Dear {field name="Name"},'
+
+[[step]]
+type = "dear "
+expect = [{ form = "dear" }]
+
+[[step]]
+submit = { Name = "Kim" }
+expect = [{ delete = 5 }, { text = "Dear Kim,", verbatim = [[5, 8]] }, { text = " " }, { expanded = "dear" }]
+
+[[step]]
+forget = true
+
+[[step]]
+reopen = true
+expect = [{ diagnostic = "no_last_form" }]
+
+[[step]]
+type = "dear "
+expect = [{ form = "dear" }]

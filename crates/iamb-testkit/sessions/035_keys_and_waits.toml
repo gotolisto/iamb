@@ -1,0 +1,19 @@
+description = "Keys and waits pass through in order"
+
+[[snippet]]
+abbr = "addr"
+body = 'Kim{key name=tab}Main St{wait ms=100}{key name=enter shift=yes times=2}Town'
+
+[[step]]
+type = "addr "
+expect = [
+  { delete = 5 },
+  { text = "Kim" },
+  { key = "tab" },
+  { text = "Main St" },
+  { wait = 100 },
+  { key = "enter", shift = true, times = 2 },
+  { text = "Town" },
+  { text = " " },
+  { expanded = "addr", chars_saved = 10 },
+]

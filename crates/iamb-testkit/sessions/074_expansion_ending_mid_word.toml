@@ -1,0 +1,25 @@
+description = "After an expansion that ends in a letter, a word-start abbreviation does not fire at once"
+
+[[snippet]]
+abbr = "zz"
+body = "foo"
+trigger = "immediate"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "zz"
+expect = [{ delete = 2 }, { text = "foo" }, { expanded = "zz" }]
+buffered = 1
+
+[[step]]
+type = "brb "
+
+[[step]]
+key = "click"
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]

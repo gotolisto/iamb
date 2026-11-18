@@ -1,0 +1,17 @@
+description = "An immediate abbreviation that starts a longer one fires first and hides it"
+
+[[snippet]]
+abbr = "ad"
+body = "advert"
+trigger = "immediate"
+
+[[snippet]]
+abbr = "add"
+body = "address"
+
+[[step]]
+type = "ad"
+expect = [{ delete = 2 }, { text = "advert" }, { expanded = "ad", chars_saved = 4 }]
+
+[[step]]
+type = "d "

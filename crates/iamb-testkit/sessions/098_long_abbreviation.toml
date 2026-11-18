@@ -1,0 +1,12 @@
+description = "A 64-character abbreviation with its delimiter fits the 65-character buffer"
+
+[[snippet]]
+abbr = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijkl"
+body = "long"
+
+[[step]]
+type = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijkl "
+expect = [{ delete = 65 }, { text = "long" }, { text = " " }, { expanded = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijkl", chars_saved = 0 }]
+
+[[step]]
+type = "xabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijkl "

@@ -1,0 +1,18 @@
+description = "A form match shows the form only; submit deletes and types with the values"
+
+[[snippet]]
+abbr = "dear"
+body = 'Dear {field name="Name"},'
+
+[[step]]
+type = "dear "
+expect = [{ form = "dear", fields = ["Name"] }]
+form_open = true
+now_calls = 1
+buffered = 0
+
+[[step]]
+submit = { Name = "Kim" }
+expect = [{ delete = 5 }, { text = "Dear Kim,", verbatim = [[5, 8]] }, { text = " " }, { expanded = "dear", chars_saved = 5 }]
+form_open = false
+now_calls = 1

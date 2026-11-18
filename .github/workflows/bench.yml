@@ -34,8 +34,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: bench
-      - name: Sample benchmark (quick mode)
-        run: cargo bench -p iamb-bench --locked --bench sample -- --quick
+      - name: Matcher benchmark (quick mode)
+        run: cargo bench -p iamb-bench --locked --bench matcher -- --quick
+      - name: Template benchmark (quick mode)
+        run: cargo bench -p iamb-bench --locked --bench template -- --quick
       - name: Summary
         if: always()
         shell: bash

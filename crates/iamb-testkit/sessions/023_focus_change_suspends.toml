@@ -1,0 +1,25 @@
+description = "After a focus change nothing is stored until the focus verdict is normal"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "br"
+
+[[step]]
+focus = "editor"
+suspended = true
+buffered = 0
+
+[[step]]
+type = "b "
+buffered = 0
+
+[[step]]
+secure = "normal"
+suspended = false
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]

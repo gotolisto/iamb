@@ -1,0 +1,14 @@
+description = "Adaptive capitalisation does nothing when the first letter comes from the clipboard"
+
+[env]
+clipboard = "kim"
+
+[[snippet]]
+abbr = "cr"
+body = "{clipboard} rocks"
+case_mode = "adaptive"
+
+[[step]]
+type = "Cr "
+expect = [{ delete = 3 }, { text = "kim rocks", verbatim = [[0, 3]] }, { text = " " }, { expanded = "cr" }]
+clipboard_calls = 1

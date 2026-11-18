@@ -1,0 +1,12 @@
+description = "Enter as delimiter with a cursor: Enter is not pressed again"
+
+[[snippet]]
+abbr = "p"
+body = "<p>{cursor}</p>"
+
+[[step]]
+type = "p"
+
+[[step]]
+key = "enter"
+expect = [{ delete = 2 }, { text = "<p></p>" }, { caret_back = 4 }, { expanded = "p" }]

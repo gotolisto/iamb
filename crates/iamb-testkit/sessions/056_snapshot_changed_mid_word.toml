@@ -1,0 +1,16 @@
+description = "SnapshotChanged keeps the buffer; the next character matches against the new library"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+type = "br"
+
+[[step]]
+snapshot = [{ abbr = "brb", body = "back soon" }]
+buffered = 2
+
+[[step]]
+type = "b "
+expect = [{ delete = 4 }, { text = "back soon" }, { text = " " }, { expanded = "brb" }]

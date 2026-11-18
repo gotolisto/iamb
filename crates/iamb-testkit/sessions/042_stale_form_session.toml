@@ -1,0 +1,44 @@
+description = "Answers for sessions that are not open are diagnostics"
+
+[[snippet]]
+abbr = "dear"
+body = 'Dear {field name="Name"},'
+
+[[step]]
+submit = { Name = "x" }
+session = 99
+expect = [{ diagnostic = "unknown_form_session" }]
+
+[[step]]
+cancel = true
+session = 99
+expect = [{ diagnostic = "unknown_form_session" }]
+
+[[step]]
+type = "dear "
+expect = [{ form = "dear" }]
+
+[[step]]
+cancel = true
+
+[[step]]
+submit = { Name = "late" }
+expect = [{ diagnostic = "unknown_form_session" }]
+
+[[step]]
+cancel = true
+expect = [{ diagnostic = "unknown_form_session" }]
+
+[[step]]
+type = "dear "
+expect = [{ form = "dear" }]
+
+[[step]]
+submit = { Name = "x" }
+session = 1
+expect = [{ diagnostic = "unknown_form_session" }]
+form_open = true
+
+[[step]]
+submit = { Name = "Kim" }
+expect = [{ delete = 5 }, { text = "Dear Kim,", verbatim = [[5, 8]] }, { text = " " }, { expanded = "dear" }]
