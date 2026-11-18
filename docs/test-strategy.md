@@ -22,7 +22,7 @@ interactive desktop on macOS), so CI uses generous thresholds and never reports 
 | Service vs. mock platform | `iamb-platform` mock + `iamb-testkit` | `crates/iamb-service/tests/` | CI, 3 OSes, every PR | Must pass |
 | OS layer | `cargo test -- --ignored` on runners | `crates/iamb-platform-{windows,macos}/tests/` | CI `windows-latest`, `macos-latest` | Must pass where the runner allows (see §4) |
 | Compatibility matrix | `iamb-testkit::compat` + manual | [`compatibility-matrix.md`](compatibility-matrix.md) | Real machines, task 2.7 and every release candidate | ≥ 95% per OS |
-| Benchmarks | criterion + `LatencyRecorder` | `crates/iamb-bench/benches/` | CI report-only; real machines for KPIs | §3 |
+| Benchmarks | criterion + `LatencyRecorder` | `crates/iamb-bench/benches/` | CI, every PR (two runs); real machines for KPIs | Regression rule against the CI baseline, §3 |
 | Soak and privacy | `iamb-testkit::soak` + canary scan | `crates/iamb-testkit/src/soak/` | Real machine per OS (72 h); CI nightly (30 min) | §5 |
 | Coverage | `cargo-llvm-cov` | CI job `coverage` (Linux) | Every PR from task 1.6 | `iamb-core` line coverage ≥ 85% |
 
@@ -77,15 +77,43 @@ hardware, power plugged in, no other user apps running). Every lab number is rec
 | Result format | One JSON-lines file per run: `target/bench-results/<unix_ms>-<bench file>.jsonl`; one line per measurement with `schema, run_id, timestamp_ms, git_sha, os, arch, runner, bench, kpi, unit, count, min, p50, p95, p99, max, mean, target_stat, target_ns, pass, note`. Raw sorted samples in `<run_id>.samples/<bench>.txt` |
 | Run modes | CI: `cargo bench -p iamb-bench -- --quick`. Lab: full mode, `IAMB_BENCH_RUNNER=lab-<os>-<n>`, laptop on mains power, results committed under `docs/results/` |
 
-**Regression rule.** Report-only for now: the `Bench` workflow runs the matcher and template
-benches, uploads results and never blocks a merge. The plan put the baseline in task 1.9, but a
-baseline has to come from runs of the real benches on `main`, and those only start once Phase 1
-merges. So the first task of Phase 2 collects 10 runs on `main` to measure each bench's spread
-and commits `crates/iamb-bench/baselines/ci-ubuntu.jsonl`.
-From then on CI fails a PR when a bench's gated statistic is **> 25% worse than baseline and the
-absolute difference exceeds the noise floor** (twice the bench's measured spread, at least 1 µs),
-**on two consecutive runs**. The CI absolute thresholds in §2.2 (2× the lab target) apply at the
-same time. Baselines change only in a PR that says why.
+**Regression rule.** CI fails a PR when a bench's gated statistic is **> 25% worse than baseline
+and the absolute difference exceeds the noise floor** (twice the bench's measured spread, at least
+1 µs), **on two consecutive runs**. The CI absolute thresholds in §2.2 (2× the lab target) apply at
+the same time. Baselines change only in a PR that says why. Exactly (`xtask/src/bench.rs`):
+
+| Term | Definition |
+| --- | --- |
+| Gated statistic | The record's `target_stat` when set, else `p50` |
+| Baseline value | Median of the gated statistic over the baseline runs; for an even number of runs, the mean of the two middle values, rounded down to whole nanoseconds |
+| Spread | Maximum minus minimum of the gated statistic over the baseline runs (the range, not a standard deviation) |
+| Noise floor | `max(2 × spread, 1 µs)` |
+| Regression in one run | `value > 1.25 × baseline` **and** `value − baseline > floor`, both strict, integer arithmetic |
+| Two consecutive runs | On a pull request the `Bench` workflow runs the four quick benches (matcher, template, store, engine) twice, one after the other in the same job on the same runner, writing to `target/bench-results/run-1` and `run-2` (`IAMB_BENCH_RESULTS_DIR`). The gate fails only when the same bench regresses in both runs; a regression in one run only passes and is shown in the table |
+
+`cargo xtask bench-compare --baseline crates/iamb-bench/baselines/ci-ubuntu.jsonl <run-1> <run-2>`
+applies the rule, prints a table (bench, baseline, run 1, run 2, change, floor, verdict) and writes
+it to the job summary. Benches not in the baseline are reported as new and never fail; a baseline
+bench missing from either run is an error, so a bench that crashes fails the gate (the bench steps
+themselves are report-only). Both runs must be of one commit and of the baseline's runner. While the
+baseline file does not exist the gate prints "not armed yet" and passes. If a slow runner fails both
+runs, re-running the job gets a fresh one. Pushes to `main` and manual runs run the benches once,
+report only, and upload the result files; the baseline is built from those.
+
+The baseline file has one JSON line per bench: `schema, bench, stat, unit, baseline, spread, runs,
+git_sha, runner`. To create or refresh it (the first task of Phase 2 creates it; later refreshes
+only in a PR that says why, e.g. a new bench, an accepted slowdown or a runner image change):
+
+1. Start 10 manual runs of the `Bench` workflow on one commit of `main`; each gets its own
+   concurrency group, so they run on separate runners:
+   `for i in $(seq 10); do gh workflow run bench.yml --ref main; done`
+2. Download each run's artifact into its own directory:
+   `gh run list --workflow bench.yml --event workflow_dispatch --limit 10 --json databaseId --jq '.[].databaseId' | xargs -I{} gh run download {} -D runs/{}`
+3. `cargo xtask bench-baseline runs/*` reads every `*.jsonl` under each directory, refuses runs of
+   different commits or runners and names any bench missing from some runs, writes
+   `crates/iamb-bench/baselines/ci-ubuntu.jsonl` (`--out <file>` to write elsewhere) and prints
+   each bench's median, spread and floor.
+4. Commit the file in a PR whose description says why and includes the printed table.
 
 ## 4. What CI runners can and cannot measure
 

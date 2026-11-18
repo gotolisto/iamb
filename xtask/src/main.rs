@@ -1,9 +1,13 @@
 //! Repository maintenance tasks, run as `cargo xtask <task>`.
 //!
-//! Currently provides `banned-terms`, which keeps the repository free of the names of other
-//! products without storing those names anywhere: only SHA-256 digests of normalised terms
-//! are kept in `xtask/banned-terms.sha256`.
+//! - `banned-terms` keeps the repository free of the names of other products without storing
+//!   those names anywhere: only SHA-256 digests of normalised terms are kept in
+//!   `xtask/banned-terms.sha256`.
+//! - `bench-baseline` and `bench-compare` build the benchmark baseline and run the regression
+//!   gate (see `bench.rs` and `docs/test-strategy.md` §3).
 
+mod bench;
+mod json;
 mod scan;
 
 use std::collections::{BTreeSet, HashSet};
@@ -14,7 +18,9 @@ use std::process::{Command, ExitCode};
 
 use scan::{Digest, digest_of, format_hit, normalise, parse_hex, scan_bytes, scan_text, to_hex};
 
-const USAGE: &str = "usage: cargo xtask banned-terms [check | add <term...> | hash <term...>]";
+const USAGE: &str = "usage: cargo xtask banned-terms [check | add <term...> | hash <term...>]\n       \
+                     cargo xtask bench-baseline [--out <file>] <run-dir> <run-dir>...\n       \
+                     cargo xtask bench-compare [--baseline <file>] <run-1-dir> <run-2-dir>";
 const LIST_HEADER: &str = "# SHA-256 digests of normalised banned terms (lowercase, tokens joined by one space).\n\
 # Managed by `cargo xtask banned-terms add`; never write the terms themselves in the repo.\n";
 
@@ -40,10 +46,32 @@ fn main() -> ExitCode {
 }
 
 fn run(args: &[String]) -> Result<ExitCode, String> {
-    if args.first().map(String::as_str) != Some("banned-terms") {
-        return Err(USAGE.to_owned());
+    match args.first().map(String::as_str) {
+        Some("banned-terms") => banned_terms(&args[1..]),
+        Some("bench-baseline") => {
+            bench::baseline_cmd(&args[1..], &root(), &mut std::io::stdout().lock())?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Some("bench-compare") => {
+            let summary = std::env::var_os("GITHUB_STEP_SUMMARY")
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from);
+            let gate = bench::compare_cmd(
+                &args[1..],
+                &root(),
+                summary.as_deref(),
+                &mut std::io::stdout().lock(),
+            )?;
+            Ok(match gate {
+                bench::Gate::NotArmed | bench::Gate::Pass => ExitCode::SUCCESS,
+                bench::Gate::Fail => ExitCode::from(1),
+            })
+        }
+        _ => Err(USAGE.to_owned()),
     }
-    let rest = &args[1..];
+}
+
+fn banned_terms(rest: &[String]) -> Result<ExitCode, String> {
     match rest.first().map(String::as_str) {
         None | Some("check") => check(),
         Some("add") => add(&rest[1..]),
