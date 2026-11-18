@@ -12,7 +12,8 @@ use std::time::Duration;
 
 use iamb_ipc::linux::LinuxEndpoint;
 use iamb_ipc::{
-    Client, HELLO_TIMEOUT, NoLog, RequestBody, ResponseBody, Role, Secret, ServerConnection,
+    Client, HELLO_TIMEOUT, IpcError, NoLog, RequestBody, ResponseBody, Role, Secret,
+    ServerConnection,
 };
 use iamb_platform::{
     EndpointKind, EndpointName, LocalEndpoint, PeerPolicy, PeerRejection, PlatformError,
@@ -195,4 +196,79 @@ fn a_round_trip_with_the_framing_and_handshake() {
     );
     client.close();
     server.join().expect("server thread");
+}
+
+#[test]
+fn the_welcome_is_sent_only_after_the_server_hook_has_run() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let dir = TempDir::new().expect("temp dir");
+    let name = name(&dir);
+    let listener = LinuxEndpoint
+        .bind(&name, PeerPolicy::SameUser)
+        .expect("binds");
+    let hook_done = Arc::new(AtomicBool::new(false));
+    let seen = Arc::clone(&hook_done);
+    let server = thread::spawn(move || {
+        let stream = listener.accept().expect("accepted");
+        let conn =
+            ServerConnection::accept_with(stream, "1.2.3", HELLO_TIMEOUT, Arc::new(NoLog), |c| {
+                assert_eq!(c.role(), Role::Ui);
+                // A slow registration: the client must still be waiting for its welcome.
+                thread::sleep(Duration::from_millis(200));
+                seen.store(true, Ordering::SeqCst);
+                Ok(())
+            })
+            .expect("hello");
+        conn.serve(|_, _| Ok(ResponseBody::Done {}))
+            .expect("served");
+    });
+    let client = Client::connect(
+        &LinuxEndpoint,
+        &name,
+        PeerPolicy::for_build(),
+        Role::Ui,
+        "0.0.1",
+        T,
+    )
+    .expect("connects");
+    assert!(
+        hook_done.load(Ordering::SeqCst),
+        "the client had its welcome before the server registered it"
+    );
+    drop(client);
+    server.join().expect("server");
+}
+
+#[test]
+fn a_failing_server_hook_sends_no_welcome() {
+    let dir = TempDir::new().expect("temp dir");
+    let name = name(&dir);
+    let listener = LinuxEndpoint
+        .bind(&name, PeerPolicy::SameUser)
+        .expect("binds");
+    let server = thread::spawn(move || {
+        let stream = listener.accept().expect("accepted");
+        let refused =
+            ServerConnection::accept_with(stream, "1.2.3", HELLO_TIMEOUT, Arc::new(NoLog), |_| {
+                Err(IpcError::Protocol("registration failed"))
+            });
+        assert!(matches!(
+            refused,
+            Err(IpcError::Protocol("registration failed"))
+        ));
+    });
+    let connected = Client::connect(
+        &LinuxEndpoint,
+        &name,
+        PeerPolicy::for_build(),
+        Role::Cli,
+        "0.0.1",
+        T,
+    );
+    assert!(
+        connected.is_err(),
+        "a client was welcomed without a registration"
+    );
+    server.join().expect("server");
 }

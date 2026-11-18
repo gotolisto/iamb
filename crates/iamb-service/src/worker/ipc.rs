@@ -139,17 +139,30 @@ pub(crate) fn accept(shared: &Arc<Shared>, listener: &Arc<dyn LocalListener>) {
 
 fn serve(shared: &Arc<Shared>, stream: Box<dyn LocalStream>) {
     let log: Arc<dyn MessageLog> = Arc::clone(&shared.logger) as Arc<dyn MessageLog>;
-    let conn = match ServerConnection::accept(stream, crate::VERSION, HELLO_TIMEOUT, log) {
+    // The client is registered before its welcome is written: a client that has its welcome
+    // is counted already (a UI host that connects just before a form is shown gets the form).
+    // Events queued before the welcome wait in the channel until the pump starts.
+    let mut registered = None;
+    let accepted = ServerConnection::accept_with(stream, crate::VERSION, HELLO_TIMEOUT, log, |c| {
+        registered = Some(shared.clients.add(c.role(), c.peer().pid, c.writer()));
+        Ok(())
+    });
+    let conn = match accepted {
         Ok(conn) => conn,
         Err(e) => {
+            if let Some((id, _)) = registered {
+                shared.clients.remove(id);
+            }
             shared.logger.warn(format_args!("handshake failed: {e}"));
             return;
         }
     };
+    let Some((id, events)) = registered else {
+        unreachable!("a welcome is sent only after the client is registered");
+    };
     let role = conn.role();
     let pid = conn.peer().pid;
     let writer = conn.writer();
-    let (id, events) = shared.clients.add(role, pid, writer.clone());
     shared.logger.info(format_args!(
         "client {id} connected: role {role}, pid {pid}, version {}",
         conn.client_version()

@@ -133,6 +133,24 @@ impl ServerConnection {
         hello_timeout: Duration,
         log: Arc<dyn MessageLog>,
     ) -> Result<Self, IpcError> {
+        Self::accept_with(stream, server_version, hello_timeout, log, |_| Ok(()))
+    }
+
+    /// Like [`ServerConnection::accept`], but runs `before_welcome` after a valid hello and
+    /// before the welcome is written. A server registers the client there, so a client that has
+    /// its welcome is known to the server already. If `before_welcome` fails, its error is
+    /// returned and no welcome is sent.
+    ///
+    /// # Errors
+    ///
+    /// As [`ServerConnection::accept`], plus the error of `before_welcome`.
+    pub fn accept_with(
+        stream: Box<dyn LocalStream>,
+        server_version: &str,
+        hello_timeout: Duration,
+        log: Arc<dyn MessageLog>,
+        before_welcome: impl FnOnce(&Self) -> Result<(), IpcError>,
+    ) -> Result<Self, IpcError> {
         let reader = stream.try_clone()?;
         let writer = ConnectionWriter {
             stream: Arc::new(Mutex::new(stream)),
@@ -189,6 +207,7 @@ impl ServerConnection {
             conn.writer.shutdown();
             return Err(IpcError::Remote(error));
         }
+        before_welcome(&conn)?;
         conn.writer.write(
             &Wire::Welcome(Welcome {
                 protocol: PROTOCOL_VERSION,
