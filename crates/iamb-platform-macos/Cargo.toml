@@ -18,6 +18,13 @@ name = "main_loop"
 path = "tests/main_loop.rs"
 harness = false
 
+# The focus tests need the main thread too: the secure-entry flag is read there, the
+# activation notification arrives there, and the test's window lives there.
+[[test]]
+name = "focus"
+path = "tests/focus.rs"
+harness = false
+
 # These tables repeat [workspace.lints] from the root Cargo.toml, because a crate cannot
 # inherit the workspace lints and override one of them. The only differences: `unsafe_code`
 # is allowed (this crate and iamb-platform-windows are the two places where it may be,
@@ -50,8 +57,10 @@ iamb-platform = { path = "../iamb-platform" }
 #   objc2-core-foundation          listener (run loop, mach port), every CF type
 #   objc2-core-graphics            listener (event tap), injector (event source, posting),
 #                                  permissions (Input Monitoring), focus (window ids)
-#   objc2-application-services     focus and permissions (the Accessibility API)
-#   objc2-app-kit                  clipboard (pasteboard), focus (frontmost application),
+#   objc2-application-services     focus and permissions (the Accessibility API; `libc` for
+#                                  the process id of an application's element and observer)
+#   objc2-app-kit                  clipboard (pasteboard), focus (frontmost application and
+#                                  its activation; `libc` for its process id),
 #                                  main_loop (the application event loop; `NSGraphicsContext`
 #                                  only for the signature of the event that stops it)
 #   objc2-service-management       login_item
@@ -62,6 +71,7 @@ libc = "0.2.191"
 objc2 = "0.6.5"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "std",
+    "libc",
     "NSApplication",
     "NSEvent",
     "NSGraphicsContext",
@@ -73,6 +83,7 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
 ] }
 objc2-application-services = { version = "0.3.2", default-features = false, features = [
     "std",
+    "libc",
     "AXAttributeConstants",
     "AXConstants",
     "AXError",
@@ -134,4 +145,15 @@ objc2-service-management = { version = "0.3.2", default-features = false, featur
     "SMErrors",
     "objc2",
     "objc2-foundation",
+] }
+
+# Only `tests/focus.rs` needs these: a window with a plain and a password field to inspect.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "NSControl",
+    "NSGraphics",
+    "NSSecureTextField",
+    "NSTextField",
+    "NSView",
+    "NSWindow",
 ] }

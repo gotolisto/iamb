@@ -41,7 +41,6 @@
 mod clipboard;
 #[cfg(windows)]
 mod endpoint;
-#[cfg(windows)]
 mod focus;
 mod hotkeys;
 mod injector;

@@ -14,7 +14,7 @@
 //! | `UCKeyTranslate` | `CarbonCore/UnicodeUtilities.h` | `layout.rs`: key press to text |
 //! | `LMGetKbdType` | `LowMem.h` (exported by `HIToolbox`) | `layout.rs`: the keyboard type when an event names none |
 //! | `RegisterEventHotKey` and the event-handler calls | `HIToolbox/CarbonEvents.h` | `hotkeys/mac.rs` |
-//! | `IsSecureEventInputEnabled` | `HIToolbox/CarbonEventsCore.h` | `tap.rs`: a self-test that fails during secure keyboard entry is not a failure |
+//! | `IsSecureEventInputEnabled` | `HIToolbox/CarbonEventsCore.h` | `tap.rs`: a self-test that fails during secure keyboard entry is not a failure; `focus/system.rs`: secure keyboard entry means a secure field |
 //! | `CFNotificationCenter…` | `CoreFoundation/CFNotificationCenter.h` | `layout.rs`: "the input source changed" |
 //!
 //! # Threads
