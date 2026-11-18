@@ -416,8 +416,9 @@ fn timed_list(dir: &Path) -> (Output, Duration) {
 fn held_lock_gives_try_again_after_the_documented_wait() {
     let d = TempDir::new().unwrap();
     let _held = iamb_store::Store::open(d.path()).unwrap();
-    // What one run costs without the wait (process start, opening, first-use setup), so that
-    // the wait itself can be measured: total time minus this baseline.
+    // What one complete run costs without the lock (process start, opening the store, first-use
+    // setup, listing). The locked run does less than this after its wait (it never opens the
+    // database), so the baseline only bounds the extra time from above.
     let free = TempDir::new().unwrap();
     let (baseline_out, baseline) = timed_list(free.path());
     assert!(baseline_out.status.success());
@@ -429,14 +430,16 @@ fn held_lock_gives_try_again_after_the_documented_wait() {
         err.starts_with("iamb: ") && err.contains("try again"),
         "{err}"
     );
-    let wait = total.saturating_sub(baseline);
+    // The process cannot finish before its 3 s wait has run out, whatever start-up costs, so
+    // the total alone proves the wait happened. (Subtracting the baseline does not: on a slow
+    // runner the baseline's database work exceeds the locked run's start-up.)
     assert!(
-        wait >= Duration::from_millis(2500),
-        "waited only {wait:?} (total {total:?}, baseline {baseline:?}): the 3 s wait is gone"
+        total >= Duration::from_millis(2900),
+        "finished after {total:?}: the 3 s wait is gone"
     );
     assert!(
-        wait <= Duration::from_millis(4500),
-        "waited {wait:?} (total {total:?}, baseline {baseline:?}): longer than 3 s"
+        total <= Duration::from_secs(3) + baseline + Duration::from_millis(1500),
+        "finished after {total:?} (one unlocked run takes {baseline:?}): longer than a 3 s wait"
     );
 }
 
