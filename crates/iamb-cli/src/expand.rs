@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use iamb_core::datetime::{Format, LocalDateTime, Locale, civil_from_days};
 use iamb_core::engine::{Action, EngineSettings, Environment, ExclusionReason, Snapshot, dry_run};
 use iamb_core::matcher::Delimiters;
-use iamb_core::model::{Id, ProfileKind, Snippet};
+use iamb_core::model::{Id, ProfileKind, Snippet, fold_abbreviation};
 use iamb_core::template::{FormValues, KeyName};
 use iamb_store::{ListOptions, Store, StoreError};
 
@@ -176,10 +176,12 @@ pub fn expand(snapshot: &Snapshot, typed: &str, env: &DryEnv, values: &FormValue
             out.action_lines.push(line);
         }
     }
-    // A snippet whose template does not parse never matches, so the engine stays silent about
-    // it; name its error when the typed text ends with its abbreviation.
+    // A snippet whose template does not parse is not matchable (architecture §4.4), so the
+    // engine stays silent about it; name its parse error when the typed text ends with its
+    // abbreviation. Resolve errors need nothing here: such snippets stay matchable and the
+    // engine reports them itself (review 1.9 finding 4).
     if out.expansions == 0 && out.diagnostics.is_empty() {
-        let typed_fold = typed.to_lowercase();
+        let typed_fold = fold_abbreviation(typed);
         for ex in snapshot.excluded() {
             if let (ExclusionReason::Template(e), Some(sn)) =
                 (&ex.reason, snapshot.snippet(ex.snippet))

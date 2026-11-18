@@ -1,16 +1,31 @@
 //! The keystroke buffer (architecture §4.1, §8 rule 1, ADR-0012).
+//!
+//! # Known gaps
+//!
+//! - **Zero-on-drop is not tested.** `Drop` calls [`KeyBuffer::clear`], which overwrites every
+//!   slot. Whether the memory really holds zeros after the value is gone can only be observed by
+//!   reading freed memory, which needs `unsafe`, and `unsafe` is forbidden in the workspace. The
+//!   matcher's mutation run (review 1.9, §4) therefore misses exactly one mutant: replacing the
+//!   body of `drop` with `()`. What is tested is the part `drop` delegates to: `clear` zeroes
+//!   every slot, read back through the crate-internal `raw_storage` accessor
+//!   (`clear_zeros_every_slot`, `clear_zeros_storage_after_overflow_and_backspace`). Closing the
+//!   gap needs either a test-only crate outside the workspace lint that inspects the memory
+//!   after drop, or this recorded exception.
 
 use std::hint::black_box;
 
 use crate::model::ABBREVIATION_MAX_CHARS;
 
-/// Number of characters a [`KeyBuffer`] holds: the longest abbreviation plus one delimiter.
-pub const KEY_BUFFER_CAPACITY: usize = ABBREVIATION_MAX_CHARS + 1;
+/// Number of characters a [`KeyBuffer`] holds: the character before the abbreviation (for the
+/// word-start rule), the longest abbreviation and one delimiter (review 1.9 finding 6).
+pub const KEY_BUFFER_CAPACITY: usize = ABBREVIATION_MAX_CHARS + 2;
 
 /// The in-memory keystroke buffer the matcher reads.
 ///
-/// Holds the last [`KEY_BUFFER_CAPACITY`] typed characters (64 for the abbreviation plus one
-/// delimiter), one per `Char` event. When it is full, the oldest character falls off.
+/// Holds the last [`KEY_BUFFER_CAPACITY`] typed characters (one before the abbreviation, 64 for
+/// the abbreviation and one delimiter), one per `Char` event, so a 64-character delimiter
+/// abbreviation with word start can still see the character before it. When it is full, the
+/// oldest character falls off.
 ///
 /// # Privacy guarantees
 ///
@@ -120,9 +135,18 @@ impl KeyBuffer {
         &self.chars[..self.len]
     }
 
-    /// Whether characters fell off the front since the last clear.
+    /// Whether characters fell off the front since the last clear, or the start of the buffer
+    /// was marked as unknown.
     pub(crate) const fn truncated(&self) -> bool {
         self.truncated
+    }
+
+    /// Marks the start of the buffer as not a known boundary: something the buffer does not
+    /// hold may precede it (a Backspace deleted a character it never held, or a failed expansion
+    /// left text on screen). Like overflow, this makes a word-start abbreviation at the very
+    /// start of the buffer not fire; [`clear`](Self::clear) resets it.
+    pub(crate) fn mark_unknown_prefix(&mut self) {
+        self.truncated = true;
     }
 
     #[cfg(test)]
@@ -181,6 +205,32 @@ mod tests {
             b.truncated(),
             "backspace does not bring dropped characters back"
         );
+    }
+
+    #[test]
+    fn clear_zeros_storage_after_overflow_and_backspace() {
+        let mut b = KeyBuffer::new();
+        for c in "the quick brown fox jumps over the lazy dog "
+            .chars()
+            .cycle()
+            .take(150)
+        {
+            b.push(c);
+        }
+        b.backspace();
+        b.mark_unknown_prefix();
+        assert!(
+            b.raw_storage()
+                .iter()
+                .take(KEY_BUFFER_CAPACITY - 1)
+                .all(|&c| c != '\0')
+        );
+        b.clear();
+        assert!(b.raw_storage().iter().all(|&c| c == '\0'));
+        assert!(b.is_empty());
+        assert!(!b.truncated(), "clear resets an unknown prefix too");
+        b.push('a');
+        assert_eq!(b.chars(), ['a']);
     }
 
     #[test]

@@ -82,6 +82,34 @@ proptest! {
         }
     }
 
+    /// Review 1.9 finding 1: business days are computed in closed form; this compares them with
+    /// the reference's day-by-day stepping (including `E_DATE_RANGE` near years 1 and 9999).
+    #[test]
+    fn business_days_match_day_by_day_stepping(
+        t in prop_oneof![
+            arb_datetime(),
+            (1u8..=12, 1u8..=28).prop_map(|(m, d)| LocalDateTime::new(1, m, d, 9, 0, 0).expect("valid")),
+            (1u8..=12, 1u8..=28).prop_map(|(m, d)| LocalDateTime::new(9999, m, d, 9, 0, 0).expect("valid")),
+        ],
+        n in 0i64..=3000,
+        backwards in any::<bool>(),
+    ) {
+        let (sign, step) = if backwards { ("-", "-1d") } else { ("+", "+1d") };
+        let closed = Shift::parse(&format!("{sign}{n}bd")).expect("ok").apply(t);
+        let one = Shift::parse(step).expect("ok");
+        let mut stepped = Ok(t);
+        let mut left = n;
+        while left > 0 {
+            stepped = stepped.and_then(|x| one.apply(x));
+            match stepped {
+                Ok(x) if !x.weekday().is_weekend() => left -= 1,
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+        prop_assert_eq!(closed, stepped);
+    }
+
     #[test]
     fn business_days_land_on_weekdays(t in arb_datetime(), n in 1u32..=30) {
         for sign in ["+", "-"] {

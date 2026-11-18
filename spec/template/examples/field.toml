@@ -154,3 +154,150 @@ macro = "field"
 note = "Error: one name defined with two types"
 template = '{field name="When"} {field name="When" type=toggle}'
 expect = { error = "E_FIELD_CONFLICT" }
+
+[[example]]
+id = "field-22"
+macro = "field"
+note = "Exactly 100 fields resolve: 99 named by {field} (one of them twice, counted once) and an implicit toggle"
+template = '{field name=f1}{field name=f2}{field name=f3}{field name=f4}{field name=f5}{field name=f6}{field name=f7}{field name=f8}{field name=f9}{field name=f10}{field name=f11}{field name=f12}{field name=f13}{field name=f14}{field name=f15}{field name=f16}{field name=f17}{field name=f18}{field name=f19}{field name=f20}{field name=f21}{field name=f22}{field name=f23}{field name=f24}{field name=f25}{field name=f26}{field name=f27}{field name=f28}{field name=f29}{field name=f30}{field name=f31}{field name=f32}{field name=f33}{field name=f34}{field name=f35}{field name=f36}{field name=f37}{field name=f38}{field name=f39}{field name=f40}{field name=f41}{field name=f42}{field name=f43}{field name=f44}{field name=f45}{field name=f46}{field name=f47}{field name=f48}{field name=f49}{field name=f50}{field name=f51}{field name=f52}{field name=f53}{field name=f54}{field name=f55}{field name=f56}{field name=f57}{field name=f58}{field name=f59}{field name=f60}{field name=f61}{field name=f62}{field name=f63}{field name=f64}{field name=f65}{field name=f66}{field name=f67}{field name=f68}{field name=f69}{field name=f70}{field name=f71}{field name=f72}{field name=f73}{field name=f74}{field name=f75}{field name=f76}{field name=f77}{field name=f78}{field name=f79}{field name=f80}{field name=f81}{field name=f82}{field name=f83}{field name=f84}{field name=f85}{field name=f86}{field name=f87}{field name=f88}{field name=f89}{field name=f90}{field name=f91}{field name=f92}{field name=f93}{field name=f94}{field name=f95}{field name=f96}{field name=f97}{field name=f98}{field name=f99}{field name=f1}{if field=T}x{endif}'
+expect.form = [
+  { name = "f1", type = "text", default = "" },
+  { name = "f2", type = "text", default = "" },
+  { name = "f3", type = "text", default = "" },
+  { name = "f4", type = "text", default = "" },
+  { name = "f5", type = "text", default = "" },
+  { name = "f6", type = "text", default = "" },
+  { name = "f7", type = "text", default = "" },
+  { name = "f8", type = "text", default = "" },
+  { name = "f9", type = "text", default = "" },
+  { name = "f10", type = "text", default = "" },
+  { name = "f11", type = "text", default = "" },
+  { name = "f12", type = "text", default = "" },
+  { name = "f13", type = "text", default = "" },
+  { name = "f14", type = "text", default = "" },
+  { name = "f15", type = "text", default = "" },
+  { name = "f16", type = "text", default = "" },
+  { name = "f17", type = "text", default = "" },
+  { name = "f18", type = "text", default = "" },
+  { name = "f19", type = "text", default = "" },
+  { name = "f20", type = "text", default = "" },
+  { name = "f21", type = "text", default = "" },
+  { name = "f22", type = "text", default = "" },
+  { name = "f23", type = "text", default = "" },
+  { name = "f24", type = "text", default = "" },
+  { name = "f25", type = "text", default = "" },
+  { name = "f26", type = "text", default = "" },
+  { name = "f27", type = "text", default = "" },
+  { name = "f28", type = "text", default = "" },
+  { name = "f29", type = "text", default = "" },
+  { name = "f30", type = "text", default = "" },
+  { name = "f31", type = "text", default = "" },
+  { name = "f32", type = "text", default = "" },
+  { name = "f33", type = "text", default = "" },
+  { name = "f34", type = "text", default = "" },
+  { name = "f35", type = "text", default = "" },
+  { name = "f36", type = "text", default = "" },
+  { name = "f37", type = "text", default = "" },
+  { name = "f38", type = "text", default = "" },
+  { name = "f39", type = "text", default = "" },
+  { name = "f40", type = "text", default = "" },
+  { name = "f41", type = "text", default = "" },
+  { name = "f42", type = "text", default = "" },
+  { name = "f43", type = "text", default = "" },
+  { name = "f44", type = "text", default = "" },
+  { name = "f45", type = "text", default = "" },
+  { name = "f46", type = "text", default = "" },
+  { name = "f47", type = "text", default = "" },
+  { name = "f48", type = "text", default = "" },
+  { name = "f49", type = "text", default = "" },
+  { name = "f50", type = "text", default = "" },
+  { name = "f51", type = "text", default = "" },
+  { name = "f52", type = "text", default = "" },
+  { name = "f53", type = "text", default = "" },
+  { name = "f54", type = "text", default = "" },
+  { name = "f55", type = "text", default = "" },
+  { name = "f56", type = "text", default = "" },
+  { name = "f57", type = "text", default = "" },
+  { name = "f58", type = "text", default = "" },
+  { name = "f59", type = "text", default = "" },
+  { name = "f60", type = "text", default = "" },
+  { name = "f61", type = "text", default = "" },
+  { name = "f62", type = "text", default = "" },
+  { name = "f63", type = "text", default = "" },
+  { name = "f64", type = "text", default = "" },
+  { name = "f65", type = "text", default = "" },
+  { name = "f66", type = "text", default = "" },
+  { name = "f67", type = "text", default = "" },
+  { name = "f68", type = "text", default = "" },
+  { name = "f69", type = "text", default = "" },
+  { name = "f70", type = "text", default = "" },
+  { name = "f71", type = "text", default = "" },
+  { name = "f72", type = "text", default = "" },
+  { name = "f73", type = "text", default = "" },
+  { name = "f74", type = "text", default = "" },
+  { name = "f75", type = "text", default = "" },
+  { name = "f76", type = "text", default = "" },
+  { name = "f77", type = "text", default = "" },
+  { name = "f78", type = "text", default = "" },
+  { name = "f79", type = "text", default = "" },
+  { name = "f80", type = "text", default = "" },
+  { name = "f81", type = "text", default = "" },
+  { name = "f82", type = "text", default = "" },
+  { name = "f83", type = "text", default = "" },
+  { name = "f84", type = "text", default = "" },
+  { name = "f85", type = "text", default = "" },
+  { name = "f86", type = "text", default = "" },
+  { name = "f87", type = "text", default = "" },
+  { name = "f88", type = "text", default = "" },
+  { name = "f89", type = "text", default = "" },
+  { name = "f90", type = "text", default = "" },
+  { name = "f91", type = "text", default = "" },
+  { name = "f92", type = "text", default = "" },
+  { name = "f93", type = "text", default = "" },
+  { name = "f94", type = "text", default = "" },
+  { name = "f95", type = "text", default = "" },
+  { name = "f96", type = "text", default = "" },
+  { name = "f97", type = "text", default = "" },
+  { name = "f98", type = "text", default = "" },
+  { name = "f99", type = "text", default = "" },
+  { name = "T", type = "toggle", default = "no" },
+]
+
+[[example]]
+id = "field-23"
+macro = "field"
+note = "Error: 101 fields in one form"
+template = '{field name=f1}{field name=f2}{field name=f3}{field name=f4}{field name=f5}{field name=f6}{field name=f7}{field name=f8}{field name=f9}{field name=f10}{field name=f11}{field name=f12}{field name=f13}{field name=f14}{field name=f15}{field name=f16}{field name=f17}{field name=f18}{field name=f19}{field name=f20}{field name=f21}{field name=f22}{field name=f23}{field name=f24}{field name=f25}{field name=f26}{field name=f27}{field name=f28}{field name=f29}{field name=f30}{field name=f31}{field name=f32}{field name=f33}{field name=f34}{field name=f35}{field name=f36}{field name=f37}{field name=f38}{field name=f39}{field name=f40}{field name=f41}{field name=f42}{field name=f43}{field name=f44}{field name=f45}{field name=f46}{field name=f47}{field name=f48}{field name=f49}{field name=f50}{field name=f51}{field name=f52}{field name=f53}{field name=f54}{field name=f55}{field name=f56}{field name=f57}{field name=f58}{field name=f59}{field name=f60}{field name=f61}{field name=f62}{field name=f63}{field name=f64}{field name=f65}{field name=f66}{field name=f67}{field name=f68}{field name=f69}{field name=f70}{field name=f71}{field name=f72}{field name=f73}{field name=f74}{field name=f75}{field name=f76}{field name=f77}{field name=f78}{field name=f79}{field name=f80}{field name=f81}{field name=f82}{field name=f83}{field name=f84}{field name=f85}{field name=f86}{field name=f87}{field name=f88}{field name=f89}{field name=f90}{field name=f91}{field name=f92}{field name=f93}{field name=f94}{field name=f95}{field name=f96}{field name=f97}{field name=f98}{field name=f99}{field name=f100}{field name=f101}'
+expect = { error = "E_FORM_TOO_LARGE" }
+
+[[example]]
+id = "field-24"
+macro = "field"
+note = "Error: a nested snippet brings the form to 101 distinct fields (f41 to f60 appear in both and count once)"
+template = '{field name=f1}{field name=f2}{field name=f3}{field name=f4}{field name=f5}{field name=f6}{field name=f7}{field name=f8}{field name=f9}{field name=f10}{field name=f11}{field name=f12}{field name=f13}{field name=f14}{field name=f15}{field name=f16}{field name=f17}{field name=f18}{field name=f19}{field name=f20}{field name=f21}{field name=f22}{field name=f23}{field name=f24}{field name=f25}{field name=f26}{field name=f27}{field name=f28}{field name=f29}{field name=f30}{field name=f31}{field name=f32}{field name=f33}{field name=f34}{field name=f35}{field name=f36}{field name=f37}{field name=f38}{field name=f39}{field name=f40}{field name=f41}{field name=f42}{field name=f43}{field name=f44}{field name=f45}{field name=f46}{field name=f47}{field name=f48}{field name=f49}{field name=f50}{field name=f51}{field name=f52}{field name=f53}{field name=f54}{field name=f55}{field name=f56}{field name=f57}{field name=f58}{field name=f59}{field name=f60}{snippet abbr=more}'
+ctx = { snippets = { more = '{field name=f41}{field name=f42}{field name=f43}{field name=f44}{field name=f45}{field name=f46}{field name=f47}{field name=f48}{field name=f49}{field name=f50}{field name=f51}{field name=f52}{field name=f53}{field name=f54}{field name=f55}{field name=f56}{field name=f57}{field name=f58}{field name=f59}{field name=f60}{field name=f61}{field name=f62}{field name=f63}{field name=f64}{field name=f65}{field name=f66}{field name=f67}{field name=f68}{field name=f69}{field name=f70}{field name=f71}{field name=f72}{field name=f73}{field name=f74}{field name=f75}{field name=f76}{field name=f77}{field name=f78}{field name=f79}{field name=f80}{field name=f81}{field name=f82}{field name=f83}{field name=f84}{field name=f85}{field name=f86}{field name=f87}{field name=f88}{field name=f89}{field name=f90}{field name=f91}{field name=f92}{field name=f93}{field name=f94}{field name=f95}{field name=f96}{field name=f97}{field name=f98}{field name=f99}{field name=f100}{field name=f101}' } }
+expect = { error = "E_FORM_TOO_LARGE" }
+
+[[example]]
+id = "field-25"
+macro = "field"
+note = "A submitted choice value that is not one of the options is replaced by the default"
+template = 'Size {field name="Size" type=choice options="S|M|L" default="M"}'
+ctx = { values = { Size = "XXL" } }
+expect = { text = "Size M", form = [{ name = "Size", type = "choice", default = "M", options = ["S", "M", "L"] }] }
+
+[[example]]
+id = "field-26"
+macro = "field"
+note = "A submitted toggle value other than yes counts as unchecked (also \"Yes\")"
+template = '{field name="Rush" type=toggle on="rush" off="standard"}/{field name="Gift" type=toggle on="gift" off="no gift"}'
+ctx = { values = { Rush = "maybe", Gift = "Yes" } }
+expect = { text = "standard/no gift", form = [{ name = "Rush", type = "toggle", default = "no" }, { name = "Gift", type = "toggle", default = "no" }] }
+
+[[example]]
+id = "field-27"
+macro = "field"
+note = "Line breaks in a submitted single-line text value become spaces (CRLF and CR count as one)"
+template = 'Re: {field name="Subject"}'
+ctx = { values = { Subject = "one\r\ntwo\rthree\nfour" } }
+expect = { text = "Re: one two three four", form = [{ name = "Subject", type = "text", default = "" }] }

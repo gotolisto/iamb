@@ -390,21 +390,39 @@ impl Shift {
                 Unit::Hour => t.add_seconds(n * 3600)?,
                 Unit::Minute => t.add_seconds(n * 60)?,
                 Unit::Second => t.add_seconds(n)?,
-                Unit::BusinessDay => {
-                    let step = n.signum();
-                    let mut left = n.abs();
-                    while left > 0 {
-                        t = t.add_days(step)?;
-                        if !t.weekday().is_weekend() {
-                            left -= 1;
-                        }
-                    }
-                    t
-                }
+                Unit::BusinessDay => t.add_days(business_day_offset(t.days(), n))?,
             };
         }
         Ok(t)
     }
+}
+
+/// The number of calendar days to move from day `days` (since 1970-01-01) to land `n`
+/// business days away, in constant time.
+///
+/// Same result as stepping one calendar day at a time in the direction of `n` and counting
+/// every Monday to Friday reached until `n` are counted (the reference implementation). Every
+/// run of seven consecutive days holds exactly five weekdays, so all but the last one to five
+/// business days are whole weeks; the rest is stepped, at most nine days. Moving is monotonic,
+/// so the result leaves the year range exactly when some step of the reference would: the
+/// caller's range check on the final day is enough.
+fn business_day_offset(days: i64, n: i64) -> i64 {
+    if n == 0 {
+        return 0;
+    }
+    let step = n.signum();
+    let count = n.abs();
+    let weeks = (count - 1) / 5;
+    let mut left = count - weeks * 5;
+    let mut offset = weeks * 7 * step;
+    while left > 0 {
+        offset += step;
+        // 1970-01-01 was a Thursday: index 3 with Monday = 0, so 5 and 6 are the weekend.
+        if (days + offset + 3).rem_euclid(7) < 5 {
+            left -= 1;
+        }
+    }
+    offset
 }
 
 /// A locale for month and weekday names: `en`, `es`, `de` or `fr`.

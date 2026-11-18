@@ -49,7 +49,7 @@ impl RefBuffer {
         match key {
             Key::Char(c) => {
                 self.chars.push(c);
-                if self.chars.len() > ABBREVIATION_MAX_CHARS + 1 {
+                if self.chars.len() > ABBREVIATION_MAX_CHARS + 2 {
                     self.chars.remove(0);
                     self.truncated = true;
                 }

@@ -10,8 +10,22 @@ errors (`RUSTFLAGS=-D warnings`). The pipeline should finish in under ten minute
   spec examples checked against the reference implementation.
 - `test` (Linux, Windows, macOS, not fail-fast): `cargo build` and `cargo test` for the whole
   workspace with `--locked`.
-- `ci-ok`: succeeds only if `lint` and every `test` leg succeeded. This is the single check to
-  require in branch protection.
+- `coverage` (Linux): `cargo llvm-cov` on `iamb-core`; fails below 85% line coverage.
+- `ci-ok`: succeeds only if `lint`, `coverage` and every `test` leg succeeded. This is the single
+  check to require in branch protection.
+
+`.github/workflows/bench.yml` runs the benchmarks in quick mode on every pull request and uploads
+the results. It is report-only and never blocks a merge (see `docs/test-strategy.md` §3).
+
+`.github/workflows/nightly.yml` runs every night and on demand, and never blocks a merge:
+
+- `fuzz-template`: 10 minutes of `cargo fuzz` on the template engine with a pinned nightly
+  toolchain, a 1-second limit per input and 512 MB of memory; the corpus is kept between nights.
+- `mutants-matcher`: the matcher mutation sample; fails when fewer than 80% of viable mutants
+  are caught.
+- `release-limits`: `cargo test --release` for `iamb-core` and `iamb-store`, which turns on the
+  tight timing limits (load KPI under 100 ms, worst-case template budgets) that debug builds
+  relax.
 
 ## Running the checks locally
 
@@ -21,6 +35,7 @@ errors (`RUSTFLAGS=-D warnings`). The pipeline should finish in under ten minute
     cargo test --workspace --locked
     cargo xtask banned-terms
     python3 spec/template/reference.py
+    cargo llvm-cov -p iamb-core --locked --summary-only --fail-under-lines 85
 
 `cargo xtask` is an alias (see `.cargo/config.toml`) for the `xtask` workspace crate.
 

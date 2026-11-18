@@ -130,6 +130,31 @@ fn abbreviation_fold_key() {
     assert_eq!(Abbreviation::new("ÄBC").unwrap().as_str(), "ÄBC");
 }
 
+/// Review 1.9 finding 12: the fold key folds like the matcher (per character, final sigma as
+/// sigma), so the store's uniqueness check rejects what the matcher would treat as one.
+#[test]
+fn abbreviation_fold_key_agrees_with_the_matcher_on_sigma() {
+    use iamb_core::matcher::{Delimiters, MatchEntry, Matcher};
+    use iamb_core::model::{CaseMode, Id, Trigger};
+
+    let key = |s: &str| Abbreviation::new(s).unwrap().fold_key();
+    assert_eq!(key("ΟΔΟΣ"), "οδοσ");
+    assert_eq!(key("ΟΔΟΣ"), key("οδοσ"));
+    assert_eq!(key("οδος"), key("οδοσ"));
+    assert_eq!(iamb_core::model::fold_abbreviation("ΟΔΟΣ"), key("οδος"));
+
+    // And the matcher drops the second of two such abbreviations as a duplicate of the first.
+    let entry = |n: u8, a: &str| MatchEntry {
+        snippet: Id::from_bytes([n; 16]),
+        abbreviation: Abbreviation::new(a).unwrap(),
+        trigger: Trigger::Delimiter,
+        case_mode: CaseMode::Adaptive,
+        word_start: true,
+    };
+    let m = Matcher::build([entry(1, "ΟΔΟΣ"), entry(2, "οδοσ")], Delimiters::default());
+    assert_eq!(m.duplicates().len(), 1);
+}
+
 #[test]
 fn error_display_and_trait() {
     let e: Box<dyn std::error::Error> = Box::new(ModelError::AbbreviationEmpty);

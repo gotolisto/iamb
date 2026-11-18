@@ -1,0 +1,46 @@
+description = "Cancelling a form whose submit is held for the verdict drops the submit with a diagnostic: nothing is typed when the verdict arrives; the submitted values stay remembered"
+
+[[snippet]]
+abbr = "pw"
+body = '{field name="Code"}'
+
+[[step]]
+focus = "notes"
+
+[[step]]
+secure = "normal"
+
+[[step]]
+type = "pw "
+expect = [{ form = "pw", fields = ["Code"] }]
+
+[[step]]
+focus = "iamb"
+
+[[step]]
+secure = "own_window"
+
+[[step]]
+focus = "notes"
+
+[[step]]
+submit = { Code = "1234" }
+held = true
+form_open = false
+
+[[step]]
+cancel = true
+expect = [{ diagnostic = "request_cancelled", snippet = "pw" }]
+held = false
+
+[[step]]
+secure = "normal"
+state = "idle"
+
+[[step]]
+cancel = true
+expect = [{ diagnostic = "unknown_form_session" }]
+
+[[step]]
+reopen = true
+expect = [{ form = "pw", fields = ["Code"], last_values = { Code = "1234" } }]

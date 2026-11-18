@@ -103,10 +103,12 @@ fn snapshot_reference_and_matchable_sets() {
         .collect();
     assert_eq!(
         reasons,
+        // The sigma pair has one fold key (review 1.9 finding 12), so it is a loser listed in
+        // input order, before template errors.
         vec![
             (id(2), "dup of 1".to_owned()),
-            (id(4), "E_UNCLOSED_MACRO".to_owned()),
             (id(6), "dup of 5".to_owned()),
+            (id(4), "E_UNCLOSED_MACRO".to_owned()),
         ]
     );
     // The matchable set: BRB, οδος, a.
@@ -305,7 +307,41 @@ fn small_types() {
             Reason::Suspended(SuspendReason::UnknownFocus),
             "suspended_unknown_focus",
         ),
+        (
+            Reason::Suspended(SuspendReason::OwnWindow),
+            "suspended_own_window",
+        ),
+        (
+            Reason::Suspended(SuspendReason::Composing),
+            "suspended_composing",
+        ),
+        (
+            Reason::RefusedSuspended(SuspendReason::SecureField),
+            "refused_secure_field",
+        ),
+        (
+            Reason::RefusedSuspended(SuspendReason::ExcludedApp),
+            "refused_excluded_app",
+        ),
+        (
+            Reason::RefusedSuspended(SuspendReason::UnknownFocus),
+            "refused_unknown_focus",
+        ),
+        (
+            Reason::RefusedSuspended(SuspendReason::OwnWindow),
+            "refused_own_window",
+        ),
+        (
+            Reason::RefusedSuspended(SuspendReason::Composing),
+            "refused_composing",
+        ),
+        (Reason::RequestCancelled, "request_cancelled"),
     ];
+    assert_eq!(SuspendReason::of(SecureState::Normal), None);
+    assert_eq!(
+        SuspendReason::of(SecureState::OwnWindow),
+        Some(SuspendReason::OwnWindow)
+    );
     for (reason, code) in reasons {
         assert_eq!(reason.code(), code);
         assert_eq!(reason.to_string(), code);
@@ -353,11 +389,64 @@ fn palette_expansion_while_suspended_leaves_the_buffer_empty() {
     // pushed while suspended, when the buffer has to stay empty.
     let snapshot = Snapshot::build([snippet(1, "w", "word")], EngineSettings::default());
     let env = FakeEnv::default();
+    // A palette pick runs while paused (in a normal field), and typing stays suspended.
     let mut engine = Engine::new(snapshot);
+    engine.handle(Event::SecureState(SecureState::Normal), &env);
+    engine.handle(Event::Paused(true), &env);
     assert!(engine.is_suspended());
     let out = engine.handle(Event::ExpandRequest { snippet: id(1) }, &env);
     assert_eq!(texts(&out), "word");
     assert_eq!(engine.buffered_len(), 0);
     engine.handle(Event::char('x', 0), &env);
     assert_eq!(engine.buffered_len(), 0);
+}
+
+/// Review 1.9 finding 5: before the first verdict an explicit request is held, not run.
+#[test]
+fn explicit_request_before_the_first_verdict_is_held() {
+    let snapshot = Snapshot::build([snippet(1, "w", "word")], EngineSettings::default());
+    let env = FakeEnv::default();
+    let mut engine = Engine::new(snapshot);
+    assert!(
+        engine
+            .handle(Event::ExpandRequest { snippet: id(1) }, &env)
+            .is_empty()
+    );
+    assert!(engine.holds_request());
+    let out = engine.handle(Event::SecureState(SecureState::Normal), &env);
+    assert_eq!(texts(&out), "word");
+    assert!(!engine.holds_request());
+}
+
+/// Review 1.9 finding 4: a snippet that parses but fails to resolve stays matchable; typing it
+/// reports the resolve error, deletes nothing, and a shorter abbreviation cannot fire instead.
+#[test]
+fn typed_resolve_error_is_reported_not_skipped() {
+    let mut shorter = snippet(2, "ost", "SHORTER");
+    shorter.word_start = false;
+    let snapshot = Snapshot::build(
+        [
+            snippet(1, "lost", "{snippet abbr=\"nowhere\"}"),
+            shorter,
+            snippet(3, "conf", "{field name=a}{field name=a type=area}"),
+            snippet(4, "deep", "{snippet abbr=deep}"),
+        ],
+        EngineSettings::default(),
+    );
+    assert!(snapshot.excluded().is_empty());
+    let env = FakeEnv::default();
+    for (typed, code, n) in [
+        ("lost ", ErrorKind::SnippetNotFound, 1),
+        ("conf ", ErrorKind::FieldConflict, 3),
+        ("deep ", ErrorKind::SnippetCycle, 4),
+    ] {
+        let out = dry_run(&snapshot, typed, &env, None);
+        assert_eq!(
+            out,
+            [Action::Diagnostic(
+                Diagnostic::new(Reason::Template(code)).with_snippet(id(n))
+            )],
+            "{typed}"
+        );
+    }
 }

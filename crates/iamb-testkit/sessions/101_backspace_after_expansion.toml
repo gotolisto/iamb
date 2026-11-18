@@ -1,0 +1,24 @@
+description = "Backspace after an expansion deletes text the buffer never held: a word-start abbreviation typed right after it does not fire mid-word (no 'be right backthank you')"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[snippet]]
+abbr = "ty"
+body = "thank you"
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]
+
+[[step]]
+backspace = 1
+buffered = 0
+
+[[step]]
+type = "ty "
+
+[[step]]
+type = "ty "
+expect = [{ delete = 3 }, { text = "thank you" }, { text = " " }, { expanded = "ty" }]

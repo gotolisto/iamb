@@ -156,12 +156,14 @@ pub enum Event {
         expansion: ExpansionId,
     },
     /// The search palette or the command-line tool asked to expand a snippet. The service keeps
-    /// the focus token; the engine does not need it.
+    /// the focus token; the engine does not need it, but expects the [`Event::FocusChanged`]
+    /// for the token's window to arrive first (see "Explicit requests" in the engine docs).
     ExpandRequest {
         /// The snippet to expand.
         snippet: Id,
     },
-    /// The user submitted a fill-in form; focus is back in the target window.
+    /// The user submitted a fill-in form; focus is back in the target window, and the service
+    /// has sent the [`Event::FocusChanged`] for that window first.
     FormSubmitted {
         /// The session from [`Action::ShowForm`].
         session: FormSessionId,
@@ -367,7 +369,7 @@ impl fmt::Debug for Action {
     }
 }
 
-/// Why the engine is suspended, for diagnostics.
+/// Why the engine is suspended, or refused an explicit request, for diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SuspendReason {
     /// A secure field has the focus.
@@ -376,14 +378,34 @@ pub enum SuspendReason {
     ExcludedApp,
     /// The focus state could not be determined.
     UnknownFocus,
+    /// One of Iamb's own windows has the focus. Only explicit requests are refused for it; the
+    /// verdict itself emits no diagnostic (every form and palette causes it).
+    OwnWindow,
+    /// An input method is composing text. Only explicit requests are refused for it.
+    Composing,
+}
+
+impl SuspendReason {
+    /// The reason for a focus verdict other than `Normal`; `None` for `Normal`.
+    #[must_use]
+    pub const fn of(state: SecureState) -> Option<SuspendReason> {
+        match state {
+            SecureState::Normal => None,
+            SecureState::Secure => Some(Self::SecureField),
+            SecureState::Excluded => Some(Self::ExcludedApp),
+            SecureState::Unknown => Some(Self::UnknownFocus),
+            SecureState::OwnWindow => Some(Self::OwnWindow),
+        }
+    }
 }
 
 /// The reason code of a [`Diagnostic`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Reason {
     /// The template failed at render time (`E_DATE_RANGE`, `E_CURSOR_BEFORE_KEY`,
-    /// `E_WAIT_TOTAL`, `E_OUTPUT_TOO_LARGE`), or (for a palette request) failed to parse or
-    /// resolve.
+    /// `E_WAIT_TOTAL`, `E_OUTPUT_TOO_LARGE`), failed to resolve (a typed match or a palette
+    /// request: `E_SNIPPET_NOT_FOUND`, `E_SNIPPET_CYCLE`, `E_TOO_DEEP`, …), or (for a palette
+    /// request) failed to parse.
     Template(crate::template::ErrorKind),
     /// A match or request arrived while a fill-in form was open; it was dropped.
     FormOpen,
@@ -404,6 +426,15 @@ pub enum Reason {
     UnexpectedInjectionEvent,
     /// The engine was suspended by the focus verdict; nothing typed is stored or matched.
     Suspended(SuspendReason),
+    /// An explicit request (palette pick, form submit, reopen) was dropped because the focused
+    /// field is not confirmed as normal: the verdict, or composition, says why. A submitted
+    /// form's values are still remembered, so it can be reopened.
+    RefusedSuspended(SuspendReason),
+    /// An explicit request was dropped without running: a held one by `Overflow`, by a newer
+    /// explicit request (which replaces it), by `FormCancelled` for its session, or by a
+    /// `FocusChanged` naming another application; or a request that belongs to another
+    /// application than the focused one (then `app` names the focused one).
+    RequestCancelled,
 }
 
 impl Reason {
@@ -420,9 +451,21 @@ impl Reason {
             Self::TypedDuringInjection => "typed_during_injection",
             Self::InjectionCancelled => "injection_cancelled",
             Self::UnexpectedInjectionEvent => "unexpected_injection_event",
-            Self::Suspended(SuspendReason::SecureField) => "suspended_secure_field",
-            Self::Suspended(SuspendReason::ExcludedApp) => "suspended_excluded_app",
-            Self::Suspended(SuspendReason::UnknownFocus) => "suspended_unknown_focus",
+            Self::Suspended(r) => match r {
+                SuspendReason::SecureField => "suspended_secure_field",
+                SuspendReason::ExcludedApp => "suspended_excluded_app",
+                SuspendReason::UnknownFocus => "suspended_unknown_focus",
+                SuspendReason::OwnWindow => "suspended_own_window",
+                SuspendReason::Composing => "suspended_composing",
+            },
+            Self::RefusedSuspended(r) => match r {
+                SuspendReason::SecureField => "refused_secure_field",
+                SuspendReason::ExcludedApp => "refused_excluded_app",
+                SuspendReason::UnknownFocus => "refused_unknown_focus",
+                SuspendReason::OwnWindow => "refused_own_window",
+                SuspendReason::Composing => "refused_composing",
+            },
+            Self::RequestCancelled => "request_cancelled",
         }
     }
 }
@@ -444,7 +487,8 @@ pub struct Diagnostic {
     pub snippet: Option<Id>,
     /// The expansion involved, for injection diagnostics.
     pub expansion: Option<ExpansionId>,
-    /// The focused app, for suspension diagnostics.
+    /// The focused app, for suspension diagnostics, refused requests and requests dropped
+    /// because the focus is in another application.
     pub app: Option<AppId>,
 }
 

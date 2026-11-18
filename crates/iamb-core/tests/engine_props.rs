@@ -91,7 +91,8 @@ enum Op {
     Char(char),
     Backspace,
     Boundary(u8),
-    Focus,
+    /// A focus change to application 0 or 1.
+    Focus(u8),
     Secure(u8),
     Pause(bool),
     Compose(bool),
@@ -111,7 +112,7 @@ fn op() -> impl Strategy<Value = Op> {
         12 => prop::sample::select(vec!['a', 'b', 'A', 'B', ' ', '.', 'x']).prop_map(Op::Char),
         2 => Just(Op::Backspace),
         2 => (0u8..8).prop_map(Op::Boundary),
-        1 => Just(Op::Focus),
+        2 => (0u8..2).prop_map(Op::Focus),
         2 => (0u8..5).prop_map(Op::Secure),
         1 => any::<bool>().prop_map(Op::Pause),
         1 => any::<bool>().prop_map(Op::Compose),
@@ -143,10 +144,31 @@ const STATES: [SecureState; 5] = [
     SecureState::Unknown,
 ];
 
+/// Whose a held request is (review 1.9 follow-up N4).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+enum Owner {
+    /// No request is held.
+    #[default]
+    Nothing,
+    /// The next `FocusChanged` decides.
+    Unbound,
+    App(String),
+}
+
 /// What the test knows independently of the engine.
 #[derive(Default)]
 struct Model {
-    verdict_normal: bool,
+    /// The focus verdict: `None` after `FocusChanged` (or at start) and before the next verdict,
+    /// when explicit requests wait; `Some(true)` for `Normal`.
+    verdict: Option<bool>,
+    /// The form session of a submit the engine holds for the verdict, if any.
+    held_submit: Option<FormSessionId>,
+    /// The application of the last `FocusChanged`.
+    app: Option<String>,
+    /// The application each form session was opened for.
+    form_app: HashMap<FormSessionId, Option<String>>,
+    /// The application of the request the engine holds.
+    held_app: Owner,
     paused: bool,
     composing: bool,
     /// Typed characters (including Enter and Tab as delimiters) since the last event that
@@ -171,7 +193,75 @@ struct Translated {
 
 impl Model {
     fn suspended(&self) -> bool {
-        !self.verdict_normal || self.paused || self.composing
+        self.verdict != Some(true) || self.paused || self.composing
+    }
+
+    /// Whether an explicit request arriving now is held for the verdict.
+    fn holds(&self) -> bool {
+        self.verdict.is_none() && !self.composing
+    }
+
+    /// The session a form answer names: the last one shown, or a raw id.
+    fn session(&self, last: bool, raw: u64) -> FormSessionId {
+        match (last, self.last_session) {
+            (true, Some(s)) => s,
+            _ => FormSessionId::from_raw(raw),
+        }
+    }
+
+    /// Checks that a held request is dropped when the focus moves to another application and
+    /// runs only in its own, and that a submit types only where its form was opened (review
+    /// 1.9 follow-up N4); then records whose request the engine now holds.
+    fn check_owner(
+        &mut self,
+        engine: &Engine,
+        types: bool,
+        (is_request, is_submit, is_verdict): (bool, bool, bool),
+        focus_to: Option<String>,
+        held_app: &Owner,
+        submitted: Option<FormSessionId>,
+    ) -> Result<(), TestCaseError> {
+        if let (Some(to), Owner::App(owner)) = (&focus_to, held_app)
+            && to != owner
+        {
+            prop_assert!(!engine.holds_request(), "held across a move to {}", to);
+        }
+        if is_verdict
+            && types
+            && let Owner::App(owner) = held_app
+        {
+            prop_assert_eq!(
+                Some(owner),
+                self.app.as_ref(),
+                "a held request ran elsewhere"
+            );
+        }
+        let form_app = submitted.and_then(|s| self.form_app.get(&s).cloned().flatten());
+        if is_submit
+            && types
+            && let Some(owner) = &form_app
+        {
+            prop_assert_eq!(Some(owner), self.app.as_ref(), "a submit ran elsewhere");
+        }
+        if !engine.holds_request() {
+            self.held_app = Owner::Nothing;
+            self.held_submit = None;
+        } else if is_request {
+            self.held_app = form_app
+                .or_else(|| self.app.clone())
+                .map_or(Owner::Unbound, Owner::App);
+            self.held_submit = submitted.filter(|_| is_submit);
+        } else if let (Some(to), Owner::Unbound) = (focus_to, held_app) {
+            self.held_app = Owner::App(to);
+        }
+        Ok(())
+    }
+
+    /// An explicit request other than a submit: if held, it replaces a held submit.
+    fn request(&mut self) {
+        if self.holds() {
+            self.held_submit = None;
+        }
     }
 
     /// Turns `op` into an event and updates what the model knows before it is handled.
@@ -203,15 +293,19 @@ impl Model {
                 m.typed = 0;
                 Event::Boundary { kind, seq: 0 }
             }
-            Op::Focus => {
+            Op::Focus(app) => {
                 m.typed = 0;
-                m.verdict_normal = false;
-                Event::FocusChanged(AppId("app".to_owned()))
+                m.verdict = None;
+                let app = format!("app{app}");
+                m.app = Some(app.clone());
+                Event::FocusChanged(AppId(app))
             }
             Op::Secure(s) => {
                 m.typed = 0;
                 let state = STATES[usize::from(*s)];
-                m.verdict_normal = state == SecureState::Normal;
+                m.verdict = Some(state == SecureState::Normal);
+                // A held submit runs (or is refused) now.
+                submitted = m.held_submit.take();
                 Event::SecureState(state)
             }
             Op::Pause(on) => {
@@ -226,6 +320,7 @@ impl Model {
             }
             Op::Overflow => {
                 m.typed = 0;
+                m.held_submit = None;
                 Event::Overflow
             }
             Op::Inject(kind, last, raw) => {
@@ -240,10 +335,7 @@ impl Model {
                 }
             }
             Op::Submit(last, raw) => {
-                let session = match (last, m.last_session) {
-                    (true, Some(s)) => s,
-                    _ => FormSessionId::from_raw(*raw),
-                };
+                let session = m.session(*last, *raw);
                 submitted = Some(session);
                 let values: FormValues = [("N", "v")].into_iter().collect();
                 Event::FormSubmitted {
@@ -252,16 +344,19 @@ impl Model {
                 }
             }
             Op::Cancel(last, raw) => {
-                let session = match (last, m.last_session) {
-                    (true, Some(s)) => s,
-                    _ => FormSessionId::from_raw(*raw),
-                };
+                let session = m.session(*last, *raw);
                 Event::FormCancelled { session }
             }
-            Op::Expand(i) => Event::ExpandRequest {
-                snippet: Id::from_bytes([*i; 16]),
-            },
-            Op::Reopen => Event::ReopenLastForm,
+            Op::Expand(i) => {
+                m.request();
+                Event::ExpandRequest {
+                    snippet: Id::from_bytes([*i; 16]),
+                }
+            }
+            Op::Reopen => {
+                m.request();
+                Event::ReopenLastForm
+            }
             Op::Snapshot => Event::SnapshotChanged(snapshot.clone()),
         };
         Translated {
@@ -286,7 +381,7 @@ fn check(
     let mut m = Model::default();
     if start_normal {
         engine.handle(Event::SecureState(SecureState::Normal), &env);
-        m.verdict_normal = true;
+        m.verdict = Some(true);
     }
     for op in ops {
         let suspended = m.suspended();
@@ -298,11 +393,40 @@ fn check(
             submitted,
         } = m.translate(op, &snapshot);
         let typed_before_event = bound;
+        let is_submit = matches!(event, Event::FormSubmitted { .. });
+        let is_request =
+            is_submit || matches!(event, Event::ExpandRequest { .. } | Event::ReopenLastForm);
+        let focus_to = match &event {
+            Event::FocusChanged(app) => Some(app.0.clone()),
+            _ => None,
+        };
+        let is_verdict = matches!(event, Event::SecureState(_));
+        let held_app = m.held_app.clone();
         let actions = engine.handle(event, &env);
         if is_key && suspended {
             prop_assert!(actions.is_empty(), "actions while suspended: {:?}", actions);
             prop_assert_eq!(engine.buffered_len(), 0);
         }
+        let types = actions.iter().any(|a| !matches!(a, Action::Diagnostic(_)));
+        m.check_owner(
+            &engine,
+            types,
+            (is_request, is_submit, is_verdict),
+            focus_to,
+            &held_app,
+            submitted,
+        )?;
+        // Explicit requests never type into a field not confirmed as normal (review 1.9
+        // finding 5): any typing action needs the verdict `Normal` and no composition.
+        if types {
+            prop_assert!(
+                m.verdict == Some(true) && !m.composing,
+                "typing actions without a normal verdict: {:?}",
+                actions
+            );
+        }
+        // Only a pending verdict holds a request.
+        prop_assert!(!engine.holds_request() || m.verdict.is_none());
         for action in &actions {
             match action {
                 Action::DeleteBack(n) => {
@@ -315,6 +439,7 @@ fn check(
                 }
                 Action::ShowForm { session, .. } => {
                     m.at_form.insert(*session, typed_before_event);
+                    m.form_app.insert(*session, m.app.clone());
                     m.last_session = Some(*session);
                     m.typed = 0;
                 }

@@ -1,0 +1,13 @@
+description = "Submitted values that do not fit their field are corrected: an unknown choice becomes the default, a toggle other than yes is unchecked, a one-line value loses its line breaks"
+
+[[snippet]]
+abbr = "sz"
+body = 'Size: {field name="Size" type=choice options="S|M|L"}{if field="T" is="maybe"} MAYBE{endif}{field name="T" type=toggle on="ON" off="OFF"} {field name="One"}'
+
+[[step]]
+type = "sz "
+expect = [{ form = "sz", fields = ["Size", "T", "One"] }]
+
+[[step]]
+submit = { Size = "XXL", T = "maybe", One = "two\nlines" }
+expect = [{ delete = 3 }, { text = "Size: SOFF two lines", verbatim = [[6, 7], [11, 20]] }, { text = " " }, { expanded = "sz" }]

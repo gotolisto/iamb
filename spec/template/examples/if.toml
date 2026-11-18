@@ -146,3 +146,11 @@ macro = "if"
 note = "Error: field is required"
 template = '{if}x{endif}'
 expect = { error = "E_MISSING_ATTR" }
+
+[[example]]
+id = "if-21"
+macro = "if"
+note = "A submitted toggle value other than yes compares as no"
+template = '{field name="Rush" type=toggle}{if field="Rush" is=no}standard{else}rush{endif}'
+ctx = { values = { Rush = "Yes" } }
+expect = { text = "standard", form = [{ name = "Rush", type = "toggle", default = "no" }] }

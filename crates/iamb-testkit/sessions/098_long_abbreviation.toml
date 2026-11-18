@@ -1,4 +1,4 @@
-description = "A 64-character abbreviation with its delimiter fits the 65-character buffer"
+description = "A 64-character abbreviation with its delimiter and the character before it fit the 66-character buffer: it fires after other text, not mid-word"
 
 [[snippet]]
 abbr = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijkl"
@@ -10,3 +10,7 @@ expect = [{ delete = 65 }, { text = "long" }, { text = " " }, { expanded = "abcd
 
 [[step]]
 type = "xabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijkl "
+
+[[step]]
+type = "ok abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijkl "
+expect = [{ delete = 65 }, { text = "long" }, { text = " " }, { expanded = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijkl" }]

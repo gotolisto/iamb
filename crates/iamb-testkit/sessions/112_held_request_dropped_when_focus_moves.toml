@@ -1,0 +1,101 @@
+description = "A held submit belongs to the application where the abbreviation was matched, and a held palette pick to the application the focus is in when it is held: a focus change to another application drops it with a diagnostic and nothing is typed or deleted there; a submit that arrives with the focus already elsewhere is dropped at once; the values stay remembered"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[snippet]]
+abbr = "pw"
+body = '{field name="Code"}'
+
+[[step]]
+focus = "mail"
+
+[[step]]
+secure = "normal"
+
+[[step]]
+type = "pw "
+expect = [{ form = "pw", fields = ["Code"] }]
+
+[[step]]
+focus = "iamb"
+
+[[step]]
+secure = "own_window"
+
+[[step]]
+focus = "mail"
+
+[[step]]
+submit = { Code = "1234" }
+held = true
+form_open = false
+
+[[step]]
+focus = "chat"
+expect = [{ diagnostic = "request_cancelled", snippet = "pw", app = "chat" }]
+held = false
+
+[[step]]
+secure = "normal"
+state = "idle"
+
+[[step]]
+type = "ok"
+buffered = 2
+
+[[step]]
+focus = "editor"
+
+[[step]]
+expand = "brb"
+held = true
+
+[[step]]
+focus = "notes"
+expect = [{ diagnostic = "request_cancelled", snippet = "brb", app = "notes" }]
+held = false
+
+[[step]]
+secure = "normal"
+state = "idle"
+
+[[step]]
+focus = "mail"
+
+[[step]]
+secure = "normal"
+
+[[step]]
+reopen = true
+expect = [{ form = "pw", fields = ["Code"], last_values = { Code = "1234" } }]
+
+[[step]]
+focus = "iamb"
+
+[[step]]
+secure = "own_window"
+
+[[step]]
+focus = "chat"
+
+[[step]]
+submit = { Code = "5678" }
+expect = [{ diagnostic = "request_cancelled", snippet = "pw", app = "chat" }]
+held = false
+form_open = false
+
+[[step]]
+secure = "normal"
+state = "idle"
+
+[[step]]
+focus = "mail"
+
+[[step]]
+secure = "normal"
+
+[[step]]
+reopen = true
+expect = [{ form = "pw", fields = ["Code"], last_values = { Code = "5678" } }]

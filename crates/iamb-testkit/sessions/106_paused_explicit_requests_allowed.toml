@@ -1,0 +1,31 @@
+description = "While paused, typed abbreviations stay blocked, but a palette pick or a form submit in a normal field runs"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[snippet]]
+abbr = "hi"
+body = 'Hi {field name="Name"}'
+
+[[step]]
+pause = true
+suspended = true
+
+[[step]]
+type = "brb hi "
+buffered = 0
+
+[[step]]
+expand = "brb"
+expect = [{ text = "be right back" }, { expanded = "brb" }]
+buffered = 0
+
+[[step]]
+expand = "hi"
+expect = [{ form = "hi", fields = ["Name"] }]
+
+[[step]]
+submit = { Name = "Kim" }
+expect = [{ text = "Hi Kim", verbatim = [[3, 6]] }, { expanded = "hi" }]
+suspended = true

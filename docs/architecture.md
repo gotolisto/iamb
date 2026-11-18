@@ -1,6 +1,6 @@
 # Iamb architecture
 
-Status: approved by the owner on 2026-11-18 · Task 0.1 ·
+Status: approved by the owner on 2026-11-18; §4 amended the same day after the Phase 1 review (ADR-0024) · Task 0.1 ·
 Decision records: [`docs/decisions/`](decisions/README.md) ·
 Review record: [`docs/reviews/0.1-architecture-review.md`](reviews/0.1-architecture-review.md)
 
@@ -157,9 +157,11 @@ impl Engine {
 | `Composing(bool)` | An input method started or finished composing text | Cleared; engine suspended while true |
 | `Paused(bool)` | Global pause toggled | Cleared; engine suspended while true |
 | `Overflow` | The listener dropped events | Cleared |
-| `InjectionStarted { seq }` / `InjectionFinished { seq }` | The injector's own start and end markers, in listener order | See §4.6 |
-| `ExpandRequest { snippet, focus }` | The search palette or CLI asked to expand a snippet | None |
+| `InjectionStarted { expansion, seq }` / `InjectionFinished { expansion, seq }` | The injector's own start and end markers for one expansion, in listener order | See §4.6 |
+| `InjectionCancelled { expansion }` | The injector gave up on an expansion before or during its output | Cleared; see §4.6 |
+| `ExpandRequest { snippet }` | The search palette or CLI asked to expand a snippet (the service keeps the focus token) | None; see §4.5 for when it is refused |
 | `FormSubmitted { session, values }` / `FormCancelled { session }` | Result of a fill-in form | None |
+| `ReopenLastForm` | Reopen the most recently submitted form, pre-filled | None |
 | `SnapshotChanged(snapshot)` | New library content or engine settings | Kept; matching continues against the new snapshot |
 
 Rules for the listener that the events rely on:
@@ -172,8 +174,11 @@ Rules for the listener that the events rely on:
 - Input-method composition is reported as `Composing`. Version 1 does not expand while an input
   method is composing.
 
-The buffer lives only in memory, holds at most 64 characters (the maximum abbreviation length), is
-held in a page locked against swapping, and is overwritten with zeros when cleared. While the
+The buffer lives only in memory, holds at most 66 characters (the 64-character maximum abbreviation,
+the character before it for the word-start rule, and one delimiter), is held in a page locked
+against swapping (the engine keeps the buffer in its own heap allocation and exposes that
+allocation's address range so the service can lock it; task 2.6 adds the accessor), and is
+overwritten with zeros when cleared. While the
 engine is suspended, `Char` events are dropped without being stored
 ([ADR-0012](decisions/0012-keystroke-privacy.md)). After a focus change the engine stays suspended
 until the focus thread reports; `unknown` (timeout, or a window Iamb may not inspect, such as an
@@ -185,12 +190,12 @@ elevated one) keeps it suspended. Iamb fails closed.
 | --- | --- |
 | `DeleteBack(n)` | Press Backspace `n` times: one per `Char` event consumed by the abbreviation and delimiter |
 | `TypeText { text, verbatim }` | Insert plain text. `verbatim` marks ranges that came from field values or the clipboard |
-| `Paste { plain, markdown_html, attachments }` | Insert rich content through the clipboard, then restore the clipboard |
+| `Paste { plain, markdown_html, attachments }` | Insert rich content through the clipboard, then restore the clipboard (emitted from task 3.8; until then rich snippets expand as plain templates) |
 | `PressKey { key, shift, times }` | Press a named key |
 | `MoveCaretBack(n)` | Press Left `n` times: one per extended grapheme cluster after the `{cursor}` position |
 | `Wait(ms)` | Pause before the next action |
-| `ShowForm { session, spec, focus }` | Ask the UI host to show a fill-in form |
-| `Expanded { snippet, chars_saved }` | An expansion completed; the service records usage |
+| `ShowForm { session, snippet, spec, last_values }` | Ask the UI host to show a fill-in form; the service adds the focus token |
+| `Expanded { expansion, snippet, chars_saved }` | Always the last action of an expansion. Opens the expansion's injection protocol (§4.6); the service records usage when the injection finishes |
 | `Diagnostic(entry)` | Record why something did or did not expand |
 
 How `TypeText` reaches the target app (simulated Unicode keys, or clipboard paste for long text),
@@ -214,12 +219,18 @@ pub trait Environment {
 
 - Two sets are built per snapshot. The **reference set** is every non-deleted snippet in the
   effective library (§7); `{snippet}` lookups use it. The **matchable set** is the enabled subset
-  whose templates have no parse error; typing matches against it.
+  whose templates parse; typing matches against it. A snippet whose template parses but fails to
+  resolve (a missing or looping `{snippet}`, a field conflict) stays matchable: typing it deletes
+  nothing and records a `Diagnostic` with the error code, so a shorter abbreviation cannot fire in
+  its place.
 - Abbreviations are unique in the reference set under case-folded comparison. The store enforces
   this inside a profile. Across profiles (shared folders) a deterministic precedence decides which
   snippet holds an abbreviation: the user's personal profile first, then the earliest-created
   share, then the lower folder id. The losers neither trigger nor resolve, and library health
   lists them.
+- Case folding, used by the store's uniqueness check and by the matcher alike, is per-character
+  lower-casing with final sigma folded to σ (`Abbreviation::fold_key`). There is no wider Unicode
+  case folding: `ß` does not match `ss`.
 - The matcher is a trie over reversed, case-folded abbreviations.
 - Trigger modes per snippet: `immediate` (fires on the last character) and `delimiter` (fires when
   a delimiter follows). The delimiter set is a setting; the default is space, Enter, Tab and
@@ -260,6 +271,23 @@ The search palette uses the same mechanism: the hotkey reaches the listener thre
 captures a focus token and sends `PaletteRequested { focus }`; choosing a snippet returns focus and
 then sends `ExpandSnippet { id, focus }`.
 
+Explicit requests (a palette pick, a form submit, `ReopenLastForm`) never type into a field Iamb
+has not confirmed as normal (owner decision, 2026-11-18). After a focus change the request waits
+for the focus thread's verdict: `normal` runs it; `secure`, `excluded`, `own_window` or `unknown`
+refuses it with a `Diagnostic`, and a refused form submit keeps its values for `ReopenLastForm`. A
+request made when the state is already known and not normal, or while an input method is
+composing, is refused at once. Pause is different: it blocks typed abbreviations but allows a
+deliberate palette pick or form submit in a normal field. A request belongs to one
+application (for a form submit, the one where the form was opened; for a palette pick or reopen,
+the one focused when it was made): a focus change to another application drops it while it
+waits, and a request that arrives while another application has the focus is dropped at once. A newer request replaces a waiting one, and drops it even when the newer
+one is refused; cancelling a form drops its waiting submit; `Overflow` drops any waiting request.
+
+The engine sees focus events and requests in the order the service delivers them, and the two
+arrive from different threads. The service therefore forwards an explicit request only after it
+has delivered the focus change for the window the request will type into (the focus token's
+window, once the UI host has handed focus back).
+
 Keys typed into Iamb's own windows are not expanded: the focus thread reports `own_window` for the
 UI host's process. The one exception is the onboarding test field, which the UI host declares with
 `SetTestField(window)`.
@@ -287,6 +315,25 @@ Iamb has finished ([ADR-0019](decisions/0019-typing-during-injection.md)).
   `Diagnostic` is recorded.
 - The rate of such interleaved expansions is measured in the 10,000-expansion reliability run at
   realistic typing speeds and counts against the 99.9% target.
+
+The protocol between the engine and the injector, per expansion:
+
+| Engine state | Entered on | Real keys arriving | Leaves on |
+| --- | --- | --- | --- |
+| Idle | — | Normal matching | `Expanded` action → Pending |
+| Pending | `Expanded { expansion }` | Stored but not matched; a boundary, a clearing event or a Backspace past the trigger marks the expansion disturbed (the injector cancels in the same cases) | `InjectionStarted` → Injecting (the buffer now holds the keys typed since the trigger, as they appear after the expansion); `InjectionCancelled` → Idle, buffer cleared |
+| Injecting | `InjectionStarted` | The first real key clears the buffer and records `TypedDuringInjection`; later ones in the window are dropped | `InjectionFinished` or `InjectionCancelled` → Idle |
+
+Every `Expanded` must be answered by `InjectionStarted` then `InjectionFinished`, or by
+`InjectionCancelled`, even for an empty expansion. Only one expansion is in flight; a palette pick
+or form submit during one is refused with `InjectionBusy`. `Overflow` ends the flight, since the
+markers may have been dropped.
+
+The injector needs the characters typed after the trigger (`k` of them) to type them again. The
+engine never hands typed text out, so the worker's listener keeps them instead: from the trigger
+until the start marker it copies real `Char`s into a separate `Sensitive` buffer of at most 64
+characters, zeroed when the expansion ends, which only the injector thread reads, after it has
+seen its own start marker. Task 2.2 implements this and the 2.8 privacy review checks it.
 
 ### 4.7 Latency budget (plain text, up to 500 characters)
 
@@ -467,8 +514,11 @@ These hold for every phase and are what the Phase 2 privacy review checks
 ([ADR-0012](decisions/0012-keystroke-privacy.md),
 [ADR-0022](decisions/0022-shared-snippet-trust.md)).
 
-1. Typed characters exist only in the engine's 64-character buffer, in locked memory. No API
-   returns the buffer. It is never serialised, logged or sent over IPC.
+1. Typed characters exist in exactly two places, both in locked memory: the engine's
+   66-character buffer, and, only while an expansion is in flight, the listener's copy of the
+   characters typed after its trigger (at most 64, for the injector to type again, §4.6), zeroed
+   when the expansion ends. No API returns either. They are never serialised, logged or sent over
+   IPC.
 2. User-entered values (form values, clipboard content read for `{clipboard}`, palette queries,
    dry-run input) are never written to disk or logs. Form values are remembered only as described
    in §4.5.
@@ -476,8 +526,10 @@ These hold for every phase and are what the Phase 2 privacy review checks
    nor `Serialize` (form values serialise only inside the IPC frame that carries them), and a lint
    forbids formatting it. IPC message bodies are never logged.
 4. Diagnostics name a snippet and a reason only when a match happened ("no word start", "template
-   error E_…", "typed during injection"). While the engine is suspended nothing is matched, so the
-   entry names only the app and the reason ("suspended: secure field"). Diagnostics are kept in a
+   error E_…", "typed during injection") or when an explicit request for a named snippet was
+   refused (§4.5; the entry names the snippet, the app and the reason). While the engine is
+   suspended nothing typed is matched, so a suspension entry names only the app and the reason
+   ("suspended: secure field"). Diagnostics are kept in a
    200-entry ring in memory.
 5. `iamb-service` has no network code, checked in CI (§2). Everything that talks to the network
    lives in `iamb-sync` or `iamb-desktop`, which never receive key events.
@@ -489,7 +541,7 @@ These hold for every phase and are what the Phase 2 privacy review checks
 9. Each process writes crash reports locally without heap contents and opts out of the operating
    system's own crash-dump collection where the OS allows. Only `iamb-desktop` uploads reports,
    and only after opt-in. Limit: an administrator who configures full-memory dumps for all
-   processes can capture the 64-character buffer; Iamb cannot prevent that and says so in its
+   processes can capture the typed-character buffers; Iamb cannot prevent that and says so in its
    privacy documentation.
 10. Snippets written by other people are treated as untrusted input:
     - A template can type text, press the keys listed in the template spec (Shift is the only

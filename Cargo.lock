@@ -483,6 +483,7 @@ version = "0.0.0"
 dependencies = [
  "criterion",
  "iamb-core",
+ "iamb-store",
 ]
 
 [[package]]
@@ -513,6 +514,7 @@ version = "0.0.0"
 dependencies = [
  "csv",
  "iamb-core",
+ "proptest",
  "rusqlite",
  "serde_json",
  "tempfile",

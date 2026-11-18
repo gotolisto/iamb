@@ -1,4 +1,4 @@
-description = "Snippets whose template does not parse or resolve are excluded from matching"
+description = "Only snippets whose template does not parse are excluded from matching; one that fails to resolve stays matchable and typing it reports the resolve error"
 
 [[snippet]]
 abbr = "brb"
@@ -21,20 +21,25 @@ abbr = "offbad"
 body = "{date"
 enabled = false
 
+[[snippet]]
+abbr = "ost"
+body = "SHORTER"
+word_start = false
+
 [[excluded]]
 abbr = "bad"
 reason = "E_UNCLOSED_MACRO"
 
-[[excluded]]
-abbr = "lost"
-reason = "E_SNIPPET_NOT_FOUND"
-
-[[excluded]]
-abbr = "loop"
-reason = "E_SNIPPET_CYCLE"
+[[step]]
+type = "bad offbad "
 
 [[step]]
-type = "bad lost loop offbad "
+type = "lost "
+expect = [{ diagnostic = "E_SNIPPET_NOT_FOUND", snippet = "lost" }]
+
+[[step]]
+type = "loop "
+expect = [{ diagnostic = "E_SNIPPET_CYCLE", snippet = "loop" }]
 
 [[step]]
 type = "brb "

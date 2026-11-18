@@ -35,18 +35,20 @@
 //!
 //! # The keystroke buffer
 //!
-//! The engine owns the [`KeyBuffer`] (64 characters plus a
+//! The engine owns the [`KeyBuffer`] (66 characters: one before the abbreviation, 64 and a
 //! delimiter; boxed, so moving the engine does not copy typed characters). Per event
 //! (architecture §4.1):
 //!
 //! | Event | Buffer |
 //! | --- | --- |
 //! | `Char` | Appended, then matched (dropped unstored while suspended) |
-//! | `Backspace` | Last character removed |
+//! | `Backspace` | Last character removed; if the buffer was empty or the character was the NUL placeholder, the start of the buffer is marked unknown, so a `word_start` abbreviation typed next does not fire until a boundary is typed |
 //! | `Boundary` | Enter and Tab are first appended as `\n` and `\t` and matched as delimiters; then cleared |
 //! | `FocusChanged`, `SecureState`, `Composing`, `Paused`, `Overflow` | Cleared |
 //! | `SnapshotChanged` | Kept; the next `Char` is matched against the new snapshot |
 //! | an expansion | Cleared; then, unless suspended, if the expansion leaves a known non-boundary character before the caret, a NUL placeholder is pushed so a following `word_start` abbreviation does not fire mid-word. NUL never matches (abbreviations contain no control characters). |
+//! | a typed match that fails (resolve or render error) | Kept: the abbreviation is still on screen, so the buffer still describes what precedes the caret |
+//! | a submitted form that fails to render | Stays empty (it was cleared when the form opened); after an immediate trigger the start is marked unknown, since the abbreviation's last character precedes the caret, while after a delimiter the delimiter does, a boundary |
 //!
 //! # Suspension
 //!
@@ -55,9 +57,45 @@
 //! `Paused(true)`. While suspended, `Char`, `Backspace` and `Boundary` produce no actions and
 //! store nothing. A `SecureState` of `Secure`, `Excluded` or `Unknown` emits one
 //! [`Reason::Suspended`] diagnostic naming the app (not `OwnWindow`, which every form and
-//! palette causes). Explicit requests (`ExpandRequest`, `FormSubmitted`, `ReopenLastForm`) are
-//! not typed keys and are served while suspended: the UI host hands focus back before it sends
-//! them, often before the focus verdict for the target window has arrived.
+//! palette causes).
+//!
+//! # Explicit requests
+//!
+//! `ExpandRequest` (a palette pick), `FormSubmitted` and `ReopenLastForm` are not typed keys,
+//! but they type into the focused field, so they never type into a field Iamb has not confirmed
+//! as normal (owner decision on review 1.9 finding 5):
+//!
+//! - With the verdict `Normal` they run at once, **also while paused**: pause blocks typed
+//!   abbreviations, not an explicit pick or submit.
+//! - With a verdict of `Secure`, `Excluded`, `Unknown` or `OwnWindow`, or while an input method
+//!   is composing, they are dropped with [`Reason::RefusedSuspended`] naming the snippet and the
+//!   app.
+//! - After `FocusChanged` and before the verdict (the UI host hands focus back before it sends
+//!   the request, often before the verdict for the target window has arrived), the request is
+//!   **held**: the next `SecureState` runs it (`Normal`) or refuses it (anything else).
+//! - Each request belongs to one application (review 1.9 follow-up N4). A submitted form
+//!   belongs to the application the form was opened for: where its abbreviation was matched,
+//!   or where the palette pick or reopen that opened it ran. A palette pick or reopen belongs to
+//!   the application the focus is in when it arrives, which for a held request is the one
+//!   named by the `FocusChanged` whose verdict is pending; if no `FocusChanged` has been seen
+//!   yet, it belongs to the first one after it. A request whose application is not the focused
+//!   one when it arrives, and a held request when a `FocusChanged` names another application,
+//!   is dropped with [`Reason::RequestCancelled`] naming the snippet and the application the
+//!   focus is in; a `FocusChanged` naming the same application keeps it held. So a submit
+//!   never deletes or types in an application other than its own.
+//! - The engine expects the service to send the `FocusChanged` for the window it hands focus
+//!   back to (and its verdict, when known) before it forwards the request from the UI host:
+//!   the request comes over IPC and the focus event from the focus thread, so only the service
+//!   can order them. A request that arrives first finds the verdict `OwnWindow` (the form or
+//!   palette still has focus) and is refused at once; its values are still remembered, so
+//!   `ReopenLastForm` works.
+//! - A newer explicit request always replaces a held one, whatever happens to the newer one
+//!   (it may be held, run or be refused at once): the held one is dropped with
+//!   [`Reason::RequestCancelled`]. `Overflow` drops it the same way, and so does
+//!   `FormCancelled` for the session whose submit is held.
+//! - A submitted form's values are remembered for `ReopenLastForm` when the submit arrives,
+//!   whether it then runs, is held, refused or cancelled; the form session closes at once.
+//!   [`Engine::forget_form_values`] also drops a held submit.
 //!
 //! # Expansion
 //!
@@ -68,8 +106,9 @@
 //! with `k > 0`, and finally `Expanded`, which carries the [`ExpansionId`]. Palette expansions
 //! (`ExpandRequest`) and reopened forms emit the same without `DeleteBack` and without case or
 //! delimiter. The clock is read once per expansion at match time, the clipboard once and only if
-//! the template contains `{clipboard}`. A render error emits only a `Diagnostic` with the error
-//! code and clears the buffer.
+//! the template contains `{clipboard}`. A typed match whose template fails to resolve (it parses,
+//! so it is matchable; architecture §4.4), and any render error, emit only a `Diagnostic` with
+//! the error code; the typed abbreviation stays on screen and in the buffer.
 //!
 //! Rich snippets are expanded as plain templates through `TypeText` until task 3.8.
 //!
@@ -79,7 +118,8 @@
 //! session and emits only `ShowForm` (the abbreviation stays on screen; the buffer is cleared).
 //! While a session is open, any further typed match, palette request or reopen is dropped with
 //! [`Reason::FormOpen`]. `FormSubmitted` renders with the captured time and clipboard and emits
-//! the expansion; `FormCancelled` emits nothing; an answer for a session that is not open emits
+//! the expansion; `FormCancelled` emits nothing (or drops a held submit of that session, see
+//! above); an answer for a session that is neither open nor held emits
 //! [`Reason::UnknownFormSession`]. The values of each submitted form are kept in memory per
 //! snippet: every `ShowForm` carries them as `last_values`, and `ReopenLastForm` shows the most
 //! recently submitted form again (as a palette expansion: nothing is deleted). The service
@@ -127,7 +167,8 @@
 //!   [`Reason::UnexpectedInjectionEvent`] and changes nothing, except `InjectionFinished` for the
 //!   pending expansion (its start marker was lost), which ends the flight and clears the buffer.
 //! - `ExpandRequest`, `FormSubmitted` and `ReopenLastForm` that would emit an expansion while
-//!   one is in flight are dropped with [`Reason::InjectionBusy`] (a submitted form's values are
+//!   one is in flight (when they run, after the focus gate) are dropped with
+//!   [`Reason::InjectionBusy`] (a submitted form's values are
 //!   still remembered, so it can be reopened).
 //! - Focus, secure-state, composition and pause events do not end the flight; the markers still
 //!   arrive.
@@ -210,8 +251,32 @@ struct Capture {
     clipboard: Option<Sensitive<String>>,
 }
 
+/// An explicit request waiting for the focus verdict (see "Explicit requests" in the module
+/// docs).
+enum Held {
+    /// A palette pick.
+    Expand(Id),
+    /// A submitted form: the closed session and its values.
+    Submit {
+        session: FormSession,
+        values: Sensitive<FormValues>,
+    },
+    /// `ReopenLastForm`.
+    Reopen,
+}
+
+/// What to do with an explicit request now.
+enum Gate {
+    Run,
+    Hold,
+    Refuse(SuspendReason),
+}
+
 struct FormSession {
     id: FormSessionId,
+    /// The application the form was opened for (where the abbreviation was matched, or where
+    /// the palette pick or reopen ran): a submit types only there.
+    app: Option<AppId>,
     /// The snapshot at match time: the form renders the template that was matched.
     snapshot: Snapshot,
     snippet: Id,
@@ -244,6 +309,9 @@ pub struct Engine {
     paused: bool,
     form: Option<FormSession>,
     flight: Option<Flight>,
+    /// The held request and the application it belongs to (`None`: not known yet; the first
+    /// `FocusChanged` decides).
+    held: Option<(Held, Option<AppId>)>,
     last_values: HashMap<Id, Sensitive<FormValues>>,
     last_form: Option<Id>,
     next_session: u64,
@@ -263,6 +331,7 @@ impl Engine {
             paused: false,
             form: None,
             flight: None,
+            held: None,
             last_values: HashMap::new(),
             last_form: None,
             next_session: 1,
@@ -279,21 +348,34 @@ impl Engine {
             Event::FocusChanged(app) => {
                 self.clear_buffer();
                 self.focus = Focus::Awaiting;
+                let out = match self.held.take() {
+                    Some((held, Some(owner))) if owner != app => {
+                        self.cancelled(&held, Some(app.clone()))
+                    }
+                    Some((held, owner)) => {
+                        self.held = Some((held, owner.or_else(|| Some(app.clone()))));
+                        Vec::new()
+                    }
+                    None => Vec::new(),
+                };
                 self.app = Some(app);
-                Vec::new()
+                out
             }
             Event::SecureState(state) => {
                 self.clear_buffer();
                 self.focus = Focus::Verdict(state);
-                let reason = match state {
-                    SecureState::Secure => SuspendReason::SecureField,
-                    SecureState::Excluded => SuspendReason::ExcludedApp,
-                    SecureState::Unknown => SuspendReason::UnknownFocus,
-                    SecureState::Normal | SecureState::OwnWindow => return Vec::new(),
-                };
-                let mut d = Diagnostic::new(Reason::Suspended(reason));
-                d.app.clone_from(&self.app);
-                vec![Action::Diagnostic(d)]
+                let mut out = Vec::new();
+                if let Some(reason) = SuspendReason::of(state)
+                    && state != SecureState::OwnWindow
+                {
+                    let mut d = Diagnostic::new(Reason::Suspended(reason));
+                    d.app.clone_from(&self.app);
+                    out.push(Action::Diagnostic(d));
+                }
+                if let Some((held, _)) = self.held.take() {
+                    out.extend(self.explicit(held, env));
+                }
+                out
             }
             Event::Composing(on) => {
                 self.clear_buffer();
@@ -308,21 +390,29 @@ impl Engine {
             Event::Overflow => {
                 self.buffer.clear();
                 self.flight = None;
-                Vec::new()
+                match self.held.take() {
+                    Some((held, _)) => self.cancelled(&held, None),
+                    None => Vec::new(),
+                }
             }
             Event::InjectionStarted { expansion, .. } => self.on_started(expansion),
             Event::InjectionFinished { expansion, .. } => self.on_finished(expansion),
             Event::InjectionCancelled { expansion } => self.on_cancelled(expansion),
-            Event::ExpandRequest { snippet } => self.on_request(snippet, env),
-            Event::FormSubmitted { session, values } => self.on_submitted(session, values),
+            Event::ExpandRequest { snippet } => self.explicit(Held::Expand(snippet), env),
+            Event::FormSubmitted { session, values } => self.on_submitted(session, values, env),
             Event::FormCancelled { session } => {
                 if self.form.take_if(|s| s.id == session).is_some() {
                     Vec::new()
+                } else if let Some((held, _)) = self.held.take_if(
+                    |(h, _)| matches!(h, Held::Submit { session: s, .. } if s.id == session),
+                ) {
+                    // The form was cancelled after its submit arrived (review 1.9 follow-up N7).
+                    self.cancelled(&held, None)
                 } else {
                     diagnostic(Diagnostic::new(Reason::UnknownFormSession))
                 }
             }
-            Event::ReopenLastForm => self.on_reopen(env),
+            Event::ReopenLastForm => self.explicit(Held::Reopen, env),
             Event::SnapshotChanged(snapshot) => {
                 self.snapshot = snapshot;
                 Vec::new()
@@ -330,10 +420,20 @@ impl Engine {
         }
     }
 
-    /// Forgets every remembered form value (30 minutes without use, screen lock, sign-out).
+    /// Forgets every remembered form value (30 minutes without use, screen lock, sign-out),
+    /// including a submitted form still held for the focus verdict.
     pub fn forget_form_values(&mut self) {
         self.last_values.clear();
         self.last_form = None;
+        if matches!(self.held, Some((Held::Submit { .. }, _))) {
+            self.held = None;
+        }
+    }
+
+    /// True while an explicit request waits for the focus verdict.
+    #[must_use]
+    pub fn holds_request(&self) -> bool {
+        self.held.is_some()
     }
 
     /// The current snapshot.
@@ -398,10 +498,13 @@ impl Engine {
         let Some(m) = self.snapshot.matcher().lookup(&self.buffer) else {
             return Vec::new();
         };
-        self.buffer.clear();
         if self.form.is_some() {
+            self.buffer.clear();
             return diagnostic(Diagnostic::new(Reason::FormOpen).with_snippet(m.snippet));
         }
+        // The buffer keeps the typed abbreviation until the expansion replaces it: if the
+        // template fails to resolve or render, the text stays on screen and the buffer still
+        // describes what precedes the caret (review 1.9 finding 13).
         let origin = Origin {
             delete: m.backspaces(),
             typed_chars: m.typed_chars,
@@ -429,7 +532,14 @@ impl Engine {
             },
             None => {}
         }
+        // Deleting a character the buffer never held (it is empty), or the placeholder for the
+        // last character of an expansion, leaves an unknown character before the caret: the
+        // start of the buffer is then not a word start (review 1.9 finding 13).
+        let unknown_before = self.buffer.chars().last().is_none_or(|&c| c == '\0');
         self.buffer.backspace();
+        if unknown_before {
+            self.buffer.mark_unknown_prefix();
+        }
         Vec::new()
     }
 
@@ -557,24 +667,93 @@ impl Engine {
         self.start(snippet, Origin::REQUEST, env)
     }
 
+    /// Whether an explicit request runs now, waits for the focus verdict or is refused.
+    fn gate(&self) -> Gate {
+        if self.composing {
+            return Gate::Refuse(SuspendReason::Composing);
+        }
+        match self.focus {
+            Focus::Awaiting => Gate::Hold,
+            Focus::Verdict(state) => SuspendReason::of(state).map_or(Gate::Run, Gate::Refuse),
+        }
+    }
+
+    /// An explicit request: run it, hold it for the focus verdict or refuse it; a held request
+    /// is dropped either way, since this one replaces it (see the module docs).
+    fn explicit(&mut self, request: Held, env: &dyn Environment) -> Vec<Action> {
+        let mut out = match self.held.take() {
+            Some((older, _)) => self.cancelled(&older, None),
+            None => Vec::new(),
+        };
+        // A submit belongs to the application its form was opened for; a pick or reopen to the
+        // one the focus is in now.
+        let owner = match &request {
+            Held::Submit { session, .. } => session.app.clone().or_else(|| self.app.clone()),
+            Held::Expand(_) | Held::Reopen => self.app.clone(),
+        };
+        let elsewhere = matches!((&owner, &self.app), (Some(o), Some(a)) if o != a);
+        match self.gate() {
+            Gate::Refuse(reason) => {
+                let mut d = Diagnostic::new(Reason::RefusedSuspended(reason));
+                d.snippet = self.held_snippet(&request);
+                d.app.clone_from(&self.app);
+                out.push(Action::Diagnostic(d));
+            }
+            Gate::Run | Gate::Hold if elsewhere => {
+                out.extend(self.cancelled(&request, self.app.clone()));
+            }
+            Gate::Hold => self.held = Some((request, owner)),
+            Gate::Run => out.extend(match request {
+                Held::Expand(snippet) => self.on_request(snippet, env),
+                Held::Submit { session, values } => self.submit(&session, &values),
+                Held::Reopen => self.on_reopen(env),
+            }),
+        }
+        out
+    }
+
+    /// The diagnostic for an explicit request dropped without running; `app` names the
+    /// application the focus moved to when that is why.
+    fn cancelled(&self, held: &Held, app: Option<AppId>) -> Vec<Action> {
+        let mut d = Diagnostic::new(Reason::RequestCancelled);
+        d.snippet = self.held_snippet(held);
+        d.app = app;
+        vec![Action::Diagnostic(d)]
+    }
+
+    fn held_snippet(&self, held: &Held) -> Option<Id> {
+        match held {
+            Held::Expand(snippet) => Some(*snippet),
+            Held::Submit { session, .. } => Some(session.snippet),
+            Held::Reopen => self.last_form,
+        }
+    }
+
     fn on_submitted(
         &mut self,
         session: FormSessionId,
         values: Sensitive<FormValues>,
+        env: &dyn Environment,
     ) -> Vec<Action> {
         let Some(s) = self.form.take_if(|s| s.id == session) else {
             return diagnostic(Diagnostic::new(Reason::UnknownFormSession));
         };
+        // Remembered at once, so the form can be reopened even if the submit is refused.
         self.last_form = Some(s.snippet);
-        let plain = values.expose().clone();
-        self.last_values.insert(s.snippet, values);
+        self.last_values.insert(s.snippet, values.clone());
+        self.explicit(Held::Submit { session: s, values }, env)
+    }
+
+    /// Expands a submitted form into the focused field.
+    fn submit(&mut self, s: &FormSession, values: &Sensitive<FormValues>) -> Vec<Action> {
+        let plain = values.expose();
         match s.snapshot.compiled(s.snippet) {
             Some(Ok(resolved)) => self.expand(
                 &s.snapshot,
                 s.snippet,
                 resolved,
                 &s.capture,
-                &plain,
+                plain,
                 s.origin,
             ),
             // A session is only opened for a snippet that compiled in its snapshot.
@@ -642,6 +821,7 @@ impl Engine {
         let spec = resolved.form().to_vec();
         self.form = Some(FormSession {
             id,
+            app: self.app.clone(),
             snapshot,
             snippet,
             capture,
@@ -680,7 +860,15 @@ impl Engine {
         let rendered = match resolved.render(&ctx, values) {
             Ok(r) => r,
             Err(e) => {
-                self.buffer.clear();
+                // Nothing was typed or deleted. A typed match still has its abbreviation in the
+                // buffer, which stays as it is. A submitted form's abbreviation is still on
+                // screen, but the buffer was cleared when the form opened: after a delimiter
+                // trigger the delimiter precedes the caret, a boundary, so the empty buffer is
+                // right; after an immediate trigger the last character of the abbreviation
+                // does, which the buffer no longer holds (review 1.9 finding 13).
+                if origin.delete > 0 && origin.delimiter.is_none() && self.buffer.is_empty() {
+                    self.buffer.mark_unknown_prefix();
+                }
                 return diagnostic(
                     Diagnostic::new(Reason::Template(e.kind())).with_snippet(snippet),
                 );

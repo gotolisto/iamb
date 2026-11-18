@@ -1,0 +1,39 @@
+description = "With a verdict already known and not normal (excluded, unknown, own window) explicit requests are refused at once"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+focus = "notes"
+
+[[step]]
+secure = "excluded"
+expect = [{ diagnostic = "suspended_excluded_app", app = "notes" }]
+
+[[step]]
+expand = "brb"
+expect = [{ diagnostic = "refused_excluded_app", snippet = "brb", app = "notes" }]
+held = false
+
+[[step]]
+secure = "unknown"
+expect = [{ diagnostic = "suspended_unknown_focus", app = "notes" }]
+
+[[step]]
+expand = "brb"
+expect = [{ diagnostic = "refused_unknown_focus", snippet = "brb", app = "notes" }]
+
+[[step]]
+focus = "iamb"
+
+[[step]]
+secure = "own_window"
+
+[[step]]
+expand = "brb"
+expect = [{ diagnostic = "refused_own_window", snippet = "brb", app = "iamb" }]
+
+[[step]]
+reopen = true
+expect = [{ diagnostic = "refused_own_window", app = "iamb" }]

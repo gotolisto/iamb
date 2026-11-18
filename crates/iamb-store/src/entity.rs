@@ -553,8 +553,27 @@ impl sealed::Row for Snippet {
                 id: self.folder_id,
             });
         }
-        let key = self.abbreviation.fold_key();
-        if live {
+        // An update that leaves the abbreviation (and the profile) as stored keeps the stored
+        // key and skips the conflict check: migration 2 leaves the old key on one row of a pair
+        // that now folds alike, and that row must stay editable (label, enabled, ...).
+        let unchanged_key: Option<String> = conn
+            .prepare_cached(
+                "SELECT abbreviation_key FROM snippet
+                 WHERE id = ?1 AND deleted_at IS NULL AND profile_id = ?2 AND abbreviation = ?3",
+            )?
+            .query_row(
+                params![
+                    self.meta.id.as_bytes(),
+                    profile_id.as_bytes(),
+                    self.abbreviation.as_str()
+                ],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let key = unchanged_key
+            .clone()
+            .unwrap_or_else(|| self.abbreviation.fold_key());
+        if live && unchanged_key.is_none() {
             let existing = conn
                 .prepare_cached(
                     "SELECT id FROM snippet

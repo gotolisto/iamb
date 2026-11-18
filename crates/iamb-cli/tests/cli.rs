@@ -246,6 +246,23 @@ fn conflict_exits_1_and_names_existing() {
     );
 }
 
+/// Review 1.9 finding 12: the store folds like the matcher, so two abbreviations that differ
+/// only in final versus medial sigma conflict instead of one silently shadowing the other.
+#[test]
+fn sigma_variants_conflict_like_the_matcher_folds() {
+    let d = TempDir::new().unwrap();
+    let id = ok(d.path(), &["add", "ΟΔΟΣ", "first"]);
+    for other in ["οδοσ", "οδος"] {
+        let err = fail(d.path(), &["add", other, "second"]);
+        assert!(
+            err.contains("already used") && err.contains(id.trim()),
+            "{err}"
+        );
+    }
+    let out = expand(d.path(), &["οδος "]);
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "first \n");
+}
+
 #[test]
 fn invalid_abbreviation_exits_1_readably() {
     let d = TempDir::new().unwrap();
@@ -399,8 +416,9 @@ fn timed_list(dir: &Path) -> (Output, Duration) {
 fn held_lock_gives_try_again_after_the_documented_wait() {
     let d = TempDir::new().unwrap();
     let _held = iamb_store::Store::open(d.path()).unwrap();
-    // What one run costs without the wait (process start, opening, first-use setup), so that
-    // the wait itself can be measured: total time minus this baseline.
+    // What one complete run costs without the lock (process start, opening the store, first-use
+    // setup, listing). The locked run does less than this after its wait (it never opens the
+    // database), so the baseline only bounds the extra time from above.
     let free = TempDir::new().unwrap();
     let (baseline_out, baseline) = timed_list(free.path());
     assert!(baseline_out.status.success());
@@ -412,14 +430,16 @@ fn held_lock_gives_try_again_after_the_documented_wait() {
         err.starts_with("iamb: ") && err.contains("try again"),
         "{err}"
     );
-    let wait = total.saturating_sub(baseline);
+    // The process cannot finish before its 3 s wait has run out, whatever start-up costs, so
+    // the total alone proves the wait happened. (Subtracting the baseline does not: on a slow
+    // runner the baseline's database work exceeds the locked run's start-up.)
     assert!(
-        wait >= Duration::from_millis(2500),
-        "waited only {wait:?} (total {total:?}, baseline {baseline:?}): the 3 s wait is gone"
+        total >= Duration::from_millis(2900),
+        "finished after {total:?}: the 3 s wait is gone"
     );
     assert!(
-        wait <= Duration::from_millis(4500),
-        "waited {wait:?} (total {total:?}, baseline {baseline:?}): longer than 3 s"
+        total <= Duration::from_secs(3) + baseline + Duration::from_millis(1500),
+        "finished after {total:?} (one unlocked run takes {baseline:?}): longer than a 3 s wait"
     );
 }
 
@@ -530,6 +550,28 @@ fn expand_reports_template_error_code() {
         String::from_utf8(out.stderr)
             .unwrap()
             .contains("iamb: E_DATE_RANGE")
+    );
+}
+
+/// Review 1.9 finding 4: a snippet with a resolve error is matchable, so the command reports
+/// the engine's diagnostic wherever the abbreviation is typed, not only at the end.
+#[test]
+fn expand_reports_resolve_error_from_the_engine() {
+    let d = TempDir::new().unwrap();
+    ok(d.path(), &["add", "lost", "{snippet abbr=\"nowhere\"}"]);
+    ok(d.path(), &["add", "loop", "{snippet abbr=\"loop\"}"]);
+    let out = expand(d.path(), &["lost and found "]);
+    assert_eq!(out.status.code(), Some(3));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "lost and found \n");
+    assert_eq!(
+        String::from_utf8(out.stderr).unwrap().trim(),
+        "iamb: E_SNIPPET_NOT_FOUND"
+    );
+    let out = expand(d.path(), &["loop "]);
+    assert_eq!(out.status.code(), Some(3));
+    assert_eq!(
+        String::from_utf8(out.stderr).unwrap().trim(),
+        "iamb: E_SNIPPET_CYCLE"
     );
 }
 

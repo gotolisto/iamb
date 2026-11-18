@@ -1,0 +1,61 @@
+description = "A held palette pick and a held form submit are refused when the verdict is secure; the submitted values stay remembered"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[snippet]]
+abbr = "pw"
+body = '{field name="Code"}'
+
+[[step]]
+focus = "bank"
+
+[[step]]
+expand = "brb"
+held = true
+
+[[step]]
+secure = "secure"
+expect = [{ diagnostic = "suspended_secure_field", app = "bank" }, { diagnostic = "refused_secure_field", snippet = "brb", app = "bank" }]
+held = false
+
+[[step]]
+focus = "bank"
+
+[[step]]
+secure = "normal"
+
+[[step]]
+type = "pw "
+expect = [{ form = "pw" }]
+
+[[step]]
+focus = "iamb"
+
+[[step]]
+secure = "own_window"
+
+[[step]]
+focus = "bank"
+
+[[step]]
+submit = { Code = "1234" }
+held = true
+form_open = false
+
+[[step]]
+secure = "secure"
+expect = [{ diagnostic = "suspended_secure_field", app = "bank" }, { diagnostic = "refused_secure_field", snippet = "pw", app = "bank" }]
+held = false
+state = "idle"
+
+[[step]]
+focus = "editor"
+
+[[step]]
+secure = "normal"
+
+[[step]]
+reopen = true
+expect = [{ form = "pw", fields = ["Code"], last_values = { Code = "1234" } }]
