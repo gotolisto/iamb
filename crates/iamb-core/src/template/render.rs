@@ -1,0 +1,381 @@
+//! Renderer: turns a resolved template, the context and the form values into actions (spec §3).
+
+use super::error::{ErrorKind, TemplateError};
+use super::parse::{Cond, Node, is_info_separator};
+use super::syntax::normalize_newlines;
+use super::{
+    FieldKind, FormValues, KeyName, MAX_OUTPUT_BYTES, MAX_OUTPUT_CHARS, MAX_RENDER_STEPS,
+    MAX_WAIT_TOTAL_MS, Resolved,
+};
+use crate::datetime::{Format, LocalDateTime, Locale, Shift};
+use std::borrow::Cow;
+use std::fmt;
+use std::ops::Range;
+use unicode_segmentation::UnicodeSegmentation;
+
+/// Everything outside the template that one expansion depends on, captured once at match time
+/// (architecture §4.3).
+#[derive(Clone, Copy)]
+pub struct RenderContext<'a> {
+    /// The local date and time, read once when the abbreviation was matched.
+    pub now: LocalDateTime,
+    /// Locale for month and weekday names.
+    pub locale: Locale,
+    /// The date-format setting, used by `{date}` without `fmt`.
+    pub date_format: &'a Format,
+    /// The time-format setting, used by `{time}` without `fmt`.
+    pub time_format: &'a Format,
+    /// The clipboard text read at match time; `None` when it was empty, held no text, or was not
+    /// read because [`Resolved::needs_clipboard`](super::Resolved::needs_clipboard) was false.
+    pub clipboard: Option<&'a str>,
+}
+
+impl fmt::Debug for RenderContext<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RenderContext")
+            .field("now", &self.now)
+            .field("locale", &self.locale)
+            .field("date_format", &self.date_format)
+            .field("time_format", &self.time_format)
+            .field("clipboard", &self.clipboard.map(|_| Redacted))
+            .finish()
+    }
+}
+
+/// One action of the output.
+#[derive(Clone, PartialEq, Eq)]
+pub enum RenderedAction {
+    /// Type plain text (architecture §4.2 `TypeText`).
+    Text {
+        /// The text, with LF line endings.
+        text: String,
+        /// Byte ranges of `text` that came from field values (`text`, `area`, `choice`) or the
+        /// clipboard, ascending and non-touching. Adaptive case must not change them.
+        verbatim: Vec<Range<usize>>,
+    },
+    /// Press a key (`PressKey`).
+    Key {
+        /// The key.
+        key: KeyName,
+        /// Hold Shift.
+        shift: bool,
+        /// How many presses, 1 to 50.
+        times: u8,
+    },
+    /// Pause before the next action (`Wait`), 1 to 10000 ms.
+    Wait {
+        /// Milliseconds.
+        ms: u32,
+    },
+}
+
+impl fmt::Debug for RenderedAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Text { text, verbatim } => f
+                .debug_struct("Text")
+                .field("len", &text.len())
+                .field("verbatim", verbatim)
+                .finish_non_exhaustive(),
+            Self::Key { key, shift, times } => f
+                .debug_struct("Key")
+                .field("key", key)
+                .field("shift", shift)
+                .field("times", times)
+                .finish(),
+            Self::Wait { ms } => f.debug_struct("Wait").field("ms", ms).finish(),
+        }
+    }
+}
+
+/// The output of one expansion.
+///
+/// The text may contain field values and clipboard content, so `Debug` prints lengths only.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Rendered {
+    /// The actions, in order. Adjacent text is merged; keys and waits stay separate.
+    pub actions: Vec<RenderedAction>,
+    /// When a `{cursor}` was rendered: how many extended grapheme clusters of typed text follow
+    /// the first one (architecture §4.2 `MoveCaretBack`).
+    pub cursor_back: Option<usize>,
+}
+
+impl Rendered {
+    /// All typed text, concatenated (for previews and tests).
+    #[must_use]
+    pub fn text(&self) -> String {
+        self.actions
+            .iter()
+            .filter_map(|a| match a {
+                RenderedAction::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+impl fmt::Debug for Rendered {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Rendered")
+            .field("actions", &self.actions)
+            .field("cursor_back", &self.cursor_back)
+            .finish()
+    }
+}
+
+struct Redacted;
+
+impl fmt::Debug for Redacted {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<redacted>")
+    }
+}
+
+struct Renderer<'r> {
+    res: &'r Resolved,
+    ctx: &'r RenderContext<'r>,
+    /// The value of each form field, in form order.
+    values: Vec<&'r str>,
+    clipboard: Option<Cow<'r, str>>,
+    dates: Vec<Option<Result<String, ErrorKind>>>,
+    actions: Vec<RenderedAction>,
+    typed_bytes: usize,
+    waited_ms: u32,
+    /// Typed bytes before the first rendered cursor.
+    cursor_at: Option<usize>,
+    steps: usize,
+}
+
+pub(crate) fn render(
+    res: &Resolved,
+    ctx: &RenderContext<'_>,
+    values: &FormValues,
+) -> Result<Rendered, TemplateError> {
+    let mut r = Renderer {
+        res,
+        ctx,
+        values: res
+            .form
+            .iter()
+            .map(|spec| values.get(&spec.name).unwrap_or(&spec.default))
+            .collect(),
+        clipboard: None,
+        dates: vec![None; res.date_slots],
+        actions: Vec::new(),
+        typed_bytes: 0,
+        waited_ms: 0,
+        cursor_at: None,
+        steps: 0,
+    };
+    r.run(0, &res.bodies[0].body.nodes)
+        .map_err(TemplateError::new)?;
+    if r.over_char_limit() {
+        return Err(TemplateError::new(ErrorKind::OutputTooLarge));
+    }
+    let cursor_back = r.cursor_at.map(|at| {
+        let mut skip = at;
+        let mut tail = String::new();
+        for a in &r.actions {
+            if let RenderedAction::Text { text, .. } = a {
+                let from = skip.min(text.len());
+                skip -= from;
+                tail.push_str(&text[from..]);
+            }
+        }
+        tail.graphemes(true).count()
+    });
+    Ok(Rendered {
+        actions: r.actions,
+        cursor_back,
+    })
+}
+
+impl<'r> Renderer<'r> {
+    /// Fails with `kind`, unless the text typed so far already exceeds the character limit: the
+    /// reference implementation checks that limit on every piece of text, so it comes first.
+    fn fail<T>(&self, kind: ErrorKind) -> Result<T, ErrorKind> {
+        if self.over_char_limit() {
+            Err(ErrorKind::OutputTooLarge)
+        } else {
+            Err(kind)
+        }
+    }
+
+    /// Whether the typed text has more than [`MAX_OUTPUT_CHARS`] grapheme clusters. The count
+    /// only grows as text is appended, so checking once before an error, and once at the end,
+    /// gives the same result as checking after every piece.
+    fn over_char_limit(&self) -> bool {
+        if self.typed_bytes <= MAX_OUTPUT_CHARS {
+            return false;
+        }
+        let texts = self.actions.iter().filter_map(|a| match a {
+            RenderedAction::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        });
+        let count = if self.actions.len() == 1 {
+            texts.map(|t| t.graphemes(true).count()).sum()
+        } else {
+            texts.collect::<String>().graphemes(true).count()
+        };
+        count > MAX_OUTPUT_CHARS
+    }
+
+    fn emit(&mut self, s: &str, verbatim: bool) -> Result<(), ErrorKind> {
+        if s.is_empty() {
+            return Ok(());
+        }
+        self.typed_bytes += s.len();
+        if self.typed_bytes > MAX_OUTPUT_BYTES {
+            return Err(ErrorKind::OutputTooLarge);
+        }
+        if let Some(RenderedAction::Text {
+            text,
+            verbatim: ranges,
+        }) = self.actions.last_mut()
+        {
+            let start = text.len();
+            text.push_str(s);
+            if verbatim {
+                push_range(ranges, start..text.len());
+            }
+        } else {
+            let mut ranges = Vec::new();
+            if verbatim {
+                ranges.push(0..s.len());
+            }
+            self.actions.push(RenderedAction::Text {
+                text: s.to_owned(),
+                verbatim: ranges,
+            });
+        }
+        Ok(())
+    }
+
+    fn run(&mut self, b: usize, nodes: &'r [Node]) -> Result<(), ErrorKind> {
+        let res = self.res;
+        let linked = &res.bodies[b];
+        for node in nodes {
+            self.steps += 1;
+            if self.steps > MAX_RENDER_STEPS {
+                return Err(ErrorKind::OutputTooLarge);
+            }
+            match node {
+                Node::Text(t) => self.emit(t, false)?,
+                Node::Date {
+                    time,
+                    format,
+                    shift,
+                    slot,
+                } => {
+                    let format = format.as_ref().unwrap_or(if *time {
+                        self.ctx.time_format
+                    } else {
+                        self.ctx.date_format
+                    });
+                    match self.date_text(linked.date_base + slot, format, shift) {
+                        Ok(text) => self.emit(&text, false)?,
+                        Err(kind) => return self.fail(kind),
+                    }
+                }
+                Node::Clipboard { trim } => {
+                    let ctx_clipboard = self.ctx.clipboard;
+                    let clip = self
+                        .clipboard
+                        .get_or_insert_with(|| normalize_newlines(ctx_clipboard.unwrap_or("")))
+                        .clone();
+                    let clip = if *trim {
+                        clip.trim_matches(|c: char| c.is_whitespace() || is_info_separator(c))
+                    } else {
+                        &clip
+                    };
+                    self.emit(clip, true)?;
+                }
+                Node::Cursor => {
+                    if self.cursor_at.is_none() {
+                        self.cursor_at = Some(self.typed_bytes);
+                    }
+                }
+                Node::Snippet(index) => {
+                    let child = linked.snippets[*index];
+                    self.run(child, &res.bodies[child].body.nodes)?;
+                }
+                Node::Field { slot, toggle } => {
+                    let value = self.values[linked.fields[*slot]];
+                    match toggle {
+                        Some(t) => {
+                            let text = if value == "yes" { &t.on } else { &t.off };
+                            self.emit(text, false)?;
+                        }
+                        None => self.emit(value, true)?,
+                    }
+                }
+                Node::Key { key, shift, times } => {
+                    if self.cursor_at.is_some() {
+                        return self.fail(ErrorKind::CursorBeforeKey);
+                    }
+                    self.actions.push(RenderedAction::Key {
+                        key: *key,
+                        shift: *shift,
+                        times: *times,
+                    });
+                }
+                Node::Wait { ms } => {
+                    self.waited_ms = self.waited_ms.saturating_add(*ms);
+                    if self.waited_ms > MAX_WAIT_TOTAL_MS {
+                        return self.fail(ErrorKind::WaitTotal);
+                    }
+                    self.actions.push(RenderedAction::Wait { ms: *ms });
+                }
+                Node::If {
+                    slot,
+                    cond,
+                    then,
+                    otherwise,
+                } => {
+                    let taken = self.condition(linked.fields[*slot], cond);
+                    self.run(b, if taken { then } else { otherwise })?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Renderer<'_> {
+    /// The text of the date node in cache slot `slot`, computed at most once per render.
+    fn date_text(
+        &mut self,
+        slot: usize,
+        format: &Format,
+        shift: &Shift,
+    ) -> Result<String, ErrorKind> {
+        if let Some(done) = &self.dates[slot] {
+            return done.clone();
+        }
+        let done = shift
+            .apply(self.ctx.now)
+            .map(|t| format.render(&t, &self.ctx.locale))
+            .map_err(|_| ErrorKind::DateRange);
+        self.dates[slot] = Some(done.clone());
+        done
+    }
+
+    /// Whether an `{if}` on form field `field` takes its first branch (spec §4.8).
+    fn condition(&self, field: usize, cond: &Cond) -> bool {
+        let value = self.values[field];
+        match cond {
+            Cond::Truthy if self.res.form[field].kind == FieldKind::Toggle => value == "yes",
+            Cond::Truthy => !value.is_empty(),
+            Cond::Is(x) => value == x,
+            Cond::Not(x) => value != x,
+        }
+    }
+}
+
+/// Appends `range` to ascending `ranges`, merging it with the last one when they touch.
+fn push_range(ranges: &mut Vec<Range<usize>>, range: Range<usize>) {
+    match ranges.last_mut() {
+        Some(last) if last.end == range.start => last.end = range.end,
+        _ => ranges.push(range),
+    }
+}
