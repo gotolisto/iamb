@@ -77,9 +77,11 @@ hardware, power plugged in, no other user apps running). Every lab number is rec
 | Result format | One JSON-lines file per run: `target/bench-results/<unix_ms>-<bench file>.jsonl`; one line per measurement with `schema, run_id, timestamp_ms, git_sha, os, arch, runner, bench, kpi, unit, count, min, p50, p95, p99, max, mean, target_stat, target_ns, pass, note`. Raw sorted samples in `<run_id>.samples/<bench>.txt` |
 | Run modes | CI: `cargo bench -p iamb-bench -- --quick`. Lab: full mode, `IAMB_BENCH_RUNNER=lab-<os>-<n>`, laptop on mains power, results committed under `docs/results/` |
 
-**Regression rule.** Report-only until task 1.9: the `Bench` workflow uploads results and never
-blocks a merge, because only placeholders exist and runner noise is unknown. Task 1.9 collects 10
-runs on `main` to measure each bench's spread and commits `crates/iamb-bench/baselines/ci-ubuntu.jsonl`.
+**Regression rule.** Report-only for now: the `Bench` workflow runs the matcher and template
+benches, uploads results and never blocks a merge. The plan put the baseline in task 1.9, but a
+baseline has to come from runs of the real benches on `main`, and those only start once Phase 1
+merges. So the first task of Phase 2 collects 10 runs on `main` to measure each bench's spread
+and commits `crates/iamb-bench/baselines/ci-ubuntu.jsonl`.
 From then on CI fails a PR when a bench's gated statistic is **> 25% worse than baseline and the
 absolute difference exceeds the noise floor** (twice the bench's measured spread, at least 1 µs),
 **on two consecutive runs**. The CI absolute thresholds in §2.2 (2× the lab target) apply at the
@@ -158,7 +160,7 @@ The same probe produces the "correct expansions" KPI and the type-1 timing cells
 | 1.5 | Store tests; `store/load/10000`, `store/search/10000` |
 | 1.6 | Engine sessions; coverage gate; engine-share latency on mock |
 | 1.7–1.8 | Import/export round-trip properties; CLI integration tests |
-| 1.9 | Review: baselines committed, regression gate on, mutation re-run |
+| 1.9 | Review; mutation re-run; coverage gate and nightly fuzz and mutation jobs wired up (baselines and the regression gate move to the start of Phase 2, see §3) |
 | 2.1–2.4 | OS-layer tests on runners; lab 10,000-expansion runs; hook p99 |
 | 2.5 | Secure field, exclusion and pause cases; canary scan |
 | 2.6 | Soak harness, idle and restart measurements |

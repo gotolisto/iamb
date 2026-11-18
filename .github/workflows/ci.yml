@@ -54,12 +54,30 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Install llvm-tools
+        run: rustup component add llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: coverage
+      - name: Install cargo-llvm-cov
+        run: cargo llvm-cov --version || cargo install cargo-llvm-cov --locked
+      - name: iamb-core line coverage (gate 85%)
+        run: cargo llvm-cov -p iamb-core --locked --summary-only --fail-under-lines 85
+
   # Single required status check for branch protection.
   ci-ok:
     name: ci-ok
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [lint, test]
+    needs: [lint, test, coverage]
     if: always()
     steps:
       - name: Require all jobs to have succeeded
