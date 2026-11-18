@@ -249,7 +249,7 @@ fn json_str(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ResultRecord, RunMeta, RunWriter, json_str};
+    use super::{ResultRecord, RunMeta, RunWriter, SystemTime, UNIX_EPOCH, json_str};
     use crate::latency::summarize_sorted;
 
     fn meta() -> RunMeta {
@@ -284,7 +284,14 @@ mod tests {
 
     #[test]
     fn writer_creates_one_jsonl_file_per_run() {
-        let dir = std::env::temp_dir().join(format!("iamb-bench-test-{}", std::process::id()));
+        // Unique per run: a process id alone is reused, and a stale directory from a killed run
+        // could hold files with the same run id.
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let dir =
+            std::env::temp_dir().join(format!("iamb-bench-test-{}-{nanos}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
         let mut w = RunWriter::new("unit", dir.clone());
         let summary = summarize_sorted(&[1, 2]).expect("non-empty");
         w.push(&ResultRecord::new("a/b/1", summary));
