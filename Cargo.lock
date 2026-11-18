@@ -596,8 +596,17 @@ dependencies = [
 name = "iamb-testkit"
 version = "0.0.0"
 dependencies = [
+ "clap",
+ "getrandom",
+ "iamb-cli",
  "iamb-core",
+ "iamb-platform",
+ "iamb-platform-macos",
+ "iamb-platform-windows",
+ "iamb-store",
  "serde",
+ "serde_json",
+ "tempfile",
  "toml",
 ]
 

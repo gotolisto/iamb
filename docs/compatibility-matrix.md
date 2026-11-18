@@ -63,17 +63,19 @@ Versions are recorded in the results table at run time (current stable release o
 
 ## 2. Snippet types
 
-All five use immediate trigger mode (delimiter mode is covered by engine tests) and the fixture
-file `crates/iamb-testkit/fixtures/compat.toml`, which holds abbreviations, bodies and expected
-results.
+All five use immediate trigger mode with exact case (delimiter mode is covered by engine tests).
+The snippets are the library file `crates/iamb-testkit/fixtures/compat.json` (the store's JSON
+import format); the expected results are `fixtures/compat-expected.toml`, and
+`fixtures/compat-expected.txt` shows them for a person to compare by eye. Tests keep the three
+in step. The harness is `iamb-compat`, run as described in [`compatibility-run.md`](compatibility-run.md).
 
 | Type | Abbreviation | Body | Expected result |
 | --- | --- | --- | --- |
 | T1 short plain | `;cpt1` | `Kind regards, the Iamb team` (27 chars) | Same text |
 | T2 long plain | `;cpt2` | Exactly 500 chars of ASCII prose in 8 lines separated by `\n` | Same text; single-line surfaces (W18) per the fixture's single-line expectation (newlines dropped) |
 | T3 Unicode | `;cpt3` | `Café déjà vu — naïve façade, Ærøskøbing, 日本語, 👋🏽 👩‍💻 ✅` | Same text after NFC normalisation; emoji with skin tone and ZWJ sequences intact |
-| T4 template | `;cpt4` | `Report for {date in ISO format}: {cursor} - done` | Today's local date (either date if the run crosses midnight); caret at the `{cursor}` position |
-| T5 rich | `;cpt5` | Markdown: one **bold** word, one link (`https://example.org/iamb`), one 16×16 PNG image | Rich surfaces: bold run, link with exact URL, one image of 16×16. Plain surfaces: the fixture's plain-text fallback |
+| T4 template | `;cpt4` | `Report for {date fmt="%Y-%m-%d"}: {cursor} - done` | Today's local date (either date if the run crosses midnight); caret at the `{cursor}` position |
+| T5 rich | `;cpt5` | Markdown: one **bold** word, one link (`https://example.org/iamb`), one 16×16 PNG image (the image is pending task 3.8: the JSON import carries no attachments, so until then the fixture holds bold and link only) | Rich surfaces: bold run, link with exact URL, one image of 16×16. Plain surfaces: the fixture's plain-text fallback |
 
 Rich surfaces for T5: W4, W5, W8, W10, W14, W16, M1, M4, M5, M8, M10, M14, M16. Every other
 non-secure row is a plain surface and expects the fallback.
@@ -125,7 +127,7 @@ issue link, date found, date re-tested.
 
 ## 6. Results template
 
-Copy per run into `docs/results/2.7-<os>-<date>.md`.
+Copy per run into `docs/results/compat-<os>-<date>.md` (`iamb-compat report` prints it).
 
 ```text
 Run: <date> · OS: <name and build> · Machine: <model, CPU, RAM> · Commit: <sha> · Tester: <role>
@@ -142,3 +144,21 @@ Exceptions:
 | ID      | Cell   | Symptom | Cause | Resolution | Issue | Found | Re-tested |
 | ------- | ------ | ------- | ----- | ---------- | ----- | ----- | --------- |
 ```
+
+## 7. What the `iamb-compat` harness does differently
+
+The harness runs on one real machine with a person at the keyboard, so it follows the sections
+above with these differences. Each one is also a line in its usage guide.
+
+| Matrix says | Harness does |
+| --- | --- |
+| Read back through UI Automation or `AXValue`; terminals through `probe.txt` | Select all and copy, then compare the clipboard (after the clipboard check). Terminals (W11, M11) and password fields are judged by the person. `probe.txt` is not read |
+| Types the abbreviation as ordinary keys | The platform injector marks every event it sends as Iamb's own output, which the listener ignores by design, so it cannot type an abbreviation. The harness types through the system (`SendKeys` on Windows, System Events on macOS) |
+| Caret: types `^` after the expansion | Same; the expected text is compared with the `^` at the expected index. Use a keyboard layout where `^` is not a dead key |
+| 5 repetitions per cell, 20 for T1 | 5 for every cell, by default (`--reps`); manual cells ask the person to do that many |
+| Latency: p95 of 20 repetitions under 50 ms | Not measured. Two processes and a clipboard round trip cannot see 50 ms. The probe window of `test-strategy.md` section 6 owns this KPI. The T1 p95 column prints `n/a` |
+| T5 on rich surfaces: inspect the HTML flavour | Judged by the person (bold, link, image). Until task 3.8, rich snippets expand as their Markdown source, so these 13 cells fail; run T5 after 3.8 (`--types 1,2,3,4` before) |
+| T3 equal after NFC normalisation | Exact comparison. A cell that differs only in normalisation is a failure to review by hand |
+| Sentinel with an HTML flavour on rich surfaces | The sentinel is text only |
+| Exceptions in the results file | `iamb-compat exception` writes them; `report` lists failures without one. Not run cells count as not passing, and a run with cells not run is reported as "KPI met: no" |
+

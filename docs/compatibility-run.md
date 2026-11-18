@@ -1,0 +1,191 @@
+# Running the compatibility matrix (task 2.7)
+
+This guide is for the owner. It takes one session of a few hours per OS. The method and the pass
+criteria are in [`compatibility-matrix.md`](compatibility-matrix.md); this page only says what to
+type. The goal: at least 95 of 100 cells pass on each OS, and every failing cell has an exception
+record (an override, a documented limitation or an issue).
+
+You run the harness `iamb-compat` on the machine under test, next to the real service. Do the
+Windows steps on a Windows 11 PC and the macOS steps on a Mac. Use a US keyboard layout, because
+the harness types `^` after each expansion to check the caret, and on some layouts `^` is a dead
+key.
+
+## What you need on either OS
+
+- The 20 apps of your OS (matrix section 1), logged in where needed. Gmail and Google Docs need an
+  account. W2, W3, W20, M2, M3 and M20 need two local web pages: a page with a `<textarea>`, a page
+  with a `contenteditable` div and a page with `<input type="password">`. Save this as `probe.html`
+  and open it in the browsers:
+
+  ```html
+  <!doctype html><meta charset="utf-8">
+  <textarea rows="12" cols="80"></textarea>
+  <div contenteditable style="border:1px solid;min-height:6em"></div>
+  <input type="password">
+  ```
+
+- The Rust toolchain from `rust-toolchain.toml` (rustup does this by itself on first build).
+- The repository checked out at the commit you want to test. Note its commit id; the harness asks.
+- A quiet machine: no other app typing, notifications off, power plugged in.
+
+## Windows
+
+1. Open a normal (not elevated) Command Prompt in the repository folder.
+2. Build in release mode. Build the service on its own, as the service README asks, so other
+   crates cannot add code to it:
+
+   ```bat
+   cargo build --release -p iamb-service
+   cargo build --release -p iamb-cli -p iamb-testkit
+   ```
+
+3. Put the fixture snippets into a data folder of their own:
+
+   ```bat
+   target\release\iamb-compat.exe setup --data-dir C:\iamb-compat
+   ```
+
+   It imports `;cpt1` to `;cpt5` and prints how to start the service. Do this before step 4: the
+   service holds the store's lock.
+4. Start the service against that folder and leave the window open:
+
+   ```bat
+   target\release\iamb-service.exe --supervise --data-dir C:\iamb-compat
+   ```
+
+5. In a second Command Prompt, check that it answers:
+
+   ```bat
+   target\release\iamb.exe --data-dir C:\iamb-compat list
+   ```
+
+   You should see five snippets. Compare with `crates\iamb-testkit\fixtures\compat-expected.txt`.
+6. Run the matrix. The harness asks a few facts for the header, then goes app by app (W1 to W20):
+
+   ```bat
+   target\release\iamb-compat.exe run --os windows
+   ```
+
+   For each app it says what to open and where to click. Open the app, click into an empty field,
+   answer the prompt. In automatic mode the harness counts down, types `;cpt1`, waits, reads the
+   field back through select-all and copy, and clears the field; it repeats 5 times per type.
+   Do not touch the keyboard or mouse while it works. In manual mode you type the abbreviation
+   yourself and answer pass or fail. Terminals (W11) and password fields (W19, W20) are always
+   manual. Rich surfaces judge T5 by eye (see the notes below).
+7. You can stop at any time (answer `q` or press Ctrl+C) and run the same command again: cells
+   already in the results file are skipped. `--app W9` runs one app. `--again` runs recorded cells
+   again; the new result replaces the old one in the report.
+8. Print the report:
+
+   ```bat
+   target\release\iamb-compat.exe report --results compat-windows.jsonl > compat-windows.md
+   ```
+
+## macOS
+
+1. Open Terminal in the repository folder.
+2. Build in release mode:
+
+   ```sh
+   cargo build --release -p iamb-service
+   cargo build --release -p iamb-cli -p iamb-testkit
+   ```
+
+3. Grant the permissions (System Settings, Privacy & Security). Two programs need them:
+   - The Iamb service binary, signed with the stable development identity (see the service
+     README): **Accessibility** and **Input Monitoring**. Until packaging exists, add
+     `target/release/iamb-service` by hand with the `+` button. After granting, quit and start
+     the service again.
+   - The terminal app you run `iamb-compat` from: **Accessibility**. The harness types through
+     System Events, and macOS asks for this once. If a dialog asks whether Terminal may control
+     System Events, allow it. If typing silently does nothing, this is the cause.
+
+4. Put the fixture snippets into a data folder of their own:
+
+   ```sh
+   target/release/iamb-compat setup --data-dir ~/iamb-compat
+   ```
+
+5. Start the service against it and leave the window open:
+
+   ```sh
+   target/release/iamb-service --supervise --data-dir ~/iamb-compat
+   ```
+
+   If the service reports a missing permission, the worker log says which:
+   `tail -f ~/iamb-compat/logs/worker.log`.
+6. In a second window, check it answers: `target/release/iamb --data-dir ~/iamb-compat list`.
+7. Run the matrix (M1 to M20):
+
+   ```sh
+   target/release/iamb-compat run --os macos
+   ```
+
+   The steps are as on Windows. Terminal (M11) and the password fields (M19, M20) are manual. For
+   M11 the harness also asks you to switch on Secure Keyboard Entry once and check that nothing
+   expands.
+8. Print the report:
+
+   ```sh
+   target/release/iamb-compat report --results compat-macos.jsonl > compat-macos.md
+   ```
+
+## Notes for the cells
+
+- **T4 and the date.** The harness asks for today's local date once and accepts the next day too,
+  for a run that crosses midnight. The caret is checked by the `^` it types after the expansion.
+- **T5 and the image.** The image part waits for task 3.8: the library import cannot carry
+  attachments, and until 3.8 a rich snippet expands as its Markdown source. So the 13 T5 cells on
+  rich surfaces fail today. Either run only `--types 1,2,3,4` now and T5 after 3.8, or record
+  the failures and give them one exception that points at 3.8. The report says "KPI met: no" while
+  any cell is not run.
+- **Secure rows (W19, W20, M19, M20).** The harness asks if anything expanded, whether the worker
+  log or the diagnostics show a "secure field" entry, and, for T1, whether the half-typed
+  abbreviation was forgotten (the buffer check). A pass means nothing expanded.
+- **Clipboard.** Before each cell the harness puts a test value on the clipboard and checks it is
+  back afterwards, then restores your own clipboard content. Do not copy anything during a run.
+- **Privacy.** The results file holds verdicts and notes only. After a failed automatic cell the
+  harness asks whether to include the field's text; it can contain other text you have on screen,
+  so the answer is no unless you checked.
+- **Undo.** After each T1 cell it asks what one Ctrl+Z or Cmd+Z did. This is noted, not gating.
+- **Latency.** The 50 ms KPI is not measured here (see section 7 of the matrix). The report shows
+  `n/a`.
+
+## When a cell fails
+
+The harness prints the first problem (extra, missing or different characters, a leftover
+abbreviation, a clipboard not restored). For each failing cell choose one of three ways and record
+it with `iamb-compat exception`, which writes an exception record into the results file:
+
+1. **A per-app override.** Try a different injection strategy for that app: type instead of paste
+   or the other way round, a key delay, `shift+enter` for chat apps, a longer paste wait. The format
+   is documented at the top of `crates/iamb-platform-windows/src/injector/strategy.rs` and
+   `crates/iamb-platform-macos/src/injector/strategy.rs` (the two formats differ), and the service
+   hands the settings text to the platform. If the service of your build does not take the setting
+   yet, the override goes into the built-in table `BUILT_IN` of that file instead, as a change
+   with a test. Then run the cell again with `iamb-compat run --os <os> --app <ID> --again`. It
+   counts as a pass only if the full re-run passes:
+
+   ```sh
+   iamb-compat exception --os windows --cell W9/T2 --resolution override \
+     --symptom "newline commits the cell" --cause "Enter commits in edit mode"
+   ```
+
+2. **A documented limitation.** The app cannot be fixed from our side; add it to the user-facing
+   known-issues list with its workaround, then record it with `--resolution limitation`.
+3. **An issue.** Open an issue (Iamb or the app's upstream) and record it with
+   `--resolution issue --issue <link>`. An issue record needs the link.
+
+Run `iamb-compat report` again: "Failures that still need an override or an issue" must say
+`none`.
+
+## Delivering the result
+
+1. Run `iamb-compat report --results compat-<os>.jsonl` for each OS.
+2. Paste the output into `docs/results/compat-<os>-<date>.md`, for example
+   `docs/results/compat-windows-2026-11-20.md`. The report already has the header line, the table
+   and the exceptions table of the matrix template.
+3. Keep the `.jsonl` file next to it, or attach it to the pull request.
+4. The KPI is met on an OS when the report says `KPI met: yes`: at least 95 of 100 cells pass and
+   every failing cell has an exception record. Check, on each OS, that the log folder has no typed
+   text in it (the canary scan of `test-strategy.md` section 5.3 is run separately).

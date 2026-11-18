@@ -1,0 +1,412 @@
+# The compatibility matrix's app list (task 2.7): one source for `iamb-compat`.
+# `docs/compatibility-matrix.md` section 1 is the reference; a test keeps the two in step
+# (ids, names and surfaces, rich flags, secure rows). Edit both together.
+#
+# os      windows | macos
+# rich    T5 is checked for bold, link and image structure (a rich surface)
+# secure  password field: nothing may expand, nothing may be buffered
+# auto    the harness may type and read back by itself (false: terminals, password fields)
+# single_line  a one-line field: newlines are dropped from T2
+# extra   an extra check to do once on this row, not a cell
+
+[[app]]
+id = "W1"
+os = "windows"
+name = "Notepad"
+surface = "Document body"
+rich = false
+secure = false
+auto = true
+notes = "Autosave and tabs; reference row, should always pass"
+
+[[app]]
+id = "W2"
+os = "windows"
+name = "Google Chrome"
+surface = "Local test page: <textarea>"
+rich = false
+secure = false
+auto = true
+notes = "Synthesised Unicode input works; autofill pop-ups can steal arrow keys"
+
+[[app]]
+id = "W3"
+os = "windows"
+name = "Mozilla Firefox"
+surface = "Local test page: contenteditable div"
+rich = false
+secure = false
+auto = true
+notes = "Different Unicode key handling from Chromium; check emoji surrogate pairs"
+
+[[app]]
+id = "W4"
+os = "windows"
+name = "Microsoft Edge"
+surface = "Gmail compose body"
+rich = true
+secure = false
+auto = true
+notes = "Web editor re-renders on input; fast key bursts can reorder; paste path preferred for long text"
+
+[[app]]
+id = "W5"
+os = "windows"
+name = "Google Chrome"
+surface = "Google Docs document body"
+rich = true
+secure = false
+auto = true
+notes = "Own editing surface; ignores some synthetic events; caret moves need key presses, not caret APIs"
+
+[[app]]
+id = "W6"
+os = "windows"
+name = "Slack"
+surface = "Message box"
+rich = false
+secure = false
+auto = true
+notes = "Enter sends the message: newlines must be Shift+Enter or paste"
+
+[[app]]
+id = "W7"
+os = "windows"
+name = "Visual Studio Code"
+surface = "Editor pane in a .txt file"
+rich = false
+secure = false
+auto = true
+notes = "Auto-closing brackets and quotes, auto-indent on newline, autocomplete pop-up on typed text"
+
+[[app]]
+id = "W8"
+os = "windows"
+name = "Microsoft Word"
+surface = "Document body"
+rich = true
+secure = false
+auto = true
+notes = "AutoCorrect (straight to curly quotes, auto-capitalisation) alters typed text; rich paste keeps formatting"
+
+[[app]]
+id = "W9"
+os = "windows"
+name = "Microsoft Excel"
+surface = "Cell in edit mode (F2)"
+rich = false
+secure = false
+auto = true
+notes = "Enter commits the cell; newline in a cell is Alt+Enter; paste outside edit mode replaces the cell"
+
+[[app]]
+id = "W10"
+os = "windows"
+name = "Microsoft Outlook (new)"
+surface = "Compose body"
+rich = true
+secure = false
+auto = true
+notes = "Web-based editor inside a native shell; clipboard restore timing sensitive"
+
+[[app]]
+id = "W11"
+os = "windows"
+name = "Windows Terminal"
+surface = "PowerShell prompt running cat > probe.txt (read back from file)"
+rich = false
+secure = false
+auto = false
+notes = "Enter executes; Ctrl+V handled by the terminal, may warn on multi-line paste"
+
+[[app]]
+id = "W12"
+os = "windows"
+name = "Visual Studio 2022"
+surface = "C# editor in a comment block"
+rich = false
+secure = false
+auto = true
+notes = "IntelliSense commits on space and punctuation; auto-format on newline"
+
+[[app]]
+id = "W13"
+os = "windows"
+name = "IntelliJ IDEA Community"
+surface = "Editor in a .txt file"
+rich = false
+secure = false
+auto = true
+notes = "Java key translation differs for dead keys and non-BMP characters"
+
+[[app]]
+id = "W14"
+os = "windows"
+name = "LibreOffice Writer"
+surface = "Document body"
+rich = true
+secure = false
+auto = true
+notes = "AutoCorrect similar to W8; own clipboard formats for rich paste"
+
+[[app]]
+id = "W15"
+os = "windows"
+name = "Telegram Desktop"
+surface = "Message box"
+rich = false
+secure = false
+auto = true
+notes = "Qt input method handling; Enter sends"
+
+[[app]]
+id = "W16"
+os = "windows"
+name = "Microsoft OneNote"
+surface = "Page body"
+rich = true
+secure = false
+auto = true
+notes = "Rich paste creates a new container when the caret is not inside an existing note container"
+
+[[app]]
+id = "W17"
+os = "windows"
+name = "Remote Desktop Connection"
+surface = "Notepad inside the remote session"
+rich = false
+secure = false
+auto = true
+notes = "Unicode packets vs. scancodes depend on client setting; clipboard is redirected, so restore is two-hop"
+
+[[app]]
+id = "W18"
+os = "windows"
+name = "Windows Settings"
+surface = "Search box"
+rich = false
+secure = false
+auto = true
+single_line = true
+notes = "Single-line: newlines dropped; suggestion list reacts to every key"
+
+[[app]]
+id = "W19"
+os = "windows"
+name = "Bitwarden"
+surface = "Master password field on the unlock screen"
+rich = false
+secure = true
+auto = false
+notes = "Expected: nothing expands, nothing is buffered"
+
+[[app]]
+id = "W20"
+os = "windows"
+name = "Google Chrome"
+surface = "Local test page: <input type=\"password\">"
+rich = false
+secure = true
+auto = false
+notes = "Expected: nothing expands, nothing is buffered; detected through UI Automation IsPassword"
+
+[[app]]
+id = "M1"
+os = "macos"
+name = "TextEdit"
+surface = "Rich text document body"
+rich = true
+secure = false
+auto = true
+notes = "Reference row; smart quotes and dashes if enabled in system settings"
+
+[[app]]
+id = "M2"
+os = "macos"
+name = "Safari"
+surface = "Local test page: <textarea>"
+rich = false
+secure = false
+auto = true
+notes = "Key events with Unicode strings accepted; autofill can intercept"
+
+[[app]]
+id = "M3"
+os = "macos"
+name = "Google Chrome"
+surface = "Local test page: contenteditable div"
+rich = false
+secure = false
+auto = true
+notes = "Check emoji and combining marks"
+
+[[app]]
+id = "M4"
+os = "macos"
+name = "Mozilla Firefox"
+surface = "Gmail compose body"
+rich = true
+secure = false
+auto = true
+notes = "As W4"
+
+[[app]]
+id = "M5"
+os = "macos"
+name = "Safari"
+surface = "Google Docs document body"
+rich = true
+secure = false
+auto = true
+notes = "As W5"
+
+[[app]]
+id = "M6"
+os = "macos"
+name = "Slack"
+surface = "Message box"
+rich = false
+secure = false
+auto = true
+notes = "As W6"
+
+[[app]]
+id = "M7"
+os = "macos"
+name = "Visual Studio Code"
+surface = "Editor pane in a .txt file"
+rich = false
+secure = false
+auto = true
+notes = "As W7"
+
+[[app]]
+id = "M8"
+os = "macos"
+name = "Microsoft Word"
+surface = "Document body"
+rich = true
+secure = false
+auto = true
+notes = "As W8"
+
+[[app]]
+id = "M9"
+os = "macos"
+name = "Microsoft Excel"
+surface = "Cell in edit mode"
+rich = false
+secure = false
+auto = true
+notes = "Newline in a cell is Control+Option+Return; Return commits"
+
+[[app]]
+id = "M10"
+os = "macos"
+name = "Mail"
+surface = "Compose body"
+rich = true
+secure = false
+auto = true
+notes = "Rich paste accepted; plain mode drops formatting"
+
+[[app]]
+id = "M11"
+os = "macos"
+name = "Terminal"
+surface = "zsh prompt running cat > probe.txt (read back from file)"
+rich = false
+secure = false
+auto = false
+extra = "With Secure Keyboard Entry switched on (Terminal menu), type ;cpt1: nothing may expand. Record the result in the note of the T1 cell."
+notes = "With Secure Keyboard Entry on, nothing may expand (extra check, not a cell)"
+
+[[app]]
+id = "M12"
+os = "macos"
+name = "Xcode"
+surface = "Swift editor in a comment block"
+rich = false
+secure = false
+auto = true
+notes = "Autocomplete commits on Return; auto-indent"
+
+[[app]]
+id = "M13"
+os = "macos"
+name = "IntelliJ IDEA Community"
+surface = "Editor in a .txt file"
+rich = false
+secure = false
+auto = true
+notes = "As W13"
+
+[[app]]
+id = "M14"
+os = "macos"
+name = "LibreOffice Writer"
+surface = "Document body"
+rich = true
+secure = false
+auto = true
+notes = "As W14"
+
+[[app]]
+id = "M15"
+os = "macos"
+name = "Telegram Desktop"
+surface = "Message box"
+rich = false
+secure = false
+auto = true
+notes = "As W15"
+
+[[app]]
+id = "M16"
+os = "macos"
+name = "Notes"
+surface = "Note body"
+rich = true
+secure = false
+auto = true
+notes = "Rich paste supported; checklist formatting may be applied to typed -"
+
+[[app]]
+id = "M17"
+os = "macos"
+name = "Messages"
+surface = "Message field"
+rich = false
+secure = false
+auto = true
+notes = "Return sends; Catalyst text input differs from AppKit"
+
+[[app]]
+id = "M18"
+os = "macos"
+name = "Windows App (Remote Desktop)"
+surface = "Notepad inside the remote session"
+rich = false
+secure = false
+auto = true
+notes = "As W17"
+
+[[app]]
+id = "M19"
+os = "macos"
+name = "Bitwarden"
+surface = "Master password field on the unlock screen"
+rich = false
+secure = true
+auto = false
+notes = "Expected: nothing expands, nothing is buffered; secure event input enabled by the field"
+
+[[app]]
+id = "M20"
+os = "macos"
+name = "Safari"
+surface = "Local test page: <input type=\"password\">"
+rich = false
+secure = true
+auto = false
+notes = "Expected: nothing expands, nothing is buffered; WebKit enables secure event input"
