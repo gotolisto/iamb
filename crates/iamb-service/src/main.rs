@@ -1,0 +1,232 @@
+//! `iamb-service`: the supervisor (`--supervise`) or the worker (`--worker`, the default).
+//!
+//! ```text
+//! iamb-service --supervise [--data-dir PATH] [--platform native|mock]
+//! iamb-service [--worker] [--data-dir PATH] [--platform native|mock] [--heartbeat-stdout]
+//! ```
+//!
+//! `--platform mock` runs the worker against the in-memory mock platform: development and CI
+//! only (it is the only choice on Linux). `--heartbeat-stdout` is passed by the supervisor: the
+//! worker then writes its heartbeat to standard output and exits when standard input ends.
+
+use std::ffi::OsString;
+use std::io::{self, Read, Write};
+use std::path::PathBuf;
+use std::process::ExitCode;
+use std::sync::Arc;
+use std::thread;
+
+use iamb_service::log::Logger;
+use iamb_service::paths::DataDirs;
+use iamb_service::platform::{self, PlatformChoice};
+use iamb_service::supervisor::{self, SupervisorConfig};
+use iamb_service::worker::{ExitReason, Worker, WorkerConfig};
+use iamb_service::{EXIT_RESTART, VERSION};
+
+const USAGE: &str = "usage: iamb-service [--supervise | --worker] [--data-dir PATH] [--platform native|mock] [--heartbeat-stdout]";
+
+#[derive(Debug, Default)]
+struct Args {
+    supervise: bool,
+    data_dir: Option<PathBuf>,
+    platform: Option<PlatformChoice>,
+    heartbeat_stdout: bool,
+}
+
+fn parse(args: impl Iterator<Item = OsString>) -> Result<Option<Args>, String> {
+    let mut out = Args::default();
+    let mut args = args.peekable();
+    while let Some(arg) = args.next() {
+        match arg.to_str() {
+            Some("--supervise") => out.supervise = true,
+            Some("--worker") => out.supervise = false,
+            Some("--heartbeat-stdout") => out.heartbeat_stdout = true,
+            Some("--data-dir") => {
+                out.data_dir = Some(PathBuf::from(args.next().ok_or("--data-dir needs a path")?));
+            }
+            Some("--platform") => {
+                let value = args.next().ok_or("--platform needs native or mock")?;
+                out.platform = Some(
+                    value
+                        .to_str()
+                        .and_then(PlatformChoice::parse)
+                        .ok_or("--platform must be native or mock")?,
+                );
+            }
+            Some("--version") => {
+                say(&format!("iamb-service {VERSION}"));
+                return Ok(None);
+            }
+            Some("--help" | "-h") => {
+                say(USAGE);
+                return Ok(None);
+            }
+            _ => return Err(format!("unknown argument; {USAGE}")),
+        }
+    }
+    Ok(Some(out))
+}
+
+fn say(line: &str) {
+    let _ = writeln!(io::stdout().lock(), "{line}");
+}
+
+fn fail(message: &str) -> ExitCode {
+    eprintln!("iamb-service: {message}");
+    ExitCode::from(1)
+}
+
+fn main() -> ExitCode {
+    let args = match parse(std::env::args_os().skip(1)) {
+        Ok(Some(args)) => args,
+        Ok(None) => return ExitCode::SUCCESS,
+        Err(e) => return fail(&e),
+    };
+    let dirs = match DataDirs::resolve(args.data_dir.as_deref()) {
+        Ok(dirs) => dirs,
+        Err(e) => return fail(&e.to_string()),
+    };
+    let choice = args
+        .platform
+        .unwrap_or_else(PlatformChoice::default_for_build);
+    if args.supervise {
+        supervise(dirs, choice)
+    } else {
+        work(&dirs, choice, args.heartbeat_stdout)
+    }
+}
+
+/// Panics are logged by location only: a panic message could quote data.
+fn log_panics(log: &Arc<Logger>) {
+    let log = Arc::clone(log);
+    std::panic::set_hook(Box::new(move |info| {
+        let at = info
+            .location()
+            .map_or_else(String::new, |l| format!(" at {}:{}", l.file(), l.line()));
+        log.error(format_args!(
+            "panic in thread {}{at}",
+            thread::current().name().unwrap_or("?")
+        ));
+    }));
+}
+
+fn supervise(dirs: DataDirs, choice: PlatformChoice) -> ExitCode {
+    let log = Arc::new(Logger::open(&dirs.logs(), "supervisor"));
+    log_panics(&log);
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(e) => return fail(&format!("cannot find this executable: {e}")),
+    };
+    let worker_args: Vec<OsString> = vec![
+        "--worker".into(),
+        "--heartbeat-stdout".into(),
+        "--data-dir".into(),
+        dirs.root().as_os_str().to_owned(),
+        "--platform".into(),
+        choice.as_str().into(),
+    ];
+    let cfg = SupervisorConfig::new(dirs, exe, worker_args);
+    match supervisor::run(&cfg, &log) {
+        Ok(supervisor::Outcome::Stopped) => ExitCode::SUCCESS,
+        Ok(supervisor::Outcome::AlreadyRunning) => {
+            eprintln!("iamb-service: another supervisor is running");
+            ExitCode::SUCCESS
+        }
+        Err(e) => fail(&format!("supervisor failed: {e}")),
+    }
+}
+
+/// Test faults, read only by debug builds (`IAMB_TEST_FAULT`): `exit-at-start` exits with
+/// status 1 at once; `hang-once` stops the engine thread shortly after the first start in a
+/// data root (a marker file in `run/` keeps later starts healthy).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Fault {
+    None,
+    ExitAtStart,
+    HangOnce,
+}
+
+fn fault(dirs: &DataDirs) -> Fault {
+    if !cfg!(debug_assertions) {
+        return Fault::None;
+    }
+    match std::env::var("IAMB_TEST_FAULT").as_deref() {
+        Ok("exit-at-start") => Fault::ExitAtStart,
+        Ok("hang-once") => {
+            let marker = dirs.run().join("test-fault-done");
+            if marker.exists() || std::fs::write(&marker, b"").is_err() {
+                Fault::None
+            } else {
+                Fault::HangOnce
+            }
+        }
+        _ => Fault::None,
+    }
+}
+
+fn work(dirs: &DataDirs, choice: PlatformChoice, supervised: bool) -> ExitCode {
+    let log = Arc::new(Logger::open(&dirs.logs(), "worker"));
+    log_panics(&log);
+    let _ = iamb_service::paths::create_private_dir(&dirs.run());
+    let fault = fault(dirs);
+    if fault == Fault::ExitAtStart {
+        log.warn(format_args!("test fault: exiting at start"));
+        return ExitCode::from(1);
+    }
+    let platform = match platform::select(choice) {
+        Ok(p) => p,
+        Err(e) => return fail(&e),
+    };
+    if choice == PlatformChoice::Mock {
+        log.warn(format_args!(
+            "running against the mock platform (development only): no real keyboard"
+        ));
+    }
+    let mut config = WorkerConfig::new(dirs.clone(), platform, iamb_ipc::native_endpoint());
+    config.logger = Arc::clone(&log);
+    if supervised {
+        config.heartbeat = Box::new(|| {
+            let mut out = io::stdout().lock();
+            let _ = out.write_all(b".");
+            let _ = out.flush();
+        });
+    }
+    let worker = match Worker::start(config) {
+        Ok(w) => w,
+        Err(e) => {
+            log.error(format_args!("worker did not start: {e}"));
+            return fail(&e.to_string());
+        }
+    };
+    if supervised {
+        // The supervisor never writes to our input: its end means the supervisor is gone.
+        let watcher = Arc::clone(&log);
+        let exit = worker_exit_handle(&worker);
+        let _ = thread::Builder::new()
+            .name("iamb-stdin".to_owned())
+            .spawn(move || {
+                let mut buf = [0_u8; 64];
+                let mut input = io::stdin().lock();
+                while matches!(input.read(&mut buf), Ok(n) if n > 0) {}
+                watcher.info(format_args!("the supervisor is gone; stopping"));
+                exit();
+            });
+    }
+    if fault == Fault::HangOnce {
+        thread::sleep(std::time::Duration::from_millis(300));
+        #[cfg(debug_assertions)]
+        worker.hang_engine();
+    }
+    let reason = worker.wait_exit(None).unwrap_or(ExitReason::Stop);
+    worker.stop();
+    match reason {
+        ExitReason::Stop => ExitCode::SUCCESS,
+        ExitReason::ListenerDead => ExitCode::from(EXIT_RESTART),
+    }
+}
+
+/// A closure that asks `worker` to stop, usable from another thread.
+fn worker_exit_handle(worker: &Worker) -> impl Fn() + Send + 'static {
+    let handle = worker.exit_handle();
+    move || handle.request(ExitReason::Stop)
+}

@@ -27,13 +27,13 @@ All Rust crates live in one Cargo workspace under `crates/`, all named `iamb-*`
 | --- | --- | --- | --- | --- |
 | `iamb-core` | library | — | Data model, matcher, template parser and renderer, date math, Markdown rendering, fuzzy search, engine pipeline (events in, actions out) | I/O, clocks, threads, OS calls, `unsafe` |
 | `iamb-store` | library | core | SQLite schema and migrations, queries, usage statistics, sync outbox, attachment index, JSON and CSV import and export, library health | Network code, OS keyboard code |
-| `iamb-ipc` | library | core | Message types, framing, blocking local transport (Unix socket, Windows named pipe), peer verification, client and server helpers | Business logic, async code, network code |
+| `iamb-ipc` | library | core, platform (+os for the native endpoint) | Message types, framing, blocking local transport (Unix socket, Windows named pipe), peer verification, client and server helpers | Business logic, async code, network code |
 | `iamb-platform` | library | core | Traits `KeyListener`, `Injector`, `FocusInspector`, `ClipboardAccess`, `Hotkeys`, `Permissions`, `LoginItem`, `MemoryLock`, `LocalEndpoint`; the listener's event type, injection steps, markers and the typed-characters hand-off; an in-memory mock used by tests on every OS | OS calls |
 | `iamb-platform-windows` | library | platform | Windows implementations of the platform traits | Anything not behind the traits |
 | `iamb-platform-macos` | library | platform | macOS implementations of the platform traits | Anything not behind the traits |
 | `iamb-service` | binary | core, store, ipc, platform(+os) | The background service: listener → engine → injector, owns the store, serves IPC, supervises | Network code of any kind |
 | `iamb-sync` | library + thin binary | core, ipc | Sync agent: account session, push, pull, live updates, media transfer, account endpoint | Access to key events |
-| `iamb-cli` | binary `iamb` | core, store, ipc | Command-line tool: add, list, remove, import, dry-run expand | — |
+| `iamb-cli` | binary `iamb` | core, store, ipc, platform | Command-line tool: add, list, remove, import, dry-run expand | — |
 | `iamb-desktop` | binary | ipc, platform(+os) | Tauri shell (`apps/desktop/src-tauri`): tray icon, windows, focus hand-back, bridges UI commands to `iamb-ipc` | Engine or store logic |
 | `iamb-testkit` | library (dev) | core, platform | Scripted typing sessions, fake clock, fixture libraries, the spec example loader, compatibility harness | — |
 | `iamb-bench` | benches (dev) | core, store | Benchmark harness for the product KPIs | — |

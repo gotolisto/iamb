@@ -1,0 +1,10 @@
+{
+  "body": {
+    "focus": {
+      "pid": 100,
+      "window": 3
+    }
+  },
+  "kind": "event",
+  "topic": "palette_requested"
+}

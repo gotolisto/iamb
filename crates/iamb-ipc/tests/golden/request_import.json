@@ -1,0 +1,10 @@
+{
+  "body": {
+    "format": "json",
+    "on_conflict": "skip",
+    "path": "/tmp/library.json",
+    "type": "import"
+  },
+  "id": 10,
+  "kind": "request"
+}

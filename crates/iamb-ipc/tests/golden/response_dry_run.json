@@ -1,0 +1,81 @@
+{
+  "id": 12,
+  "kind": "response",
+  "result": {
+    "actions": [
+      {
+        "action": "delete_back",
+        "n": 4
+      },
+      {
+        "action": "type_text",
+        "text": "be right back",
+        "verbatim": [
+          [
+            0,
+            2
+          ]
+        ]
+      },
+      {
+        "action": "paste",
+        "attachments": [
+          "abababababababababababababababababababababababababababababababab"
+        ],
+        "markdown_html": "<p>x</p>",
+        "plain": "x"
+      },
+      {
+        "action": "press_key",
+        "key": "enter",
+        "shift": false,
+        "times": 1
+      },
+      {
+        "action": "move_caret_back",
+        "n": 2
+      },
+      {
+        "action": "wait",
+        "ms": 100
+      },
+      {
+        "action": "show_form",
+        "fields": [
+          {
+            "default": "M",
+            "kind": "choice",
+            "name": "Size",
+            "options": [
+              "S",
+              "M"
+            ]
+          }
+        ],
+        "session": 1,
+        "snippet": "01010101-0101-0101-0101-010101010101"
+      },
+      {
+        "action": "expanded",
+        "chars_saved": 10,
+        "expansion": 1,
+        "snippet": "01010101-0101-0101-0101-010101010101"
+      },
+      {
+        "action": "diagnostic",
+        "diagnostic": {
+          "at": 1763400000500,
+          "code": "injection_cancelled",
+          "expansion": 7,
+          "snippet": "01010101-0101-0101-0101-010101010101"
+        }
+      }
+    ],
+    "hints": [
+      {
+        "code": "E_UNKNOWN_TOKEN"
+      }
+    ],
+    "type": "dry_run"
+  }
+}

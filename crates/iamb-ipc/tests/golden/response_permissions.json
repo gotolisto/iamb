@@ -1,0 +1,9 @@
+{
+  "id": 13,
+  "kind": "response",
+  "result": {
+    "accessibility": "granted",
+    "input_monitoring": "denied",
+    "type": "permissions"
+  }
+}

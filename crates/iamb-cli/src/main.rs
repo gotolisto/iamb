@@ -1,14 +1,17 @@
 //! Command-line entry point for Iamb (`iamb`).
 //!
-//! The tool opens the local store directly (there is no background service yet). To add a
-//! subcommand: add a variant to [`cli::Command`], write a `run` function in a new module under
-//! `commands/`, and add one arm to the `match` in [`run`].
+//! Each command first tries the service endpoint (role `cli`); when no service answers it opens
+//! the local store under its lock, and if the lock stays taken for 3 s it stops with "the
+//! service is starting, try again" (architecture §6.3, `service.rs`). To add a subcommand: add
+//! a variant to [`cli::Command`], write a `run` function in a new module under `commands/` that
+//! handles both [`service::Backend`]s, and add one arm to the `match` in [`run`].
 
 mod cli;
 mod commands;
 mod error;
 mod ids;
 mod output;
+mod service;
 mod session;
 
 use std::process::ExitCode;

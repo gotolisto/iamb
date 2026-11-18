@@ -1,0 +1,26 @@
+{
+  "body": {
+    "focus": {
+      "pid": 100,
+      "window": 3
+    },
+    "last_values": {
+      "Name": "Ada"
+    },
+    "session": 2,
+    "snippet": "01010101-0101-0101-0101-010101010101",
+    "spec": [
+      {
+        "default": "M",
+        "kind": "choice",
+        "name": "Size",
+        "options": [
+          "S",
+          "M"
+        ]
+      }
+    ]
+  },
+  "kind": "event",
+  "topic": "form_requested"
+}

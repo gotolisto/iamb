@@ -1,0 +1,28 @@
+{
+  "id": 2,
+  "kind": "response",
+  "result": {
+    "folders": [
+      {
+        "created_at": 1763400000000,
+        "defaults": {
+          "abbreviation_prefix": null,
+          "case_mode": null,
+          "trigger": null
+        },
+        "deleted_at": null,
+        "id": "02020202-0202-0202-0202-020202020202",
+        "member_permission": null,
+        "name": "Snippets",
+        "parent_id": null,
+        "position": 0,
+        "profile_id": "09090909-0909-0909-0909-090909090909",
+        "rev": 0,
+        "updated_at": 1763400000000,
+        "updated_by": null
+      }
+    ],
+    "profile": "09090909-0909-0909-0909-090909090909",
+    "type": "folders"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "body": {
+    "ids": [
+      1,
+      2,
+      3
+    ],
+    "type": "outbox_ack"
+  },
+  "id": 34,
+  "kind": "request"
+}

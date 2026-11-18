@@ -1,0 +1,11 @@
+{
+  "body": {
+    "type": "set_test_field",
+    "window": {
+      "pid": 7,
+      "window": 8
+    }
+  },
+  "id": 21,
+  "kind": "request"
+}

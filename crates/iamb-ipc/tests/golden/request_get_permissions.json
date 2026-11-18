@@ -1,0 +1,7 @@
+{
+  "body": {
+    "type": "get_permissions"
+  },
+  "id": 19,
+  "kind": "request"
+}

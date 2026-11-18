@@ -5,10 +5,11 @@ use std::fmt::Write as _;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use iamb_core::datetime::{Format, LocalDateTime, Locale, civil_from_days};
-use iamb_core::engine::{Action, EngineSettings, Environment, ExclusionReason, Snapshot, dry_run};
+use iamb_core::engine::{EngineSettings, Environment, ExclusionReason, Snapshot, dry_run};
 use iamb_core::matcher::Delimiters;
 use iamb_core::model::{Id, ProfileKind, Snippet, fold_abbreviation};
 use iamb_core::template::{FormValues, KeyName};
+use iamb_ipc::{WireAction, key_named};
 use iamb_store::{ListOptions, Store, StoreError};
 
 /// The clock and clipboard of a dry run.
@@ -143,43 +144,16 @@ impl Outcome {
 /// Characters (not grapheme clusters) are the unit of deletion and caret movement here.
 #[must_use]
 pub fn expand(snapshot: &Snapshot, typed: &str, env: &DryEnv, values: &FormValues) -> Outcome {
-    let actions = dry_run(snapshot, typed, env, Some(values));
-    let mut field: Vec<char> = typed.chars().collect();
-    let mut caret = field.len();
-    let mut out = Outcome::default();
-    for action in &actions {
-        match action {
-            Action::DeleteBack(n) => {
-                let n = (*n).min(caret);
-                field.drain(caret - n..caret);
-                caret -= n;
-            }
-            Action::TypeText { text, .. } => insert(&mut field, &mut caret, text),
-            Action::Paste { plain, .. } => insert(&mut field, &mut caret, plain),
-            Action::PressKey { key, times, .. } => {
-                let piece = match key {
-                    KeyName::Enter => "\n".to_owned(),
-                    KeyName::Tab => "\t".to_owned(),
-                    KeyName::Space => " ".to_owned(),
-                    other => format!("<{other}>"),
-                };
-                for _ in 0..*times {
-                    insert(&mut field, &mut caret, &piece);
-                }
-            }
-            Action::MoveCaretBack(n) => caret = caret.saturating_sub(*n),
-            Action::Expanded { .. } => out.expansions += 1,
-            Action::Diagnostic(d) => out.diagnostics.push(d.reason.code().to_owned()),
-            Action::Wait(_) | Action::ShowForm { .. } => {}
-        }
-        if let Some(line) = describe(action) {
-            out.action_lines.push(line);
-        }
-    }
+    let actions: Vec<WireAction> = dry_run(snapshot, typed, env, Some(values))
+        .iter()
+        .map(WireAction::from)
+        .collect();
+    let mut out = apply(typed, &actions);
     // A snippet whose template does not parse is not matchable (architecture §4.4), so the
     // engine stays silent about it; name its parse error when the typed text ends with its
     // abbreviation. Resolve errors need nothing here: such snippets stay matchable and the
-    // engine reports them itself (review 1.9 finding 4).
+    // engine reports them itself (review 1.9 finding 4). The service's `DryRun` returns the
+    // same hints.
     if out.expansions == 0 && out.diagnostics.is_empty() {
         let typed_fold = fold_abbreviation(typed);
         for ex in snapshot.excluded() {
@@ -192,6 +166,45 @@ pub fn expand(snapshot: &Snapshot, typed: &str, env: &DryEnv, values: &FormValue
                     out.diagnostics.push(e.code().to_owned());
                 }
             }
+        }
+    }
+    out
+}
+
+/// Applies a dry run's actions to a field that holds `typed`, caret at the end: the same for
+/// a dry run here and one answered by the service.
+#[must_use]
+pub fn apply(typed: &str, actions: &[WireAction]) -> Outcome {
+    let mut field: Vec<char> = typed.chars().collect();
+    let mut caret = field.len();
+    let mut out = Outcome::default();
+    for action in actions {
+        match action {
+            WireAction::DeleteBack { n } => {
+                let n = (*n).min(caret);
+                field.drain(caret - n..caret);
+                caret -= n;
+            }
+            WireAction::TypeText { text, .. } => insert(&mut field, &mut caret, text),
+            WireAction::Paste { plain, .. } => insert(&mut field, &mut caret, plain),
+            WireAction::PressKey { key, times, .. } => {
+                let piece = match key_named(key) {
+                    Some(KeyName::Enter) => "\n".to_owned(),
+                    Some(KeyName::Tab) => "\t".to_owned(),
+                    Some(KeyName::Space) => " ".to_owned(),
+                    _ => format!("<{key}>"),
+                };
+                for _ in 0..*times {
+                    insert(&mut field, &mut caret, &piece);
+                }
+            }
+            WireAction::MoveCaretBack { n } => caret = caret.saturating_sub(*n),
+            WireAction::Expanded { .. } => out.expansions += 1,
+            WireAction::Diagnostic { diagnostic } => out.diagnostics.push(diagnostic.code.clone()),
+            WireAction::Wait { .. } | WireAction::ShowForm { .. } => {}
+        }
+        if let Some(line) = describe(action) {
+            out.action_lines.push(line);
         }
     }
     out.text = field.into_iter().collect();
@@ -208,27 +221,27 @@ fn insert(field: &mut Vec<char>, caret: &mut usize, text: &str) {
 
 /// A readable one-line form of an action; `None` for diagnostics, which go to stderr.
 #[must_use]
-pub fn describe(action: &Action) -> Option<String> {
+pub fn describe(action: &WireAction) -> Option<String> {
     Some(match action {
-        Action::DeleteBack(n) => format!("delete-back {n}"),
-        Action::TypeText { text, .. } => format!("type-text {}", quote(text)),
-        Action::Paste { plain, .. } => format!("paste {}", quote(plain)),
-        Action::PressKey { key, shift, times } => {
+        WireAction::DeleteBack { n } => format!("delete-back {n}"),
+        WireAction::TypeText { text, .. } => format!("type-text {}", quote(text)),
+        WireAction::Paste { plain, .. } => format!("paste {}", quote(plain)),
+        WireAction::PressKey { key, shift, times } => {
             let shift = if *shift { " shift" } else { "" };
             format!("press-key {key} x{times}{shift}")
         }
-        Action::MoveCaretBack(n) => format!("move-caret-back {n}"),
-        Action::Wait(ms) => format!("wait {ms}"),
-        Action::ShowForm { spec, .. } => {
-            let names: Vec<&str> = spec.iter().map(|f| f.name.as_str()).collect();
+        WireAction::MoveCaretBack { n } => format!("move-caret-back {n}"),
+        WireAction::Wait { ms } => format!("wait {ms}"),
+        WireAction::ShowForm { fields, .. } => {
+            let names: Vec<&str> = fields.iter().map(|f| f.name.as_str()).collect();
             format!("show-form {}", names.join(", "))
         }
-        Action::Expanded {
+        WireAction::Expanded {
             snippet,
             chars_saved,
             ..
         } => format!("expanded {snippet} saved {chars_saved}"),
-        Action::Diagnostic(_) => return None,
+        WireAction::Diagnostic { .. } => return None,
     })
 }
 

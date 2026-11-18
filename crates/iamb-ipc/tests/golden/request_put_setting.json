@@ -1,0 +1,9 @@
+{
+  "body": {
+    "key": "date_format",
+    "type": "put_setting",
+    "value": "%d.%m.%Y"
+  },
+  "id": 30,
+  "kind": "request"
+}

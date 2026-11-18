@@ -1,0 +1,20 @@
+{
+  "id": 11,
+  "kind": "response",
+  "result": {
+    "status": {
+      "clients": 1,
+      "injection": "idle",
+      "listener": true,
+      "memory_locked": true,
+      "paused": false,
+      "pid": 4242,
+      "revision": 3,
+      "snippets": 12,
+      "suspended": true,
+      "ui_connected": false,
+      "version": "0.0.0"
+    },
+    "type": "status"
+  }
+}

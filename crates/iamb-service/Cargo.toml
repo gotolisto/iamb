@@ -1,0 +1,37 @@
+[package]
+name = "iamb-service"
+description = "The Iamb background service: supervisor and worker (listener, engine, injector, focus, store, IPC). No network code."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "iamb-service"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+# No networking crate may ever be added here, directly or through a dependency (ADR-0008);
+# `tests/no_network.rs` checks the sources and the resolved dependency names. No async runtime
+# (ADR-0009) and no logging framework: `src/log.rs` is a small in-house file logger.
+[dependencies]
+iamb-core = { path = "../iamb-core" }
+iamb-ipc = { path = "../iamb-ipc" }
+iamb-platform = { path = "../iamb-platform" }
+iamb-store = { path = "../iamb-store" }
+
+[target.'cfg(windows)'.dependencies]
+iamb-platform-windows = { path = "../iamb-platform-windows" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+iamb-platform-macos = { path = "../iamb-platform-macos" }
+
+[dev-dependencies]
+tempfile = "3.27.0"

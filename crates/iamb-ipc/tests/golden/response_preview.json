@@ -1,0 +1,11 @@
+{
+  "id": 15,
+  "kind": "response",
+  "result": {
+    "error": {
+      "code": "E_UNKNOWN_TOKEN",
+      "position": 3
+    },
+    "type": "preview"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "body": {
+    "limit": 100,
+    "type": "outbox_read"
+  },
+  "id": 33,
+  "kind": "request"
+}

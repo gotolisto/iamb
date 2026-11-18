@@ -5,11 +5,11 @@ use std::path::Path;
 use iamb_core::model::{CaseMode, Snippet, Trigger};
 use iamb_store::ListOptions;
 
-use super::folders::{SEP, folder_map, parse_path, path_of};
+use super::folders::{SEP, folder_map, folder_map_of, parse_path, path_of};
 use crate::cli::ListArgs;
 use crate::error::CliError;
 use crate::output::{json_string, line};
-use crate::session::Session;
+use crate::service::{self, Backend};
 
 struct Row {
     snippet: Snippet,
@@ -51,11 +51,11 @@ pub fn run(data_dir: &Path, args: &ListArgs) -> Result<(), CliError> {
         .as_deref()
         .map(|f| parse_path(f).map(|p| p.join(SEP)))
         .transpose()?;
-    let s = Session::open(data_dir)?;
-    let folders = folder_map(&s)?;
-    let mut rows: Vec<Row> = s
-        .store
-        .list_snippets(ListOptions::LIVE)?
+    let (folders, snippets) = match service::open(data_dir)? {
+        Backend::Local(s) => (folder_map(&s)?, s.store.list_snippets(ListOptions::LIVE)?),
+        Backend::Service(mut r) => (folder_map_of(r.profile, r.folders()?), r.snippets()?),
+    };
+    let mut rows: Vec<Row> = snippets
         .into_iter()
         .filter(|sn| folders.contains_key(&sn.folder_id))
         .map(|sn| Row {

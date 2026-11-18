@@ -6,7 +6,10 @@ use iamb_core::model::Timestamp;
 use iamb_core::model::{Folder, Id};
 use iamb_store::{ListOptions, StoreError, WriteTx};
 
+use iamb_ipc::{RequestBody, ResponseBody};
+
 use crate::error::CliError;
+use crate::service::{Remote, unexpected};
 use crate::session::{Session, new_folder};
 
 /// Separator between folder names in a path.
@@ -25,12 +28,54 @@ pub fn parse_path(text: &str) -> Result<Vec<String>, CliError> {
 
 /// The personal profile's live folders by id.
 pub fn folder_map(s: &Session) -> Result<BTreeMap<Id, Folder>, CliError> {
-    Ok(s.store
-        .list_folders(ListOptions::LIVE)?
+    Ok(folder_map_of(
+        s.profile,
+        s.store.list_folders(ListOptions::LIVE)?,
+    ))
+}
+
+/// The folders of `profile` among `folders`, by id.
+pub fn folder_map_of(profile: Id, folders: Vec<Folder>) -> BTreeMap<Id, Folder> {
+    folders
         .into_iter()
-        .filter(|f| f.profile_id == s.profile)
+        .filter(|f| f.profile_id == profile)
         .map(|f| (f.meta.id, f))
-        .collect())
+        .collect()
+}
+
+/// Finds the folder at `path` through the service, creating missing levels with `PutFolder`.
+/// Unlike [`ensure_path`] this is not one transaction: the caller checks for conflicts before,
+/// so only a change made by someone else in between can leave a new, empty folder behind.
+pub fn ensure_path_remote(
+    remote: &mut Remote,
+    mut map: BTreeMap<Id, Folder>,
+    path: &[String],
+) -> Result<Id, CliError> {
+    let mut parent: Option<Id> = None;
+    for name in path {
+        let found = map
+            .values()
+            .find(|f| f.parent_id == parent && &f.name == name)
+            .map(|f| f.meta.id);
+        let id = if let Some(id) = found {
+            id
+        } else {
+            let position = i64::try_from(map.values().filter(|f| f.parent_id == parent).count())
+                .unwrap_or(i64::MAX);
+            let folder = new_folder(remote.profile, parent, name, position, remote.now);
+            let id = folder.meta.id;
+            match remote.call(RequestBody::PutFolder {
+                folder: folder.clone(),
+            })? {
+                ResponseBody::Saved { .. } => {}
+                _ => return Err(unexpected()),
+            }
+            map.insert(id, folder);
+            id
+        };
+        parent = Some(id);
+    }
+    parent.ok_or_else(|| CliError::new("empty folder path"))
 }
 
 /// The path text of a folder.

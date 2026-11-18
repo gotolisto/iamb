@@ -1,0 +1,11 @@
+{
+  "body": {
+    "status": {
+      "last_sync": 1763400000000,
+      "signed_in": true
+    },
+    "type": "set_sync_status"
+  },
+  "id": 39,
+  "kind": "request"
+}

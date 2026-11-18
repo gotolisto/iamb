@@ -1,0 +1,13 @@
+{
+  "id": 6,
+  "kind": "response",
+  "result": {
+    "hits": [
+      {
+        "score": 90,
+        "snippet": "01010101-0101-0101-0101-010101010101"
+      }
+    ],
+    "type": "search_results"
+  }
+}

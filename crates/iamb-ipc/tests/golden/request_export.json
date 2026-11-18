@@ -1,0 +1,9 @@
+{
+  "body": {
+    "format": "csv",
+    "path": "/tmp/library.csv",
+    "type": "export"
+  },
+  "id": 11,
+  "kind": "request"
+}

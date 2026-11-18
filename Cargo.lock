@@ -503,6 +503,9 @@ dependencies = [
  "clap",
  "getrandom",
  "iamb-core",
+ "iamb-ipc",
+ "iamb-platform",
+ "iamb-service",
  "iamb-store",
  "tempfile",
 ]
@@ -516,6 +519,19 @@ dependencies = [
  "serde_json",
  "toml",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "iamb-ipc"
+version = "0.0.0"
+dependencies = [
+ "iamb-core",
+ "iamb-platform",
+ "iamb-platform-macos",
+ "iamb-platform-windows",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -548,6 +564,19 @@ version = "0.0.0"
 dependencies = [
  "iamb-platform",
  "windows-sys",
+]
+
+[[package]]
+name = "iamb-service"
+version = "0.0.0"
+dependencies = [
+ "iamb-core",
+ "iamb-ipc",
+ "iamb-platform",
+ "iamb-platform-macos",
+ "iamb-platform-windows",
+ "iamb-store",
+ "tempfile",
 ]
 
 [[package]]
