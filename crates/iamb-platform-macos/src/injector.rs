@@ -1,56 +1,86 @@
-//! The injector. **Task 2.4** fills this file.
+//! The injector: synthetic key events and pasteboard pastes (architecture §4.2, §4.6, §5;
+//! ADR-0010, ADR-0019; the protocol in the trait docs of
+//! [`Injector`](iamb_platform::Injector)).
 //!
-//! What it must do (architecture §4.2, §4.6, §5; ADR-0019; the protocol in the trait docs of
-//! [`Injector`]):
+//! # One expansion
 //!
-//! - Post the start marker, wait for the hand-off to seal
-//!   ([`TypedHandoff::wait_sealed`]), then send the output and the end marker.
-//! - Synthesise key events from a private event source: the leading deletion (the
-//!   expansion's own plus the characters typed after the trigger,
-//!   [`compensate`](iamb_platform::compensate)), the text as Unicode strings on key events,
-//!   the characters to type again ([`TypedHandoff::read`], copied out inside the closure and
-//!   zeroed after posting) and the end marker. macOS cannot deliver a batch without
-//!   interleaving, so real keys between the markers are the engine's
-//!   `typed_during_injection` case; keep the window short.
-//! - Mark every synthetic event in the event-source user data
-//!   ([`Marker::encode_i64`](iamb_platform::Marker::encode_i64)):
-//!   [`Marker::Output`](iamb_platform::Marker::Output) for output, the injection markers for
-//!   the two no-op events.
-//! - Choose how text is sent (key events, or a paste for long text) and how many presses a
-//!   deletion or caret move needs from a per-application strategy table kept here, with the
-//!   request's overrides on top.
-//! - Without Accessibility the system drops synthetic events: report
-//!   [`PermissionDenied`](iamb_platform::PlatformError::PermissionDenied).
-//! - Pasting uses `clipboard.rs`: snapshot, transient write, paste shortcut, restore.
+//! 1. Without the right to post events (Accessibility; `CGPreflightPostEventAccess`) nothing
+//!    is posted and the outcome is `Failed(PermissionDenied(Accessibility))`: the system
+//!    would drop the events silently.
+//! 2. A private event source (`kCGEventSourceStatePrivate`) is created, so the events neither
+//!    read nor change the modifier state of the real keyboard, and its user data
+//!    (`kCGEventSourceUserData`) is set to [`Marker::Output`](iamb_platform::Marker). Every
+//!    event also gets its marker set explicitly, and its modifier flags, so a key the user
+//!    holds down does not leak into Iamb's output.
+//! 3. The start marker: a release of F20 (a key that types nothing, which few keyboards have,
+//!    like the listener's self-test) marked `InjectionStart`.
+//! 4. [`TypedHandoff::wait_sealed`](iamb_platform::TypedHandoff::wait_sealed) gives `k`, or
+//!    the reason to cancel. Then the deletion (`n + k` presses of Delete, keycode 51,
+//!    [`compensate`](iamb_platform::compensate)), the steps, the `k` characters again, and
+//!    the end marker (F20 released, marked `InjectionEnd`). The driver is [`run`]; the plan
+//!    of key operations is [`plan`].
+//!
+//! macOS cannot deliver a batch of events that real keys cannot interleave. A key the user
+//! types between the two markers lands inside the output; the listener reports it between
+//! `InjectionStarted` and `InjectionFinished`, and the engine records `TypedDuringInjection`
+//! (architecture §4.6). The injector keeps that window short: the plan is made before the
+//! start marker, and between the markers it only posts.
+//!
+//! # Where events are posted
+//!
+//! At the HID event tap (`kCGHIDEventTap`), the point where events from the keyboard enter the
+//! system. From there they pass through every tap of the login session, the listener's
+//! included, in the same queue and the same order as real keys. That is what the marker
+//! protocol needs: the start and end markers must be seen by the listener at their true
+//! position among real keys. Posting at the session tap would skip any tap placed before it,
+//! which real keys pass through and Iamb's events would not.
+//!
+//! # Text
+//!
+//! Text travels as the Unicode string of key events (`CGEventKeyboardSetUnicodeString`) on a
+//! neutral key code, at most 20 UTF-16 code units per event, cut only at grapheme cluster
+//! boundaries ([`chunk`], [`segment`]): accents, emoji with skin tones, flags and ZWJ sequences
+//! arrive whole. Line breaks are the strategy's Return (plain, Shift, Option, Control+Option),
+//! tabs are Tab. Text above the strategy's threshold, and all text where the strategy says so,
+//! is pasted instead.
+//!
+//! # Pasting
+//!
+//! A `Paste` step, and text sent by paste, go through the pasteboard: snapshot, transient
+//! write, Command+V marked as output (the key code of V, with the string "v" so that the
+//! shortcut is found on any keyboard layout), a bounded wait (`paste_wait_ms`), restore. See
+//! `clipboard::paste`.
+//!
+//! # The strategy table
+//!
+//! [`strategy`] holds the per-application table (bundle identifier → typing method, paste
+//! threshold, line-break key, key delay, paste wait, chunk size) with a reason per built-in
+//! entry, and reads the user's overrides from the settings JSON
+//! (`Platform::set_injection_settings`).
+//!
+//! # Failures
+//!
+//! Every way out is a clean [`InjectionOutcome`](iamb_platform::InjectionOutcome): `Failed`
+//! before the start marker (permission, event source), `Cancelled` when the hand-off says so
+//! (no end marker follows), `Failed` without an end marker when the system refuses an event
+//! after the start marker, as the trait requires; the service then sends
+//! `InjectionCancelled`, which ends the flight in the engine.
+//!
+//! # Privacy
+//!
+//! Text to type lives in fixed-size chunks that zero themselves when dropped and show only
+//! their length in `Debug`. The characters typed after the trigger are copied out of the
+//! hand-off into a stack buffer, chunked, posted and zeroed. Nothing here logs.
 
-use iamb_platform::{InjectionOutcome, InjectionRequest, Injector, PlatformError, TypedHandoff};
+pub(crate) mod chunk;
+pub(crate) mod json;
+pub(crate) mod plan;
+pub(crate) mod run;
+pub(crate) mod segment;
+pub(crate) mod strategy;
 
-use crate::Platform;
+#[cfg(target_os = "macos")]
+mod mac;
 
-/// The injector's state: the strategy table.
-#[derive(Debug, Default)]
-pub(crate) struct State {}
-
-impl Injector for Platform {
-    fn inject(&self, _request: &InjectionRequest, _typed: &TypedHandoff) -> InjectionOutcome {
-        let State {} = &self.injector;
-        InjectionOutcome::Failed(PlatformError::Unsupported)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use iamb_platform::core_types::ExpansionId;
-
-    use super::*;
-
-    #[test]
-    fn not_implemented_yet() {
-        let platform = Platform::new();
-        let request = InjectionRequest::new(ExpansionId::from_raw(1), Vec::new());
-        assert_eq!(
-            platform.inject(&request, &TypedHandoff::new()),
-            InjectionOutcome::Failed(PlatformError::Unsupported)
-        );
-    }
-}
+#[cfg(target_os = "macos")]
+pub(crate) use mac::State;

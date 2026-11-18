@@ -59,23 +59,26 @@
 //! - Shared decisions are not made here: marker values, named-key classification, the
 //!   overflow rule, compensation and peer verification are functions of `iamb-platform`.
 
-#[cfg(target_os = "macos")]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod clipboard;
 #[cfg(target_os = "macos")]
 mod endpoint;
 #[cfg(target_os = "macos")]
 mod focus;
-#[cfg(target_os = "macos")]
+// `clipboard`, `hotkeys`, `injector`, `listener` and `permissions` keep their decisions in
+// plain Rust submodules that are built and tested on every system; their macOS code is gated
+// inside. Off macOS nothing but the tests uses them.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod hotkeys;
-#[cfg(target_os = "macos")]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod injector;
-#[cfg(target_os = "macos")]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod listener;
 #[cfg(target_os = "macos")]
 mod login_item;
 #[cfg(target_os = "macos")]
 mod memory;
-#[cfg(target_os = "macos")]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod permissions;
 
 /// The macOS platform: implements every trait of `iamb-platform`
@@ -115,6 +118,8 @@ mod tests {
         assert_platform::<Platform>();
         let shared: std::sync::Arc<dyn iamb_platform::Platform> =
             std::sync::Arc::new(Platform::new());
-        assert!(!shared.permission_status().all_satisfied());
+        // What the status is depends on the machine; that it can be asked through the trait
+        // object is the point.
+        let _ = shared.permission_status();
     }
 }

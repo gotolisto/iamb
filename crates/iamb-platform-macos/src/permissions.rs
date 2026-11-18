@@ -1,52 +1,42 @@
-//! Permissions. **Task 2.3** fills this file (with `listener.rs`).
+//! Permissions: Accessibility and Input Monitoring (architecture §5, ADR-0021).
 //!
-//! What it must do (architecture §5; ADR-0021; the trait docs of [`Permissions`]):
+//! # Whose permissions
 //!
-//! - `permission_status` reports Accessibility (is this process a trusted Accessibility
-//!   client?) and Input Monitoring (may this process listen to events?), without showing a
-//!   prompt. It is always asked in the worker, the process that holds the grants; the UI
-//!   host never checks its own.
-//! - `open_settings` opens the matching page of System Settings, Privacy & Security. The
-//!   first time, it also makes the system list Iamb there (the prompting variants of the
-//!   two checks do that).
-//! - A grant given while the worker runs must be seen without a restart: do not cache.
+//! Every answer here is about **the process that asks**. macOS grants Accessibility and Input
+//! Monitoring to one signed program, and `AXIsProcessTrusted` and
+//! `CGPreflightListenEventAccess` report on the caller. The grants that matter are those of the
+//! worker, the signed helper app that creates the event tap (architecture §3.2, ADR-0021), so
+//! the worker asks and reports over IPC; the UI host never asks about itself. Nothing in this
+//! module looks at another process.
+//!
+//! # What the calls do
+//!
+//! | Call | Accessibility | Input Monitoring | Shows a prompt |
+//! | --- | --- | --- | --- |
+//! | `permission_status` | `AXIsProcessTrusted` | `CGPreflightListenEventAccess` | never |
+//! | `open_settings(kind)`, permission missing | `AXIsProcessTrustedWithOptions` with the prompt option | `CGRequestListenEventAccess` | the system may, once |
+//! | `open_settings(kind)`, then | opens the Accessibility page | opens the Input Monitoring page | no |
+//!
+//! Requesting is never a side effect of a status check: the rules are in
+//! [`policy`], which is plain Rust and tested on every system. The listener uses the same
+//! checks before it creates its tap, because creating a tap without the permission would make
+//! the system show its prompt uninvited.
+//!
+//! Nothing is cached: a grant given while the worker runs is seen by the next call.
+//!
+//! # Limits
+//!
+//! - macOS does not say whether a missing permission was refused or never asked for; both are
+//!   [`Grant::Denied`](iamb_platform::Grant).
+//! - macOS applies a change of Input Monitoring to a running process only in part: a tap
+//!   created before the change keeps its old rights until the process restarts. The worker
+//!   restarts its listener when the status changes, and the supervisor restarts the worker
+//!   when the self-test keeps failing (architecture §3.2).
 
-use iamb_platform::{Grant, PermissionKind, PermissionStatus, Permissions, PlatformError, Result};
+pub(crate) mod policy;
 
-use crate::Platform;
+#[cfg(target_os = "macos")]
+mod mac;
 
-/// The permission checker's state.
-#[derive(Debug, Default)]
-pub(crate) struct State {}
-
-impl Permissions for Platform {
-    fn permission_status(&self) -> PermissionStatus {
-        let State {} = &self.permissions;
-        // Not implemented: nothing is known to be granted.
-        PermissionStatus {
-            accessibility: Grant::Denied,
-            input_monitoring: Grant::Denied,
-        }
-    }
-
-    fn open_settings(&self, _kind: PermissionKind) -> Result<()> {
-        Err(PlatformError::Unsupported)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn not_implemented_yet_and_nothing_is_granted() {
-        let platform = Platform::new();
-        assert_eq!(platform.permission_status().missing(), PermissionKind::ALL);
-        for kind in PermissionKind::ALL {
-            assert_eq!(
-                platform.open_settings(kind),
-                Err(PlatformError::Unsupported)
-            );
-        }
-    }
-}
+#[cfg(target_os = "macos")]
+pub(crate) use mac::{State, SystemProbe};
