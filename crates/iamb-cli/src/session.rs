@@ -79,7 +79,9 @@ fn data_dir_from_env(os: Os, get: impl Fn(&str) -> Option<OsString>) -> Result<P
             }
         }
         Os::Unix => {
-            if let Some(xdg) = nonempty(get("XDG_DATA_HOME")).filter(|p| p.is_absolute()) {
+            // `has_root` rather than `is_absolute`: on Unix they agree, and it keeps the Unix rule
+            // testable on a Windows host, where "/xdg" has a root but no drive prefix.
+            if let Some(xdg) = nonempty(get("XDG_DATA_HOME")).filter(|p| p.has_root()) {
                 return Ok(xdg.join("iamb"));
             }
             if let Some(home) = nonempty(get("HOME")) {
