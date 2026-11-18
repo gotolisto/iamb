@@ -1,0 +1,22 @@
+[package]
+name = "iamb-platform"
+description = "What Iamb needs from an operating system: traits, shared event types and an in-memory mock. No OS calls."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+iamb-core = { path = "../iamb-core" }
+
+[dev-dependencies]
+# Reads the manifests in `tests/lints.rs` (the OS crates must mirror the workspace lints).
+toml = "1.2.1"

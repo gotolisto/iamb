@@ -1,0 +1,122 @@
+[package]
+name = "iamb-platform-macos"
+description = "macOS implementations of the Iamb platform traits. An empty crate on every other system."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+# These tables repeat [workspace.lints] from the root Cargo.toml, because a crate cannot
+# inherit the workspace lints and override one of them. The only differences: `unsafe_code`
+# is allowed (this crate and iamb-platform-windows are the two places where it may be,
+# architecture §2), and in exchange every `unsafe` block must carry a `// SAFETY:` comment
+# and an `unsafe fn` gets no implicit unsafe block.
+# `crates/iamb-platform/tests/lints.rs` fails when this copy and the workspace drift apart.
+[lints.rust]
+unsafe_code = "allow"
+unsafe_op_in_unsafe_fn = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
+undocumented_unsafe_blocks = "deny"
+
+[dependencies]
+iamb-platform = { path = "../iamb-platform" }
+
+# One family of bindings generated from the system headers, with default features off and
+# only the types the modules in `src/` need (see the crate docs for why this family). None of
+# these crates has a build script that needs the macOS SDK, so the crate type-checks from
+# Linux. No networking framework may ever be added: this crate is linked into iamb-service
+# (architecture §2, ADR-0008).
+#
+#   objc2, objc2-foundation        everything that talks to Objective-C classes
+#   objc2-core-foundation          listener (run loop, mach port), every CF type
+#   objc2-core-graphics            listener (event tap), injector (event source, posting),
+#                                  permissions (Input Monitoring), focus (window ids)
+#   objc2-application-services     focus and permissions (the Accessibility API)
+#   objc2-app-kit                  clipboard (pasteboard), focus (frontmost application)
+#   objc2-service-management       login_item
+#   objc2-security                 endpoint (code signature of the peer)
+#   libc                           memory (mlock), endpoint (peer credentials, modes)
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2.191"
+objc2 = "0.6.5"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSPasteboard",
+    "NSPasteboardItem",
+    "NSRunningApplication",
+    "NSWorkspace",
+] }
+objc2-application-services = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "AXAttributeConstants",
+    "AXConstants",
+    "AXError",
+    "AXNotificationConstants",
+    "AXRoleConstants",
+    "AXUIElement",
+    "AXValue",
+    "AXValueConstants",
+    "HIServices",
+] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CFArray",
+    "CFBase",
+    "CFData",
+    "CFDictionary",
+    "CFMachPort",
+    "CFNumber",
+    "CFRunLoop",
+    "CFString",
+    "CFURL",
+] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CGError",
+    "CGEvent",
+    "CGEventSource",
+    "CGEventTypes",
+    "CGRemoteOperation",
+    "CGWindow",
+] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSArray",
+    "NSData",
+    "NSDictionary",
+    "NSError",
+    "NSNotification",
+    "NSObject",
+    "NSRunLoop",
+    "NSString",
+    "NSThread",
+    "NSURL",
+    "NSValue",
+] }
+objc2-security = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CSCommon",
+    "SecBase",
+    "SecCode",
+    "SecRequirement",
+    "SecStaticCode",
+] }
+objc2-service-management = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "SMAppService",
+    "SMErrors",
+    "objc2",
+    "objc2-foundation",
+] }

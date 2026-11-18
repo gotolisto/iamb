@@ -31,6 +31,15 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # The OS crates are empty on Linux. Type-check and lint them for their own targets here
+      # (no SDK needed), so a mistake shows in this job before the Windows and macOS legs of
+      # `test` have finished building.
+      - name: Install Windows and macOS targets
+        run: rustup target add x86_64-pc-windows-msvc aarch64-apple-darwin
+      - name: Clippy (Windows code, cross-target)
+        run: cargo clippy -p iamb-platform-windows --target x86_64-pc-windows-msvc --all-targets --locked -- -D warnings
+      - name: Clippy (macOS code, cross-target)
+        run: cargo clippy -p iamb-platform-macos --target aarch64-apple-darwin --all-targets --locked -- -D warnings
       - name: Banned terms
         run: cargo xtask banned-terms
       - name: Template spec examples
@@ -53,6 +62,12 @@ jobs:
         run: cargo build --workspace --all-targets --locked
       - name: Test
         run: cargo test --workspace --locked
+      # Lints the code that only exists on this OS (iamb-platform-windows, iamb-platform-macos
+      # and any `cfg` branch elsewhere), tests included. Linux is linted by the `lint` job.
+      # Runs even when a test failed, so one failing test does not hide lint errors.
+      - name: Clippy (this OS)
+        if: ${{ !cancelled() && runner.os != 'Linux' }}
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   coverage:
     name: coverage
