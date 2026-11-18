@@ -1,4 +1,4 @@
-description = "A form triggered by Enter presses Enter again after submit"
+description = "A form triggered by Enter presses Enter again after submit; the submit waits for the verdict on the field focus returned to"
 
 [[snippet]]
 abbr = "dear"
@@ -22,5 +22,10 @@ focus = "mail"
 
 [[step]]
 submit = { Name = "Kim" }
+held = true
+
+[[step]]
+secure = "normal"
 expect = [{ delete = 5 }, { text = "Dear Kim,", verbatim = [[5, 8]] }, { key = "enter" }, { expanded = "dear" }]
-suspended = true
+suspended = false
+held = false

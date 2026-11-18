@@ -60,7 +60,8 @@
 //!
 //! Optional checks after a step: `now_calls = n` and `clipboard_calls = n` (totals so far),
 //! `suspended = bool`, `buffered = n` (buffer length), `state = "idle" | "pending" |
-//! "injecting"`, `form_open = bool`.
+//! "injecting"`, `form_open = bool`, `held = bool` (an explicit request waits for the focus
+//! verdict).
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
@@ -234,6 +235,8 @@ pub struct Step {
     pub state: Option<String>,
     /// `form_open` (see the module docs).
     pub form_open: Option<bool>,
+    /// `held` (see the module docs).
+    pub held: Option<bool>,
 }
 
 /// One expected action. Exactly one of the leading keys is set.
@@ -529,6 +532,11 @@ impl Runner {
             && want != self.engine.open_form().is_some()
         {
             return Err(format!("form_open: expected {want}"));
+        }
+        if let Some(want) = step.held
+            && want != self.engine.holds_request()
+        {
+            return Err(format!("held: expected {want}"));
         }
         if let Some(want) = &step.state {
             let got = match self.engine.injection_state() {

@@ -211,7 +211,9 @@ Ask the user for a value in the fill-in form and insert it.
 
 - A field's value is `text`/`area`: what was entered; `choice`: the chosen option; `toggle`: `yes`
   or `no`. What is inserted is the value, except for a toggle, which inserts its `on` or `off`
-  text.
+  text. A submitted value that does not fit its field is corrected, not reported: a `choice` value
+  that is not one of the options becomes the default, a `toggle` value other than `yes` counts as
+  `no`, and line breaks in a `text` value become spaces.
 - Fields with the same name are one form field, asked once and inserted everywhere. If two
   definitions of one name differ in type or options, that is `E_FIELD_CONFLICT`; if they differ
   only in default, the first definition wins.

@@ -246,6 +246,23 @@ fn conflict_exits_1_and_names_existing() {
     );
 }
 
+/// Review 1.9 finding 12: the store folds like the matcher, so two abbreviations that differ
+/// only in final versus medial sigma conflict instead of one silently shadowing the other.
+#[test]
+fn sigma_variants_conflict_like_the_matcher_folds() {
+    let d = TempDir::new().unwrap();
+    let id = ok(d.path(), &["add", "ΟΔΟΣ", "first"]);
+    for other in ["οδοσ", "οδος"] {
+        let err = fail(d.path(), &["add", other, "second"]);
+        assert!(
+            err.contains("already used") && err.contains(id.trim()),
+            "{err}"
+        );
+    }
+    let out = expand(d.path(), &["οδος "]);
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "first \n");
+}
+
 #[test]
 fn invalid_abbreviation_exits_1_readably() {
     let d = TempDir::new().unwrap();
@@ -530,6 +547,28 @@ fn expand_reports_template_error_code() {
         String::from_utf8(out.stderr)
             .unwrap()
             .contains("iamb: E_DATE_RANGE")
+    );
+}
+
+/// Review 1.9 finding 4: a snippet with a resolve error is matchable, so the command reports
+/// the engine's diagnostic wherever the abbreviation is typed, not only at the end.
+#[test]
+fn expand_reports_resolve_error_from_the_engine() {
+    let d = TempDir::new().unwrap();
+    ok(d.path(), &["add", "lost", "{snippet abbr=\"nowhere\"}"]);
+    ok(d.path(), &["add", "loop", "{snippet abbr=\"loop\"}"]);
+    let out = expand(d.path(), &["lost and found "]);
+    assert_eq!(out.status.code(), Some(3));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "lost and found \n");
+    assert_eq!(
+        String::from_utf8(out.stderr).unwrap().trim(),
+        "iamb: E_SNIPPET_NOT_FOUND"
+    );
+    let out = expand(d.path(), &["loop "]);
+    assert_eq!(out.status.code(), Some(3));
+    assert_eq!(
+        String::from_utf8(out.stderr).unwrap().trim(),
+        "iamb: E_SNIPPET_CYCLE"
     );
 }
 

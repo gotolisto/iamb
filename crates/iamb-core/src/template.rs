@@ -57,6 +57,12 @@
 //!   The character limit itself is checked exactly, but lazily: grapheme clusters are counted
 //!   only once more than 100,000 bytes are typed, and only before another render error and at
 //!   the end, which reports the same first error as checking after every piece of text.
+//! - **Form values.** A submitted value is checked against its field when the template renders
+//!   (review 1.9 finding 14): a `choice` value that is not one of the options renders as the
+//!   field's default; a `toggle` value other than `yes` counts as unchecked (`no`), also in
+//!   `{if}` comparisons; a `text` (single-line) value has each line break replaced by a space.
+//!   `area` values are used as given. Nothing is reported: the form normally cannot produce
+//!   such values, and a stale or hand-made answer should still type something sensible.
 //! - **Characters.** Limits and `cursor_back` count extended grapheme clusters (§3), using
 //!   `unicode-segmentation`. Field names are limited to 64 grapheme clusters.
 //! - **Positions.** Error positions and token ranges are offsets in Unicode scalar values
@@ -71,6 +77,8 @@ mod parse;
 mod render;
 mod resolve;
 mod syntax;
+
+pub(crate) use resolve::Compiler;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
@@ -248,7 +256,8 @@ pub struct FieldSpec {
 }
 
 /// Values entered in the fill-in form: field name → value. A field without a value keeps its
-/// default. Line endings are normalised to LF on insertion.
+/// default. Line endings are normalised to LF on insertion. Values that do not fit their field
+/// are corrected when the template renders (see the module docs, "Form values").
 ///
 /// Values are user-entered text (architecture §8): `Debug` prints only how many there are.
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -348,26 +357,29 @@ impl Template {
     /// error in a nested body, then `E_FIELD_CONFLICT`, then `E_FIELD_UNDEFINED`), with the
     /// snippet whose body contains it.
     pub fn resolve(&self, snippets: &dyn SnippetSource) -> Result<Resolved, TemplateError> {
-        resolve::resolve(Arc::clone(&self.body), snippets)
+        resolve::Compiler::new(snippets).resolve(Arc::clone(&self.body))
     }
 }
 
 /// A template with its snippets inlined and its form built. Every parse and resolve error has
 /// been ruled out; only the run-time limits can still fail in [`render`](Self::render).
+///
+/// Nested bodies are shared, not copied: resolves made by one snapshot build link to the same
+/// parsed and expanded bodies (see the module docs).
 #[derive(Debug, Clone)]
 pub struct Resolved {
-    bodies: Vec<resolve::Linked>,
-    form: Vec<FieldSpec>,
+    root: Arc<resolve::Expanded>,
+    /// Shared with other templates whose form is the same included body's.
+    form: Arc<resolve::Form>,
     needs_clipboard: bool,
     uses_cursor: bool,
-    date_slots: usize,
 }
 
 impl Resolved {
     /// The fill-in fields, in order of first appearance. Empty when there is nothing to ask.
     #[must_use]
     pub fn form(&self) -> &[FieldSpec] {
-        &self.form
+        &self.form.fields
     }
 
     /// True when a `{clipboard}` appears anywhere in the resolved template (taken branch or not),

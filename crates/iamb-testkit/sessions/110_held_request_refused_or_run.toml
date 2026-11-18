@@ -1,0 +1,106 @@
+description = "A held explicit request is refused by every verdict but normal (excluded, unknown, own window, and composing when the verdict arrives); a held reopen runs on normal; a refused submit keeps its values; forgetting form values drops a held submit"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[snippet]]
+abbr = "pw"
+body = '{field name="Code"}'
+
+[[step]]
+type = "pw "
+expect = [{ form = "pw", fields = ["Code"] }]
+
+[[step]]
+focus = "notes"
+
+[[step]]
+submit = { Code = "1234" }
+held = true
+form_open = false
+
+[[step]]
+secure = "excluded"
+expect = [{ diagnostic = "suspended_excluded_app", app = "notes" }, { diagnostic = "refused_excluded_app", snippet = "pw", app = "notes" }]
+held = false
+state = "idle"
+
+[[step]]
+focus = "viewer"
+
+[[step]]
+reopen = true
+held = true
+
+[[step]]
+secure = "unknown"
+expect = [{ diagnostic = "suspended_unknown_focus", app = "viewer" }, { diagnostic = "refused_unknown_focus", snippet = "pw", app = "viewer" }]
+held = false
+
+[[step]]
+focus = "iamb"
+
+[[step]]
+expand = "brb"
+held = true
+
+[[step]]
+secure = "own_window"
+expect = [{ diagnostic = "refused_own_window", snippet = "brb", app = "iamb" }]
+held = false
+
+[[step]]
+focus = "editor"
+
+[[step]]
+reopen = true
+held = true
+
+[[step]]
+secure = "normal"
+expect = [{ form = "pw", fields = ["Code"], last_values = { Code = "1234" } }]
+held = false
+form_open = true
+
+[[step]]
+focus = "mail"
+
+[[step]]
+submit = { Code = "5678" }
+held = true
+
+[[step]]
+compose = true
+held = true
+
+[[step]]
+secure = "normal"
+expect = [{ diagnostic = "refused_composing", snippet = "pw", app = "mail" }]
+held = false
+
+[[step]]
+compose = false
+
+[[step]]
+reopen = true
+expect = [{ form = "pw", fields = ["Code"], last_values = { Code = "5678" } }]
+
+[[step]]
+focus = "chat"
+
+[[step]]
+submit = { Code = "0000" }
+held = true
+
+[[step]]
+forget = true
+held = false
+
+[[step]]
+secure = "normal"
+state = "idle"
+
+[[step]]
+reopen = true
+expect = [{ diagnostic = "no_last_form" }]

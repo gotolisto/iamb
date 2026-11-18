@@ -10,7 +10,7 @@ use super::syntax::{
 };
 use super::{FieldKind, KeyName, MAX_DEPTH};
 use crate::datetime::{DateError, Format, Shift};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Longest field name, in grapheme clusters.
@@ -362,10 +362,9 @@ fn place_field(
                 .attr(AttrName::Options)
                 .ok_or(fail(ErrorKind::MissingAttr, m.start))?;
             let options: Vec<String> = a.value.split('|').map(str::to_owned).collect();
-            let has_duplicate = options
-                .iter()
-                .enumerate()
-                .any(|(i, o)| options[..i].contains(o));
+            // Linear: a set of the options seen so far (review 1.9 finding 10).
+            let mut seen = HashSet::with_capacity(options.len());
+            let has_duplicate = !options.iter().all(|o| seen.insert(o.as_str()));
             if options.iter().any(String::is_empty) || has_duplicate {
                 return Err(fail(ErrorKind::BadValue, a.value_at));
             }

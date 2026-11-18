@@ -1,4 +1,4 @@
-description = "A render error emits only a diagnostic: nothing is deleted and the buffer is cleared"
+description = "A render error emits only a diagnostic: nothing is deleted and the typed abbreviation stays in the buffer, as on screen"
 
 [[snippet]]
 abbr = "brb"
@@ -11,7 +11,7 @@ body = '{date shift="+9999y"}'
 [[step]]
 type = "far "
 expect = [{ diagnostic = "E_DATE_RANGE", snippet = "far" }]
-buffered = 0
+buffered = 4
 state = "idle"
 
 [[step]]

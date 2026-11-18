@@ -2,15 +2,18 @@
 
 use super::error::{ErrorKind, TemplateError};
 use super::parse::{Cond, Node, is_info_separator};
+use super::resolve::Expanded;
 use super::syntax::normalize_newlines;
 use super::{
-    FieldKind, FormValues, KeyName, MAX_OUTPUT_BYTES, MAX_OUTPUT_CHARS, MAX_RENDER_STEPS,
-    MAX_WAIT_TOTAL_MS, Resolved,
+    FieldKind, FieldSpec, FormValues, KeyName, MAX_OUTPUT_BYTES, MAX_OUTPUT_CHARS,
+    MAX_RENDER_STEPS, MAX_WAIT_TOTAL_MS, Resolved,
 };
 use crate::datetime::{Format, LocalDateTime, Locale, Shift};
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::fmt;
 use std::ops::Range;
+use std::sync::Arc;
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Everything outside the template that one expansion depends on, captured once at match time
@@ -134,10 +137,14 @@ impl fmt::Debug for Redacted {
 struct Renderer<'r> {
     res: &'r Resolved,
     ctx: &'r RenderContext<'r>,
-    /// The value of each form field, in form order.
-    values: Vec<&'r str>,
-    clipboard: Option<Cow<'r, str>>,
-    dates: Vec<Option<Result<String, ErrorKind>>>,
+    /// The value of each form field, in form order, after [`field_value`].
+    values: &'r [Cow<'r, str>],
+    /// The clipboard with LF line endings, and trimmed: computed once per render, however many
+    /// `{clipboard}` nodes the walk visits.
+    clipboard: &'r str,
+    clipboard_trimmed: &'r str,
+    /// Date text by (body, date slot): each distinct node is computed at most once per render.
+    dates: HashMap<(usize, usize), Result<String, ErrorKind>>,
     actions: Vec<RenderedAction>,
     typed_bytes: usize,
     waited_ms: u32,
@@ -146,28 +153,53 @@ struct Renderer<'r> {
     steps: usize,
 }
 
+/// The value a field renders with: the submitted value checked against the field, or the
+/// default (see the module docs of [`template`](super), "Form values").
+fn field_value<'v>(spec: &'v FieldSpec, submitted: Option<&'v str>) -> Cow<'v, str> {
+    let Some(value) = submitted else {
+        return Cow::Borrowed(&spec.default);
+    };
+    match &spec.kind {
+        FieldKind::Choice(options) if !options.iter().any(|o| o == value) => {
+            Cow::Borrowed(&spec.default)
+        }
+        FieldKind::Toggle => Cow::Borrowed(if value == "yes" { "yes" } else { "no" }),
+        FieldKind::Text if value.contains('\n') => Cow::Owned(value.replace('\n', " ")),
+        _ => Cow::Borrowed(value),
+    }
+}
+
 pub(crate) fn render(
     res: &Resolved,
     ctx: &RenderContext<'_>,
     values: &FormValues,
 ) -> Result<Rendered, TemplateError> {
+    let clipboard = if res.needs_clipboard {
+        normalize_newlines(ctx.clipboard.unwrap_or(""))
+    } else {
+        Cow::Borrowed("")
+    };
+    let values: Vec<Cow<'_, str>> = res
+        .form
+        .fields
+        .iter()
+        .map(|spec| field_value(spec, values.get(&spec.name)))
+        .collect();
     let mut r = Renderer {
         res,
         ctx,
-        values: res
-            .form
-            .iter()
-            .map(|spec| values.get(&spec.name).unwrap_or(&spec.default))
-            .collect(),
-        clipboard: None,
-        dates: vec![None; res.date_slots],
+        values: &values,
+        clipboard: &clipboard,
+        clipboard_trimmed: clipboard
+            .trim_matches(|c: char| c.is_whitespace() || is_info_separator(c)),
+        dates: HashMap::new(),
         actions: Vec::new(),
         typed_bytes: 0,
         waited_ms: 0,
         cursor_at: None,
         steps: 0,
     };
-    r.run(0, &res.bodies[0].body.nodes)
+    r.run(&res.root, &res.root.body.nodes)
         .map_err(TemplateError::new)?;
     if r.over_char_limit() {
         return Err(TemplateError::new(ErrorKind::OutputTooLarge));
@@ -251,9 +283,7 @@ impl<'r> Renderer<'r> {
         Ok(())
     }
 
-    fn run(&mut self, b: usize, nodes: &'r [Node]) -> Result<(), ErrorKind> {
-        let res = self.res;
-        let linked = &res.bodies[b];
+    fn run(&mut self, at: &'r Expanded, nodes: &'r [Node]) -> Result<(), ErrorKind> {
         for node in nodes {
             self.steps += 1;
             if self.steps > MAX_RENDER_STEPS {
@@ -272,21 +302,17 @@ impl<'r> Renderer<'r> {
                     } else {
                         self.ctx.date_format
                     });
-                    match self.date_text(linked.date_base + slot, format, shift) {
+                    let key = (Arc::as_ptr(&at.body).addr(), *slot);
+                    match self.date_text(key, format, shift) {
                         Ok(text) => self.emit(&text, false)?,
                         Err(kind) => return self.fail(kind),
                     }
                 }
                 Node::Clipboard { trim } => {
-                    let ctx_clipboard = self.ctx.clipboard;
-                    let clip = self
-                        .clipboard
-                        .get_or_insert_with(|| normalize_newlines(ctx_clipboard.unwrap_or("")))
-                        .clone();
                     let clip = if *trim {
-                        clip.trim_matches(|c: char| c.is_whitespace() || is_info_separator(c))
+                        self.clipboard_trimmed
                     } else {
-                        &clip
+                        self.clipboard
                     };
                     self.emit(clip, true)?;
                 }
@@ -296,11 +322,12 @@ impl<'r> Renderer<'r> {
                     }
                 }
                 Node::Snippet(index) => {
-                    let child = linked.snippets[*index];
-                    self.run(child, &res.bodies[child].body.nodes)?;
+                    let child: &'r Expanded = &at.snippets[*index];
+                    self.run(child, &child.body.nodes)?;
                 }
                 Node::Field { slot, toggle } => {
-                    let value = self.values[linked.fields[*slot]];
+                    let values = self.values;
+                    let value: &str = &values[self.field(at, *slot)];
                     match toggle {
                         Some(t) => {
                             let text = if value == "yes" { &t.on } else { &t.off };
@@ -332,8 +359,8 @@ impl<'r> Renderer<'r> {
                     then,
                     otherwise,
                 } => {
-                    let taken = self.condition(linked.fields[*slot], cond);
-                    self.run(b, if taken { then } else { otherwise })?;
+                    let taken = self.condition(self.field(at, *slot), cond);
+                    self.run(at, if taken { then } else { otherwise })?;
                 }
             }
         }
@@ -342,29 +369,39 @@ impl<'r> Renderer<'r> {
 }
 
 impl Renderer<'_> {
-    /// The text of the date node in cache slot `slot`, computed at most once per render.
+    /// The form index of field slot `slot` of the body `at`.
+    fn field(&self, at: &Expanded, slot: usize) -> usize {
+        self.res
+            .form
+            .index
+            .get(at.body.field_names[slot].as_str())
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// The text of the date node `key` (body, slot), computed at most once per render.
     fn date_text(
         &mut self,
-        slot: usize,
+        key: (usize, usize),
         format: &Format,
         shift: &Shift,
     ) -> Result<String, ErrorKind> {
-        if let Some(done) = &self.dates[slot] {
+        if let Some(done) = self.dates.get(&key) {
             return done.clone();
         }
         let done = shift
             .apply(self.ctx.now)
             .map(|t| format.render(&t, &self.ctx.locale))
             .map_err(|_| ErrorKind::DateRange);
-        self.dates[slot] = Some(done.clone());
+        self.dates.insert(key, done.clone());
         done
     }
 
     /// Whether an `{if}` on form field `field` takes its first branch (spec §4.8).
     fn condition(&self, field: usize, cond: &Cond) -> bool {
-        let value = self.values[field];
+        let value: &str = &self.values[field];
         match cond {
-            Cond::Truthy if self.res.form[field].kind == FieldKind::Toggle => value == "yes",
+            Cond::Truthy if self.res.form.fields[field].kind == FieldKind::Toggle => value == "yes",
             Cond::Truthy => !value.is_empty(),
             Cond::Is(x) => value == x,
             Cond::Not(x) => value != x,

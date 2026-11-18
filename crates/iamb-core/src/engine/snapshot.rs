@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use crate::datetime::{Format, Locale};
 use crate::matcher::{Delimiters, MatchEntry, Matcher, Shadowing};
-use crate::model::{Id, Snippet};
-use crate::template::{Resolved, SnippetSource, Template, TemplateError};
+use crate::model::{Id, Snippet, fold_abbreviation};
+use crate::template::{Compiler, Resolved, SnippetSource, TemplateError};
 
 /// The engine settings that are part of a snapshot (architecture §4.3: settings are not in the
 /// environment).
@@ -44,8 +44,10 @@ pub enum ExclusionReason {
         /// The snippet that holds the abbreviation.
         kept: Id,
     },
-    /// The template does not parse or resolve. The snippet can still be found by `{snippet}`
-    /// lookups of other templates (which then fail with the same error).
+    /// The template does not parse (architecture §4.4). The snippet can still be found by
+    /// `{snippet}` lookups of other templates (which then fail with the same error). A template
+    /// that parses but fails to resolve stays matchable: typing it emits a diagnostic with the
+    /// resolve error.
     Template(TemplateError),
 }
 
@@ -63,6 +65,8 @@ struct Entry {
     snippet: Snippet,
     /// `None` for duplicate losers, which are never compiled.
     compiled: Option<Result<Resolved, TemplateError>>,
+    /// The template itself parses (it may still fail to resolve).
+    parses: bool,
 }
 
 struct Inner {
@@ -85,8 +89,9 @@ struct Inner {
 ///   precedence order: of two snippets whose abbreviations fold to the same key, the first
 ///   holds the abbreviation and the later one neither triggers nor resolves. `{snippet}` lookups
 ///   use it ([`SnippetSource`] is implemented on the snapshot), including disabled snippets.
-/// - The **matchable set** is the enabled subset whose template parses and resolves, minus
-///   duplicates. Typing matches against it.
+/// - The **matchable set** is the enabled subset whose template parses, minus duplicates.
+///   Typing matches against it. A matched snippet whose template fails to resolve emits a
+///   diagnostic with the resolve error and nothing else.
 /// - Every template is parsed and resolved once, here.
 ///
 /// Rich snippets (`SnippetKind::Rich`) are compiled and expanded as plain templates through
@@ -128,32 +133,42 @@ impl Snapshot {
             entries.push(Entry {
                 snippet,
                 compiled: None,
+                parses: false,
             });
         }
 
-        // Compile every snippet that holds its abbreviation, against the reference set.
-        let compiled: Vec<Option<Result<Resolved, TemplateError>>> = {
+        // Compile every snippet that holds its abbreviation, against the reference set. One
+        // compiler for the whole build: each distinct body is parsed and expanded once and
+        // shared by every template that includes it (review 1.9 finding 2).
+        let compiled: Vec<Option<Result<Result<Resolved, TemplateError>, TemplateError>>> = {
             let source = RefSource {
                 entries: &entries,
                 by_fold_key: &by_fold_key,
             };
+            let mut compiler = Compiler::new(&source);
             entries
                 .iter()
                 .enumerate()
                 .map(|(i, e)| {
                     let holds = by_fold_key.get(&e.snippet.abbreviation.fold_key()) == Some(&i);
-                    holds.then(|| Template::parse(&e.snippet.body)?.resolve(&source))
+                    holds.then(|| {
+                        compiler.resolve_snippet(e.snippet.abbreviation.as_str(), &e.snippet.body)
+                    })
                 })
                 .collect()
         };
         for (entry, c) in entries.iter_mut().zip(compiled) {
-            entry.compiled = c;
+            entry.parses = matches!(c, Some(Ok(_)));
+            entry.compiled = c.map(|c| c.and_then(|resolved| resolved));
         }
 
+        // The matchable set: enabled holders whose template parses (architecture §4.4). One that
+        // fails to resolve stays matchable, so typing it reports the error instead of letting a
+        // shorter abbreviation fire in its place (review 1.9 finding 4).
         let mut matchable = Vec::new();
         for entry in &entries {
             match &entry.compiled {
-                Some(Ok(_)) if entry.snippet.enabled => {
+                Some(_) if entry.snippet.enabled && entry.parses => {
                     matchable.push(MatchEntry::from_snippet(&entry.snippet));
                 }
                 Some(Err(e)) if entry.snippet.enabled => excluded.push(Exclusion {
@@ -201,9 +216,9 @@ impl Snapshot {
 
     /// Snippets of the reference set that are not matchable for a reason other than being
     /// disabled: duplicate losers (whether enabled or not) and enabled snippets whose template
-    /// fails to parse or resolve. Losers first in input order, then template errors, then
-    /// duplicates only the matcher detects (abbreviations that differ in fold key but match
-    /// alike, such as final and medial sigma).
+    /// fails to parse. Losers first in input order, then parse errors, then
+    /// duplicates only the matcher detects (none today: the matcher folds exactly as
+    /// [`Abbreviation::fold_key`](crate::model::Abbreviation::fold_key) does).
     #[must_use]
     pub fn excluded(&self) -> &[Exclusion] {
         &self.inner.excluded
@@ -284,7 +299,7 @@ fn lookup_body<'a>(
     by_fold_key: &HashMap<String, usize>,
     abbreviation: &str,
 ) -> Option<&'a str> {
-    let &i = by_fold_key.get(&abbreviation.to_lowercase())?;
+    let &i = by_fold_key.get(&fold_abbreviation(abbreviation))?;
     let snippet = &entries[i].snippet;
     (snippet.abbreviation.as_str() == abbreviation).then_some(snippet.body.as_str())
 }

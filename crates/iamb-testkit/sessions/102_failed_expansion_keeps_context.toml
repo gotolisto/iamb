@@ -1,0 +1,29 @@
+description = "A failed expansion leaves the abbreviation on screen and in the buffer: a word-start abbreviation typed right after an immediate one does not fire mid-word, but does after a delimiter"
+
+[[snippet]]
+abbr = "dr"
+body = '{date shift="+9999y"}'
+trigger = "immediate"
+
+[[snippet]]
+abbr = "far"
+body = '{date shift="+9999y"}'
+
+[[snippet]]
+abbr = "ty"
+body = "thank you"
+
+[[step]]
+type = "dr"
+expect = [{ diagnostic = "E_DATE_RANGE", snippet = "dr" }]
+
+[[step]]
+type = "ty "
+
+[[step]]
+type = "far "
+expect = [{ diagnostic = "E_DATE_RANGE", snippet = "far" }]
+
+[[step]]
+type = "ty "
+expect = [{ delete = 3 }, { text = "thank you" }, { text = " " }, { expanded = "ty" }]

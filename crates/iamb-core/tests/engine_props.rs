@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use env::FakeEnv;
 use iamb_core::engine::{
     Action, AppId, BoundaryKind, Engine, EngineSettings, Event, ExpansionId, FormSessionId,
-    InjectionState, SecureState, Snapshot, dry_run,
+    InjectionState, Reason, SecureState, Snapshot, dry_run,
 };
 use iamb_core::model::{Abbreviation, CaseMode, Id, Snippet, SyncMeta, Timestamp, Trigger};
 use iamb_core::sensitive::Sensitive;
@@ -146,7 +146,11 @@ const STATES: [SecureState; 5] = [
 /// What the test knows independently of the engine.
 #[derive(Default)]
 struct Model {
-    verdict_normal: bool,
+    /// The focus verdict: `None` after `FocusChanged` (or at start) and before the next verdict,
+    /// when explicit requests wait; `Some(true)` for `Normal`.
+    verdict: Option<bool>,
+    /// The form session of a submit the engine holds for the verdict, if any.
+    held_submit: Option<FormSessionId>,
     paused: bool,
     composing: bool,
     /// Typed characters (including Enter and Tab as delimiters) since the last event that
@@ -171,7 +175,27 @@ struct Translated {
 
 impl Model {
     fn suspended(&self) -> bool {
-        !self.verdict_normal || self.paused || self.composing
+        self.verdict != Some(true) || self.paused || self.composing
+    }
+
+    /// Whether an explicit request arriving now is held for the verdict.
+    fn holds(&self) -> bool {
+        self.verdict.is_none() && !self.composing
+    }
+
+    /// The session a form answer names: the last one shown, or a raw id.
+    fn session(&self, last: bool, raw: u64) -> FormSessionId {
+        match (last, self.last_session) {
+            (true, Some(s)) => s,
+            _ => FormSessionId::from_raw(raw),
+        }
+    }
+
+    /// An explicit request other than a submit: if held, it replaces a held submit.
+    fn request(&mut self) {
+        if self.holds() {
+            self.held_submit = None;
+        }
     }
 
     /// Turns `op` into an event and updates what the model knows before it is handled.
@@ -205,13 +229,15 @@ impl Model {
             }
             Op::Focus => {
                 m.typed = 0;
-                m.verdict_normal = false;
+                m.verdict = None;
                 Event::FocusChanged(AppId("app".to_owned()))
             }
             Op::Secure(s) => {
                 m.typed = 0;
                 let state = STATES[usize::from(*s)];
-                m.verdict_normal = state == SecureState::Normal;
+                m.verdict = Some(state == SecureState::Normal);
+                // A held submit runs (or is refused) now.
+                submitted = m.held_submit.take();
                 Event::SecureState(state)
             }
             Op::Pause(on) => {
@@ -226,6 +252,7 @@ impl Model {
             }
             Op::Overflow => {
                 m.typed = 0;
+                m.held_submit = None;
                 Event::Overflow
             }
             Op::Inject(kind, last, raw) => {
@@ -240,10 +267,7 @@ impl Model {
                 }
             }
             Op::Submit(last, raw) => {
-                let session = match (last, m.last_session) {
-                    (true, Some(s)) => s,
-                    _ => FormSessionId::from_raw(*raw),
-                };
+                let session = m.session(*last, *raw);
                 submitted = Some(session);
                 let values: FormValues = [("N", "v")].into_iter().collect();
                 Event::FormSubmitted {
@@ -252,16 +276,19 @@ impl Model {
                 }
             }
             Op::Cancel(last, raw) => {
-                let session = match (last, m.last_session) {
-                    (true, Some(s)) => s,
-                    _ => FormSessionId::from_raw(*raw),
-                };
+                let session = m.session(*last, *raw);
                 Event::FormCancelled { session }
             }
-            Op::Expand(i) => Event::ExpandRequest {
-                snippet: Id::from_bytes([*i; 16]),
-            },
-            Op::Reopen => Event::ReopenLastForm,
+            Op::Expand(i) => {
+                m.request();
+                Event::ExpandRequest {
+                    snippet: Id::from_bytes([*i; 16]),
+                }
+            }
+            Op::Reopen => {
+                m.request();
+                Event::ReopenLastForm
+            }
             Op::Snapshot => Event::SnapshotChanged(snapshot.clone()),
         };
         Translated {
@@ -286,7 +313,7 @@ fn check(
     let mut m = Model::default();
     if start_normal {
         engine.handle(Event::SecureState(SecureState::Normal), &env);
-        m.verdict_normal = true;
+        m.verdict = Some(true);
     }
     for op in ops {
         let suspended = m.suspended();
@@ -298,11 +325,33 @@ fn check(
             submitted,
         } = m.translate(op, &snapshot);
         let typed_before_event = bound;
+        let is_submit = matches!(event, Event::FormSubmitted { .. });
         let actions = engine.handle(event, &env);
         if is_key && suspended {
             prop_assert!(actions.is_empty(), "actions while suspended: {:?}", actions);
             prop_assert_eq!(engine.buffered_len(), 0);
         }
+        // Explicit requests never type into a field not confirmed as normal (review 1.9
+        // finding 5): any typing action needs the verdict `Normal` and no composition.
+        let types = actions.iter().any(|a| !matches!(a, Action::Diagnostic(_)));
+        if types {
+            prop_assert!(
+                m.verdict == Some(true) && !m.composing,
+                "typing actions without a normal verdict: {:?}",
+                actions
+            );
+        }
+        // A submit for an open session that arrives before the verdict is held.
+        if is_submit && m.holds() {
+            let unknown = actions.iter().any(
+                |a| matches!(a, Action::Diagnostic(d) if d.reason == Reason::UnknownFormSession),
+            );
+            if !unknown {
+                m.held_submit = submitted;
+            }
+        }
+        // Only a pending verdict holds a request.
+        prop_assert!(!engine.holds_request() || m.verdict.is_none());
         for action in &actions {
             match action {
                 Action::DeleteBack(n) => {

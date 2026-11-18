@@ -1,4 +1,4 @@
-description = "Submitting into a window the focus thread calls secure still works: the user asked explicitly"
+description = "Submitting a form into a window the focus thread calls secure is refused; the values stay remembered and the form can be reopened in a normal field"
 
 [[snippet]]
 abbr = "pw"
@@ -17,4 +17,16 @@ expect = [{ diagnostic = "suspended_secure_field", app = "login" }]
 
 [[step]]
 submit = { Code = "1234" }
-expect = [{ delete = 3 }, { text = "1234", verbatim = [[0, 4]] }, { text = " " }, { expanded = "pw" }]
+expect = [{ diagnostic = "refused_secure_field", snippet = "pw", app = "login" }]
+form_open = false
+state = "idle"
+
+[[step]]
+focus = "editor"
+
+[[step]]
+secure = "normal"
+
+[[step]]
+reopen = true
+expect = [{ form = "pw", fields = ["Code"], last_values = { Code = "1234" } }]

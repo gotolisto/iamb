@@ -1,0 +1,19 @@
+# cargo-mutants configuration for the matcher mutation sample (test strategy §2, review 1.9 §4).
+#
+# cargo-mutants (27.1) reads `.cargo/mutants.toml` only at the workspace root, so pass this file
+# explicitly. From the workspace root:
+#
+#   cargo mutants --config crates/iamb-core/.cargo/mutants.toml --timeout 120 -j 3
+#
+# `--list` shows the sample without running it: 115 mutants in the three matcher files. Target:
+# at least 80% of viable mutants caught, every missed one reviewed. Known miss:
+# `<impl Drop for KeyBuffer>::drop` (see "Known gaps" in `src/matcher/buffer.rs`).
+
+# The sample: the matcher, its key buffer and its tries. Paths are relative to the workspace root.
+examine_globs = [
+    "crates/iamb-core/src/matcher.rs",
+    "crates/iamb-core/src/matcher/*.rs",
+]
+
+# The tests that exercise the matcher live in this crate.
+test_package = ["iamb-core"]

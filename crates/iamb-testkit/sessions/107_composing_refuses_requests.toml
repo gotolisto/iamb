@@ -1,0 +1,20 @@
+description = "While an input method is composing, explicit requests are refused like a field that is not normal"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+compose = true
+
+[[step]]
+expand = "brb"
+expect = [{ diagnostic = "refused_composing", snippet = "brb" }]
+held = false
+
+[[step]]
+compose = false
+
+[[step]]
+expand = "brb"
+expect = [{ text = "be right back" }, { expanded = "brb" }]

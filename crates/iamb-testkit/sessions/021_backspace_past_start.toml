@@ -1,4 +1,4 @@
-description = "Backspace on an empty buffer does nothing; typing afterwards matches from the start"
+description = "Backspace past the start of the buffer deletes a character the buffer never held: what precedes the caret is unknown, so a word-start abbreviation fires only after a boundary"
 
 [[snippet]]
 abbr = "brb"
@@ -10,6 +10,9 @@ type = "br"
 [[step]]
 backspace = 5
 buffered = 0
+
+[[step]]
+type = "brb "
 
 [[step]]
 type = "brb "

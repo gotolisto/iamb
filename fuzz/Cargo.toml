@@ -1,9 +1,9 @@
 # Fuzz targets for iamb-core (cargo-fuzz layout). Its own workspace, so the main workspace's
 # `cargo build --workspace` never sees it; it is the only code built with nightly.
 #
-# Run (from this directory):
-#   cargo +nightly fuzz run template -- -max_total_time=600
-# Seed corpus: one file per `template` in ../spec/template/examples/*.toml (see the target).
+# Run (from this directory, after seeding the corpus; see README.md):
+#   cargo +nightly fuzz run template corpus/template -- -timeout=1 -max_total_time=600 -rss_limit_mb=512
+# (`-timeout=1`: an input that takes over a second counts as a failure.)
 
 [package]
 name = "iamb-fuzz"

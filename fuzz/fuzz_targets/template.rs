@@ -2,8 +2,8 @@
 //! it with a fixed context. Besides crashes, it checks that every error comes from the phase that
 //! may find it and that successful output is well formed.
 //!
-//! Seed the corpus with the spec example templates, e.g.
-//! `python3 -c 'import tomllib,pathlib,hashlib; [pathlib.Path("corpus/template", hashlib.sha1(e["template"].encode()).hexdigest()).write_text(e["template"]) for p in pathlib.Path("../spec/template/examples").glob("*.toml") for e in tomllib.loads(p.read_text())["example"]]'`
+//! Seed the corpus and run it as `README.md` in this directory says (with a per-input time limit,
+//! `-timeout=1`).
 
 #![no_main]
 

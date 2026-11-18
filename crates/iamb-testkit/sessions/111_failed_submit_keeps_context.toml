@@ -1,0 +1,42 @@
+description = "A submitted form that fails to render leaves the abbreviation on screen: after its delimiter a word-start abbreviation fires, right after an immediate one it does not"
+
+[[snippet]]
+abbr = "slow"
+body = 'x{if field="Slow"}{wait ms=10000}{wait ms=10000}{wait ms=10000}{wait ms=10000}{endif}'
+
+[[snippet]]
+abbr = "qq"
+body = 'x{if field="Slow"}{wait ms=10000}{wait ms=10000}{wait ms=10000}{wait ms=10000}{endif}'
+trigger = "immediate"
+
+[[snippet]]
+abbr = "ty"
+body = "thank you"
+
+[[step]]
+type = "slow "
+expect = [{ form = "slow", fields = ["Slow"] }]
+
+[[step]]
+submit = { Slow = "yes" }
+expect = [{ diagnostic = "E_WAIT_TOTAL", snippet = "slow" }]
+buffered = 0
+
+[[step]]
+type = "ty "
+expect = [{ delete = 3 }, { text = "thank you" }, { text = " " }, { expanded = "ty" }]
+
+[[step]]
+type = "qq"
+expect = [{ form = "qq", fields = ["Slow"] }]
+
+[[step]]
+submit = { Slow = "yes" }
+expect = [{ diagnostic = "E_WAIT_TOTAL", snippet = "qq" }]
+
+[[step]]
+type = "ty "
+
+[[step]]
+type = "ty "
+expect = [{ delete = 3 }, { text = "thank you" }, { text = " " }, { expanded = "ty" }]

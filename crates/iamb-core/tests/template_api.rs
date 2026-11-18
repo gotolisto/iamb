@@ -705,3 +705,38 @@ fn keys_and_waits_stay_separate_actions() {
         assert_eq!(KeyName::from_name(key.as_str()), Some(key));
     }
 }
+
+// ------------------------------------------------------------------ form values
+
+/// Review 1.9 finding 14: values that do not fit their field are corrected at render.
+#[test]
+fn form_values_are_checked_against_their_fields() {
+    let source = "Size: {field name=Size type=choice options=\"S|M|L\" default=M}\
+        {if field=T is=maybe} MAYBE{endif}{if field=T} ON{endif}\
+        {field name=T type=toggle on=+ off=-}|{field name=One}|{field name=Many type=area}";
+    let r = render(
+        source,
+        &NoSnippets,
+        &[
+            ("Size", "XXL"),
+            ("T", "maybe"),
+            ("One", "two\nlines\r\nhere"),
+            ("Many", "a\nb"),
+        ],
+    );
+    // XXL is not an option: the default; "maybe" is not "yes": unchecked, also for `is`; the
+    // one-line field gets spaces; the area keeps its line break.
+    assert_eq!(r.text(), "Size: M-|two lines here|a\nb");
+    assert_eq!(
+        texts(&r),
+        [("Size: M-|two lines here|a\nb", &[6..7, 9..23, 24..27][..])]
+    );
+
+    // Values that fit are used as given.
+    let r = render(
+        source,
+        &NoSnippets,
+        &[("Size", "L"), ("T", "yes"), ("One", "x"), ("Many", "")],
+    );
+    assert_eq!(r.text(), "Size: L ON+|x|");
+}

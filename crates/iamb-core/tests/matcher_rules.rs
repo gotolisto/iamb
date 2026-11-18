@@ -410,7 +410,7 @@ fn longest_abbreviation_64_chars() {
     // The second abbreviation (63 chars) is distinct and delimiter-triggered.
     assert_eq!(m.len(), 2);
 
-    // Immediate with word start: the preceding space still fits (1 + 64 = 65).
+    // Immediate with word start: the preceding space still fits (1 + 64 = 65 of 66).
     let mut buf = KeyBuffer::new();
     for _ in 0..100 {
         buf.push('z');
@@ -427,7 +427,7 @@ fn longest_abbreviation_64_chars() {
 }
 
 #[test]
-fn delimiter_64_char_abbreviation_and_truncation_fail_closed() {
+fn delimiter_64_char_abbreviation_with_word_start_fires_after_other_text() {
     let long: String = "0123456789".repeat(7)[..ABBREVIATION_MAX_CHARS].to_owned();
     let m = matcher([
         del(1, &long),
@@ -435,9 +435,17 @@ fn delimiter_64_char_abbreviation_and_truncation_fail_closed() {
     ]);
     // From a fresh buffer: 64 + delimiter = 65 characters, the abbreviation starts the buffer.
     assert_eq!(last(&m, &format!("{long} ")), plain(1, 64, Some(' ')));
-    // After other typing, the character before the abbreviation has fallen off; the matcher
-    // cannot know it was a boundary, so a word-start snippet does not fire (fails closed).
-    assert_eq!(last(&m, &format!("ok {long} ")), None);
+    // After other typing, the buffer (66 characters) still holds the character before the
+    // abbreviation, so a word-start snippet fires after a boundary (review 1.9 finding 6)...
+    assert_eq!(last(&m, &format!("ok {long} ")), plain(1, 64, Some(' ')));
+    // ...and not mid-word.
+    assert_eq!(last(&m, &format!("ok{long} ")), None);
+    // Even after a long run of typing (the buffer full and truncated), the character before a
+    // 64-character abbreviation is still held, so the rule can always be decided.
+    let mut buf = KeyBuffer::new();
+    push_all(&mut buf, &format!("{} {long} ", "z".repeat(100)));
+    assert_eq!(buf.len(), KEY_BUFFER_CAPACITY);
+    assert_eq!(m.lookup(&buf), plain(1, 64, Some(' ')));
     // Without word start it fires regardless.
     let x = long.replace('0', "x");
     assert_eq!(last(&m, &format!("ok {x} ")), plain(2, 64, Some(' ')));

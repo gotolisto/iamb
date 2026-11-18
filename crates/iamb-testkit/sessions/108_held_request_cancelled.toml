@@ -1,0 +1,42 @@
+description = "A held request is replaced by a newer one and dropped by overflow, each with a diagnostic"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[snippet]]
+abbr = "omw"
+body = "on my way"
+
+[[step]]
+focus = "mail"
+
+[[step]]
+expand = "brb"
+held = true
+
+[[step]]
+expand = "omw"
+expect = [{ diagnostic = "request_cancelled", snippet = "brb" }]
+held = true
+
+[[step]]
+secure = "normal"
+expect = [{ text = "on my way" }, { expanded = "omw" }]
+held = false
+
+[[step]]
+focus = "chat"
+
+[[step]]
+expand = "brb"
+held = true
+
+[[step]]
+overflow = true
+expect = [{ diagnostic = "request_cancelled", snippet = "brb" }]
+held = false
+
+[[step]]
+secure = "normal"
+state = "idle"

@@ -1,0 +1,28 @@
+description = "A palette pick that arrives after a focus change waits for the verdict and runs on normal; a second focus change keeps it held"
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+[[step]]
+focus = "palette"
+
+[[step]]
+secure = "own_window"
+
+[[step]]
+focus = "mail"
+
+[[step]]
+expand = "brb"
+held = true
+suspended = true
+
+[[step]]
+focus = "editor"
+held = true
+
+[[step]]
+secure = "normal"
+expect = [{ text = "be right back" }, { expanded = "brb" }]
+held = false

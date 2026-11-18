@@ -32,10 +32,10 @@
 //! # Rules
 //!
 //! - **Folding.** Matching compares characters folded one at a time with
-//!   [`char::to_lowercase`], with final sigma `ς` folded to `σ`. The result is
-//!   [`Abbreviation::fold_key`] with every `ς` replaced by `σ`: [`str::to_lowercase`] picks
-//!   between the two from the surrounding letters, which a matcher reading the caret backwards
-//!   cannot see, so `ΟΔΟΣ`, `οδοσ` and `οδος` all match each other. No other folding (such as
+//!   [`char::to_lowercase`], with final sigma `ς` folded to `σ`, exactly as
+//!   [`Abbreviation::fold_key`] folds: [`str::to_lowercase`] would pick between the two sigmas
+//!   from the surrounding letters, which a matcher reading the caret backwards cannot see, so
+//!   `ΟΔΟΣ`, `οδοσ` and `οδος` all match each other. No other folding (such as
 //!   `ß` versus `ss`) is applied. Folding may turn one character into several (`İ` → `i` +
 //!   U+0307); a match always covers whole typed characters and [`Match::typed_chars`] counts
 //!   typed characters.
@@ -273,9 +273,10 @@ struct Entry {
     word_start: bool,
 }
 
-/// Folds one typed or abbreviation character for matching (see the module docs).
+/// Folds one typed or abbreviation character for matching (see the module docs). The same
+/// function builds [`Abbreviation::fold_key`].
 fn fold(c: char) -> std::char::ToLowercase {
-    if c == 'ς' { 'σ' } else { c }.to_lowercase()
+    crate::model::fold_char(c)
 }
 
 /// The folded character sequence the tries are keyed on.
@@ -301,7 +302,7 @@ impl Matcher {
     ///
     /// An entry whose folded abbreviation equals an earlier entry's is dropped (the first
     /// wins) and listed in [`duplicates`](Self::duplicates). Equal [`Abbreviation::fold_key`]s
-    /// always fold equal.
+    /// always fold equal, and the converse holds too: both use one folding function.
     ///
     /// # Panics
     ///

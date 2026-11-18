@@ -20,9 +20,6 @@ body = '{snippet abbr="brb"}'
 abbr = "brb"
 reason = "duplicate"
 
-[[excluded]]
-abbr = "refloser"
-reason = "E_SNIPPET_NOT_FOUND"
 
 [[step]]
 type = "brb "
@@ -31,6 +28,10 @@ expect = [{ delete = 4 }, { text = "first" }, { text = " " }, { expanded = "BRB"
 [[step]]
 type = "ref "
 expect = [{ delete = 4 }, { text = "first" }, { text = " " }, { expanded = "ref" }]
+
+[[step]]
+type = "refloser "
+expect = [{ diagnostic = "E_SNIPPET_NOT_FOUND", snippet = "refloser" }]
 
 [[step]]
 expand = "brb"

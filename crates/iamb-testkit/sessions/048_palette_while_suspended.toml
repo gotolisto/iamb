@@ -1,4 +1,4 @@
-description = "Palette requests are explicit and work while typing is suspended"
+description = "A palette pick never types into a field already known to be secure: it is refused with a diagnostic"
 
 [[snippet]]
 abbr = "brb"
@@ -9,8 +9,10 @@ focus = "vault"
 
 [[step]]
 secure = "secure"
-expect = [{ diagnostic = "suspended_secure_field" }]
+expect = [{ diagnostic = "suspended_secure_field", app = "vault" }]
 
 [[step]]
 expand = "brb"
-expect = [{ text = "be right back" }, { expanded = "brb" }]
+expect = [{ diagnostic = "refused_secure_field", snippet = "brb", app = "vault" }]
+held = false
+state = "idle"

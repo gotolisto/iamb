@@ -362,12 +362,29 @@ impl Abbreviation {
 
     /// The case-folded form used for uniqueness and matching.
     ///
-    /// The folding rule is [`str::to_lowercase`] (Unicode default lower-casing, no
-    /// normalisation). Two abbreviations collide when their fold keys are equal.
+    /// The folding rule is the matcher's, applied one character at a time: each character is
+    /// lower-cased on its own with [`char::to_lowercase`] (Unicode default lower-casing, no
+    /// normalisation, no context), after mapping final sigma `ς` to `σ`. So `ΟΔΟΣ`, `οδοσ` and
+    /// `οδος` all fold to `οδοσ`, where [`str::to_lowercase`] would give `οδος` for the first
+    /// (it picks the final form at the end of a word). Two abbreviations collide when their fold
+    /// keys are equal, and exactly then the matcher treats them as one: the store's uniqueness
+    /// index and the matcher use the same key (review 1.9 finding 12).
     #[must_use]
     pub fn fold_key(&self) -> String {
-        self.0.to_lowercase()
+        fold_abbreviation(&self.0)
     }
+}
+
+/// Folds one character of an abbreviation or of typed text (see [`Abbreviation::fold_key`]).
+pub(crate) fn fold_char(c: char) -> std::char::ToLowercase {
+    if c == 'ς' { 'σ' } else { c }.to_lowercase()
+}
+
+/// Folds abbreviation text the way [`Abbreviation::fold_key`] does, for text that has not been
+/// validated as an abbreviation (for example the `abbr` of a `{snippet}` macro).
+#[must_use]
+pub fn fold_abbreviation(text: &str) -> String {
+    text.chars().flat_map(fold_char).collect()
 }
 
 impl fmt::Display for Abbreviation {
