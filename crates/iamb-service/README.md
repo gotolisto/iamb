@@ -9,7 +9,11 @@ The background service (architecture §3, ADR-0001, ADR-0011). One binary, two p
   heartbeat, because it may wait up to 5 s for `run/store.lock`.
 - `iamb-service --worker` (the default): listener → engine → injector, the focus and store
   threads, the service endpoint (§3.1). Exits with status 0 when its standard input ends (the
-  supervisor is gone) and with status 75 when the listener failed its self-test twice.
+  supervisor is gone) and with status 75 when the listener failed its self-test twice. On macOS
+  the native worker's main thread runs the application event loop
+  (`iamb_platform_macos::run_with_main_loop`; no Dock icon, no menu bar), which the listener's
+  keyboard-layout reads and the hotkeys need; the worker's own threads run beside it. The
+  supervisor and `--platform mock` do not use the loop.
 
 ```text
 iamb-service --supervise [--data-dir PATH] [--platform native|mock]

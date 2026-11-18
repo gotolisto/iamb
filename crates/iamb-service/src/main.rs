@@ -8,6 +8,11 @@
 //! `--platform mock` runs the worker against the in-memory mock platform: development and CI
 //! only (it is the only choice on Linux). `--heartbeat-stdout` is passed by the supervisor: the
 //! worker then writes its heartbeat to standard output and exits when standard input ends.
+//!
+//! On macOS the native worker gives its main thread to the application event loop
+//! (`iamb_platform_macos::run_with_main_loop`), which the listener's keyboard-layout reads and
+//! the hotkeys need, and runs on a thread beside it. The supervisor and the mock worker do not
+//! need the loop.
 
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
@@ -72,8 +77,13 @@ fn say(line: &str) {
 }
 
 fn fail(message: &str) -> ExitCode {
+    ExitCode::from(complain(message))
+}
+
+/// Writes `message` to standard error; returns the exit status of a failure.
+fn complain(message: &str) -> u8 {
     eprintln!("iamb-service: {message}");
-    ExitCode::from(1)
+    1
 }
 
 fn main() -> ExitCode {
@@ -90,10 +100,17 @@ fn main() -> ExitCode {
         .platform
         .unwrap_or_else(PlatformChoice::default_for_build);
     if args.supervise {
-        supervise(dirs, choice)
-    } else {
-        work(&dirs, choice, args.heartbeat_stdout)
+        return supervise(dirs, choice);
     }
+    let supervised = args.heartbeat_stdout;
+    #[cfg(target_os = "macos")]
+    if choice == PlatformChoice::Native {
+        let code = iamb_platform_macos::run_with_main_loop(move || {
+            i32::from(work(&dirs, choice, supervised))
+        });
+        return ExitCode::from(u8::try_from(code).unwrap_or(1));
+    }
+    ExitCode::from(work(&dirs, choice, supervised))
 }
 
 /// Panics are logged by location only: a panic message could quote data.
@@ -164,18 +181,19 @@ fn fault(dirs: &DataDirs) -> Fault {
     }
 }
 
-fn work(dirs: &DataDirs, choice: PlatformChoice, supervised: bool) -> ExitCode {
+/// The worker; returns its exit status.
+fn work(dirs: &DataDirs, choice: PlatformChoice, supervised: bool) -> u8 {
     let log = Arc::new(Logger::open(&dirs.logs(), "worker"));
     log_panics(&log);
     let _ = iamb_service::paths::create_private_dir(&dirs.run());
     let fault = fault(dirs);
     if fault == Fault::ExitAtStart {
         log.warn(format_args!("test fault: exiting at start"));
-        return ExitCode::from(1);
+        return 1;
     }
     let platform = match platform::select(choice) {
         Ok(p) => p,
-        Err(e) => return fail(&e),
+        Err(e) => return complain(&e),
     };
     if choice == PlatformChoice::Mock {
         log.warn(format_args!(
@@ -195,7 +213,7 @@ fn work(dirs: &DataDirs, choice: PlatformChoice, supervised: bool) -> ExitCode {
         Ok(w) => w,
         Err(e) => {
             log.error(format_args!("worker did not start: {e}"));
-            return fail(&e.to_string());
+            return complain(&e.to_string());
         }
     };
     if supervised {
@@ -220,8 +238,8 @@ fn work(dirs: &DataDirs, choice: PlatformChoice, supervised: bool) -> ExitCode {
     let reason = worker.wait_exit(None).unwrap_or(ExitReason::Stop);
     worker.stop();
     match reason {
-        ExitReason::Stop => ExitCode::SUCCESS,
-        ExitReason::ListenerDead => ExitCode::from(EXIT_RESTART),
+        ExitReason::Stop => 0,
+        ExitReason::ListenerDead => EXIT_RESTART,
     }
 }
 

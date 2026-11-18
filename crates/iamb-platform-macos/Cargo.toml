@@ -11,6 +11,13 @@ publish.workspace = true
 [lib]
 path = "src/lib.rs"
 
+# `run_with_main_loop` must be called on the process's main thread, which the standard test
+# harness keeps for itself; this test brings its own `main`.
+[[test]]
+name = "main_loop"
+path = "tests/main_loop.rs"
+harness = false
+
 # These tables repeat [workspace.lints] from the root Cargo.toml, because a crate cannot
 # inherit the workspace lints and override one of them. The only differences: `unsafe_code`
 # is allowed (this crate and iamb-platform-windows are the two places where it may be,
@@ -44,7 +51,9 @@ iamb-platform = { path = "../iamb-platform" }
 #   objc2-core-graphics            listener (event tap), injector (event source, posting),
 #                                  permissions (Input Monitoring), focus (window ids)
 #   objc2-application-services     focus and permissions (the Accessibility API)
-#   objc2-app-kit                  clipboard (pasteboard), focus (frontmost application)
+#   objc2-app-kit                  clipboard (pasteboard), focus (frontmost application),
+#                                  main_loop (the application event loop; `NSGraphicsContext`
+#                                  only for the signature of the event that stops it)
 #   objc2-service-management       login_item
 #   objc2-security                 endpoint (code signature of the peer)
 #   libc                           memory (mlock), endpoint (peer credentials, modes)
@@ -53,8 +62,12 @@ libc = "0.2.191"
 objc2 = "0.6.5"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "std",
+    "NSApplication",
+    "NSEvent",
+    "NSGraphicsContext",
     "NSPasteboard",
     "NSPasteboardItem",
+    "NSResponder",
     "NSRunningApplication",
     "NSWorkspace",
 ] }
@@ -74,7 +87,9 @@ objc2-core-foundation = { version = "0.3.2", default-features = false, features 
     "std",
     "CFArray",
     "CFBase",
+    "CFCGTypes",
     "CFData",
+    "CFDate",
     "CFDictionary",
     "CFMachPort",
     "CFNumber",

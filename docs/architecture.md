@@ -90,6 +90,10 @@ set, the reference set (§4.4), the search index and the engine settings (delimi
 formats, locale, excluded apps). Usage-statistics writes and sync bookkeeping do not produce a new
 snapshot.
 
+On macOS the worker's main thread runs the application event loop, because the listener's
+keyboard-layout reads and the hotkey registrations must happen on the main thread and hotkey
+presses are dispatched by that loop; the threads above run beside it.
+
 The listener is observe-only: it never blocks, delays or swallows a key
 ([ADR-0010](decisions/0010-observe-only-listener.md)). Work in the hook callback is bounded:
 translate, push, return (under 1 ms at the 99th percentile). If the channel is full the listener

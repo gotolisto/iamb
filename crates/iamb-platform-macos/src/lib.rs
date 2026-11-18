@@ -1,9 +1,10 @@
 //! macOS implementations of the Iamb platform traits (architecture §5, ADR-0005, ADR-0021).
 //!
 //! On macOS this crate exposes [`Platform`], which implements every trait of
-//! `iamb-platform`. On every other system the crate is empty, so the workspace builds
-//! everywhere and `cargo clippy --target aarch64-apple-darwin` can check it from Linux
-//! (`docs/ci.md`).
+//! `iamb-platform`, and [`run_with_main_loop`], which the worker's `main` calls so that its
+//! main thread runs the application event loop the listener and the hotkeys need. On every
+//! other system the crate is empty, so the workspace builds everywhere and
+//! `cargo clippy --target aarch64-apple-darwin` can check it from Linux (`docs/ci.md`).
 //!
 //! # Layout
 //!
@@ -23,6 +24,10 @@
 //! | `endpoint` | `LocalEndpoint` | 2.6 |
 //!
 //! Until its task lands, a module answers [`Unsupported`](iamb_platform::PlatformError).
+//!
+//! One module implements no trait: `main_loop` ([`run_with_main_loop`]) gives the worker's
+//! main thread to the application event loop, because the listener's keyboard-layout reads
+//! and the hotkeys must happen there (`listener`, `hotkeys`).
 //!
 //! # Bindings
 //!
@@ -50,7 +55,8 @@
 //! - This is one of the two crates where `unsafe` is allowed. Keep each `unsafe` block as
 //!   small as the call it wraps, with a `// SAFETY:` comment that says why the call is sound
 //!   (the lint `clippy::undocumented_unsafe_blocks` is an error here). Nothing outside the
-//!   traits is public.
+//!   traits is public, with one agreed exception: [`run_with_main_loop`], because what the
+//!   main thread runs is decided by the process's `main`, which no trait method can reach.
 //! - No networking framework and no `std::net`: this crate is linked into the service
 //!   (architecture §2).
 //! - The grants (Accessibility, Input Monitoring) belong to the process that creates the
@@ -77,9 +83,14 @@ mod listener;
 #[cfg(target_os = "macos")]
 mod login_item;
 #[cfg(target_os = "macos")]
+mod main_loop;
+#[cfg(target_os = "macos")]
 mod memory;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod permissions;
+
+#[cfg(target_os = "macos")]
+pub use main_loop::run_with_main_loop;
 
 /// The macOS platform: implements every trait of `iamb-platform`
 /// (and so [`iamb_platform::Platform`]).
