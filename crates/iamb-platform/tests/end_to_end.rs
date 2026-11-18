@@ -761,9 +761,9 @@ fn lost_events_during_a_flight_cancel_it() {
         report.outcomes,
         [InjectionOutcome::Cancelled(CancelReason::Overflow)]
     );
-    // The engine already forgot the flight on Overflow, so the cancellation is unexpected
-    // to it and changes nothing.
-    assert_eq!(report.diagnostics, [Reason::UnexpectedInjectionEvent]);
+    // The engine already forgot the flight on Overflow and ignores the late cancellation
+    // silently: no diagnostic, no change.
+    assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
     assert_eq!(report.final_state, Some(InjectionState::Idle));
 }
 

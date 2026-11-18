@@ -177,7 +177,7 @@ Rules for the listener that the events rely on:
 The buffer lives only in memory, holds at most 66 characters (the 64-character maximum abbreviation,
 the character before it for the word-start rule, and one delimiter), is held in a page locked
 against swapping (the engine keeps the buffer in its own heap allocation and exposes that
-allocation's address range so the service can lock it; task 2.6 adds the accessor), and is
+allocation's address range, `Engine::buffer_region()`, so the service can lock it), and is
 overwritten with zeros when cleared. While the
 engine is suspended, `Char` events are dropped without being stored
 ([ADR-0012](decisions/0012-keystroke-privacy.md)). After a focus change the engine stays suspended
@@ -327,7 +327,8 @@ The protocol between the engine and the injector, per expansion:
 Every `Expanded` must be answered by `InjectionStarted` then `InjectionFinished`, or by
 `InjectionCancelled`, even for an empty expansion. Only one expansion is in flight; a palette pick
 or form submit during one is refused with `InjectionBusy`. `Overflow` ends the flight, since the
-markers may have been dropped.
+markers may have been dropped; a late `InjectionFinished` or `InjectionCancelled` for an expansion
+forgotten this way is ignored silently.
 
 The injector needs the characters typed after the trigger (`k` of them) to type them again. The
 engine never hands typed text out, so the thread that feeds listener events to the engine keeps

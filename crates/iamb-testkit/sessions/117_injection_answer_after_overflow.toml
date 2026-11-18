@@ -1,0 +1,80 @@
+description = "Overflow forgets the expansion in flight; the injector's late cancel or finish marker for it is ignored silently, with no diagnostic and no change to the buffer (a late start marker is still unexpected, see 067). Once answered, the id is unexpected again, and so is an id the engine never emitted"
+auto_inject = false
+
+[[snippet]]
+abbr = "brb"
+body = "be right back"
+
+# A pending expansion forgotten by Overflow, then cancelled by the injector.
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]
+state = "pending"
+
+[[step]]
+overflow = true
+state = "idle"
+buffered = 0
+
+[[step]]
+type = "ok"
+buffered = 2
+
+[[step]]
+inject = "cancel"
+buffered = 2
+state = "idle"
+
+[[step]]
+inject = "cancel"
+expect = [{ diagnostic = "unexpected_injection_event" }]
+
+# An injecting expansion forgotten by Overflow, then finished.
+[[step]]
+type = " brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]
+
+[[step]]
+inject = "start"
+state = "injecting"
+
+[[step]]
+overflow = true
+state = "idle"
+
+[[step]]
+inject = "finish"
+state = "idle"
+
+[[step]]
+inject = "finish"
+expect = [{ diagnostic = "unexpected_injection_event" }]
+
+# A pending expansion forgotten by Overflow whose markers both arrive late: the start marker is
+# unexpected, the finish marker is ignored; the next abbreviation expands as usual.
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]
+
+[[step]]
+overflow = true
+
+[[step]]
+inject = "start"
+expect = [{ diagnostic = "unexpected_injection_event" }]
+state = "idle"
+
+[[step]]
+inject = "finish"
+state = "idle"
+
+[[step]]
+type = "brb "
+expect = [{ delete = 4 }, { text = "be right back" }, { text = " " }, { expanded = "brb" }]
+state = "pending"
+
+[[step]]
+inject = "finish"
+expansion = 99
+expect = [{ diagnostic = "unexpected_injection_event" }]
+state = "pending"

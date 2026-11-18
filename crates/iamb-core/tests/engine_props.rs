@@ -163,6 +163,9 @@ struct Model {
     verdict: Option<bool>,
     /// The form session of a submit the engine holds for the verdict, if any.
     held_submit: Option<FormSessionId>,
+    /// The open form session: opened by `ShowForm`, closed by the first submit or cancel that
+    /// names it.
+    open_form: Option<FormSessionId>,
     /// The application of the last `FocusChanged`.
     app: Option<String>,
     /// The application each form session was opened for.
@@ -187,8 +190,24 @@ struct Translated {
     is_key: bool,
     /// Upper bound of typed characters a `DeleteBack` caused by this event may remove.
     bound: usize,
-    /// The session a `FormSubmitted` answers.
+    /// The session a `FormSubmitted` answers (an open one, or a held submit's on a verdict).
     submitted: Option<FormSessionId>,
+    ask: Ask,
+}
+
+/// What a generated event is as far as explicit requests go.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ask {
+    /// Neither a request nor a stale form answer.
+    Other,
+    /// A palette pick or a reopen.
+    Request,
+    /// A submit of the open form.
+    Submit,
+    /// A submit for a session that is not open, or a cancel for one that is neither open nor
+    /// held as a submit: not a request (engine module docs, "Explicit requests"), so it must
+    /// change nothing.
+    Stale,
 }
 
 impl Model {
@@ -271,6 +290,7 @@ impl Model {
         let mut is_key = false;
         let mut bound = m.typed;
         let mut submitted = None;
+        let mut ask = Ask::Other;
         let event = match op {
             Op::Char(c) => {
                 is_key = true;
@@ -323,20 +343,11 @@ impl Model {
                 m.held_submit = None;
                 Event::Overflow
             }
-            Op::Inject(kind, last, raw) => {
-                let expansion = match (last, m.last_expansion) {
-                    (true, Some(e)) => e,
-                    _ => ExpansionId::from_raw(*raw),
-                };
-                match kind {
-                    0 => Event::InjectionStarted { expansion, seq: 0 },
-                    1 => Event::InjectionFinished { expansion, seq: 0 },
-                    _ => Event::InjectionCancelled { expansion },
-                }
-            }
+            Op::Inject(kind, last, raw) => m.inject(*kind, *last, *raw),
             Op::Submit(last, raw) => {
                 let session = m.session(*last, *raw);
-                submitted = Some(session);
+                ask = m.submit(session);
+                submitted = (ask == Ask::Submit).then_some(session);
                 let values: FormValues = [("N", "v")].into_iter().collect();
                 Event::FormSubmitted {
                     session,
@@ -345,15 +356,18 @@ impl Model {
             }
             Op::Cancel(last, raw) => {
                 let session = m.session(*last, *raw);
+                ask = m.cancel(session);
                 Event::FormCancelled { session }
             }
             Op::Expand(i) => {
+                ask = Ask::Request;
                 m.request();
                 Event::ExpandRequest {
                     snippet: Id::from_bytes([*i; 16]),
                 }
             }
             Op::Reopen => {
+                ask = Ask::Request;
                 m.request();
                 Event::ReopenLastForm
             }
@@ -364,6 +378,45 @@ impl Model {
             is_key,
             bound,
             submitted,
+            ask,
+        }
+    }
+
+    /// An injector event for the last expansion, or a raw id.
+    fn inject(&self, kind: u8, last: bool, raw: u64) -> Event {
+        let expansion = match (last, self.last_expansion) {
+            (true, Some(e)) => e,
+            _ => ExpansionId::from_raw(raw),
+        };
+        match kind {
+            0 => Event::InjectionStarted { expansion, seq: 0 },
+            1 => Event::InjectionFinished { expansion, seq: 0 },
+            _ => Event::InjectionCancelled { expansion },
+        }
+    }
+
+    /// A submit for `session`: only the submit of the open form is a request. An answer for a
+    /// session that was already answered or never shown is dropped and leaves a held request
+    /// (which belongs to its own application) alone.
+    fn submit(&mut self, session: FormSessionId) -> Ask {
+        if self.open_form == Some(session) {
+            self.open_form = None;
+            Ask::Submit
+        } else {
+            Ask::Stale
+        }
+    }
+
+    /// A cancel for `session`: it closes the open form or drops a held submit of that session;
+    /// for any other session it changes nothing.
+    fn cancel(&mut self, session: FormSessionId) -> Ask {
+        if self.open_form == Some(session) {
+            self.open_form = None;
+            Ask::Other
+        } else if self.held_submit == Some(session) {
+            Ask::Other
+        } else {
+            Ask::Stale
         }
     }
 }
@@ -391,11 +444,12 @@ fn check(
             is_key,
             bound,
             submitted,
+            ask,
         } = m.translate(op, &snapshot);
+        let is_submit = ask == Ask::Submit;
+        let is_request = matches!(ask, Ask::Request | Ask::Submit);
         let typed_before_event = bound;
-        let is_submit = matches!(event, Event::FormSubmitted { .. });
-        let is_request =
-            is_submit || matches!(event, Event::ExpandRequest { .. } | Event::ReopenLastForm);
+        let held_before = engine.holds_request();
         let focus_to = match &event {
             Event::FocusChanged(app) => Some(app.0.clone()),
             _ => None,
@@ -408,6 +462,12 @@ fn check(
             prop_assert_eq!(engine.buffered_len(), 0);
         }
         let types = actions.iter().any(|a| !matches!(a, Action::Diagnostic(_)));
+        // A form answer for a session that is neither open nor held is not a request: it types
+        // nothing and neither replaces nor drops a held request.
+        if ask == Ask::Stale {
+            prop_assert!(!types, "a stale form answer typed: {:?}", actions);
+            prop_assert_eq!(engine.holds_request(), held_before);
+        }
         m.check_owner(
             &engine,
             types,
@@ -441,6 +501,7 @@ fn check(
                     m.at_form.insert(*session, typed_before_event);
                     m.form_app.insert(*session, m.app.clone());
                     m.last_session = Some(*session);
+                    m.open_form = Some(*session);
                     m.typed = 0;
                 }
                 Action::Expanded { expansion, .. } => {
@@ -457,6 +518,7 @@ fn check(
                 _ => {}
             }
         }
+        prop_assert_eq!(engine.open_form(), m.open_form);
         // A pending or injecting expansion must have been announced.
         if let InjectionState::Pending(e) | InjectionState::Injecting(e) = engine.injection_state()
         {
