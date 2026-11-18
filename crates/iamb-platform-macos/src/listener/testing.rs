@@ -256,12 +256,15 @@ impl KeyLayout for FakeLayout {
         self.calls.fetch_add(1, Ordering::Relaxed);
         *self.last.lock().unwrap_or_else(PoisonError::into_inner) =
             Some((press.action.code(), press.keyboard_type));
-        let pending = std::mem::take(dead_state);
+        let previous = std::mem::take(dead_state);
+        // Like the system's layouts: only the low word is the waiting dead key, and a key that
+        // ends one leaves the ended state in the high word (observed: 0x1, then E, gives 0x10000).
+        let pending = previous & 0xFFFF;
         let accent = self.accents.get(&pending).copied();
-        match self.keys.get(&(press.code, press.modifiers)) {
+        let typed = match self.keys.get(&(press.code, press.modifiers)) {
             None => {
                 // A key without output leaves a pending dead key pending.
-                *dead_state = pending;
+                *dead_state = previous;
                 Some(0)
             }
             Some(Stroke::Fail) => None,
@@ -297,7 +300,11 @@ impl KeyLayout for FakeLayout {
                     (None, None) => write(out, text.chars()),
                 })
             }
+        };
+        if pending != 0 && *dead_state == 0 {
+            *dead_state = pending << 16;
         }
+        typed
     }
 }
 

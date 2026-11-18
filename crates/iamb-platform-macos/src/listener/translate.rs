@@ -160,6 +160,13 @@ impl KeyOutput {
     }
 }
 
+/// True when a `UCKeyTranslate` dead-key state holds a waiting dead key. Only the low word
+/// counts: a key that ends a dead key leaves a non-zero high word behind (0x1, then E, gives
+/// 0x10000 on the system's layouts), which is passed back unchanged but waits for nothing.
+pub(crate) const fn dead_key_waits(state: u32) -> bool {
+    state & 0xFFFF != 0
+}
+
 /// The listener's translation state: its own dead-key state and nothing else.
 #[derive(Debug, Default)]
 pub(crate) struct Translator {
@@ -174,7 +181,7 @@ impl Translator {
 
     /// True while a dead key waits for the key it combines with.
     pub(crate) const fn dead_key_pending(&self) -> bool {
-        self.dead_state != 0
+        dead_key_waits(self.dead_state)
     }
 
     /// Forgets a pending dead key: the application's own composition has ended.
