@@ -176,8 +176,9 @@ Rules for the listener that the events rely on:
 
 The buffer lives only in memory, holds at most 66 characters (the 64-character maximum abbreviation,
 the character before it for the word-start rule, and one delimiter), is held in a page locked
-against swapping (the service locks the pages of the engine's allocation, which holds the buffer
-inline), and is overwritten with zeros when cleared. While the
+against swapping (the engine keeps the buffer in its own heap allocation and exposes that
+allocation's address range so the service can lock it; task 2.6 adds the accessor), and is
+overwritten with zeros when cleared. While the
 engine is suspended, `Char` events are dropped without being stored
 ([ADR-0012](decisions/0012-keystroke-privacy.md)). After a focus change the engine stays suspended
 until the focus thread reports; `unknown` (timeout, or a window Iamb may not inspect, such as an
@@ -276,8 +277,15 @@ for the focus thread's verdict: `normal` runs it; `secure`, `excluded`, `own_win
 refuses it with a `Diagnostic`, and a refused form submit keeps its values for `ReopenLastForm`. A
 request made when the state is already known and not normal, or while an input method is
 composing, is refused at once. Pause is different: it blocks typed abbreviations but allows a
-deliberate palette pick or form submit in a normal field. A newer request replaces a waiting one;
-`Overflow` cancels it.
+deliberate palette pick or form submit in a normal field. A waiting request belongs to one
+application (for a form, the one where the abbreviation was typed): a focus change to another
+application drops it. A newer request replaces a waiting one, and drops it even when the newer
+one is refused; cancelling a form drops its waiting submit; `Overflow` drops any waiting request.
+
+The engine sees focus events and requests in the order the service delivers them, and the two
+arrive from different threads. The service therefore forwards an explicit request only after it
+has delivered the focus change for the window the request will type into (the focus token's
+window, once the UI host has handed focus back).
 
 Keys typed into Iamb's own windows are not expanded: the focus thread reports `own_window` for the
 UI host's process. The one exception is the onboarding test field, which the UI host declares with
@@ -505,8 +513,11 @@ These hold for every phase and are what the Phase 2 privacy review checks
 ([ADR-0012](decisions/0012-keystroke-privacy.md),
 [ADR-0022](decisions/0022-shared-snippet-trust.md)).
 
-1. Typed characters exist only in the engine's 64-character buffer, in locked memory. No API
-   returns the buffer. It is never serialised, logged or sent over IPC.
+1. Typed characters exist in exactly two places, both in locked memory: the engine's
+   66-character buffer, and, only while an expansion is in flight, the listener's copy of the
+   characters typed after its trigger (at most 64, for the injector to type again, §4.6), zeroed
+   when the expansion ends. No API returns either. They are never serialised, logged or sent over
+   IPC.
 2. User-entered values (form values, clipboard content read for `{clipboard}`, palette queries,
    dry-run input) are never written to disk or logs. Form values are remembered only as described
    in §4.5.
@@ -514,8 +525,10 @@ These hold for every phase and are what the Phase 2 privacy review checks
    nor `Serialize` (form values serialise only inside the IPC frame that carries them), and a lint
    forbids formatting it. IPC message bodies are never logged.
 4. Diagnostics name a snippet and a reason only when a match happened ("no word start", "template
-   error E_…", "typed during injection"). While the engine is suspended nothing is matched, so the
-   entry names only the app and the reason ("suspended: secure field"). Diagnostics are kept in a
+   error E_…", "typed during injection") or when an explicit request for a named snippet was
+   refused (§4.5; the entry names the snippet, the app and the reason). While the engine is
+   suspended nothing typed is matched, so a suspension entry names only the app and the reason
+   ("suspended: secure field"). Diagnostics are kept in a
    200-entry ring in memory.
 5. `iamb-service` has no network code, checked in CI (§2). Everything that talks to the network
    lives in `iamb-sync` or `iamb-desktop`, which never receive key events.
@@ -527,7 +540,7 @@ These hold for every phase and are what the Phase 2 privacy review checks
 9. Each process writes crash reports locally without heap contents and opts out of the operating
    system's own crash-dump collection where the OS allows. Only `iamb-desktop` uploads reports,
    and only after opt-in. Limit: an administrator who configures full-memory dumps for all
-   processes can capture the 64-character buffer; Iamb cannot prevent that and says so in its
+   processes can capture the typed-character buffers; Iamb cannot prevent that and says so in its
    privacy documentation.
 10. Snippets written by other people are treated as untrusted input:
     - A template can type text, press the keys listed in the template spec (Shift is the only

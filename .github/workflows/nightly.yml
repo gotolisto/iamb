@@ -1,7 +1,8 @@
 name: Nightly
 
 # Long-running checks from docs/test-strategy.md that are too slow for every pull request:
-# a 10-minute fuzz run of the template engine and the matcher mutation sample.
+# a 10-minute fuzz run of the template engine, the matcher mutation sample, and the release-mode
+# timing limits (load KPI, worst-case template budgets).
 # Report only for now; a failure shows on the run and its artifacts, and never blocks a merge.
 
 on:
@@ -14,6 +15,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # The only nightly use in the project; bump it deliberately, in a PR that says why.
+  FUZZ_TOOLCHAIN: nightly-2026-11-01
 
 jobs:
   fuzz-template:
@@ -22,16 +25,22 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Install nightly toolchain and cargo-fuzz
+      - name: Install the pinned nightly toolchain and cargo-fuzz
         run: |
-          rustup toolchain install nightly --profile minimal
-          cargo +nightly install cargo-fuzz --locked
+          rustup toolchain install "$FUZZ_TOOLCHAIN" --profile minimal
+          cargo "+$FUZZ_TOOLCHAIN" install cargo-fuzz --locked
+      - name: Restore the corpus kept from earlier nights
+        uses: actions/cache@v4
+        with:
+          path: fuzz/corpus/template
+          key: fuzz-corpus-template-${{ github.run_id }}
+          restore-keys: fuzz-corpus-template-
       - name: Seed the corpus from the spec examples
         run: python3 -I spec/template/seed_fuzz_corpus.py fuzz/corpus/template
       - name: Fuzz for 10 minutes (no crash, no input over 1 s, no OOM over 512 MB)
         working-directory: fuzz
         run: >
-          cargo +nightly fuzz run template corpus/template --
+          cargo "+$FUZZ_TOOLCHAIN" fuzz run template corpus/template --
           -max_total_time=600 -timeout=1 -rss_limit_mb=512
       - uses: actions/upload-artifact@v4
         if: failure()
@@ -79,3 +88,17 @@ jobs:
           name: mutants-${{ github.run_id }}
           path: mutants.out/
           retention-days: 30
+
+  release-limits:
+    name: release-mode timing limits
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-limits
+      - name: Release-mode tests (load KPI under 100 ms, worst-case budgets)
+        run: cargo test --release --locked -p iamb-core -p iamb-store

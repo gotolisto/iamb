@@ -2,6 +2,8 @@
 
 Status: accepted (approved by the owner on 2026-11-18)
 
+Amended by [ADR-0024](0024-engine-protocol-after-phase-1.md): explicit requests wait for the focus verdict and are tied to one application (architecture §4.5).
+
 **Context.** A form interrupts typing; the user may cancel, and focus leaves the target app while the form is open. Operating systems let only the process that holds the foreground give it away, so a background service cannot restore focus.
 
 **Decision.** On a match that needs a form, the engine captures the clock and clipboard, opens the single form session, and emits only `ShowForm`. The service attaches a focus token for the target window. The UI host shows the form (a non-activating panel on macOS; with a foreground grant from the service on Windows), and on submit or cancel it returns focus to the token's window itself and confirms it before answering. Only then does the engine emit `DeleteBack` and the rendered text. A second trigger while a form is open is dropped. The palette uses the same token mechanism.
