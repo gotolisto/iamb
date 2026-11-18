@@ -24,6 +24,7 @@ mod entity;
 mod error;
 pub mod migrations;
 mod ops;
+pub mod transfer;
 
 pub use entity::{Entity, EntityKind};
 pub use error::StoreError;
