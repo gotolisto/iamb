@@ -21,11 +21,18 @@ pub struct Migration {
 }
 
 /// All migrations, in order.
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "initial",
-    sql: include_str!("../migrations/0001_initial.sql"),
-}];
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "initial",
+        sql: include_str!("../migrations/0001_initial.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "fold_final_sigma",
+        sql: include_str!("../migrations/0002_fold_final_sigma.sql"),
+    },
+];
 
 /// The schema version this build creates and understands.
 pub const LATEST_VERSION: u32 = MIGRATIONS[MIGRATIONS.len() - 1].version;

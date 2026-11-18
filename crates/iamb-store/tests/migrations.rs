@@ -27,11 +27,88 @@ struct Fixture {
     check: fn(&Store) -> TestResult,
 }
 
-const FIXTURES: &[Fixture] = &[Fixture {
-    version: 1,
-    sql: include_str!("fixtures/v0001.sql"),
-    check: check_v1,
-}];
+const FIXTURES: &[Fixture] = &[
+    Fixture {
+        version: 1,
+        sql: include_str!("fixtures/v0001.sql"),
+        check: check_v1,
+    },
+    Fixture {
+        version: 2,
+        sql: include_str!("fixtures/v0002.sql"),
+        check: check_v2,
+    },
+];
+
+/// `X'01900000000070008000000000000bNN'` from the version 2 fixture.
+fn fid2(n: u8) -> Id {
+    let mut b = fid(n).as_bytes().to_owned();
+    b[14] = 0x0b;
+    Id::from_bytes(b)
+}
+
+fn check_v2(store: &Store) -> TestResult {
+    let road = store.get_snippet(fid2(0x20))?.ok_or("version 2 snippet")?;
+    assert_eq!(road.abbreviation.as_str(), "ΔΡΟΜΟΣ");
+    assert_eq!(road.abbreviation.fold_key(), "δρομοσ");
+    Ok(())
+}
+
+/// Reads the stored folding key of a snippet row directly.
+fn stored_key(conn: &Connection, n: u8) -> Result<String, rusqlite::Error> {
+    conn.query_row(
+        "SELECT abbreviation_key FROM snippet WHERE id = ?1",
+        [fid(n).as_bytes().as_slice()],
+        |r| r.get(0),
+    )
+}
+
+#[test]
+fn version_2_rewrites_final_sigma_keys() -> TestResult {
+    let root = temp_dir();
+    let path = root.path().join(iamb_store::LIBRARY_FILE);
+    build_at(&path, 1)?;
+    {
+        // Rows as version 1 stored them: `str::to_lowercase` keeps the final form ς.
+        let conn = Connection::open(&path)?;
+        conn.execute_batch(
+            "INSERT INTO snippet (id, created_at, updated_at, updated_by, rev, deleted_at, folder_id,
+                                  profile_id, abbreviation, abbreviation_key, label, kind, body,
+                                  trigger_mode, case_mode, word_start, enabled)
+             VALUES
+             (X'01900000000070008000000000000a50', 1, 1, NULL, 0, NULL, X'01900000000070008000000000000a10',
+              X'01900000000070008000000000000a01', 'ΟΔΟΣ', 'οδος', '', 'plain', 'a', 'delimiter',
+              'insensitive', 1, 1),
+             (X'01900000000070008000000000000a51', 1, 1, NULL, 0, NULL, X'01900000000070008000000000000a10',
+              X'01900000000070008000000000000a01', 'ΟΣ', 'ος', '', 'plain', 'b', 'delimiter',
+              'insensitive', 1, 1),
+             (X'01900000000070008000000000000a52', 1, 1, NULL, 0, NULL, X'01900000000070008000000000000a10',
+              X'01900000000070008000000000000a01', 'οσ', 'οσ', '', 'plain', 'c', 'delimiter',
+              'insensitive', 1, 1),
+             (X'01900000000070008000000000000a53', 1, 1, NULL, 0, 5, X'01900000000070008000000000000a10',
+              X'01900000000070008000000000000a01', 'ΚΟΣ', 'κος', '', 'plain', 'd', 'delimiter',
+              'insensitive', 1, 1);",
+        )?;
+    }
+    let mut store = Store::open(root.path())?;
+    drop(store);
+    let conn = Connection::open(&path)?;
+    assert_eq!(stored_key(&conn, 0x50)?, "οδοσ", "live row is rewritten");
+    assert_eq!(stored_key(&conn, 0x53)?, "κοσ", "deleted row is rewritten");
+    // `ος` and `οσ` now fold alike; the older key stays so the uniqueness index holds.
+    assert_eq!(stored_key(&conn, 0x51)?, "ος");
+    assert_eq!(stored_key(&conn, 0x52)?, "οσ");
+    drop(conn);
+
+    // The rewritten key now blocks the other spelling, as the matcher would treat them as one.
+    store = Store::open(root.path())?;
+    let clash = common::snippet(common::id_from(900), fid(0x10), "οδοσ");
+    match store.put(&clash, Timestamp(10)) {
+        Err(StoreError::AbbreviationConflict { existing, .. }) => assert_eq!(existing, fid(0x50)),
+        other => return Err(format!("expected a conflict, got {other:?}").into()),
+    }
+    Ok(())
+}
 
 /// `X'01900000000070008000000000000aNN'` from the fixture files.
 fn fid(n: u8) -> Id {
