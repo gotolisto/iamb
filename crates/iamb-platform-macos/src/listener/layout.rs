@@ -85,6 +85,77 @@ impl UchrLayout {
     }
 }
 
+impl UchrLayout {
+    /// The keyboard type a press without one is translated with.
+    const fn keyboard_type(&self, press: &KeyPress) -> u32 {
+        if press.keyboard_type == 0 {
+            self.default_keyboard_type
+        } else {
+            press.keyboard_type
+        }
+    }
+
+    /// `UCKeyTranslate` on this layout: its status and the length it reported.
+    fn call(&self, press: &KeyPress, dead_state: &mut u32, out: &mut [u16; MAX_UNITS]) -> Call {
+        // SAFETY: `words` is a complete `uchr` resource as the system handed it out, at an
+        // address aligned for all its fields; it lives as long as `self` and never changes.
+        unsafe {
+            key_translate(
+                self.words.as_ptr().cast(),
+                press,
+                self.keyboard_type(press),
+                dead_state,
+                out,
+            )
+        }
+    }
+}
+
+/// What one `UCKeyTranslate` call returned.
+#[derive(Clone, Copy)]
+struct Call {
+    status: sys::OSStatus,
+    len: usize,
+}
+
+/// One `UCKeyTranslate` call: `press` on the `uchr` data at `layout`, from and into
+/// `dead_state`, with no translation options. No option bit is set: in particular not
+/// `kUCKeyTranslateNoDeadKeysMask`, so a dead key starts a dead-key state (a zero-length
+/// result and a non-zero state) and the next key completes it.
+///
+/// # Safety
+///
+/// `layout` must point to a complete `uchr` resource, aligned for its fields, that stays valid
+/// and unchanged for the duration of the call.
+unsafe fn key_translate(
+    layout: *const c_void,
+    press: &KeyPress,
+    keyboard_type: u32,
+    dead_state: &mut u32,
+    out: &mut [u16; MAX_UNITS],
+) -> Call {
+    let mut len = 0_usize;
+    // SAFETY: the caller vouches for `layout`; `UCKeyTranslate` only reads it. `dead_state`,
+    // `len` and `out` are valid for writes, and the function writes at most
+    // `maxStringLength` (`MAX_UNITS`) units to `out`. The function is a pure function of its
+    // arguments and may run on any thread.
+    let status = unsafe {
+        sys::UCKeyTranslate(
+            layout,
+            press.code,
+            press.action.code(),
+            press.modifiers,
+            keyboard_type,
+            0,
+            dead_state,
+            MAX_UNITS,
+            &raw mut len,
+            out.as_mut_ptr(),
+        )
+    };
+    Call { status, len }
+}
+
 impl KeyLayout for UchrLayout {
     fn translate(
         &self,
@@ -92,31 +163,7 @@ impl KeyLayout for UchrLayout {
         dead_state: &mut u32,
         out: &mut [u16; MAX_UNITS],
     ) -> Option<usize> {
-        let keyboard_type = if press.keyboard_type == 0 {
-            self.default_keyboard_type
-        } else {
-            press.keyboard_type
-        };
-        let mut len = 0_usize;
-        // SAFETY: `words` is a complete `uchr` resource as the system handed it out, at an
-        // address aligned for all its fields, and it lives as long as `self`.
-        // `UCKeyTranslate` only reads it. `dead_state`, `len` and `out` are valid for writes,
-        // and the function writes at most `maxStringLength` (`MAX_UNITS`) units to `out`.
-        // The function is a pure function of its arguments and may run on any thread.
-        let status = unsafe {
-            sys::UCKeyTranslate(
-                self.words.as_ptr().cast(),
-                press.code,
-                press.action.code(),
-                press.modifiers,
-                keyboard_type,
-                0,
-                dead_state,
-                MAX_UNITS,
-                &raw mut len,
-                out.as_mut_ptr(),
-            )
-        };
+        let Call { status, len } = self.call(press, dead_state, out);
         (status == sys::NO_ERR && len <= MAX_UNITS).then_some(len)
     }
 }
@@ -449,6 +496,121 @@ pub(crate) mod by_id {
     ///
     /// A sentence saying which step failed.
     pub(crate) fn load(mtm: MainThreadMarker, id: &str) -> Result<UchrLayout, String> {
+        let source = source(mtm, id)?;
+        let (found_id, layout) = layout_of(mtm, &source);
+        if found_id.as_deref() != Some(id) {
+            return Err(format!("asked for {id} and was given another input source"));
+        }
+        layout.ok_or_else(|| format!("the input source {id} has no Unicode layout data"))
+    }
+
+    /// What `UCKeyTranslate` answered for one press, unfiltered, for the tests' diagnostics.
+    pub(crate) struct Answer {
+        /// The `OSStatus`.
+        pub(crate) status: sys::OSStatus,
+        /// The units it wrote, as many as it said it wrote (at most `MAX_UNITS`).
+        pub(crate) units: Vec<u16>,
+        /// The length it reported.
+        pub(crate) len: usize,
+        /// The dead-key state afterwards.
+        pub(crate) state: u32,
+    }
+
+    impl Answer {
+        fn new(call: Call, out: &[u16; MAX_UNITS], state: u32) -> Self {
+            Self {
+                status: call.status,
+                units: out.iter().take(call.len).copied().collect(),
+                len: call.len,
+                state,
+            }
+        }
+    }
+
+    impl UchrLayout {
+        /// `UCKeyTranslate`'s own answer for `press` from dead-key state `dead`.
+        pub(crate) fn answer(&self, press: &KeyPress, dead: u32) -> Answer {
+            let mut state = dead;
+            let mut out = [0; MAX_UNITS];
+            let call = self.call(press, &mut state, &mut out);
+            Answer::new(call, &out, state)
+        }
+
+        /// The keyboard type a press without one is translated with (`LMGetKbdType` when
+        /// the layout was read).
+        pub(crate) const fn fallback_keyboard_type(&self) -> u32 {
+            self.default_keyboard_type
+        }
+    }
+
+    /// The layout data of the installed input source `id`, the object the system holds.
+    ///
+    /// # Errors
+    ///
+    /// A sentence saying which step failed.
+    pub(crate) fn system_data(
+        mtm: MainThreadMarker,
+        id: &str,
+    ) -> Result<CFRetained<CFData>, String> {
+        let source = source(mtm, id)?;
+        // SAFETY: a constant the framework initialises when it is loaded.
+        let data_key = unsafe { sys::kTISPropertyUnicodeKeyLayoutData };
+        property::<CFData>(mtm, &source, data_key)
+            .ok_or_else(|| format!("the input source {id} has no Unicode layout data"))
+    }
+
+    /// The identifier and layout data of the keyboard layout in use, as the system holds them.
+    pub(crate) fn current_data(mtm: MainThreadMarker) -> Option<(String, CFRetained<CFData>)> {
+        // SAFETY: no arguments; the marker proves this is the main thread. The result is null
+        // or a retained object, which `take_source` takes over.
+        let source = unsafe { take_source(sys::TISCopyCurrentKeyboardLayoutInputSource()) }?;
+        // SAFETY: constants the framework initialises when it is loaded.
+        let (id_key, data_key) = unsafe {
+            (
+                sys::kTISPropertyInputSourceID,
+                sys::kTISPropertyUnicodeKeyLayoutData,
+            )
+        };
+        let id = property::<CFString>(mtm, &source, id_key)
+            .map_or_else(String::new, |id| id.to_string());
+        Some((id, property::<CFData>(mtm, &source, data_key)?))
+    }
+
+    /// `LMGetKbdType` now. Main thread only, which the marker proves.
+    pub(crate) fn keyboard_type_now(_mtm: MainThreadMarker) -> u32 {
+        // SAFETY: no arguments; the marker proves this is the main thread.
+        u32::from(unsafe { sys::LMGetKbdType() })
+    }
+
+    /// `UCKeyTranslate`'s answer for `press` on the system's own bytes of `data`, not on a
+    /// copy, with `keyboard_type`. `None` when the bytes are too short or misaligned to be a
+    /// layout.
+    pub(crate) fn answer_on(
+        data: &CFData,
+        press: &KeyPress,
+        keyboard_type: u32,
+        dead: u32,
+    ) -> Option<Answer> {
+        let bytes = data.byte_ptr();
+        if bytes.is_null()
+            || data.len() < MIN_UCHR_LEN
+            || bytes.align_offset(align_of::<u32>()) != 0
+        {
+            return None;
+        }
+        let mut state = dead;
+        let mut out = [0; MAX_UNITS];
+        // SAFETY: `data` is the immutable layout object the input source handed out, retained
+        // by the caller for the duration of the call; its bytes are a complete `uchr`
+        // resource, checked above for length and alignment.
+        let call =
+            unsafe { key_translate(bytes.cast(), press, keyboard_type, &mut state, &mut out) };
+        Some(Answer::new(call, &out, state))
+    }
+
+    /// The installed input source `id`, enabled or not. Main thread only, which the marker
+    /// proves.
+    fn source(_mtm: MainThreadMarker, id: &str) -> Result<CFRetained<CFType>, String> {
         let wanted = CFString::from_str(id);
         // SAFETY: a constant the framework initialises when it is loaded.
         let id_key = unsafe { sys::kTISPropertyInputSourceID };
@@ -462,13 +624,7 @@ pub(crate) mod by_id {
         // which are Core Foundation objects.
         let list: CFRetained<CFArray<CFType>> =
             unsafe { CFRetained::cast_unchecked(CFRetained::from_raw(list)) };
-        let source = list
-            .get(0)
-            .ok_or_else(|| format!("the list of input sources named {id} is empty"))?;
-        let (found_id, layout) = layout_of(mtm, &source);
-        if found_id.as_deref() != Some(id) {
-            return Err(format!("asked for {id} and was given another input source"));
-        }
-        layout.ok_or_else(|| format!("the input source {id} has no Unicode layout data"))
+        list.get(0)
+            .ok_or_else(|| format!("the list of input sources named {id} is empty"))
     }
 }

@@ -11,6 +11,11 @@
 //! | [`Recovery::check`], from the listener thread's watchdog | every [`WATCHDOG_INTERVAL`] | at most one interval |
 //! | [`Recovery::check`], from `self_test` | on a self-test that did not see its event | that call |
 //!
+//! A disable the process asks for itself (`CGEventTapEnable(tap, false)`) is announced as well,
+//! with `kCGEventTapDisabledByUserInput` (seen on macOS 26.7). The tests that need a tap
+//! disabled *without* notice therefore keep that one notice from the listener
+//! (`Request::DisableTap` in `tap.rs`).
+//!
 //! Both bounds are far below the one second the plan allows. A tap that will not stay enabled
 //! (the user revoked the permission while the listener ran) is reported as
 //! [`TapHealth::Lost`]; the worker's self-test then fails and the worker reinstalls the

@@ -92,6 +92,13 @@ pub(crate) enum Request {
     /// Look at the tap, enable it if needed, and say what was found.
     CheckTap(SyncSender<TapCheck>),
     /// Disable the tap, as the system would without telling anyone, and say when it is done.
+    ///
+    /// `CGEventTapEnable(tap, false)` is not silent: the system answers it with a
+    /// `kCGEventTapDisabledByUserInput` notice to the tap's own callback (macOS 26.7 did so
+    /// on the CI runner, run 44331151855, and the listener then recovered through the notice
+    /// and counted no unannounced disable). To leave the tap disabled *without notice*, which
+    /// is what the watchdog exists for, the listener thread keeps the next disable notice from
+    /// the core ([`ThreadState::hides`]).
     #[cfg(test)]
     DisableTap(SyncSender<()>),
 }
@@ -107,6 +114,9 @@ pub(crate) struct Shared {
     health: Mutex<(TapHealth, RecoveryStats)>,
     self_tests: Arc<SelfTests>,
     stats: Arc<ListenerStats>,
+    /// Disable notices kept from the core after a [`Request::DisableTap`].
+    #[cfg(test)]
+    hidden_notices: std::sync::atomic::AtomicU64,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -125,6 +135,8 @@ impl Shared {
             health: Mutex::new((TapHealth::Working, RecoveryStats::default())),
             self_tests: Arc::new(SelfTests::new()),
             stats: Arc::new(ListenerStats::default()),
+            #[cfg(test)]
+            hidden_notices: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -210,6 +222,10 @@ struct ThreadState {
     /// The tap's port, for the test request that disables it.
     #[cfg(test)]
     port: Option<CFRetained<CFMachPort>>,
+    /// Set by [`Request::DisableTap`]: the next disable notice is the system's answer to that
+    /// request and does not reach the core.
+    #[cfg(test)]
+    hide_disable_notice: bool,
 }
 
 impl ThreadState {
@@ -228,6 +244,9 @@ impl ThreadState {
                 #[cfg(test)]
                 Request::DisableTap(done) => {
                     if let Some(port) = &self.port {
+                        // The notice the system sends for this arrives later, through the
+                        // run loop; it is the one to hide.
+                        self.hide_disable_notice = true;
                         CGEvent::tap_enable(port, false);
                     }
                     let _ = done.try_send(());
@@ -240,6 +259,22 @@ impl ThreadState {
         {
             run_loop.stop();
         }
+    }
+
+    /// Whether the callback keeps `raw` from the core: the one disable notice that answers a
+    /// [`Request::DisableTap`]. Without it the test's disable is announced, and the watchdog,
+    /// whose job is a disable the system does not announce, is never exercised.
+    ///
+    /// Should a system send no notice for that request, the flag stays set and would hide the
+    /// next notice of this listener; only the tests that disable the tap set it.
+    #[cfg(test)]
+    fn hides(&mut self, raw: &RawEvent) -> bool {
+        if !self.hide_disable_notice || !matches!(raw.kind, RawKind::TapDisabled(_)) {
+            return false;
+        }
+        self.hide_disable_notice = false;
+        self.shared.hidden_notices.fetch_add(1, Ordering::Relaxed);
+        true
     }
 
     /// The watchdog's periodic look.
@@ -371,7 +406,14 @@ unsafe extern "C-unwind" fn tap_callback(
     // SAFETY: the system passes null or an event that is valid for the duration of the call.
     let event_ref = unsafe { event.as_ref() };
     guarded(cell, |state| {
-        if let (Some(core), Some(raw)) = (state.core.as_mut(), raw_event(kind, event_ref)) {
+        let Some(raw) = raw_event(kind, event_ref) else {
+            return;
+        };
+        #[cfg(test)]
+        if state.hides(&raw) {
+            return;
+        }
+        if let Some(core) = state.core.as_mut() {
             core.handle(&raw, entered);
         }
     });
@@ -410,6 +452,8 @@ fn install(shared: &Arc<Shared>, parts: Parts) -> Result<Installed> {
         core: None,
         #[cfg(test)]
         port: None,
+        #[cfg(test)]
+        hide_disable_notice: false,
     }));
     // The callbacks get the address of the cell. It does not move while the `Rc` lives, and
     // every access, here and in the callbacks, goes through the cell's shared reference.
@@ -672,6 +716,12 @@ impl Running {
     /// The listener's counters.
     pub(crate) fn stats(&self) -> StatsSnapshot {
         self.shared.stats.snapshot()
+    }
+
+    /// How many disable notices were kept from the core after [`Request::DisableTap`].
+    #[cfg(test)]
+    pub(crate) fn hidden_disable_notices(&self) -> u64 {
+        self.shared.hidden_notices.load(Ordering::Relaxed)
     }
 }
 

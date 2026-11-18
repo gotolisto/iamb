@@ -194,6 +194,15 @@ impl ListenerCore {
             Marker::SelfTest(nonce) => self.self_tests.complete(nonce),
             Marker::InjectionStart(_) | Marker::InjectionEnd(_) => {
                 if matches!(marker, Marker::InjectionStart(_)) {
+                    // A dead key still waiting here was typed after the trigger: the application
+                    // would spend the first Backspace of the deletion on it. Reporting a boundary
+                    // first cancels the hand-off, so nothing is sent (architecture §4.6).
+                    if self.translator.dead_key_pending() {
+                        self.sink.deliver(ListenerEvent::Boundary {
+                            kind: BoundaryKind::Other,
+                            seq: self.seq.next(),
+                        });
+                    }
                     // Iamb's output is about to go through the application's text input: a
                     // pending accent does not survive that.
                     self.translator.reset();
@@ -500,7 +509,22 @@ mod tests {
             Marker::InjectionStart(ExpansionId::from_raw(1)),
         ));
         rig.send(&key(vk::ANSI_E));
-        assert_eq!(rig.take(), ["started:1#2", "e#3"]);
+        // The waiting dead key cancels the expansion before it starts.
+        assert_eq!(rig.take(), ["boundary:Other#2", "started:1#3", "e#4"]);
+    }
+
+    #[test]
+    fn an_injection_start_with_no_dead_key_pending_reports_only_the_start() {
+        let mut rig = Rig::new(FakeInputs::layout(FakeLayout::spanish()));
+        rig.core.started();
+        rig.take();
+        rig.send(&key(FakeLayout::SPANISH_ACUTE));
+        rig.send(&key(vk::ANSI_E));
+        rig.send(&marked(
+            RawKind::KeyUp,
+            Marker::InjectionStart(ExpansionId::from_raw(1)),
+        ));
+        assert_eq!(rig.take(), ["é#2", "started:1#3"]);
     }
 
     #[test]

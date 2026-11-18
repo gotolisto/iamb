@@ -22,8 +22,12 @@
 use std::sync::{Arc, OnceLock};
 
 use objc2::MainThreadMarker;
+use objc2_core_graphics::{CGEvent, CGEventField};
 
+use super::keycodes::vk;
+use super::layout::by_id::{self, Answer};
 use super::layout::{self, UchrLayout};
+use super::modifiers::layout_state::OPTION;
 use super::translate::{KeyAction, KeyLayout, KeyPress, MAX_UNITS};
 
 const US: &str = "com.apple.keylayout.US";
@@ -32,12 +36,31 @@ const GERMAN: &str = "com.apple.keylayout.German";
 const FRENCH: &str = "com.apple.keylayout.French";
 const LAYOUT_IDS: [&str; 4] = [US, SPANISH, GERMAN, FRENCH];
 
+/// `kVK_ANSI_Quote`: the key right of Ñ, the dead acute accent on the Spanish layout.
+const SPANISH_ACUTE_KEY: u16 = 0x27;
+/// `kVK_ANSI_LeftBracket`: the key right of P, the dead circumflex on the French layout.
+const FRENCH_CIRCUMFLEX_KEY: u16 = 0x21;
+
+/// A key and the modifier state it is pressed with.
+type Stroke = (u16, u32);
+
+/// The dead key each layout is documented to have, and E after it: what the probes ask
+/// `UCKeyTranslate` directly, so that a failing dead-key test says what the system answered.
+const DEAD_KEY_PROBES: [(&str, &str, Stroke); 3] = [
+    (US, "Option+E", (vk::ANSI_E, OPTION)),
+    (SPANISH, "the key right of Ñ", (SPANISH_ACUTE_KEY, 0)),
+    (FRENCH, "the key right of P", (FRENCH_CIRCUMFLEX_KEY, 0)),
+];
+
 /// What the static constructor found.
 struct Fixture {
     on_main_thread: bool,
     /// Whether secure keyboard entry was on when the test process started.
     secure_input: bool,
     layouts: Vec<(&'static str, Result<Arc<UchrLayout>, String>)>,
+    /// Per layout, what `UCKeyTranslate` answered on the main thread for the dead key of
+    /// [`DEAD_KEY_PROBES`] and E after it, one line per way of calling it.
+    probes: Vec<(&'static str, Vec<String>)>,
 }
 
 static FIXTURE: OnceLock<Fixture> = OnceLock::new();
@@ -58,20 +81,151 @@ extern "C" fn load_on_main_thread() {
                 on_main_thread: false,
                 secure_input: false,
                 layouts: Vec::new(),
+                probes: Vec::new(),
             });
             return;
         };
-        let layouts = LAYOUT_IDS
+        let layouts: Vec<_> = LAYOUT_IDS
             .iter()
-            .map(|id| (*id, layout::by_id::load(mtm, id).map(Arc::new)))
+            .map(|id| (*id, by_id::load(mtm, id).map(Arc::new)))
             .collect();
+        let probes = probe_on_main_thread(mtm, &layouts);
         layout::system().refresh(mtm);
         let _ = FIXTURE.set(Fixture {
             on_main_thread: true,
             secure_input: super::tap::secure_input_enabled(mtm),
             layouts,
+            probes,
         });
     });
+}
+
+/// A press as the probes make it: a key going down, from a keyboard of type `keyboard_type`
+/// (0: the layout's fallback, `LMGetKbdType` when it was read).
+const fn probe_press((code, modifiers): Stroke, keyboard_type: u32) -> KeyPress {
+    KeyPress {
+        code,
+        action: KeyAction::Down,
+        modifiers,
+        keyboard_type,
+    }
+}
+
+/// One answer of `UCKeyTranslate`, for a failure message. Layout data only, no user input.
+fn show(answer: &Answer) -> String {
+    let units: Vec<String> = answer
+        .units
+        .iter()
+        .map(|unit| format!("U+{unit:04X}"))
+        .collect();
+    format!(
+        "status {}, length {}, units [{}], state {:#x}",
+        answer.status,
+        answer.len,
+        units.join(" "),
+        answer.state
+    )
+}
+
+/// The dead key `dead` from no dead-key state, then E from the state it left, through
+/// `translate`: what each call answered.
+fn two_presses(dead: Stroke, translate: impl Fn(Stroke, u32) -> Option<Answer>) -> String {
+    let Some(first) = translate(dead, 0) else {
+        return "the data is not a layout".to_owned();
+    };
+    let second = translate((vk::ANSI_E, 0), first.state).map_or_else(
+        || "the data is not a layout".to_owned(),
+        |answer| show(&answer),
+    );
+    format!("{}; then E: {second}", show(&first))
+}
+
+/// Asks `UCKeyTranslate`, on the main thread, about each layout's dead key in the ways that
+/// differ from the listener's own call: on the system's bytes instead of the private copy,
+/// with another keyboard type, and on the layout in use. (Run from the static constructor, so
+/// it makes no event: [`probe_report`] adds the keyboard type of a real event.)
+fn probe_on_main_thread(
+    mtm: MainThreadMarker,
+    layouts: &[(&'static str, Result<Arc<UchrLayout>, String>)],
+) -> Vec<(&'static str, Vec<String>)> {
+    let now = by_id::keyboard_type_now(mtm);
+    let mut probes = Vec::new();
+    for (id, name, dead) in DEAD_KEY_PROBES {
+        let mut lines = vec![format!(
+            "{id}, {name} then E (LMGetKbdType on the main thread before the tests: {now}):"
+        )];
+        if let Some((_, Ok(copy))) = layouts.iter().find(|(known, _)| *known == id) {
+            let kind = copy.fallback_keyboard_type();
+            lines.push(format!(
+                "  main thread, private copy, keyboard type {kind}: {}",
+                two_presses(dead, |stroke, state| Some(
+                    copy.answer(&probe_press(stroke, 0), state)
+                ))
+            ));
+        }
+        match by_id::system_data(mtm, id) {
+            Ok(data) => {
+                for kind in [now, 0] {
+                    lines.push(format!(
+                        "  main thread, system bytes, keyboard type {kind}: {}",
+                        two_presses(dead, |stroke, state| {
+                            by_id::answer_on(&data, &probe_press(stroke, 0), kind, state)
+                        })
+                    ));
+                }
+            }
+            Err(why) => lines.push(format!("  main thread, system bytes: {why}")),
+        }
+        if let Some((current, data)) = by_id::current_data(mtm) {
+            lines.push(format!(
+                "  main thread, the layout in use ({current}), system bytes, keyboard type \
+                 {now}: {}",
+                two_presses(dead, |stroke, state| {
+                    by_id::answer_on(&data, &probe_press(stroke, 0), now, state)
+                })
+            ));
+        }
+        probes.push((id, lines));
+    }
+    probes
+}
+
+/// What the probes found for `id`, and what the private copy answers on this (test) thread,
+/// as the listener thread calls it, as lines for a failure message. Each line is also written
+/// to standard error.
+fn probe_report(id: &str) -> String {
+    let mut lines: Vec<String> = fixture()
+        .probes
+        .iter()
+        .filter(|(known, _)| *known == id)
+        .flat_map(|(_, lines)| lines.iter().cloned())
+        .collect();
+    if let Some((_, _, dead)) = DEAD_KEY_PROBES.iter().find(|(known, _, _)| *known == id) {
+        let layout = system_layout(id);
+        // The keyboard type a key event carries, which is what the listener translates with.
+        let event_type = CGEvent::new_keyboard_event(None, vk::ANSI_E, true).map_or(0, |event| {
+            let field =
+                CGEvent::integer_value_field(Some(&event), CGEventField::KeyboardEventKeyboardType);
+            u32::try_from(field).unwrap_or(0)
+        });
+        for kind in [0, event_type] {
+            lines.push(format!(
+                "  test thread, private copy, keyboard type {}: {}",
+                if kind == 0 {
+                    layout.fallback_keyboard_type()
+                } else {
+                    kind
+                },
+                two_presses(*dead, |stroke, state| Some(
+                    layout.answer(&probe_press(stroke, kind), state)
+                ))
+            ));
+        }
+    }
+    for line in &lines {
+        note(&format!("PROBE listener::mac_tests: {line}"));
+    }
+    lines.join("\n")
 }
 
 fn fixture() -> &'static Fixture {
@@ -128,9 +282,6 @@ mod layouts {
     use super::super::testing::typed;
     use super::super::translate::{KeyEffect, Translator};
     use super::*;
-
-    /// A key and the modifier state it is pressed with.
-    type Stroke = (u16, u32);
 
     const STATES: [u32; 4] = [0, SHIFT, OPTION, SHIFT | OPTION];
 
@@ -257,7 +408,8 @@ mod layouts {
         let dead = dead_keys_giving(&us, e, "é");
         assert!(
             dead.contains(&(vk::ANSI_E, OPTION)),
-            "US: Option+E then E should type é; the layout's dead keys for é are {dead:?}"
+            "US: Option+E then E should type é; the layout's dead keys for é are {dead:?}\n{}",
+            probe_report(US)
         );
         // The US layout has no dead key without Option.
         assert!(dead.iter().all(|(_, state)| state & OPTION != 0));
@@ -283,7 +435,8 @@ mod layouts {
             plain_dead.len(),
             1,
             "{id}: expected one unmodified dead key that makes {combined:?} with E; the \
-             layout's dead keys for it are {dead:?}"
+             layout's dead keys for it are {dead:?}\n{}",
+            probe_report(id)
         );
         let accent = plain_dead[0];
 
@@ -462,7 +615,7 @@ mod layouts {
         let accent = dead_keys_giving(&spanish, e, "é")
             .into_iter()
             .find(|(_, state)| *state == 0)
-            .expect("the Spanish dead acute accent");
+            .unwrap_or_else(|| panic!("the Spanish dead acute accent\n{}", probe_report(SPANISH)));
 
         // Two holders of dead-key state for the same layout, as the listener and the focused
         // application are: a dead key pressed in one is invisible to the other.
@@ -1167,6 +1320,9 @@ mod with_a_tap {
         let (running, events) = start_on_us_layout();
         assert_eq!(running.self_test(Duration::from_secs(1)), Ok(()));
 
+        // The system announces a disable that this process asks for; `disable_tap` keeps that
+        // notice from the listener (see `Request::DisableTap`), so only the watchdog can find
+        // the tap disabled.
         disable_tap(&running);
         let disabled = Instant::now();
         let back = wait_for(Duration::from_secs(5), || {
@@ -1180,16 +1336,19 @@ mod with_a_tap {
         );
         let (health, stats) = running.tap_health();
         assert_eq!(health, TapHealth::Working);
-        assert_eq!(stats.unannounced, 1);
+        // Found by the watchdog.
+        assert_eq!(stats.unannounced, 1, "{stats:?}");
         assert!(stats.longest_recovery.expect("one recovery") < Duration::from_secs(1));
 
         // The tap sees events again, and the loss was announced.
         assert_eq!(running.self_test(Duration::from_secs(1)), Ok(()));
+        let hidden = running.hidden_disable_notices();
         running.stop().expect("the listener stops");
         let delivered: Vec<ListenerEvent> = events.iter().collect();
         assert!(delivered.contains(&ListenerEvent::Overflow));
         note(&format!(
-            "listener tap recovery after a silent disable: {took:?}"
+            "listener tap recovery after a silent disable: {took:?} (disable notices the \
+             system sent for the test's own disable, kept from the listener: {hidden})"
         ));
     }
 
