@@ -6,7 +6,11 @@
 //!   fixtures are in `crates/iamb-testkit/fixtures/`.
 //! - [`session`]: the TOML session format, a loader and a runner. The sessions live in
 //!   `crates/iamb-testkit/sessions/`; `crates/iamb-core/tests/engine_sessions.rs` runs them all.
+//! - [`soak`] (feature `soak`, on by default): the long-run harness of task 2.6 and the canary
+//!   privacy scan of task 2.5 (the `iamb-soak` binary).
 
 pub mod compat;
 pub mod env;
 pub mod session;
+#[cfg(feature = "soak")]
+pub mod soak;

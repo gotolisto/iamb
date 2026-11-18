@@ -1,8 +1,9 @@
 name: Nightly
 
 # Long-running checks from docs/test-strategy.md that are too slow for every pull request:
-# a 10-minute fuzz run of the template engine, the matcher mutation sample, and the release-mode
-# timing limits (load KPI, worst-case template budgets).
+# a 10-minute fuzz run of the template engine, the matcher mutation sample, the release-mode
+# timing limits (load KPI, worst-case template budgets), and the 30-minute soak with the canary
+# privacy scan (section 5).
 # Report only for now; a failure shows on the run and its artifacts, and never blocks a merge.
 
 on:
@@ -102,3 +103,41 @@ jobs:
           key: release-limits
       - name: Release-mode tests (load KPI under 100 ms, worst-case budgets)
         run: cargo test --release --locked -p iamb-core -p iamb-store
+
+  # docs/test-strategy.md section 5, CI form: the service's supervisor and worker on the mock
+  # platform for 30 minutes (seeded key stream, 10,000 fixture snippets, one library edit per
+  # minute, the worker hard-killed 7 times between minutes 11.5 and 18.5), then the canary scan
+  # of the data root, logs, temp directory and IPC tap, and the networking-crate check that
+  # stands in for the lab's packet capture. Fails on any broken pass rule or canary hit.
+  soak:
+    name: soak (30 min, mock platform) and canary scan
+    runs-on: ubuntu-latest
+    # About 8 min to build cold, 30 min of soak, under a minute to stop and scan.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: soak
+      - name: Build the soak harness (release)
+        run: cargo build --release --locked -p iamb-testkit --bin iamb-soak
+      - name: Soak for 30 minutes, scan for canaries, check for networking crates
+        run: >
+          target/release/iamb-soak run --duration 30m --seed ${{ github.run_id }}
+          --out target/soak/nightly --net-check .
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: soak-${{ github.run_id }}
+          # The samples, the reports and the service logs; not the canary input file.
+          path: |
+            target/soak/nightly/samples.jsonl
+            target/soak/nightly/report.json
+            target/soak/nightly/canary-scan.json
+            target/soak/nightly/summary.txt
+            target/soak/nightly/work/data/logs/
+            target/soak/nightly/work/service-stderr.log
+          if-no-files-found: warn
+          retention-days: 30
