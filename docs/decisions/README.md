@@ -28,3 +28,4 @@ See the [architecture document](../architecture.md) for how they fit together.
 | [ADR-0021](0021-packaging-and-permissions.md) | The macOS service is a signed helper app; permissions are checked in the worker |
 | [ADR-0022](0022-shared-snippet-trust.md) | Snippets from other people are reviewed before they can press keys or read the clipboard |
 | [ADR-0023](0023-updates.md) | The UI host applies updates; the supervisor stops and restarts the worker around them |
+| [ADR-0024](0024-engine-protocol-after-phase-1.md) | Engine protocol details settled by the Phase 1 review |
