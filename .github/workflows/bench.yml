@@ -1,7 +1,11 @@
 name: Bench
 
-# Report-only: results are uploaded as an artifact and nothing fails on a slowdown yet.
-# Shared runners are too noisy to gate on; see docs/test-strategy.md, "Regression rule".
+# Pushes to `main` and manual runs: one run of the four quick benches, report only; results are
+# uploaded as an artifact (the baseline is built from 10 manual runs on `main`).
+# Pull requests: two consecutive runs, then `cargo xtask bench-compare` against
+# crates/iamb-bench/baselines/ci-ubuntu.jsonl. It fails the job only when the same bench is
+# > 25% and more than its noise floor slower than baseline in both runs, and passes with
+# "not armed yet" while that file does not exist. See docs/test-strategy.md, "Regression rule".
 
 on:
   pull_request:
@@ -25,11 +29,15 @@ env:
 
 jobs:
   bench:
-    name: bench (report only)
+    name: bench
     runs-on: ubuntu-latest
+    # A warm-cache run of the four quick benches takes about 40 s, a whole job 1-2.5 min; two
+    # runs plus the gate fit well inside this.
     timeout-minutes: 15
-    # Never blocks a merge, even if a bench crashes.
-    continue-on-error: true
+    env:
+      # Absolute: bench binaries run in crates/iamb-bench. Pushes and manual runs keep the
+      # default directory (target/bench-results); pull requests write run 1 under run-1/.
+      IAMB_BENCH_RESULTS_DIR: ${{ github.workspace }}/target/bench-results${{ github.event_name == 'pull_request' && '/run-1' || '' }}
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain from rust-toolchain.toml
@@ -37,24 +45,50 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: bench
+      # Bench steps are report-only: a crash shows as a failed step but does not fail the job.
+      # On a pull request with an armed gate, the crashed bench's missing results make
+      # `bench-compare` fail instead.
       - name: Matcher benchmark (quick mode)
+        continue-on-error: true
         run: cargo bench -p iamb-bench --locked --bench matcher -- --quick
       - name: Template benchmark (quick mode)
+        continue-on-error: true
         run: cargo bench -p iamb-bench --locked --bench template -- --quick
       - name: Store benchmark (quick mode)
+        continue-on-error: true
         run: cargo bench -p iamb-bench --locked --bench store -- --quick
       - name: Engine benchmark (quick mode)
+        continue-on-error: true
         run: cargo bench -p iamb-bench --locked --bench engine -- --quick
+      - name: Second run of the four benches (pull requests)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          IAMB_BENCH_RESULTS_DIR: ${{ github.workspace }}/target/bench-results/run-2
+        shell: bash
+        run: |
+          status=0
+          for b in matcher template store engine; do
+            cargo bench -p iamb-bench --locked --bench "$b" -- --quick || status=1
+          done
+          exit "$status"
       - name: Summary
         if: always()
         shell: bash
         run: |
           {
-            echo '### Benchmark results (report only)'
+            echo '### Benchmark results'
             echo '```'
-            cat target/bench-results/*.jsonl 2>/dev/null || echo 'no results written'
+            files=$(find target/bench-results -name '*.jsonl' 2>/dev/null | sort)
+            if [ -n "$files" ]; then cat $files; else echo 'no results written'; fi
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Regression gate (two runs against the baseline)
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        run: >-
+          cargo xtask bench-compare
+          --baseline crates/iamb-bench/baselines/ci-ubuntu.jsonl
+          target/bench-results/run-1 target/bench-results/run-2
       - uses: actions/upload-artifact@v4
         if: always()
         with:

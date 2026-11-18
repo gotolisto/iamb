@@ -19,8 +19,13 @@ errors (`RUSTFLAGS=-D warnings`). The pipeline should finish in under ten minute
 - `ci-ok`: succeeds only if `lint`, `coverage` and every `test` leg succeeded. This is the single
   check to require in branch protection.
 
-`.github/workflows/bench.yml` runs the benchmarks in quick mode on every pull request and uploads
-the results. It is report-only and never blocks a merge (see `docs/test-strategy.md` §3).
+`.github/workflows/bench.yml` runs the four benchmarks in quick mode and uploads the results. On
+pushes to `main` and manual runs it runs them once, report only. On a pull request it runs them
+twice and then `cargo xtask bench-compare`, which fails the `bench` job when the same bench
+regresses against `crates/iamb-bench/baselines/ci-ubuntu.jsonl` in both runs, and passes ("not
+armed yet") while that file does not exist (see `docs/test-strategy.md` §3, "Regression rule").
+`bench` is not part of `ci-ok`; require it in branch protection as well for a regression to block
+a merge.
 
 `.github/workflows/nightly.yml` runs every night and on demand, and never blocks a merge:
 

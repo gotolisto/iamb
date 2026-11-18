@@ -1,0 +1,8 @@
+{"schema":1,"bench":"engine/expand/10000","stat":"p50","unit":"ns","baseline":10370,"spread":6140,"runs":10,"git_sha":"314b3ddb598ecd564bce5e95d13597ba07a82cec","runner":"ci-ubuntu"}
+{"schema":1,"bench":"matcher/build/10000","stat":"p50","unit":"ns","baseline":8123676,"spread":4130988,"runs":10,"git_sha":"314b3ddb598ecd564bce5e95d13597ba07a82cec","runner":"ci-ubuntu"}
+{"schema":1,"bench":"matcher/lookup/10000","stat":"p99","unit":"ns","baseline":320,"spread":200,"runs":10,"git_sha":"314b3ddb598ecd564bce5e95d13597ba07a82cec","runner":"ci-ubuntu"}
+{"schema":1,"bench":"matcher/lookup_hit/10000","stat":"p99","unit":"ns","baseline":311,"spread":171,"runs":10,"git_sha":"314b3ddb598ecd564bce5e95d13597ba07a82cec","runner":"ci-ubuntu"}
+{"schema":1,"bench":"matcher/lookup_miss/10000","stat":"p99","unit":"ns","baseline":101,"spread":50,"runs":10,"git_sha":"314b3ddb598ecd564bce5e95d13597ba07a82cec","runner":"ci-ubuntu"}
+{"schema":1,"bench":"store/load/10000","stat":"p95","unit":"ns","baseline":38108835,"spread":16712600,"runs":10,"git_sha":"314b3ddb598ecd564bce5e95d13597ba07a82cec","runner":"ci-ubuntu"}
+{"schema":1,"bench":"template/render/5kb","stat":"p99","unit":"ns","baseline":30667,"spread":33240,"runs":10,"git_sha":"314b3ddb598ecd564bce5e95d13597ba07a82cec","runner":"ci-ubuntu"}
+{"schema":1,"bench":"template/render_only/5kb","stat":"p99","unit":"ns","baseline":15984,"spread":19751,"runs":10,"git_sha":"314b3ddb598ecd564bce5e95d13597ba07a82cec","runner":"ci-ubuntu"}

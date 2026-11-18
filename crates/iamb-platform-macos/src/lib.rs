@@ -69,11 +69,11 @@
 mod clipboard;
 #[cfg(target_os = "macos")]
 mod endpoint;
-#[cfg(target_os = "macos")]
+// `clipboard`, `focus`, `hotkeys`, `injector`, `listener` and `permissions` keep their
+// decisions in plain Rust submodules that are built and tested on every system; their macOS
+// code is gated inside. Off macOS nothing but the tests uses them.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod focus;
-// `clipboard`, `hotkeys`, `injector`, `listener` and `permissions` keep their decisions in
-// plain Rust submodules that are built and tested on every system; their macOS code is gated
-// inside. Off macOS nothing but the tests uses them.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod hotkeys;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]

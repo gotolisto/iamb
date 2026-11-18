@@ -81,6 +81,40 @@ key.
    target\release\iamb-compat.exe report --results compat-windows.jsonl > compat-windows.md
    ```
 
+### Secure fields on Windows (W19, W20 and two extra checks)
+
+The build machines have no browser and no password manager, so these cases are only checked here,
+by hand. The harness asks the questions of the "Secure rows" note below; this says what to do
+first. How a password field is detected, and what is not, is in the module docs of
+`crates/iamb-platform-windows/src/focus.rs`.
+
+1. **W20, browser.** Close every Chrome window first, so that Chrome starts without its
+   accessibility tree, which is the hardest case. Open `probe.html` and click straight into the
+   password field. Type `;cpt1` and a space. Pass: the field holds exactly the six characters and
+   the diagnostics show a "secure field" entry (in the first second after Chrome starts, "unknown
+   focus" is also a pass). Then the buffer check: type `;cp` in the password field, click into the
+   `<textarea>`, type `t1`; nothing may expand. Do both once more reaching the password field
+   with Tab from the `contenteditable` div instead of the mouse.
+2. **W20, the other way round.** Type `;cpt1` in the `<textarea>` and in the `contenteditable`
+   div: both expand. If the first try after starting the browser does not, note how long it took
+   until one did (the browser describes the page only once it has been asked).
+3. **W19, password manager.** Start the app fresh, so that the master password field is the first
+   thing it ever has the focus on. Type `;cpt1` and a space: same pass as in step 1. Lock, unlock
+   and repeat once.
+4. **Extra, not cells:** steps 1 and 2 in Microsoft Edge and in Mozilla Firefox.
+5. **Extra, known limit: a password prompt in a terminal.** In Windows Terminal run
+   `runas /user:nobody cmd` and type `;cpt1` and a space at the password prompt. Windows does not
+   tell that a console is asking for a password, so today this expands; record what happened.
+   Then exclude the terminal and repeat; nothing may expand, and the diagnostics show "excluded
+   app". An exclusion is a row of the table `app_exclusion`, written like the setting under
+   "Per-app overrides" below, while the service is stopped. Its `app_id` must be the name exactly
+   as the diagnostics show it, which on Windows is the executable's file name in lower case:
+
+   ```sh
+   sqlite> INSERT INTO app_exclusion (app_id, display_name, created_at)
+      ...> VALUES ('windowsterminal.exe', 'Windows Terminal', 0);
+   ```
+
 ## macOS
 
 1. Open Terminal in the repository folder.
@@ -129,6 +163,42 @@ key.
    ```sh
    target/release/iamb-compat report --results compat-macos.jsonl > compat-macos.md
    ```
+
+### Secure fields on macOS (M11, M19, M20 and extra checks)
+
+No build machine has a browser, a password manager or an unlocked desktop, so these cases are
+only checked here, by hand. The harness asks the questions of the "Secure rows" note below; this
+says what to do first. How a secure field is detected, and what is not, is in the module docs of
+`crates/iamb-platform-macos/src/focus.rs`.
+
+1. **M20, browser.** Open `probe.html` in Safari and click into the password field. Type `;cpt1`
+   and a space. Pass: the field holds exactly the six characters. The diagnostics should show a
+   "secure field" entry; if they show none, note it (while secure keyboard entry is on, macOS
+   hands Iamb no key at all, so nothing was buffered, but the app reported no focus change).
+   Then the buffer check: type `;cp` in the password field, click into the `<textarea>`, type
+   `t1`; nothing may expand. Do both once more reaching the password field with Tab from the
+   `contenteditable` div instead of the mouse.
+2. **M20, the other way round.** Leave the password field with a click into the `<textarea>` and
+   type `;cpt1` and a space: it expands, at the latest about a second after the click (that is
+   how long the end of secure keyboard entry can take to be noticed in a browser that sends no
+   focus notification). Note it if it takes longer or needs a switch to another app and back.
+3. **M19, password manager.** Lock the app, so that the master password field has the focus.
+   Type `;cpt1` and a space: same pass as in step 1. Unlock, type `;cpt1` in a search or note
+   field of the app: record whether it expands (an app that keeps secure keyboard entry on while
+   unlocked does not, and that is a pass for the secure row, noted as a limit).
+4. **M11, Terminal.** In Terminal choose Terminal > Secure Keyboard Entry, type `;cpt1` and a
+   space at the prompt: nothing expands. Switch to another app and back: the diagnostics show
+   "secure field". Switch it off again and type the same: it expands within about a second,
+   without leaving the window.
+5. **Extra, not cells:** steps 1 and 2 in Google Chrome and in Mozilla Firefox, each started
+   fresh, and a `sudo -k; sudo true` password prompt in Terminal with Secure Keyboard Entry off.
+   macOS does not say that a terminal is asking for a password, so the last one expands today;
+   record what happened. Excluding Terminal (bundle identifier `com.apple.Terminal` in the table
+   `app_exclusion`, written while the service is stopped) must stop it, with "excluded app" in
+   the diagnostics.
+6. **If secure keyboard entry is stuck on.** When nothing expands anywhere and every entry says
+   "secure field", some app left secure keyboard entry on. `ioreg -l -w 0 | grep SecureInput`
+   names its process id; quit that app and note which one it was.
 
 ## Notes for the cells
 
