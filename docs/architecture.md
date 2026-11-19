@@ -177,12 +177,21 @@ impl Engine {
 Rules for the listener that the events rely on:
 
 - Where the OS tells it cheaply, the listener says which window a key went to (on Windows the
-  window in front and its process, read in the hook; the macOS listener does not say yet). A
-  focus change reaches the engine later than the keys typed right after it (the watcher hears of
-  it after the application, and it crosses the focus thread), so the thread that feeds the engine
-  hands it no key whose window differs from the last `FocusChanged` it delivered: such a key is
-  neither stored nor matched, and an expansion waiting for its start marker is cancelled. A move
-  to another field of the same window is not seen this way.
+  window in front and its process, read in the hook; on macOS the process only: the event's
+  `kCGEventTargetUnixProcessID` when the system has filled it in, otherwise the frontmost
+  application as the focus watcher last noted it in an atomic, never asked of AppKit in the tap).
+  A focus change reaches the engine later than the keys typed right after it (the watcher hears
+  of it after the application, and it crosses the focus thread), so the thread that feeds the
+  engine hands it no key whose window differs from the last `FocusChanged` it delivered: such a
+  key is neither stored nor matched, and an expansion waiting for its start marker is cancelled.
+  A move to another field of the same window is not seen this way. A key the listener cannot
+  place is delivered without a target and handled as before; it is never dropped for that.
+- Keys for an unreported window do not stop expansion silently: after three of them, or half a
+  second of them, the service records `keys_for_unreported_window` and reads the focus from the
+  inspector. Another window than the last report is judged as if the watcher had reported it.
+  The same window means the listener and the inspector disagree about where keys go; once that
+  has lasted half a second, keys with that stamp are handled as keys without a target until the
+  focus changes.
 - A key is a `Char` whenever translation yields text. AltGr combinations on Windows and Option
   combinations on macOS are therefore characters, not boundaries.
 - Translation never disturbs the target application's keyboard state. The Windows listener
@@ -365,9 +374,15 @@ expansion. So does a dead key still waiting when the start marker arrives: the
 listener reports it as a boundary just before `InjectionStarted`, because the target would spend
 the first Backspace on it. The 2.8 privacy review checks this.
 
-After the start marker the hand-off is sealed and no longer cancels, so the injector watches the
-focus itself (`iamb_platform::FocusGuard`). Right before the start marker it notes where keys go,
-and before each batch (Windows) or each key operation (macOS) it compares: when the window, its
+The hand-off cancels only for what reaches the engine thread before the start marker comes back,
+and a window can take the focus before its watcher reports it. So the injector watches the focus
+itself (`iamb_platform::FocusGuard`). Each request names the window its keys belong to: that of
+the last `FocusChanged` the engine thread delivered, which every key it let through was compared
+with (before the first report, the trigger key's own target). Right before the start marker the
+injector reads where keys go and compares: when that is another window (on macOS, another
+process), it sends nothing, not even the start marker, and answers `Cancelled(FocusMoved)` (the
+2.8 follow-up review's N1). Otherwise that same reading is the guard's reference, and before
+each batch (Windows) or each key operation (macOS) it compares again: when the window, its
 process or the field it can see changed, it stops with `Cancelled(FocusMoved)` and posts no end
 marker; the service answers with `InjectionCancelled`. What it compares never waits for the
 target: on Windows the foreground window, its process and the focused control the system names
@@ -376,9 +391,11 @@ macOS the frontmost process, the secure-input flag and the count of the focus wa
 notifications. Steps sent before the stop stay where they went. Once the expansion itself sends a
 key that may move the focus (Tab, Enter, Escape, Space, an arrow other than Left, a line break
 or a tab in text), the comparisons end for that expansion, because the move it causes cannot be
-told from another. The trigger key's own move can happen before the injector notes the focus;
-that part of the 2.8 review's finding 1 is the delimiter decision
-([ADR-0026](decisions/0026-enter-and-tab-not-default-delimiters.md)), not this check.
+told from another. What none of this sees is a move to another field of the trigger's window
+before the start check (the request names a window, not a field, and on macOS only the
+process): a Tab or an Enter the user added to the delimiters moves the focus inside its own form
+or dialog, which is why they are not delimiters by default
+([ADR-0026](decisions/0026-enter-and-tab-not-default-delimiters.md)).
 
 A paste never replaces clipboard content that its snapshot could not save whole (a format the
 owner did not deliver, a handle, a format past the size or time limit), because the restore
@@ -456,8 +473,13 @@ One transport and framing for both endpoints ([ADR-0006](decisions/0006-ipc.md))
   (import, export, attachments) is passed as file paths, never inline.
 - Shape: `Request { id, body }` → `Response { id, result | error }`, plus `Event { topic, body }`
   pushed by the server.
-- The first message is `Hello { protocol: 1, role, client_version }`; a different major protocol
-  version is refused with a clear error.
+- The first message is `Hello { protocol: 2, role, client_version }`; a different major protocol
+  version is refused with a clear error. The major version is raised whenever a build could
+  misread what a build of the previous version sends: a message or field removed, renamed or
+  given another meaning, a new required field, or a request answered with another response type.
+  Additions an older peer can ignore (a new request, event or optional field) do not raise it.
+  `PROTOCOL_VERSION` in `crates/iamb-ipc/src/protocol.rs` lists each step; 2 is `PutExclusion`
+  answering `Exclusions` instead of `Done`.
 - Message bodies are never logged. Logs record the message name, size and duration.
 
 ### 6.2 The service endpoint

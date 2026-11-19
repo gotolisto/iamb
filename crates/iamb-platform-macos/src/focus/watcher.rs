@@ -44,6 +44,15 @@
 //! injector compares the count between its steps (`injector::run`): a notification that
 //! arrives while it types means the focus moved, whatever the tracker would make of it.
 //!
+//! # The frontmost application for the listener
+//!
+//! The key listener stamps keys with the frontmost application when the event does not name
+//! its target process (`listener::target`). Its tap callback may not call into `AppKit`, so the
+//! watcher notes the process in [`FRONTMOST`](crate::listener::target::FRONTMOST): the
+//! application each activation notification names (on the main thread, while a watcher
+//! lives), and the one each look finds. When the watcher thread ends, the note is cleared, so
+//! keys are delivered without a stamp rather than with a stale one.
+//!
 //! # Lifetimes
 //!
 //! The observer callback and the wake source receive a pointer: the callback to the thread's
@@ -64,7 +73,10 @@ use iamb_platform::{FocusChange, FocusSink, PlatformError, Result};
 use objc2::rc::Retained;
 use objc2::runtime::NSObject;
 use objc2::{ClassType, MainThreadMarker, define_class, msg_send, sel};
-use objc2_app_kit::{NSWorkspace, NSWorkspaceDidActivateApplicationNotification};
+use objc2_app_kit::{
+    NSRunningApplication, NSWorkspace, NSWorkspaceApplicationKey,
+    NSWorkspaceDidActivateApplicationNotification,
+};
 use objc2_application_services::{AXError, AXObserver, AXUIElement};
 use objc2_core_foundation::{
     CFRetained, CFRunLoop, CFRunLoopRunResult, CFRunLoopSource, CFString, Type,
@@ -76,6 +88,7 @@ use super::field::{self, Registration, notification};
 use super::system;
 use super::track::{Attachment, Seen, Signal, Step, Tracker};
 use crate::listener::main_thread::{RunLoopSignal, common_modes, default_mode};
+use crate::listener::target::FRONTMOST;
 
 /// How long `start` waits for the watcher thread's first report.
 const START_TIMEOUT: Duration = Duration::from_secs(5);
@@ -162,15 +175,33 @@ fn noted() {
 static WATCHERS: Mutex<Vec<Weak<Shared>>> = Mutex::new(Vec::new());
 static OBSERVING: AtomicBool = AtomicBool::new(false);
 
-/// Tells every living watcher that an application was activated. Runs on the main thread.
-fn notify_watchers() {
+/// Tells every living watcher that an application was activated, and, while one lives, notes
+/// `pid` (the activated application) for the listener. Runs on the main thread.
+fn notify_watchers(pid: Option<u32>) {
     noted();
     let mut watchers = lock(&WATCHERS);
     watchers.retain(|watcher| watcher.strong_count() > 0);
+    let mut living = false;
     for watcher in watchers.iter().filter_map(Weak::upgrade) {
+        living = true;
         watcher.activated.store(true, Ordering::Release);
         watcher.wake();
     }
+    if living && pid.is_some() {
+        FRONTMOST.note(pid);
+    }
+}
+
+/// The process id of the application an activation notification names.
+fn activated_pid(notification: &NSNotification) -> Option<u32> {
+    let info = notification.userInfo()?;
+    // SAFETY: a constant the framework initialises when it is loaded; it never changes.
+    let key = unsafe { NSWorkspaceApplicationKey };
+    let app = info.objectForKey(key.as_ref())?;
+    let app = app.downcast::<NSRunningApplication>().ok()?;
+    u32::try_from(app.processIdentifier())
+        .ok()
+        .filter(|pid| *pid != 0)
 }
 
 define_class!(
@@ -180,12 +211,13 @@ define_class!(
     struct ActivationObserver;
 
     impl ActivationObserver {
-        /// The target of the workspace's notification. The notification names the
-        /// application; the watcher thread asks the workspace itself, so it is not read.
+        /// The target of the workspace's notification. Only the process id of the
+        /// application it names is read, for the listener; the watcher thread asks the
+        /// workspace itself for everything else.
         #[unsafe(method(applicationActivated:))]
-        fn application_activated(&self, _notification: &NSNotification) {
+        fn application_activated(&self, notification: &NSNotification) {
             // A panic must not unwind into the notification centre.
-            let _ = catch_unwind(notify_watchers);
+            let _ = catch_unwind(AssertUnwindSafe(|| notify_watchers(activated_pid(notification))));
         }
     }
 );
@@ -363,6 +395,9 @@ impl Watcher {
     fn look(&mut self, signal: Signal<Element>) -> bool {
         let front = system::front();
         self.front = front.as_ref().map(|(app, _)| app.pid);
+        if self.front.is_some() {
+            FRONTMOST.note(self.front);
+        }
         let seen = Seen {
             change: front.map(|(app, token)| FocusChange { app, token }),
             // A main thread that does not answer counts as "off": the inspection, which
@@ -474,6 +509,8 @@ struct Exit<'a>(&'a Shared);
 
 impl Drop for Exit<'_> {
     fn drop(&mut self) {
+        // No watcher keeps the listener's note up to date any more (module docs).
+        FRONTMOST.note(None);
         self.0.mark_exited();
     }
 }

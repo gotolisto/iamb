@@ -8,8 +8,11 @@
 //! 2. A hand-off already cancelled for this expansion: `Cancelled`, nothing posted.
 //! 3. The plan of the steps after the leading deletion is made now, before the start marker,
 //!    so that only posting remains between the hand-off sealing and the output.
-//! 4. The output is opened (the private event source), where the keys go is noted
-//!    ([`Output::focus`]), and the start marker posted.
+//! 4. The output is opened (the private event source) and where the keys go is noted
+//!    ([`Output::focus`]). When the frontmost application is not the process the trigger key
+//!    went to ([`InjectionRequest::target`]), the outcome is `Cancelled(FocusMoved)` and
+//!    nothing is posted, not even the start marker (the follow-up review's N1). Otherwise the
+//!    start marker is posted.
 //! 5. [`TypedHandoff::wait_sealed`] gives `k`, or the reason to cancel (no end marker then).
 //! 6. [`compensate`] gives the deletion, `n + k` Backspaces, posted first; then the bursts;
 //!    then the `k` characters, copied out of the hand-off into a stack buffer inside
@@ -42,7 +45,7 @@ use std::time::Duration;
 
 use iamb_platform::{
     CancelReason, ClipboardContent, FocusGuard, HANDOFF_CAPACITY, InjectionOutcome,
-    InjectionRequest, Marker, PlatformError, Result, START_MARKER_TIMEOUT, TypedHandoff,
+    InjectionRequest, KeyTarget, Marker, PlatformError, Result, START_MARKER_TIMEOUT, TypedHandoff,
     compensate,
 };
 
@@ -57,6 +60,9 @@ pub(crate) trait Output {
     type Focus: PartialEq;
     /// Where keys go now. Must not wait for any application.
     fn focus(&mut self) -> Self::Focus;
+    /// The process `focus` names (macOS knows no window here), for the start check against
+    /// the request's target. `None` when no application is frontmost.
+    fn target_of(focus: &Self::Focus) -> Option<KeyTarget>;
     /// Posts a no-op event carrying `marker`.
     fn marker(&mut self, marker: Marker) -> Result<()>;
     /// Posts one press and release of `key`, marked as output.
@@ -167,7 +173,11 @@ pub(crate) fn inject_with_timeout<O: Output>(
         Ok(output) => output,
         Err(error) => return InjectionOutcome::Failed(error),
     };
-    let mut guard = FocusGuard::new(output.focus());
+    let now = output.focus();
+    let mut guard = match FocusGuard::for_request(request.target, now, O::target_of) {
+        Ok(guard) => guard,
+        Err(reason) => return InjectionOutcome::Cancelled(reason),
+    };
     if let Err(error) = output.marker(Marker::InjectionStart(expansion)) {
         return InjectionOutcome::Failed(error);
     }
@@ -452,6 +462,11 @@ mod tests {
                 self.focus = to;
             }
             self.focus
+        }
+
+        /// The focus is the frontmost process's id.
+        fn target_of(focus: &u64) -> Option<KeyTarget> {
+            u32::try_from(*focus).ok().map(KeyTarget::process)
         }
 
         fn marker(&mut self, marker: Marker) -> Result<()> {
@@ -822,6 +837,9 @@ mod tests {
             fn focus(&mut self) -> u64 {
                 (&mut *self.inner).focus()
             }
+            fn target_of(focus: &u64) -> Option<KeyTarget> {
+                <&mut Recorder as Output>::target_of(focus)
+            }
             fn marker(&mut self, marker: Marker) -> Result<()> {
                 (&mut *self.inner).marker(marker)
             }
@@ -879,6 +897,38 @@ mod tests {
             InjectionOutcome::Cancelled(CancelReason::FocusMoved)
         );
         assert_eq!(recorder.seen, [Seen::Marker(Marker::InjectionStart(E))]);
+    }
+
+    /// The follow-up review's N1: another application came to the front between the trigger
+    /// key and the injector's first look. Nothing is posted, not even the start marker; with
+    /// the trigger's application in front the same request goes ahead. The window the trigger
+    /// was stamped with does not count: the frontmost process is all macOS tells cheaply.
+    #[test]
+    fn a_request_for_another_process_posts_nothing() {
+        let steps = vec![InjectionStep::DeleteBack(3), text("be right back")];
+        let editor = KeyTarget::window(iamb_platform::FocusToken::from_raw(7, 31));
+        let request = InjectionRequest::new(E, steps).for_target(editor);
+        let mut recorder = Recorder {
+            focus: 9,
+            ..Recorder::default()
+        };
+        let outcome = run(&request, &sealed(&[]), &Strategy::DEFAULT, &mut recorder);
+        assert_eq!(
+            outcome,
+            InjectionOutcome::Cancelled(CancelReason::FocusMoved)
+        );
+        assert_eq!(recorder.seen, []);
+
+        let mut recorder = Recorder {
+            focus: 7,
+            ..Recorder::default()
+        };
+        let outcome = run(&request, &sealed(&[]), &Strategy::DEFAULT, &mut recorder);
+        assert_eq!(outcome, InjectionOutcome::Finished { retyped: 0 });
+        assert_eq!(
+            recorder.seen.first(),
+            Some(&Seen::Marker(Marker::InjectionStart(E)))
+        );
     }
 
     #[test]

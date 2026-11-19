@@ -18,11 +18,12 @@
 //! | a focused `NSSecureTextField` is `Secure`, and the plain field after it is as before | the test window in front | skipped |
 //! | an answer comes within the service's timeout | a focused window | skipped |
 //! | `watch`: first report, `AlreadyRunning`, a field change, `unwatch` | Accessibility for the process that runs the tests | checked to be refused with `PermissionDenied(Accessibility)` |
+//! | the listener stamps a key that goes to the test window with this process (finding 5 on macOS), and says which source stamped it | the test window in front, Input Monitoring and Accessibility | skipped |
 //! | `restore_focus` on a process that does not exist; with the test window brought back to the front first (and that checked), `restore_focus` on it takes the fast path | a focused window | the second half is skipped |
 //!
 //! A skipped check writes `SKIPPED` and its reason to standard error; a failed one writes
-//! `FAILED` and the process exits with a failure. Nothing is typed, and no field's content is
-//! read: the fields stay empty.
+//! `FAILED` and the process exits with a failure. Nothing is typed (the stamp check presses
+//! Left, which types nothing), and no field's content is read: the fields stay empty.
 //!
 //! If secure keyboard entry is already on when the test starts (another program left it on,
 //! or the screen is locked), every answer is `Secure` and the checks that need `Normal` are
@@ -51,8 +52,9 @@ mod mac {
     use std::time::{Duration, Instant};
 
     use iamb_platform::{
-        FieldSecurity, FocusChange, FocusInspector, FocusToken, Grant, PermissionKind, Permissions,
-        PlatformError, SECURE_STATE_TIMEOUT, UnknownReason,
+        EventSink, FieldSecurity, FocusChange, FocusInspector, FocusToken, Grant, KeyListener,
+        KeyTarget, ListenerEvent, PermissionKind, Permissions, PlatformError, SECURE_STATE_TIMEOUT,
+        UnknownReason,
     };
     use iamb_platform_macos::{Platform, run_with_main_loop};
     use objc2::MainThreadMarker;
@@ -64,6 +66,9 @@ mod mac {
     use objc2_core_foundation::{
         CFRetained, CFRunLoop, CFRunLoopSource, CFRunLoopSourceContext, CGPoint, CGRect, CGSize,
         kCFRunLoopCommonModes,
+    };
+    use objc2_core_graphics::{
+        CGEvent, CGEventFlags, CGEventSource, CGEventSourceStateID, CGEventTapLocation,
     };
 
     /// What the closure returns when no check failed.
@@ -623,6 +628,113 @@ mod mac {
         });
     }
 
+    /// A sink that keeps each event with the target it was delivered with.
+    struct Stamps(std::sync::mpsc::Sender<(ListenerEvent, Option<KeyTarget>)>);
+
+    impl EventSink for Stamps {
+        fn deliver(&mut self, event: ListenerEvent) {
+            let _ = self.0.send((event, None));
+        }
+        fn deliver_to(&mut self, event: ListenerEvent, target: KeyTarget) {
+            let _ = self.0.send((event, Some(target)));
+        }
+    }
+
+    /// One of the listener's stamp counters, read from the platform's health report.
+    fn counter(report: &str, name: &str) -> u64 {
+        report
+            .split(&format!("{name}: "))
+            .nth(1)
+            .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(0)
+    }
+
+    /// The 2.8 review's finding 5 on macOS: with the test window in front and the watcher
+    /// running, Left is pressed at the hardware end of the stream. The listener must stamp it
+    /// with this process. Which source stamped it (the event's `kCGEventTargetUnixProcessID`,
+    /// or the frontmost application as the watcher noted it) is written as a note, so the
+    /// CI log says whether the system fills the field in for a session event tap.
+    fn keys_are_stamped_with_this_process(run: &mut Run, platform: &Platform, window: bool) {
+        let what = "the listener stamps a key typed into the test window with this process";
+        if !window {
+            Run::skipped(what, "the test window is not in front");
+            return;
+        }
+        if let Err(error) = platform.watch(Box::new(|_: FocusChange| {})) {
+            Run::skipped(what, &format!("the focus watcher did not start: {error}"));
+            return;
+        }
+        let (sender, stamps) = channel();
+        match platform.start(Box::new(Stamps(sender))) {
+            Ok(()) => {}
+            Err(error) => {
+                let _ = platform.unwatch();
+                Run::skipped(what, &format!("the listener did not start: {error}"));
+                return;
+            }
+        }
+        let own = std::process::id();
+        let front = bring_window_back()
+            && wait_for(FRONT_TIMEOUT, || {
+                platform.focus_token().ok().filter(|t| t.pid() == own)
+            })
+            .is_some();
+        if !front {
+            let _ = platform.stop();
+            let _ = platform.unwatch();
+            Run::skipped(what, "the test window did not come back to the front");
+            return;
+        }
+        // Let the watcher's looks of the move settle, so the frontmost note is this process.
+        thread::sleep(Duration::from_millis(300));
+        while stamps.try_recv().is_ok() {}
+        let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState);
+        for down in [true, false] {
+            if let Some(event) = CGEvent::new_keyboard_event(source.as_deref(), 0x7B, down) {
+                CGEvent::set_flags(Some(&event), CGEventFlags(0));
+                CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&event));
+            }
+        }
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut stamp = None;
+        while let Ok((event, target)) =
+            stamps.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        {
+            if matches!(event, ListenerEvent::Boundary { .. }) {
+                stamp = Some(target);
+                break;
+            }
+        }
+        let report = format!("{platform:?}");
+        let _ = platform.stop();
+        let _ = platform.unwatch();
+        let (event, frontmost, unknown, disagreements) = (
+            counter(&report, "targets_from_event"),
+            counter(&report, "targets_from_frontmost"),
+            counter(&report, "targets_unknown"),
+            counter(&report, "target_disagreements"),
+        );
+        let by = if event > 0 {
+            "the event's own kCGEventTargetUnixProcessID"
+        } else if frontmost > 0 {
+            "the frontmost application as the watcher noted it (the event's field was 0)"
+        } else {
+            "nothing (no source knew)"
+        };
+        say(&format!(
+            "note: key stamp source: {by}; key presses stamped from the event {event}, from the \
+             frontmost application {frontmost}, not stamped {unknown}; the event's field \
+             disagreed with the frontmost application {disagreements} times"
+        ));
+        match stamp {
+            None => run.failed(what, "the key did not reach the listener's sink"),
+            Some(target) => run.check(what, target == Some(KeyTarget::process(own)), || {
+                format!("stamped {target:?}, this process is {own}")
+            }),
+        }
+    }
+
     /// `restore_focus` on the window that has the focus takes the fast path: it sees the
     /// window in front and returns without activating anything. The slow path (activate,
     /// then wait for the window) is covered by the unit tests of `focus::restore`, which
@@ -764,6 +876,14 @@ mod mac {
             }
         }
 
+        if secure_input_is_on() == Some(false) {
+            keys_are_stamped_with_this_process(&mut run, &platform, window.is_some());
+        } else {
+            Run::skipped(
+                "the listener stamps a key typed into the test window with this process",
+                "secure keyboard entry is on: no tap sees keys",
+            );
+        }
         the_watcher_reports(&mut run, &platform, window, accessibility);
         the_focus_is_given_back(&mut run, &platform, window, target);
         close_window();

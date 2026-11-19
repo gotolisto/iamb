@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use iamb_ipc::{
     Client, Direction, ErrorCode, FrameError, Group, HELLO_TIMEOUT, IpcError, MAX_FRAME_LEN,
-    MessageLog, MessageRecord, RequestBody, ResponseBody, Role, Secret, ServerConnection, Wire,
-    read_frame, write_frame,
+    MessageLog, MessageRecord, PROTOCOL_VERSION, RequestBody, ResponseBody, Role, Secret,
+    ServerConnection, Wire, read_frame, write_frame,
 };
 use iamb_platform::mock::MockPlatform;
 use iamb_platform::{EndpointKind, EndpointName, LocalEndpoint, LocalStream, PeerPolicy};
@@ -95,10 +95,11 @@ fn another_protocol_version_is_refused_with_a_clear_error() {
     let os = MockPlatform::new();
     server(&os);
     let mut stream = raw(&os);
-    match hello(&mut stream, 2, "ui") {
+    // A client of the previous version (it would misread the answer to `PutExclusion`).
+    match hello(&mut stream, 1, "ui") {
         Wire::Refused { error } => {
             assert_eq!(error.code, ErrorCode::UnsupportedProtocol);
-            assert!(error.message.contains("protocol 1"), "{}", error.message);
+            assert!(error.message.contains("protocol 2"), "{}", error.message);
         }
         other => panic!("expected a refusal, got {}", other.name()),
     }
@@ -113,7 +114,7 @@ fn a_first_frame_that_is_not_a_hello_is_refused() {
     for first in [
         r#"{"kind":"request","id":1,"body":{"type":"get_status"}}"#,
         "not json at all",
-        r#"{"kind":"hello","protocol":1,"role":"admin","client_version":"x"}"#,
+        r#"{"kind":"hello","protocol":2,"role":"admin","client_version":"x"}"#,
     ] {
         let mut stream = raw(&os);
         match send_raw(&mut stream, first) {
@@ -144,7 +145,10 @@ fn malformed_frames_get_an_error_and_the_connection_stays_usable() {
     let os = MockPlatform::new();
     server(&os);
     let mut stream = raw(&os);
-    assert!(matches!(hello(&mut stream, 1, "ui"), Wire::Welcome(_)));
+    assert!(matches!(
+        hello(&mut stream, PROTOCOL_VERSION, "ui"),
+        Wire::Welcome(_)
+    ));
 
     let bad = |stream: &mut Box<dyn LocalStream>, json: &str| match send_raw(stream, json) {
         Wire::Response(r) => (r.id, r.error.map(|e| e.code)),
@@ -173,7 +177,7 @@ fn malformed_frames_get_an_error_and_the_connection_stays_usable() {
     assert_eq!(
         bad(
             &mut stream,
-            r#"{"kind":"welcome","protocol":1,"server_version":"x"}"#
+            r#"{"kind":"welcome","protocol":2,"server_version":"x"}"#
         ),
         (0, Some(ErrorCode::BadRequest))
     );
@@ -195,7 +199,10 @@ fn an_oversized_frame_is_refused_and_the_connection_closed() {
     let os = MockPlatform::new();
     server(&os);
     let mut stream = raw(&os);
-    assert!(matches!(hello(&mut stream, 1, "cli"), Wire::Welcome(_)));
+    assert!(matches!(
+        hello(&mut stream, PROTOCOL_VERSION, "cli"),
+        Wire::Welcome(_)
+    ));
     // Only the header: the server must not wait for 8 MB of body.
     let len = u32::try_from(MAX_FRAME_LEN + 1).expect("fits");
     stream.write_all(&len.to_le_bytes()).expect("written");

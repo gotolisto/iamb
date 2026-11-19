@@ -18,6 +18,7 @@
 //! | [`reply`] | every system | the answer of a job handed to another thread, with a deadline |
 //! | [`stats`] | every system | the callback's duration histogram and counters |
 //! | [`core`] | every system | what the callback does with one event; markers; why other software's synthetic events are typing |
+//! | [`target`] | every system | where a key went: the event's target process, the frontmost application as last noted, or no stamp |
 //! | `sys` | macOS | every hand-written `extern` declaration of this crate |
 //! | `main_thread` | macOS | running work on the main thread |
 //! | `layout` | macOS | the system's keyboard layout, read on the main thread, translated with `UCKeyTranslate` |
@@ -69,6 +70,7 @@ mod recovery;
 mod reply;
 mod selftest;
 mod stats;
+pub(crate) mod target;
 mod translate;
 
 #[cfg(test)]

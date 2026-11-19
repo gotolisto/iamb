@@ -55,8 +55,10 @@
 //! after the end marker instead.
 //!
 //! [`script_at`](MockPlatform::script_at) scripts a focus change at such a point (the
-//! application moved the focus on the trigger key, a window took it). The injector notes the
-//! focused window and its field right before the start marker and stops with
+//! application moved the focus on the trigger key, a window took it). Right before the start
+//! marker the injector compares the focused window with the request's
+//! [`target`](crate::InjectionRequest::target) and does not start when it is another one;
+//! from there it notes the focused window and its field and stops with
 //! [`FocusMoved`](crate::CancelReason::FocusMoved) before the first step that would go
 //! elsewhere ([`FocusGuard`]).
 //!
@@ -934,12 +936,15 @@ impl MockPlatform {
         }
     }
 
-    /// Where the injector's keys go, for its [`FocusGuard`]: the focused window and what its
-    /// field is (a move to another field of the window is a change of its security here).
-    fn keys_go_to(&self) -> Option<(u64, FieldSecurity)> {
+    /// Where the injector's keys go, for its [`FocusGuard`]: the focused window (with its
+    /// process) and what its field is (a move to another field of the window is a change of
+    /// its security here).
+    fn keys_go_to(&self) -> Option<(FocusToken, FieldSecurity)> {
         let desk = self.desk();
         let id = desk.focused?;
-        desk.windows.get(&id).map(|w| (id, w.spec.security))
+        desk.windows
+            .get(&id)
+            .map(|w| (FocusToken::from_raw(w.spec.pid, id), w.spec.security))
     }
 
     /// Posts a marked no-op event. The listener does what a real one does with it: decodes the
@@ -1039,7 +1044,7 @@ impl MockPlatform {
         request: &InjectionRequest,
         typed: &TypedHandoff,
         k: usize,
-        guard: &mut FocusGuard<Option<(u64, FieldSecurity)>>,
+        guard: &mut FocusGuard<Option<(FocusToken, FieldSecurity)>>,
         after_batch: &mut Vec<MockKey>,
     ) -> std::result::Result<(), InjectionOutcome> {
         let failed = InjectionOutcome::Failed;
@@ -1176,7 +1181,13 @@ impl Injector for MockPlatform {
 
         let mut after_batch = Vec::new();
         self.interleaved(InjectionPoint::BeforeStartMarker, &mut after_batch);
-        let mut guard = FocusGuard::new(self.keys_go_to());
+        // The start check (N1): the keys must still go to the trigger's window.
+        let mut guard = match FocusGuard::for_request(request.target, self.keys_go_to(), |now| {
+            now.map(|(token, _)| KeyTarget::window(token))
+        }) {
+            Ok(guard) => guard,
+            Err(reason) => return self.stopped(expansion, InjectionOutcome::Cancelled(reason)),
+        };
         self.post_marker(Marker::InjectionStart(expansion));
         self.log(Injected::StartMarker(expansion));
         self.interleaved(InjectionPoint::AfterStartMarker, &mut after_batch);
