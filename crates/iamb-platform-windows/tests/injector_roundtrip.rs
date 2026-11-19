@@ -366,6 +366,8 @@ fn a_focus_change_during_a_wait_stops_the_expansion() {
         skip("this session cannot create a second window");
         return;
     };
+    // An edit window starts out holding its title; empty both so only injected text counts.
+    other.set_text("");
     desk.window.set_text("");
     if !desk.window.focus() {
         skip("the test window could not take the foreground and the keyboard focus");
