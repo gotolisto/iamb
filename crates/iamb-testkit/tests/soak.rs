@@ -101,7 +101,7 @@ fn a_short_soak_passes_and_its_scan_can_fail() {
         control["value"]
             .as_str()
             .expect("value")
-            .contains("145 of 145 planted shapes found"),
+            .contains("150 of 150 planted shapes found"),
         "{control}"
     );
     assert_eq!(rule("no-crash-dumps")["verdict"], "pass");

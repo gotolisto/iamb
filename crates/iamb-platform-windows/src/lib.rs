@@ -51,6 +51,8 @@
 mod clipboard;
 #[cfg(windows)]
 mod endpoint;
+#[cfg(windows)]
+mod files;
 mod focus;
 #[cfg(windows)]
 mod hardening;
@@ -63,9 +65,14 @@ mod login_item;
 mod memory;
 #[cfg(windows)]
 mod permissions;
+// The pipe's name rules are plain Rust, built and tested on every system.
+#[cfg_attr(not(windows), allow(dead_code))]
+mod pipe_names;
 #[cfg(all(windows, feature = "probe"))]
 pub mod probe;
 
+#[cfg(windows)]
+pub use files::restrict_to_current_user;
 #[cfg(windows)]
 pub use hardening::harden_process;
 

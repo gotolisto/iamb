@@ -52,6 +52,8 @@ iamb-platform = { path = "../iamb-platform" }
 # ADR-0008).
 #
 #   Foundation                     everything (handles, BOOL, error codes)
+#   Graphics_Gdi                   clipboard (an enhanced metafile copied as its records and
+#                                  made again: the 2.8 follow-up review's N4)
 #   UI_WindowsAndMessaging         listener (hooks, message loop), focus (foreground window)
 #   UI_Input_KeyboardAndMouse      listener (layout translation), injector (SendInput), hotkeys
 #   UI_Input_Ime                   listener (composition state)
@@ -75,6 +77,7 @@ iamb-platform = { path = "../iamb-platform" }
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Gdi",
     "Win32_Security",
     "Win32_Security_Authorization",
     "Win32_Security_Cryptography",

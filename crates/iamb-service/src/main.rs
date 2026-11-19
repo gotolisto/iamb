@@ -103,6 +103,13 @@ fn main() -> ExitCode {
         Ok(dirs) => dirs,
         Err(e) => return fail(&e.to_string()),
     };
+    // The data root is the user's alone, wherever it is (§3.3; the 2.8 review's finding 20:
+    // on Windows a root outside the profile would otherwise keep its parent's permissions).
+    if let Err(e) = iamb_service::paths::create_private_dir(dirs.root()) {
+        return fail(&format!(
+            "cannot make the data root private to this user: {e}"
+        ));
+    }
     let choice = args
         .platform
         .unwrap_or_else(PlatformChoice::default_for_build);

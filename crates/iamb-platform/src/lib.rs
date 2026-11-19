@@ -66,8 +66,8 @@ pub use endpoint::{
 };
 pub use error::{PlatformError, Result};
 pub use focus::{
-    AppIdentity, FieldSecurity, FocusChange, FocusInspector, FocusSink, FocusToken,
-    RESTORE_FOCUS_TIMEOUT, SECURE_STATE_TIMEOUT, UnknownReason, verdict,
+    AppIdentity, FOCUS_READ_ATTEMPTS, FieldSecurity, FocusChange, FocusInspector, FocusSink,
+    FocusToken, RESTORE_FOCUS_TIMEOUT, SECURE_STATE_TIMEOUT, UnknownReason, verdict,
 };
 pub use handoff::{
     CancelReason, HANDOFF_CAPACITY, HandoffStatus, START_MARKER_TIMEOUT, TypedHandoff,

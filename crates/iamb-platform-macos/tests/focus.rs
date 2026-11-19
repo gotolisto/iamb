@@ -18,7 +18,7 @@
 //! | a focused `NSSecureTextField` is `Secure`, and the plain field after it is as before | the test window in front | skipped |
 //! | an answer comes within the service's timeout | a focused window | skipped |
 //! | `watch`: first report, `AlreadyRunning`, a field change, `unwatch` | Accessibility for the process that runs the tests | checked to be refused with `PermissionDenied(Accessibility)` |
-//! | the listener stamps a key that goes to the test window with this process (finding 5 on macOS), and says which source stamped it | the test window in front, Input Monitoring and Accessibility | skipped |
+//! | the listener stamps a key that goes to the test window with this process (finding 5 on macOS), and says which source stamped it | the test window in front, Input Monitoring and Accessibility | skipped when a permission is missing or secure keyboard entry is on; any other reason fails (see below) |
 //! | `restore_focus` on a process that does not exist; with the test window brought back to the front first (and that checked), `restore_focus` on it takes the fast path | a focused window | the second half is skipped |
 //!
 //! A skipped check writes `SKIPPED` and its reason to standard error; a failed one writes
@@ -28,6 +28,14 @@
 //! If secure keyboard entry is already on when the test starts (another program left it on,
 //! or the screen is locked), every answer is `Secure` and the checks that need `Normal` are
 //! skipped.
+//!
+//! The key-stamp check is the only test of the macOS half of the 2.8 review's finding 5 on a
+//! real system, so it may not pass unseen (the close-out review's C5). It skips only for what
+//! a CI runner can lack by design: the Accessibility or Input Monitoring grant, or secure
+//! keyboard entry left on. Anything else that keeps it from running (the watcher or the
+//! listener failing for another reason, the test window not coming to the front) is a
+//! failure. On a machine that has the grants (the lab, a runner set up with them),
+//! `IAMB_REQUIRE_KEY_STAMP` turns those skips into failures too.
 
 #[cfg(target_os = "macos")]
 fn main() -> std::process::ExitCode {
@@ -83,6 +91,9 @@ mod mac {
     const SETTLE: Duration = Duration::from_secs(3);
     /// A generous timeout for `secure_state`, so that a slow runner is not a failure.
     const PATIENT: Duration = Duration::from_secs(2);
+    /// Set on a machine that has the Accessibility and Input Monitoring grants: the key-stamp
+    /// check must then run (module docs).
+    const REQUIRE_KEY_STAMP: &str = "IAMB_REQUIRE_KEY_STAMP";
 
     #[link(name = "Carbon", kind = "framework")]
     unsafe extern "C" {
@@ -117,6 +128,17 @@ mod mac {
         fn failed(&mut self, what: &str, why: &str) {
             say(&format!("FAILED: {what}: {why}"));
             self.failed = true;
+        }
+
+        /// A check that could not run. With `grants`, what was missing is a permission or
+        /// secure keyboard entry being off: a skip, unless `IAMB_REQUIRE_KEY_STAMP` says this
+        /// machine has them. Any other reason is a failure (module docs).
+        fn could_not_run(&mut self, what: &str, reason: &str, grants: bool) {
+            if grants && std::env::var_os(REQUIRE_KEY_STAMP).is_none() {
+                Self::skipped(what, reason);
+            } else {
+                self.failed(what, &format!("it could not run: {reason}"));
+            }
         }
 
         fn check(&mut self, what: &str, passed: bool, why: impl FnOnce() -> String) {
@@ -657,12 +679,14 @@ mod mac {
     /// CI log says whether the system fills the field in for a session event tap.
     fn keys_are_stamped_with_this_process(run: &mut Run, platform: &Platform, window: bool) {
         let what = "the listener stamps a key typed into the test window with this process";
-        if !window {
-            Run::skipped(what, "the test window is not in front");
-            return;
-        }
+        // The grants first: without them nothing else can be told apart.
         if let Err(error) = platform.watch(Box::new(|_: FocusChange| {})) {
-            Run::skipped(what, &format!("the focus watcher did not start: {error}"));
+            let grants = matches!(error, PlatformError::PermissionDenied(_));
+            run.could_not_run(
+                what,
+                &format!("the focus watcher did not start: {error}"),
+                grants,
+            );
             return;
         }
         let (sender, stamps) = channel();
@@ -670,9 +694,20 @@ mod mac {
             Ok(()) => {}
             Err(error) => {
                 let _ = platform.unwatch();
-                Run::skipped(what, &format!("the listener did not start: {error}"));
+                let grants = matches!(error, PlatformError::PermissionDenied(_));
+                run.could_not_run(
+                    what,
+                    &format!("the listener did not start: {error}"),
+                    grants,
+                );
                 return;
             }
+        }
+        if !window {
+            let _ = platform.stop();
+            let _ = platform.unwatch();
+            run.could_not_run(what, "the test window is not in front", false);
+            return;
         }
         let own = std::process::id();
         let front = bring_window_back()
@@ -683,7 +718,11 @@ mod mac {
         if !front {
             let _ = platform.stop();
             let _ = platform.unwatch();
-            Run::skipped(what, "the test window did not come back to the front");
+            run.could_not_run(
+                what,
+                "the test window did not come back to the front",
+                false,
+            );
             return;
         }
         // Let the watcher's looks of the move settle, so the frontmost note is this process.
@@ -879,9 +918,10 @@ mod mac {
         if secure_input_is_on() == Some(false) {
             keys_are_stamped_with_this_process(&mut run, &platform, window.is_some());
         } else {
-            Run::skipped(
+            run.could_not_run(
                 "the listener stamps a key typed into the test window with this process",
                 "secure keyboard entry is on: no tap sees keys",
+                true,
             );
         }
         the_watcher_reports(&mut run, &platform, window, accessibility);

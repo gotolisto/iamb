@@ -28,6 +28,10 @@ pub const SECURE_STATE_TIMEOUT: Duration = Duration::from_millis(100);
 /// [`Timeout`](crate::PlatformError::Timeout).
 pub const RESTORE_FOCUS_TIMEOUT: Duration = Duration::from_millis(500);
 
+/// How often the default [`FocusInspector::focus_now`] reads before it gives up on a focus
+/// that keeps moving.
+pub const FOCUS_READ_ATTEMPTS: usize = 4;
+
 /// The application that has the focus.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AppIdentity {
@@ -172,6 +176,37 @@ pub trait FocusInspector: Send + Sync {
     ///
     /// [`NoFocus`](crate::PlatformError::NoFocus) when no window is focused.
     fn focus_token(&self) -> Result<FocusToken>;
+
+    /// The application and the window that have the focus, as one consistent reading: the
+    /// application is the one the window belongs to, never one that had the focus a moment
+    /// earlier or later. The service reads the focus this way when it has to look for itself
+    /// (keys went to a window the watcher did not report), and sends the result to the focus
+    /// thread as one change: the exclusion is judged by the application's name and the keys by
+    /// the window, so the two must not come from two different moments (the close-out
+    /// review's C3).
+    ///
+    /// The Windows and macOS inspectors answer from one reading of the system, as their
+    /// watchers build a [`FocusChange`]. The default, for an inspector that has only the two
+    /// separate reads, reads the window, then the application, then the window again, and
+    /// accepts the pair only when both window readings agree; otherwise it reads again, up to
+    /// [`FOCUS_READ_ATTEMPTS`] times. A focus that moves away and back between the two window
+    /// readings is not seen; that takes two focus changes inside two adjacent calls.
+    ///
+    /// # Errors
+    ///
+    /// [`NoFocus`](crate::PlatformError::NoFocus) when no window is focused, or the focus did
+    /// not hold still for any of the attempts.
+    fn focus_now(&self) -> Result<FocusChange> {
+        for _ in 0..FOCUS_READ_ATTEMPTS {
+            let before = self.focus_token()?;
+            let app = self.focused_app()?;
+            let after = self.focus_token()?;
+            if before == after {
+                return Ok(FocusChange { app, token: after });
+            }
+        }
+        Err(crate::PlatformError::NoFocus)
+    }
 
     /// Gives the focus back to the token's window and returns once the OS confirms that the
     /// window is focused (§4.5 step 4), within [`RESTORE_FOCUS_TIMEOUT`].

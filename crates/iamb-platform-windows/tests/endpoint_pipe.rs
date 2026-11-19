@@ -1,6 +1,6 @@
 //! The Windows endpoint on a real named pipe: exclusive bind, not found, a round trip with the
-//! peer identified in both directions, read timeouts, shutdown and close. Runs on Windows only
-//! (CI's Windows leg).
+//! peer identified in both directions, read timeouts, shutdown and close, and the pipe's
+//! secret name (the 2.8 review's finding 12). Runs on Windows only (CI's Windows leg).
 
 #![cfg(windows)]
 
@@ -119,4 +119,50 @@ fn a_read_times_out_and_close_wakes_accept() {
     thread::sleep(Duration::from_millis(100));
     listener.close().expect("closes");
     assert_eq!(waiting.join().expect("thread"), Err(PlatformError::Closed));
+}
+
+/// Finding 12: the pipe's name ends in a secret that only the user's run directory names, so
+/// another user cannot create it first. Each endpoint of a data root has its own, and a bind
+/// after a close draws a new one.
+#[test]
+fn the_pipe_name_is_a_secret_kept_in_the_run_directory() {
+    let p = Platform::new();
+    let service = name("secret");
+    let sync = EndpointName::new(EndpointKind::Sync, service.run_dir());
+    let a = p
+        .bind(&service, PeerPolicy::SameUser)
+        .expect("service binds");
+    let b = p
+        .bind(&sync, PeerPolicy::SameUser)
+        .expect("sync binds beside it");
+    let read =
+        |file: &str| std::fs::read_to_string(service.run_dir().join(file)).expect("name file");
+    let (one, other) = (read("service.pipe"), read("sync.pipe"));
+    for secret in [&one, &other] {
+        let secret = secret.trim_end();
+        assert_eq!(secret.len(), 32, "{secret:?}");
+        assert!(secret.bytes().all(|c| c.is_ascii_hexdigit()), "{secret:?}");
+    }
+    assert_ne!(one, other);
+    // A client finds each through its file.
+    let listener: Arc<dyn LocalListener> = Arc::from(a);
+    let server = Arc::clone(&listener);
+    let accepted = thread::spawn(move || server.accept().map(|s| s.peer().pid));
+    let client = p
+        .connect(&service, PeerPolicy::SameUser, T)
+        .expect("connects");
+    assert_eq!(client.peer().pid, std::process::id());
+    assert_eq!(accepted.join().expect("thread"), Ok(std::process::id()));
+    listener.close().expect("closes");
+    drop(listener);
+    // A file that names no pipe is nothing to connect to.
+    std::fs::write(service.run_dir().join("service.pipe"), "not a secret\n").expect("written");
+    assert!(matches!(
+        p.connect(&service, PeerPolicy::SameUser, T),
+        Err(PlatformError::EndpointNotFound)
+    ));
+    let again = p.bind(&service, PeerPolicy::SameUser).expect("binds again");
+    assert_ne!(read("service.pipe"), one, "a new secret");
+    again.close().expect("closes");
+    b.close().expect("closes");
 }

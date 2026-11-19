@@ -168,10 +168,18 @@ fn serve(shared: &Arc<Shared>, stream: Box<dyn LocalStream>) {
     // is counted already (a UI host that connects just before a form is shown gets the form).
     // Events queued before the welcome wait in the channel until the pump starts.
     let mut registered = None;
-    let accepted = ServerConnection::accept_with(stream, crate::VERSION, HELLO_TIMEOUT, log, |c| {
-        registered = Some(shared.clients.add(c.role(), c.peer().pid, c.writer()));
-        Ok(())
-    });
+    // The role must be one the client's executable may take (finding 10, `iamb_ipc::roles`).
+    let accepted = ServerConnection::accept_for(
+        stream,
+        crate::VERSION,
+        HELLO_TIMEOUT,
+        log,
+        shared.policy,
+        |c| {
+            registered = Some(shared.clients.add(c.role(), c.peer().pid, c.writer()));
+            Ok(())
+        },
+    );
     let conn = match accepted {
         Ok(conn) => conn,
         Err(e) => {

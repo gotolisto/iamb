@@ -305,3 +305,27 @@ fn the_log_sees_names_and_sizes_never_bodies() {
     // A record is plain data: its Debug cannot hold the body.
     assert!(!format!("{records:?}").contains("canary"));
 }
+
+/// The 2.8 review's finding 10: the role is not whatever the client says. A server built with
+/// `accept` holds Iamb's own clients to their roles, by the executable the endpoint names.
+#[test]
+fn a_hello_with_a_role_the_executable_does_not_hold_is_refused() {
+    let os = MockPlatform::new();
+    server(&os);
+    let sync_agent = os.with_identity(iamb_platform::PeerIdentity {
+        pid: 77,
+        user: os.identity().user.clone(),
+        executable: Some(r"C:\Users\Ada\AppData\Local\Iamb\iamb-sync.exe".into()),
+        trusted_binary: false,
+    });
+    let stream = sync_agent
+        .connect(&name(), PeerPolicy::SameUser, T)
+        .expect("connects");
+    let refused = Client::handshake(stream, Role::Ui, "1.0.0", T).expect_err("refused");
+    assert_eq!(refused.remote_code(), Some(ErrorCode::NotPermitted));
+    let stream = sync_agent
+        .connect(&name(), PeerPolicy::SameUser, T)
+        .expect("connects");
+    let c = Client::handshake(stream, Role::Sync, "1.0.0", T).expect("its own role");
+    assert_eq!(c.role(), Role::Sync);
+}

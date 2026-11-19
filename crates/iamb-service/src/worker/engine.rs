@@ -482,19 +482,22 @@ impl EngineThread {
     /// Reads where the focus is now. Another window than the last report goes to the focus
     /// thread as a change; the same window, once the keys have gone elsewhere for
     /// [`RESYNC_AFTER`], makes `target` a stamp that is no longer trusted (module docs).
+    ///
+    /// The application and the window come from one consistent reading
+    /// ([`FocusInspector::focus_now`](iamb_platform::FocusInspector::focus_now)): the change
+    /// is judged by the application's name and its keys by the window, so a focus change
+    /// between two separate reads would pair one application's name with another's window
+    /// (the close-out review's C3).
     fn resync(&mut self, target: KeyTarget, lasted: bool) {
-        let platform = &self.shared.platform;
-        let (Ok(app), Ok(token)) = (platform.focused_app(), platform.focus_token()) else {
+        let Ok(change) = self.shared.platform.focus_now() else {
             return;
         };
+        let token = change.token;
         if self.focus.as_ref().map(|c| c.token) != Some(token) {
             self.shared.logger.info(format_args!(
                 "keys went to a window the focus watcher did not report; the focus was read again"
             ));
-            let _ = self
-                .shared
-                .focus_tx
-                .send(FocusMsg::Change(FocusChange { app, token }));
+            let _ = self.shared.focus_tx.send(FocusMsg::Change(change));
         } else if lasted {
             self.shared.logger.warn(format_args!(
                 "the listener names process {} for keys while the focus is in process {}; \

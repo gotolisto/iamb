@@ -58,6 +58,27 @@ pub fn dev_mock() -> MockPlatform {
     os
 }
 
+/// Makes the directory `dir` readable by the current user only, where the system needs a call
+/// of the OS crate for it: on Windows a protected DACL for the user's SID alone
+/// (`iamb_platform_windows::restrict_to_current_user`, the 2.8 review's finding 20). Unix
+/// systems need none: [`create_private_dir`](crate::paths::create_private_dir) sets mode
+/// `0700` there.
+///
+/// # Errors
+///
+/// The system's error when the permissions cannot be set.
+pub fn restrict_to_user(dir: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        iamb_platform_windows::restrict_to_current_user(dir)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = dir;
+        Ok(())
+    }
+}
+
 /// The platform for `choice`.
 ///
 /// # Errors

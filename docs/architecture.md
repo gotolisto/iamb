@@ -34,7 +34,7 @@ All Rust crates live in one Cargo workspace under `crates/`, all named `iamb-*`
 | `iamb-service` | binary | core, store, ipc, platform(+os) | The background service: listener → engine → injector, owns the store, serves IPC, supervises | Network code of any kind |
 | `iamb-sync` | library + thin binary | core, ipc | Sync agent: account session, push, pull, live updates, media transfer, account endpoint | Access to key events |
 | `iamb-cli` | binary `iamb` | core, store, ipc, platform | Command-line tool: add, list, remove, import, dry-run expand | — |
-| `iamb-desktop` | binary | ipc, platform(+os) | Tauri shell (`apps/desktop/src-tauri`): tray icon, windows, focus hand-back, bridges UI commands to `iamb-ipc` | Engine or store logic |
+| `iamb-desktop` | binary | core (model types only), ipc, platform(+os) | Tauri shell (`apps/desktop/src-tauri`): tray icon, windows, focus hand-back, bridges UI commands to `iamb-ipc` | Engine or store logic |
 | `iamb-testkit` | library (dev) | core, platform | Scripted typing sessions, fake clock, fixture libraries, the spec example loader, compatibility harness | — |
 | `iamb-bench` | benches (dev) | core, store | Benchmark harness for the product KPIs | — |
 | `xtask` | binary (dev) | — | Repository automation run by CI | — |
@@ -138,11 +138,20 @@ replaces the files, and asks it to start again ([ADR-0023](decisions/0023-update
 | Library | `library.db` (SQLite, WAL mode) | same |
 | Attachments | `attachments/<profile id>/<sha256>` | same |
 | Logs | `logs/<process>.log` (rotated, 5 × 1 MB) | same |
-| Locks | `run/supervisor.lock`, `run/store.lock` | same |
-| Endpoints | `run/service.sock`, `run/sync.sock` | `\\.\pipe\iamb-service-<user SID>`, `\\.\pipe\iamb-sync-<user SID>` |
+| Locks | `run/supervisor.lock`, `run/store.lock`, `run/desktop.lock` (one UI host per data root) | same |
+| Endpoints | `run/service.sock`, `run/sync.sock` | `\\.\pipe\iamb-service-<user SID>-<secret>`, `\\.\pipe\iamb-sync-<user SID>-<secret>`; each secret (128 random bits, new for every bind) in `run/service.pipe`, `run/sync.pipe`; `run/service.pipe.lock`, `run/sync.pipe.lock` |
 
 On Linux (development and the command-line tool only) the data root is `$XDG_DATA_HOME/iamb/`.
 Setting `IAMB_DATA_DIR` overrides the data root on every OS; tests always set it.
+
+The data root is the user's alone wherever it is: the service creates it, or tightens an existing
+one, before anything else (mode `0700` on macOS and Linux; on Windows a protected DACL with one
+entry, full control for the user's SID, inherited by everything inside, set through
+`iamb_platform_windows::restrict_to_current_user`; the 2.8 review's finding 20). The default under
+`%APPDATA%` is private already; a root chosen with `--data-dir` or `IAMB_DATA_DIR` would otherwise
+keep its parent's permissions. If that cannot be done (a file system without permissions), the
+service does not start. The Windows endpoint restricts its `run` directory the same way before it
+writes the pipe's secret there.
 
 ## 4. The engine pipeline
 
@@ -398,8 +407,12 @@ or dialog, which is why they are not delimiters by default
 ([ADR-0026](decisions/0026-enter-and-tab-not-default-delimiters.md)).
 
 A paste never replaces clipboard content that its snapshot could not save whole (a format the
-owner did not deliver, a handle, a format past the size or time limit), because the restore
-could not put that part back (§8 rule 8). Plain text is then typed with keys instead; content
+owner did not deliver, a handle the snapshot cannot copy, a format past the size or time limit),
+because the restore could not put that part back (§8 rule 8). On Windows the snapshot copies an
+enhanced metafile as its records and leaves out the bitmap, palette and metafile picture the
+system makes again from a device-independent bitmap or an enhanced metafile, so the picture an
+office program puts next to copied text does not make it incomplete (the follow-up review's N4).
+Plain text is then typed with keys instead; content
 that keys cannot carry (HTML, files) stops the expansion with `Cancelled(ClipboardNotRestorable)`.
 
 ### 4.7 Latency budget (plain text, up to 500 characters)
@@ -421,13 +434,13 @@ that keys cannot carry (HTML, files) stops the expansion with `Cancelled(Clipboa
 | --- | --- | --- | --- | --- |
 | `KeyListener` | `start(sink)`, `stop()`, `self_test(timeout)` | service | Low-level keyboard and mouse hooks on a message-loop thread; stateless layout-aware translation | Event tap; re-enables itself when the system disables it |
 | `Injector` | `inject(request, handoff)`: one call per expansion, which posts the start marker, applies the compensation of §4.6 and the steps, and posts the end marker; `configure(settings_json)`: the user's per-app settings (default: accepts only the empty string) | service | Synthesised Unicode input in atomic batches; clipboard paste with restore; per-app strategy table keyed by executable name, settings add `paste_keys` and `batch_delay_ms` | Synthesised key events; pasteboard paste with restore; per-app strategy table keyed by bundle identifier, settings add `chunk_units` and more line breaks |
-| `FocusInspector` | `focused_app()`, `secure_state(target, timeout)`, `focus_token()`, `restore_focus(token)`, `allow_foreground(pid)`, `watch(sink)`, `unwatch()`, `is_watching()` (false once the watcher's thread has ended by itself) | service, UI host | Foreground window, its process and integrity level; window-event hooks for focus changes; password fields by the edit control's style, and through UI Automation `IsPassword` on a dedicated thread | Frontmost app and its front window; activation notifications and an Accessibility observer for focus changes; secure fields by the session's secure-input state, and by the focused element's role and subrole on a dedicated thread |
+| `FocusInspector` | `focused_app()`, `secure_state(target, timeout)`, `focus_token()`, `focus_now()` (the application and its window from one reading, for the service's own look at the focus; the close-out review's C3), `restore_focus(token)`, `allow_foreground(pid)`, `watch(sink)`, `unwatch()`, `is_watching()` (false once the watcher's thread has ended by itself) | service, UI host | Foreground window, its process and integrity level; window-event hooks for focus changes; password fields by the edit control's style, and through UI Automation `IsPassword` on a dedicated thread | Frontmost app and its front window; activation notifications and an Accessibility observer for focus changes; secure fields by the session's secure-input state, and by the focused element's role and subrole on a dedicated thread |
 | `ClipboardAccess` | `read_text`, `snapshot`, `write(content, transient)`, `restore` | service | Clipboard API, with the formats that keep content out of clipboard history | Pasteboard API, with the transient and concealed markers, for this device only |
 | `Hotkeys` | `register(id, chord)`, `unregister(id)` | service | OS hotkey API on the listener thread | OS hotkey API on the listener's run loop |
 | `Permissions` | `permission_status()`, `open_settings(kind)` | service | Always granted | Accessibility and Input Monitoring, checked in the worker, which is the process that holds them |
 | `LoginItem` | `enable()`, `disable()`, `login_item_status()` | UI host | Per-user Run key | Login-item registration of the helper app |
 | `MemoryLock` | `lock(region)`, `unlock(region)` | service | Keeps the keystroke buffer and hand-off out of the page file | Same, out of swap |
-| `LocalEndpoint` | `bind(name, policy)`, `connect(name, policy, timeout)`; streams carry the verified peer | service, UI host, CLI, sync agent | Named pipe, first instance only, remote clients rejected, user SID checked | Unix socket in a user-only directory, peer uid checked |
+| `LocalEndpoint` | `bind(name, policy)`, `connect(name, policy, timeout)`; streams carry the verified peer | service, UI host, CLI, sync agent | Named pipe whose name ends in a secret kept in the user-only `run` directory, first instance only, remote clients rejected, user SID checked | Unix socket in a user-only directory, peer uid checked |
 
 All traits are object safe and take `&self`, so the service holds one `Arc<dyn Platform>`. The
 OS crates are the only crates allowed `unsafe`, and every `unsafe` block carries a safety comment
@@ -464,11 +477,22 @@ One transport and framing for both endpoints ([ADR-0006](decisions/0006-ipc.md))
 - A Unix domain socket on macOS and Linux, a named pipe on Windows.
 - Server side: the socket lives in a directory owned by the user with mode `0700`; a pipe is
   created as the first instance of its name, restricted to the user's SID, and rejects remote
-  clients. A server that cannot create the first instance refuses to start and reports that the
-  name is taken.
+  clients. The pipe's name ends in a secret that only the user's `run` directory names (§3.3),
+  so another local user cannot create it first (the 2.8 review's finding 12); a name that exists
+  all the same makes the server draw another secret. Which server owns the endpoint of a data
+  root is decided by an exclusive lock beside it (`<kind>.sock.lock`, `<kind>.pipe.lock`): a
+  second one gets "the name is taken". The worker does not need its endpoint to expand (§3):
+  when the bind fails it starts without it, logs why, records the diagnostic
+  `endpoint_unavailable`, and tries again every 5 seconds until it can serve it.
 - Client side: before sending anything, a client verifies that the server process runs as the same
   user and, in release builds, that its executable is the installed Iamb binary with a valid
   signature. Servers verify clients the same way.
+- The role a client states must be one its executable may take, by the file name the endpoint
+  read from the operating system (§6.2; `iamb_ipc::roles`; the 2.8 review's finding 10): an
+  Iamb client is held to its role in every build, and release builds accept no other program.
+  What that cannot stop until builds are signed (a signed binary of another publisher in the
+  installation directory, a process that replaces its image under the check) is finding 11,
+  tracked under "Open findings" in §8.
 - Framing: a 4-byte little-endian length, then one UTF-8 JSON document, at most 8 MB. Bulk data
   (import, export, attachments) is passed as file paths, never inline.
 - Shape: `Request { id, body }` → `Response { id, result | error }`, plus `Event { topic, body }`
@@ -484,11 +508,18 @@ One transport and framing for both endpoints ([ADR-0006](decisions/0006-ipc.md))
 
 ### 6.2 The service endpoint
 
-| Role | Used by | May call |
+| Role | Used by (executable) | May call |
 | --- | --- | --- |
-| `ui` | `iamb-desktop` | Library, Engine control, Forms, Templates, Diagnostics, Settings |
-| `cli` | `iamb-cli` | Library, Engine control |
-| `sync` | `iamb-sync` | Sync only |
+| `ui` | `iamb-desktop` (`iamb-desktop`, `iamb-desktop.exe`) | Library, Engine control, Forms, Templates, Diagnostics, Settings |
+| `cli` | `iamb-cli` (`iamb`, `iamb.exe`) | Library, Engine control |
+| `sync` | `iamb-sync` (`iamb-sync`, `iamb-sync.exe`) | Sync only |
+
+The service refuses a hello whose role is not the one of the client's executable
+(`not_permitted`): a taken-over sync agent cannot say `ui`. Names are compared without regard to
+case. Under the release policy an executable with any other name may take no role; debug builds
+and tests let other programs (test binaries, the harnesses) take any role. The UI host's
+executable must therefore keep the name `iamb-desktop` in its bundle (Tauri's main binary name
+left at the cargo name). On Linux the endpoint names no executable and the role is not checked.
 
 | Group | Requests | Events |
 | --- | --- | --- |
@@ -602,16 +633,38 @@ These hold for every phase and are what the Phase 2 privacy review checks
 ([ADR-0012](decisions/0012-keystroke-privacy.md),
 [ADR-0022](decisions/0022-shared-snippet-trust.md)).
 
-1. Typed characters exist in exactly three places, all in locked memory: the key queue between
-   the listener and the engine thread (one fixed allocation of 256 slots; each character only
-   until the engine thread takes it, when its slot is overwritten with zero, and every slot is
-   zeroed when the worker stops; the engine channel itself carries a notice without content),
-   the engine's 66-character buffer, and, only while an expansion is in flight, the
-   engine-feeding thread's copy of the characters typed after its trigger (at most 64, for the
-   injector to type again, §4.6), zeroed when the expansion ends. Every key passes through the
-   queue, also keys typed into a secure field, an excluded app or under pause, which the engine
-   then drops unstored. No API returns any of them. They are never serialised, logged or sent
-   over IPC.
+1. Typed characters exist only in the places below. No API returns any of them; they are never
+   serialised, logged or sent over IPC.
+   - **Three places in locked memory, overwritten with zero:**
+     - the key queue between the listener and the engine thread: one fixed allocation of 256
+       slots; each character only until the engine thread takes it, when its slot is
+       overwritten, and every slot is zeroed when the worker stops; the engine channel itself
+       carries a notice without content. Every key passes through it, also keys typed into a
+       secure field, an excluded app or under pause, which the engine then drops unstored;
+     - the engine's 66-character keystroke buffer: ordinary fields only, never while the
+       engine is suspended, cleared at every boundary, focus change, verdict, pause,
+       composition, overflow and expansion;
+     - while an expansion is in flight, the engine-feeding thread's copy of the characters
+       typed after its trigger (the typed-characters hand-off: at most 64, for the injector to
+       type again, §4.6), zeroed when the expansion ends. It is armed for every expansion, also
+       for an explicit request (a palette pick, a form submit, `ExpandSnippet`,
+       `ReopenLastForm`) made while paused: the keys typed between such a request's expansion
+       and the injector's start marker are captured and typed again after it, so that they are
+       not lost under the expansion, although §4.1 otherwise drops keys typed under pause
+       unstored. A secure field and an excluded app refuse explicit requests, so nothing typed
+       there is captured.
+   - **One value each in ordinary memory, overwritten when it is replaced or used and when the
+     listener stops:** the Windows listener's pending dead character and the first half of a
+     character outside the Basic Multilingual Plane that another program is injecting
+     (`VK_PACKET`, `listener/pipeline.rs`, `listener/deadkey.rs`); the macOS listener's 32-bit
+     dead-key state, which says which accent waits (`listener/translate.rs`).
+   - **Copies while one key or one expansion is handled, in ordinary memory:** the hook or tap
+     callback's stack and the engine thread's stack hold the key being handled until later
+     calls overwrite them; the injector's batch holds the characters it types again (zeroed
+     after it is sent: on Windows when the batch is dropped, on macOS in fixed chunks); an
+     expansion's steps hold the one delimiter that triggered it (typed again after the text)
+     until the injection ends. The follow-up review found the last key handled in a few such
+     stack copies, never the keys before it.
 2. User-entered values (form values, clipboard content read for `{clipboard}`, palette queries,
    dry-run input) are never written to disk or logs. Form values are remembered only as described
    in §4.5.
@@ -664,13 +717,14 @@ machine, and from other members of shared folders. It does not defend against ma
 running as the same user, which can observe the keyboard directly.
 
 **Crash handling (rule 9).** The supervisor and the worker do two things first in `main`
-(`iamb_service::crash`); the UI host must do the same when it lands (Phase 3):
+(`iamb_service::crash`); the UI host does the same (`iamb_desktop::crash`, process name
+`desktop`):
 
 | | Opt-out of the system's dumps (before any thread starts) | Where |
 | --- | --- | --- |
 | Windows | `SetErrorMode` adds `SEM_NOGPFAULTERRORBOX` (the system does not invoke Windows Error Reporting for the process) and `SEM_FAILCRITICALERRORS`; `WerSetFlags(WER_FAULT_REPORTING_FLAG_NOHEAP)` so that a report WER still makes (a hang, a fail-fast exit) holds no heap. Inherited by the worker | `iamb_platform_windows::harden_process` |
 | macOS | `RLIMIT_CORE` 0, soft and hard: no core file in `/cores`. The system's crash report (`~/Library/Logs/DiagnosticReports`) is still written; it holds backtraces, registers and the loaded images, not heap memory | `iamb_platform_macos::harden_process` |
-| Linux (development and CI only) | `/proc/self/coredump_filter` set to 0: a core file still appears but holds no memory mapping. The core limit and `PR_SET_DUMPABLE` need `unsafe`, which the service forbids and for which Linux has no platform crate | `iamb_service::crash` |
+| Linux (development and CI only) | `/proc/self/coredump_filter` set to 0: a core file still appears but holds no memory mapping. The core limit and `PR_SET_DUMPABLE` need `unsafe`, which the service forbids and for which Linux has no platform crate | `iamb_service::crash`, `iamb_desktop::crash` |
 
 The worker logs which steps took effect (`crash dumps: … ok`), a warning when one did not. Then
 the panic hook: a panic writes a local crash report `logs/crash-<process>-<unix ms>.txt` (user
@@ -682,6 +736,10 @@ after any abnormal exit. What still ends the process the system's way is a fault
 panic (in the OS crates' `unsafe` code, or a signal); the opt-outs above apply to it. Not
 prevented: a dump taken from outside the process (a debugger, Task Manager, a full-memory dump
 policy), the limit of rule 9. `iamb-desktop` will read the local reports for its opt-in upload.
+The UI host's web view processes are started by the system's web view library (WebView2's
+browser processes, `WKWebView`'s XPC services, WebKitGTK's helpers), so the opt-outs above do
+not reach them. They never receive key events; a form's values reach them only while the form
+is shown.
 
 **Detection limits (rule 7).** The platform layers suspend the engine for what they can
 recognise. What they cannot is treated as an ordinary field, because refusing every window that
@@ -699,6 +757,16 @@ docs named here hold the details; `docs/compatibility-run.md` has the manual che
 In each case what is typed passes through the 66-character buffer in locked memory like any
 typing (never stored, logged or sent, cleared at the next boundary), and an abbreviation in it
 can expand.
+
+**Open findings of the Phase 2 privacy review.** Three low findings of
+[`2.8-phase2-privacy-review.md`](reviews/2.8-phase2-privacy-review.md) are left to the tasks that
+can close them; each of those tasks must close its finding before it is done:
+
+| Finding | What is open | Tracked in |
+| --- | --- | --- |
+| 11, the installed-binary check | Windows trusts any executable in the installation directory with a valid signature from any publisher; macOS identifies the peer by process id, compares it with the service's own designated requirement (which would refuse the UI host and the command-line tool once builds are signed) and does not pass `kSecCSNoNetworkAccess`. The role check of §6.1 rests on this check | Phase 5, with the first signed builds (the signing rules of task 5.2): compare the peer's signer with the running executable's; build the macOS requirement from the team identifier and identify the peer by audit token; set the no-network flag; say in §6.1 what the check does not stop; test with signed builds |
+| 13, screen lock and sign-out | No platform trait reports a screen lock or a sign-out, so remembered form values (§4.5) and the typed-characters hand-off are not cleared then, only after 30 minutes or at restart; forgotten values and dropped clipboard snapshots are freed without being overwritten | Task 3.5 (fill-in form), before a form can be shown: a session-event source in the platform traits (§5), wired to `Worker::forget_form_values` and `TypedHandoff::clear`, and form values and snapshot bytes overwritten before they are freed |
+| 16, Iamb's own panels on macOS | The form and the palette are non-activating panels, so the frontmost application stays the target and typing in them cannot be reported as `own_window` (§4.5) | Tasks 3.5 and 3.6, before the first panel ships: a UI-role message that says a panel has the keyboard (or suspension from `FormRequested` and `PaletteRequested` until the answer), recorded in ADR-0013 |
 
 ## 9. Sync
 
@@ -738,13 +806,22 @@ Task 4.1 specifies the conflict scenarios; the architecture fixes the frame
 ## 10. Desktop UI
 
 [ADR-0017](decisions/0017-ui-host.md) fixes the shape; task 3.1 designs the screens.
+The screens, flows, copy and design tokens are in [`docs/ux/spec.md`](ux/spec.md).
 
 - `iamb-desktop` is a Tauri 2 app. It starts hidden at login and stays resident whether or not the
   tray icon is shown, because the fill-in form and the palette depend on it.
 - It keeps two small windows created but hidden, the fill-in form and the search palette, so they
   appear within their targets (150 ms and 100 ms). On macOS they are non-activating panels, which
   needs a small amount of native window code in `iamb-desktop`. The library window is created on
-  demand and destroyed when closed.
+  demand and destroyed when closed. All three load one page; the front end picks its view by the
+  window's label. On Linux (development only) the library window and the form share the
+  palette's running web content process, without which a cold open spent about 600 ms starting
+  one (`docs/test-strategy.md` §8.1).
+- One bridge thread holds the connection to the service endpoint with the role `ui`, reconnects
+  with backoff (200 ms, 500 ms, 1 s, then every 2 s) while the service is away, and reports the
+  state to the tray menu and the front end. The front end calls a small set of typed Tauri
+  commands (`apps/desktop/src-tauri/src/contract.rs`) and hears two events, `iamb:status` and
+  `iamb:event`; focus tokens and form values the panels do not show stay on the Rust side.
 - Search runs in the worker, in memory over the snapshot (fuzzy matching on abbreviation, label,
   content and tag), on the reader thread of the requesting client.
 - Rich snippets are edited as Markdown and stored as Markdown plus attachments
@@ -776,8 +853,8 @@ Task 4.1 specifies the conflict scenarios; the architecture fixes the frame
 | 3.2 Tauri shell | `iamb-desktop`, `iamb-ipc` client, `LoginItem` |
 | 3.3 Library | `apps/desktop/src/library/`, Library messages |
 | 3.4 Template editor | `apps/desktop/src/editor/`, Templates messages |
-| 3.5 Fill-in form | Form panel in `iamb-desktop`; Forms messages; focus tokens in the OS crates; form memory in `iamb-service` |
-| 3.6 Search palette | Palette panel in `iamb-desktop`; `iamb-core::search`; `Hotkeys`; `PaletteRequested` |
+| 3.5 Fill-in form | Form panel in `iamb-desktop`; Forms messages; focus tokens in the OS crates; form memory in `iamb-service`; screen-lock and sign-out events and the panels' own-window state on macOS (findings 13 and 16 of the 2.8 review, §8 "Open findings") |
+| 3.6 Search palette | Palette panel in `iamb-desktop`; `iamb-core::search`; `Hotkeys`; `PaletteRequested`; the palette's own-window state on macOS (finding 16 of the 2.8 review, §8 "Open findings") |
 | 3.7 Onboarding | `apps/desktop/src/onboarding/`, `GetPermissions`, `SetTestField` |
 | 3.8 Rich text snippets | `iamb-core::rich`, `Paste` action, clipboard building in `iamb-service`, attachments in `iamb-store` |
 | 3.9 Settings and diagnostics | `apps/desktop/src/settings/`, Settings and Diagnostics messages |

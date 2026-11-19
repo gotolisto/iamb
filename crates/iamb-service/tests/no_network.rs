@@ -12,6 +12,16 @@
 //!
 //! Check 4, the release binary built with `-p iamb-service` alone, is a step of the `lint` job
 //! of `.github/workflows/ci.yml`.
+//!
+//! The lint can be switched off where it is used, and it cannot see a function declared by
+//! hand (the follow-up review's N6). So the sources of the six crates are also searched:
+//!
+//! - no `allow` or `expect` attribute (also inside `cfg_attr`) names `disallowed_types`,
+//!   `disallowed_methods`, or a group that holds them (`clippy::style`, `clippy::all`);
+//! - no `extern` block declares a socket, connection or name-resolution function by hand, and
+//!   no `#[link]` attribute or `link!` macro names a networking library.
+//!
+//! The built binaries' imports are checked by CI on each system (`docs/ci.md`).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -195,4 +205,219 @@ fn no_networking_crate_in_the_dependency_tree() {
             "{banned} is in the service's dependency tree"
         );
     }
+}
+
+/// Lints that forbid network code, and the groups that would switch them off with them. Built
+/// from parts so that this file does not hold the attribute it looks for.
+fn guarding_lints() -> Vec<String> {
+    ["disallowed_types", "disallowed_methods", "style", "all"]
+        .iter()
+        .map(|lint| format!("clippy::{lint}"))
+        .collect()
+}
+
+/// Socket, connection and name-resolution functions of the C library and the Windows sockets
+/// and Internet libraries.
+const NETWORK_FUNCTIONS: &[&str] = &[
+    "socket",
+    "socketpair",
+    "connect",
+    "bind",
+    "listen",
+    "accept",
+    "accept4",
+    "send",
+    "sendto",
+    "sendmsg",
+    "recv",
+    "recvfrom",
+    "recvmsg",
+    "getaddrinfo",
+    "freeaddrinfo",
+    "gethostbyname",
+    "gethostbyaddr",
+    "getnameinfo",
+    "res_query",
+    "WSAStartup",
+    "WSASocketA",
+    "WSASocketW",
+    "WSAConnect",
+    "GetAddrInfoW",
+    "GetAddrInfoExW",
+    "DnsQuery_W",
+    "WinHttpOpen",
+    "InternetOpenW",
+    "URLDownloadToFileW",
+    "CFSocketCreate",
+    "CFStreamCreatePairWithSocketToHost",
+    "nw_connection_create",
+];
+
+/// Libraries and frameworks that do networking.
+const NETWORK_LIBRARIES: &[&str] = &[
+    "ws2_32",
+    "wsock32",
+    "mswsock",
+    "dnsapi",
+    "winhttp",
+    "wininet",
+    "urlmon",
+    "iphlpapi",
+    "cfnetwork",
+    "network",
+    "resolv",
+];
+
+/// The code of `source` without `//` comments, one string per line.
+fn code_lines(source: &str) -> Vec<String> {
+    source
+        .lines()
+        .map(|line| line.split("//").next().unwrap_or("").to_owned())
+        .collect()
+}
+
+/// What in `source` switches the network lints off, or declares network code by hand.
+fn hand_made_network_code(source: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let lines = code_lines(source);
+    let flat: String = lines.concat().split_whitespace().collect();
+    let guarding = guarding_lints();
+    for attribute in ["allow(", "expect("] {
+        let mut rest = flat.as_str();
+        while let Some(at) = rest.find(attribute) {
+            let list = &rest[at + attribute.len()..];
+            let list = &list[..list.find(')').unwrap_or(list.len())];
+            for lint in list.split(',') {
+                if guarding.iter().any(|l| l == lint) {
+                    found.push(format!("{attribute}{lint})"));
+                }
+            }
+            rest = &rest[at + attribute.len()..];
+        }
+    }
+    // Functions declared in `extern` blocks.
+    let mut depth: Option<i32> = None;
+    for line in &lines {
+        let opens = line.contains("extern \"")
+            && line
+                .split("extern \"")
+                .nth(1)
+                .and_then(|after| after.split_once('"'))
+                .is_some_and(|(_, after)| after.trim_start().starts_with('{'));
+        if depth.is_none() && opens {
+            depth = Some(0);
+        }
+        if let Some(d) = depth.as_mut() {
+            let mut words = line
+                .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .filter(|w| !w.is_empty());
+            while let Some(word) = words.next() {
+                if word == "fn"
+                    && let Some(name) = words.next()
+                    && NETWORK_FUNCTIONS.contains(&name)
+                {
+                    found.push(format!("extern fn {name}"));
+                }
+            }
+            if let Some((_, name)) = line.split_once("link_name") {
+                let name = name.split('"').nth(1).unwrap_or("");
+                if NETWORK_FUNCTIONS.contains(&name) {
+                    found.push(format!("link_name {name}"));
+                }
+            }
+            *d += i32::try_from(line.matches('{').count()).unwrap_or(0);
+            *d -= i32::try_from(line.matches('}').count()).unwrap_or(0);
+            if *d <= 0 && line.contains('}') {
+                depth = None;
+            }
+        }
+    }
+    // Libraries linked by name.
+    for marker in ["#[link(name=\"", "link!(\""] {
+        let mut rest = flat.as_str();
+        while let Some(at) = rest.find(marker) {
+            let name = rest[at + marker.len()..].split('"').next().unwrap_or("");
+            let base = name
+                .to_ascii_lowercase()
+                .trim_end_matches(".dll")
+                .to_owned();
+            if NETWORK_LIBRARIES.contains(&base.as_str()) {
+                found.push(format!("library {name}"));
+            }
+            rest = &rest[at + marker.len()..];
+        }
+    }
+    found
+}
+
+fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            rust_files(&path, out);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(path);
+        }
+    }
+}
+
+/// The follow-up review's N6: what the lint cannot see in the six crates.
+#[test]
+fn the_network_lint_is_not_switched_off_and_nothing_declares_network_code_by_hand() {
+    let mut checked = 0;
+    for krate in GUARDED {
+        let mut files = Vec::new();
+        rust_files(&workspace().join("crates").join(krate), &mut files);
+        for file in files {
+            let source = fs::read_to_string(&file).expect("readable");
+            let found = hand_made_network_code(&source);
+            assert!(found.is_empty(), "{}: {found:?}", file.display());
+            checked += 1;
+        }
+    }
+    assert!(
+        checked > 100,
+        "the six crates' sources were found ({checked} files)"
+    );
+}
+
+/// The search above finds the follow-up review's two examples, in their usual spellings, and
+/// not the trait methods and hand-written declarations the crates have.
+#[test]
+fn the_search_for_hand_made_network_code_finds_what_it_should() {
+    let lints = guarding_lints();
+    let (types, methods) = (&lints[0], &lints[1]);
+    for source in [
+        format!("#[allow({types}, {methods})]\nfn f() {{}}"),
+        format!("#[allow(\n    clippy::too_many_lines,\n    {methods}\n)]\nfn f() {{}}"),
+        format!("#![cfg_attr(test, expect({types}))]"),
+        format!("#[allow({})]\nmod m {{}}", lints[3]),
+        "unsafe extern \"C\" {\n    fn socket(d: i32, t: i32, p: i32) -> i32;\n}".to_owned(),
+        "extern \"C\" {\n    #[link_name = \"connect\"]\n    fn open_it(fd: i32) -> i32;\n}"
+            .to_owned(),
+        "#[link(name = \"ws2_32\")]\nunsafe extern \"system\" {}".to_owned(),
+        "windows_link::link!(\"WS2_32.dll\" \"system\" fn f() -> i32);".to_owned(),
+    ] {
+        assert!(
+            !hand_made_network_code(&source).is_empty(),
+            "not found: {source}"
+        );
+    }
+    for source in [
+        "fn bind(&self, name: &EndpointName) -> Result<()> { todo!() }",
+        "unsafe extern \"C-unwind\" fn focus_notified(refcon: *mut c_void) {}",
+        "#[link(name = \"Carbon\", kind = \"framework\")]\nunsafe extern \"C\" {\n    fn EnableSecureEventInput() -> i32;\n}\nfn connect() {}",
+        "#[allow(clippy::too_many_lines, reason = \"long\")]\nfn f() {}",
+    ] {
+        assert_eq!(
+            hand_made_network_code(source),
+            Vec::<String>::new(),
+            "{source}"
+        );
+    }
+    let commented = format!("// #[allow({})] in a comment", lints[2]);
+    assert_eq!(hand_made_network_code(&commented), Vec::<String>::new());
 }

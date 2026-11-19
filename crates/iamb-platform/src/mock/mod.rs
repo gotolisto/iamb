@@ -329,6 +329,9 @@ struct Desk {
     settings_dialect: SettingsDialect,
     configured: Vec<String>,
     injection_settings: String,
+    /// A window that takes the focus right after the next `focused_app` read
+    /// ([`MockPlatform::focus_after_next_app_read`]).
+    focus_after_app_read: Option<FocusToken>,
 }
 
 impl Desk {
@@ -363,6 +366,7 @@ impl Desk {
             settings_dialect: SettingsDialect::Windows,
             configured: Vec::new(),
             injection_settings: String::new(),
+            focus_after_app_read: None,
         }
     }
 
@@ -586,6 +590,14 @@ impl MockPlatform {
                 sink.focus_changed(change);
             }
         }
+    }
+
+    /// Makes `token`'s window take the focus right after the next
+    /// [`focused_app`](FocusInspector::focused_app) has answered, reported like
+    /// [`focus`](Self::focus) (and held back with the other reports while they are held): a
+    /// focus change that falls between two reads of the focus (the close-out review's C3).
+    pub fn focus_after_next_app_read(&self, token: FocusToken) {
+        self.desk().focus_after_app_read = Some(token);
     }
 
     /// The text of a window's field; `None` when the window is not open.
@@ -1211,10 +1223,18 @@ impl Injector for MockPlatform {
 
 impl FocusInspector for MockPlatform {
     fn focused_app(&self) -> Result<AppIdentity> {
-        self.desk()
-            .focused_window()
-            .map(Window::identity)
-            .ok_or(PlatformError::NoFocus)
+        let (answer, then) = {
+            let mut desk = self.desk();
+            let answer = desk
+                .focused_window()
+                .map(Window::identity)
+                .ok_or(PlatformError::NoFocus);
+            (answer, desk.focus_after_app_read.take())
+        };
+        if let Some(token) = then {
+            let _ = self.focus(token);
+        }
+        answer
     }
 
     fn secure_state(&self, target: &FocusToken, timeout: Duration) -> FieldSecurity {
