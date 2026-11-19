@@ -256,6 +256,10 @@ fn a_copy_with_a_picture_of_the_selection_is_saved_and_restored_whole() {
     }
     let records = metafile_records(&raw).expect("the metafile is on the clipboard");
     let text = raw.get(CF_UNICODETEXT).expect("just put");
+    drop(raw);
+    // The system makes the metafile picture from the enhanced metafile once the clipboard is
+    // closed, so it is listed only after reopening.
+    let raw = Clip::open().expect("clipboard");
     assert!(
         raw.formats().contains(&CF_METAFILEPICT),
         "{:?}",
