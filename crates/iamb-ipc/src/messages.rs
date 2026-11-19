@@ -730,9 +730,16 @@ pub enum RequestBody {
     },
     /// The app exclusions. → [`ResponseBody::Exclusions`]
     ListExclusions {},
-    /// Adds (`excluded: true`) or removes an app exclusion. → [`ResponseBody::Done`]
+    /// Adds (`excluded: true`) or removes an app exclusion. → [`ResponseBody::Exclusions`]
+    /// with the row written, or the rows removed (none when there was none).
+    ///
+    /// The service stores the id in the form the focus inspector reports it (Windows: the
+    /// executable's file name in lower case, a path reduced to it; macOS: the bundle
+    /// identifier, compared without regard to case), so the answer may spell it differently
+    /// from the request. An id no application of the system can have (empty, a path on macOS,
+    /// a character no file name or bundle identifier holds) is refused with `invalid`.
     PutExclusion {
-        /// Bundle id or executable name.
+        /// Bundle id (macOS) or executable name (Windows).
         app_id: String,
         /// The name shown to the user.
         display_name: String,

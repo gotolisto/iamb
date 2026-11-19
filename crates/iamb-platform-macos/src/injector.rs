@@ -59,6 +59,16 @@
 //! [`Injector::configure`](iamb_platform::Injector::configure) in the format both systems
 //! share (`iamb_platform::injection_settings`, ADR-0025).
 //!
+//! # The focus between steps
+//!
+//! Before every key operation, paste and the retyped characters the driver compares the
+//! frontmost process, the secure-input flag and the count of the focus watcher's
+//! notifications with their values at the start marker, and stops with
+//! `Cancelled(FocusMoved)` when one changed (`run`). None of them asks the application
+//! anything; the flag is a question to the worker's own main thread, which waits at most
+//! 20 ms and counts as unchanged when it gets no answer. Without a running focus watcher
+//! the count does not move, and only a change of application or of the flag is seen.
+//!
 //! # Failures
 //!
 //! Every way out is a clean [`InjectionOutcome`](iamb_platform::InjectionOutcome): `Failed`

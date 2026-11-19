@@ -69,6 +69,22 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build
         run: cargo build --workspace --all-targets --locked
+      # ADR-0008, check 4: the service as it ships, built on its own. In the workspace build
+      # above, features that other members turn on in shared dependencies (test-only crates
+      # such as iamb-testkit with `probe`) are unified into the service's dependencies; here
+      # they are not, and clippy's network lint (check 3, `crates/*/clippy.toml`) runs on
+      # exactly that code. On Linux the binary must import no name-resolution function.
+      - name: Build the service alone (release)
+        shell: bash
+        run: |
+          cargo build -p iamb-service --release --locked
+          cargo clippy -p iamb-service --release --locked -- -D warnings
+          if [ "$RUNNER_OS" = Linux ]; then
+            if objdump -T target/release/iamb-service | grep -E 'getaddrinfo|gethostbyname|getnameinfo'; then
+              echo "the service binary imports a name-resolution function (ADR-0008)" >&2
+              exit 1
+            fi
+          fi
       - name: Test
         if: runner.os != 'Windows'
         run: cargo test --workspace --locked

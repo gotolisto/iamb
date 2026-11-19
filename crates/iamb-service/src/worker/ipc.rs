@@ -137,6 +137,31 @@ pub(crate) fn accept(shared: &Arc<Shared>, listener: &Arc<dyn LocalListener>) {
     }
 }
 
+/// The most characters of a client's version string that reach the log.
+const VERSION_SHOWN: usize = 32;
+
+/// A client's version string as the log shows it: client text, so at most [`VERSION_SHOWN`]
+/// characters, each outside `A-Z a-z 0-9 . + - _` replaced by `?`, and `...` when it was
+/// longer (the 2.8 review's finding 10: a hello may carry up to 8 MB, and a line break in it
+/// would forge log lines).
+fn shown_version(version: &str) -> String {
+    let mut shown: String = version
+        .chars()
+        .take(VERSION_SHOWN)
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '-' | '_') {
+                c
+            } else {
+                '?'
+            }
+        })
+        .collect();
+    if version.chars().nth(VERSION_SHOWN).is_some() {
+        shown.push_str("...");
+    }
+    shown
+}
+
 fn serve(shared: &Arc<Shared>, stream: Box<dyn LocalStream>) {
     let log: Arc<dyn MessageLog> = Arc::clone(&shared.logger) as Arc<dyn MessageLog>;
     // The client is registered before its welcome is written: a client that has its welcome
@@ -165,7 +190,7 @@ fn serve(shared: &Arc<Shared>, stream: Box<dyn LocalStream>) {
     let writer = conn.writer();
     shared.logger.info(format_args!(
         "client {id} connected: role {role}, pid {pid}, version {}",
-        conn.client_version()
+        shown_version(conn.client_version())
     ));
     let pump = {
         let shared = Arc::clone(shared);
@@ -194,5 +219,26 @@ fn serve(shared: &Arc<Shared>, stream: Box<dyn LocalStream>) {
     match result {
         Ok(()) => shared.logger.info(format_args!("client {id} disconnected")),
         Err(e) => shared.logger.info(format_args!("client {id} dropped: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_client_version_is_shown_short_and_plain() {
+        assert_eq!(shown_version("0.3.1-beta+42"), "0.3.1-beta+42");
+        assert_eq!(shown_version(""), "");
+        assert_eq!(
+            shown_version("1.0\r2026-01-01T00:00:00.000Z ERROR forged"),
+            "1.0?2026-01-01T00?00?00.000Z?ERR..."
+        );
+        let long = "V".repeat(300_000);
+        assert_eq!(
+            shown_version(&long),
+            format!("{}...", "V".repeat(VERSION_SHOWN))
+        );
+        assert_eq!(shown_version("ünï\ncode"), "?n??code");
     }
 }

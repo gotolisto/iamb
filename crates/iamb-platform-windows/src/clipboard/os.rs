@@ -21,7 +21,9 @@ use windows_sys::Win32::System::Memory::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, HWND_MESSAGE};
 
-use super::formats::{CF_UNICODETEXT, OPEN_RETRY_DELAYS, Treatment, retry, treatment};
+use super::formats::{
+    CF_UNICODETEXT, OPEN_RETRY_DELAYS, PASTE_OPEN_RETRY_DELAYS, Treatment, retry, treatment,
+};
 
 /// The last error of the calling thread as a [`PlatformError::Os`].
 fn last_error(context: &'static str) -> PlatformError {
@@ -84,12 +86,25 @@ pub(super) struct Open {
     _thread_bound: PhantomData<*const ()>,
 }
 
-/// Opens the clipboard, retrying for about a tenth of a second while another program holds
-/// it.
-pub(super) fn open() -> Result<Open> {
+/// How long an opening waits for another program to let go of the clipboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Patience {
+    /// About a tenth of a second ([`OPEN_RETRY_DELAYS`]): `read_text`.
+    Brief,
+    /// About half a second ([`PASTE_OPEN_RETRY_DELAYS`]): the steps of a paste.
+    Paste,
+}
+
+/// Opens the clipboard, retrying while another program holds it, as long as `patience`
+/// says.
+pub(super) fn open(patience: Patience) -> Result<Open> {
     let owner = OwnerWindow::create()?;
+    let delays: &[std::time::Duration] = match patience {
+        Patience::Brief => &OPEN_RETRY_DELAYS,
+        Patience::Paste => &PASTE_OPEN_RETRY_DELAYS,
+    };
     retry(
-        &OPEN_RETRY_DELAYS,
+        delays,
         || {
             // SAFETY: `owner.0` is a live window of this thread.
             if unsafe { OpenClipboard(owner.0) } == 0 {

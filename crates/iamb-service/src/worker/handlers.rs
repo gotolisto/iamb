@@ -26,7 +26,7 @@ use iamb_store::{AppExclusion, StoreError};
 use super::store::{StoreCtx, new_id};
 use super::{EngineMsg, Explicit, FocusMsg, Shared};
 use crate::clock;
-use crate::library::{View, engine_settings};
+use crate::library::{AppIdRule, View, engine_settings};
 
 type Answer = Result<ResponseBody, ErrorBody>;
 
@@ -316,29 +316,7 @@ pub(crate) fn handle(shared: &Arc<Shared>, _role: Role, body: RequestBody) -> An
             app_id,
             display_name,
             excluded,
-        } => {
-            if app_id.is_empty() {
-                return Err(err(ErrorCode::Invalid, "the app id is empty"));
-            }
-            write(shared, move |ctx| {
-                if excluded {
-                    ctx.store
-                        .put_app_exclusion(&AppExclusion {
-                            app_id,
-                            display_name,
-                            created_at: clock::timestamp(),
-                        })
-                        .map_err(|e| store_error(&e))?;
-                } else {
-                    ctx.store
-                        .delete_app_exclusion(&app_id)
-                        .map_err(|e| store_error(&e))?;
-                }
-                ctx.settings_changed();
-                Ok(())
-            })
-            .and_then(|()| done())
-        }
+        } => put_exclusion(shared, &app_id, display_name, excluded),
 
         // ---- Sync ---------------------------------------------------------------------------
         RequestBody::OutboxRead { .. }
@@ -372,6 +350,63 @@ const fn format_of(f: TransferFormat) -> Format {
         TransferFormat::Json => Format::Json,
         TransferFormat::Csv => Format::Csv,
     }
+}
+
+/// Adds or removes an exclusion, stored in the form the focus inspector reports
+/// ([`AppIdRule`]), and answers with the rows written or removed: the client sees the id that
+/// will be compared. An id that can never be reported is refused; removing one still removes
+/// a row stored under it before this rule existed.
+fn put_exclusion(shared: &Shared, app_id: &str, display_name: String, excluded: bool) -> Answer {
+    let key = AppIdRule::this_os().normalise(app_id);
+    let wire = |e: AppExclusion| WireExclusion {
+        app_id: e.app_id,
+        display_name: e.display_name,
+        created_at: e.created_at,
+    };
+    if excluded {
+        let key = key.map_err(|e| err(ErrorCode::Invalid, e.to_string()))?;
+        let row = write(shared, move |ctx| {
+            let row = AppExclusion {
+                app_id: key,
+                display_name,
+                created_at: clock::timestamp(),
+            };
+            ctx.store
+                .put_app_exclusion(&row)
+                .map_err(|e| store_error(&e))?;
+            ctx.settings_changed();
+            Ok(row)
+        })?;
+        return Ok(ResponseBody::Exclusions {
+            exclusions: vec![wire(row)],
+        });
+    }
+    let mut ids = vec![app_id.to_owned()];
+    if let Ok(key) = key
+        && key != app_id
+    {
+        ids.push(key);
+    }
+    let removed = write(shared, move |ctx| {
+        let mut removed = Vec::new();
+        for id in ids {
+            if let Some(row) = ctx
+                .store
+                .get_app_exclusion(&id)
+                .map_err(|e| store_error(&e))?
+            {
+                ctx.store
+                    .delete_app_exclusion(&id)
+                    .map_err(|e| store_error(&e))?;
+                removed.push(row);
+            }
+        }
+        ctx.settings_changed();
+        Ok(removed)
+    })?;
+    Ok(ResponseBody::Exclusions {
+        exclusions: removed.into_iter().map(wire).collect(),
+    })
 }
 
 fn put_snippet(shared: &Shared, view: &View, snippet: Snippet) -> Answer {

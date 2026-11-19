@@ -5,8 +5,8 @@
 //! | --- | --- |
 //! | `read_text` | the plain text of the first item that has some (`public.utf8-plain-text`), as `Sensitive` |
 //! | `snapshot` | every item, every type, its data copied out as bytes; types the pasteboard gives no data for, or that pass the size limit, are recorded and left out ([`layout`]) |
-//! | `write(content, transient)` | clears the pasteboard and writes plain text and HTML in one item, and one item per file; with `transient`, the nspasteboard.org transient and concealed marker types on every item, which clipboard managers honour |
-//! | `restore(snapshot)` | clears the pasteboard and writes every saved item back, type for type and byte for byte, with the transient marker, unless the change-count rule says to leave it alone |
+//! | `write(content, transient)` | clears the pasteboard and writes plain text and HTML in one item, and one item per file; with `transient`, the nspasteboard.org transient and concealed marker types on every item, which clipboard managers honour, and the write is for this device only, so the system does not offer it to the user's other devices |
+//! | `restore(snapshot)` | clears the pasteboard and writes every saved item back, type for type and byte for byte, with the transient marker, unless the change-count rule says to leave it alone; for this device only when the saved content carried the transient or the concealed marker ([`layout`]) |
 //!
 //! # The change-count rule
 //!
@@ -28,6 +28,13 @@
 //!
 //! # Limits
 //!
+//! - A restore makes Iamb the pasteboard's owner and moves its change count, as any write
+//!   does. An application that clears its own copy later "if the pasteboard has not changed"
+//!   (password managers do this after a minute or so) sees a change and leaves the restored
+//!   copy there. Windows behaves the same way (sequence number and owner).
+//! - Whether content another application wrote was for this device only cannot be read back.
+//!   A restore keeps it on this device when it carried either marker; content without
+//!   markers is offered to the other devices again, as before the paste.
 //! - Data the owner provides lazily is read (and so produced) at snapshot time; a type whose
 //!   provider gives nothing is left out of the restore.
 //! - Recent macOS releases can ask the user before an application reads the pasteboard

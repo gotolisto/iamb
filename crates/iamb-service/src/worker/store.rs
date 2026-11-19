@@ -5,6 +5,7 @@
 //! (`LibraryChanged`, `SettingsChanged`). Usage records do not rebuild anything (ADR-0007).
 
 use std::collections::hash_map::RandomState;
+use std::fmt;
 use std::hash::BuildHasher;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -16,7 +17,39 @@ use iamb_store::{Store, StoreError};
 use super::injection::InjectionSettings;
 use super::{EngineMsg, FocusMsg, Shared, WakeCounters};
 use crate::clock;
-use crate::library::{View, build_view, ensure_personal_profile};
+use crate::library::{
+    AppIdRule, ExclusionMigration, View, build_view, ensure_personal_profile, migrate_exclusions,
+};
+
+/// A store error as the log shows it: its kind with the numbers and ids it carries, never a
+/// value from the database or a path (the log's rule is names, sizes, counts, ids and codes;
+/// the 2.8 review's finding 19). `InvalidData` can quote a stored value, `AbbreviationConflict`
+/// an abbreviation, `Locked` a path with the user's name, `Sqlite` and `Io` messages of their
+/// own.
+pub(crate) struct Logged<'a>(pub(crate) &'a StoreError);
+
+impl fmt::Display for Logged<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            StoreError::Locked { .. } => f.write_str("the store is locked by another process"),
+            StoreError::SchemaTooNew { found, supported } => write!(
+                f,
+                "database schema version {found} is newer than this build supports ({supported})"
+            ),
+            StoreError::NotFound { entity, id } => write!(f, "{entity} {id} not found"),
+            StoreError::AbbreviationConflict { existing, .. } => {
+                write!(f, "abbreviation already used by snippet {existing}")
+            }
+            StoreError::FolderTooDeep { folder, depth } => {
+                write!(f, "folder {folder} would be nested {depth} levels deep")
+            }
+            StoreError::InvalidData(_) => f.write_str("invalid data"),
+            StoreError::Io(e) => write!(f, "i/o error ({:?})", e.kind()),
+            StoreError::Sqlite(_) => f.write_str("sqlite error"),
+            _ => f.write_str("store error"),
+        }
+    }
+}
 
 /// A fresh id: UUID version 7 from the clock and ten bytes of `RandomState` (seeded by the OS),
 /// mixed with a counter so two ids in one millisecond differ.
@@ -102,11 +135,15 @@ impl StoreHandle {
     }
 }
 
-/// Makes sure the personal profile exists and builds the first view.
-pub(crate) fn initial_view(store: &mut Store) -> Result<(Id, View), StoreError> {
+/// Makes sure the personal profile exists, stores the exclusions in the form this system's
+/// focus inspector reports, and builds the first view.
+pub(crate) fn initial_view(
+    store: &mut Store,
+) -> Result<(Id, View, ExclusionMigration), StoreError> {
     let profile = ensure_personal_profile(store, &mut new_id, clock::timestamp())?;
+    let migrated = migrate_exclusions(store, AppIdRule::this_os())?;
     let view = build_view(store, profile, 1)?;
-    Ok((profile, view))
+    Ok((profile, view, migrated))
 }
 
 /// The thread's loop.
@@ -142,9 +179,10 @@ pub(crate) fn run(
                     .store
                     .record_expansion(snippet, saved, clock::timestamp())
                 {
-                    shared
-                        .logger
-                        .warn(format_args!("cannot record usage of {snippet}: {e}"));
+                    shared.logger.warn(format_args!(
+                        "cannot record usage of {snippet}: {}",
+                        Logged(&e)
+                    ));
                 }
             }
             Ok(StoreMsg::Stop) | Err(_) => break,
@@ -183,6 +221,68 @@ fn publish(shared: &Shared, ctx: &mut StoreCtx) {
         }
         Err(e) => shared
             .logger
-            .error(format_args!("cannot rebuild the snapshot: {e}")),
+            .error(format_args!("cannot rebuild the snapshot: {}", Logged(&e))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use iamb_store::EntityKind;
+
+    use super::*;
+
+    #[test]
+    fn a_logged_store_error_holds_no_value() {
+        let id = Id::from_bytes([7; 16]);
+        let cases = [
+            (
+                StoreError::InvalidData("column 3 (TEXT): Secret Value".to_owned()),
+                "invalid data".to_owned(),
+            ),
+            (
+                StoreError::AbbreviationConflict {
+                    key: "secretabbr".to_owned(),
+                    existing: id,
+                },
+                format!("abbreviation already used by snippet {id}"),
+            ),
+            (
+                StoreError::Locked {
+                    path: "/home/ada/iamb/run/store.lock".into(),
+                },
+                "the store is locked by another process".to_owned(),
+            ),
+            (
+                StoreError::Io(std::io::Error::other("/home/ada/secret")),
+                "i/o error (Other)".to_owned(),
+            ),
+            (
+                StoreError::NotFound {
+                    entity: EntityKind::Snippet,
+                    id,
+                },
+                format!("{} {id} not found", EntityKind::Snippet),
+            ),
+            (
+                StoreError::SchemaTooNew {
+                    found: 9,
+                    supported: 3,
+                },
+                "database schema version 9 is newer than this build supports (3)".to_owned(),
+            ),
+            (
+                StoreError::FolderTooDeep {
+                    folder: id,
+                    depth: 9,
+                },
+                format!("folder {id} would be nested 9 levels deep"),
+            ),
+        ];
+        for (error, shown) in cases {
+            assert_eq!(Logged(&error).to_string(), shown);
+            for word in ["Secret", "secretabbr", "ada"] {
+                assert!(!Logged(&error).to_string().contains(word));
+            }
+        }
     }
 }

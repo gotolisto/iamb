@@ -15,7 +15,7 @@
 //! | an application was activated | always |
 //! | the Accessibility observer was attached late (see below) | always: changes may have been missed |
 //! | the focused or main window of the application changed | the application or the window differs from the last report |
-//! | the focused element changed | the element differs from the last one known, or the window does |
+//! | the focused element changed | the element differs from the last one known, or the window does, or the known one was learned by reading (see below) |
 //! | a timer | the application or the window differs from the last report |
 //!
 //! and, for every signal, when secure keyboard entry was switched on or off since the last
@@ -26,6 +26,14 @@
 //! caused by an element notification the focused element is unknown until the watcher has
 //! read it ([`Tracker::learn_element`]), and the first element notification for an unknown
 //! element is reported.
+//!
+//! An element learned by reading is not trusted to be the one the last report was about:
+//! the service inspects the field at about the same time as the watcher reads it, and when
+//! the focus moves between the two reads, the watcher learns the new element while the engine
+//! holds the verdict for the old one. So the first element notification after such a read is
+//! reported even when it names the element read (the 2.8 review, finding 15). That can make
+//! one report more after a window change (the window, then its element), which costs a new
+//! verdict, never a missed one.
 //!
 //! # Looking again
 //!
@@ -88,6 +96,8 @@ pub(crate) enum Signal<E> {
 pub(crate) struct Tracker<E> {
     reported: Option<FocusChange>,
     element: Option<E>,
+    /// `element` was learned by reading, and no element notification came since.
+    learned: bool,
     secure_input: bool,
     settle: [Option<Instant>; SETTLE.len()],
     poll: Option<Instant>,
@@ -99,6 +109,7 @@ impl<E: PartialEq> Tracker<E> {
         Self {
             reported: None,
             element: None,
+            learned: false,
             secure_input: false,
             settle: [None; SETTLE.len()],
             poll: None,
@@ -135,12 +146,18 @@ impl<E: PartialEq> Tracker<E> {
         };
         let refocused = named
             .as_ref()
-            .is_some_and(|element| self.element.as_ref() != Some(element));
+            .is_some_and(|element| self.learned || self.element.as_ref() != Some(element));
         match named {
-            Some(element) => self.element = Some(element),
+            Some(element) => {
+                self.element = Some(element);
+                self.learned = false;
+            }
             // Which element has the focus in the application or window seen now is not
             // known until the watcher has read it.
-            None if always || moved => self.element = None,
+            None if always || moved => {
+                self.element = None;
+                self.learned = false;
+            }
             None => {}
         }
         if !(always || moved || flag_changed || refocused) {
@@ -159,6 +176,7 @@ impl<E: PartialEq> Tracker<E> {
     /// leaves it unknown.
     pub(crate) fn learn_element(&mut self, element: Option<E>) {
         if self.element.is_none() {
+            self.learned = element.is_some();
             self.element = element;
         }
     }
@@ -361,18 +379,28 @@ mod tests {
         let now = Instant::now();
         let form = window(1, 10);
         let mut tracker = tracking(&form, 5, now);
+        // The first one after the read is reported (see the next test); the repeats are not.
+        assert!(
+            tracker
+                .observe(Signal::Element(5), now, seen(&form))
+                .is_some()
+        );
         for _ in 0..3 {
             assert_eq!(tracker.observe(Signal::Element(5), now, seen(&form)), None);
         }
     }
 
+    /// Review 2.8, finding 15: the watcher reads the focused element after a report, at about
+    /// the time the service inspects the field. The focus moved to the password field (8)
+    /// between the service's inspection of the name field and the watcher's read; the
+    /// notification for the password field names the element just read and must still be
+    /// reported, or the engine keeps the name field's verdict.
     #[test]
-    fn the_burst_after_a_window_change_is_one_report() {
+    fn the_first_notification_after_a_read_is_reported_even_for_the_element_read() {
         let now = Instant::now();
         let first = window(1, 10);
         let second = window(1, 11);
         let mut tracker = tracking(&first, 5, now);
-        // The window, then the element in it; the watcher read the element in between.
         assert_eq!(
             tracker.observe(Signal::Window, now, seen(&second)),
             Some(second.clone())
@@ -380,8 +408,27 @@ mod tests {
         tracker.learn_element(Some(8));
         assert_eq!(
             tracker.observe(Signal::Element(8), now, seen(&second)),
+            Some(second.clone())
+        );
+        // From then on the element is known from a notification: repeats are not reports.
+        assert_eq!(
+            tracker.observe(Signal::Element(8), now, seen(&second)),
             None
         );
+        // A read that finds nothing does not count as learning.
+        let mut tracker = Tracker::<u32>::new();
+        assert!(
+            tracker
+                .observe(Signal::Activated, now, seen(&first))
+                .is_some()
+        );
+        tracker.learn_element(None);
+        assert!(
+            tracker
+                .observe(Signal::Element(3), now, seen(&first))
+                .is_some()
+        );
+        assert_eq!(tracker.observe(Signal::Element(3), now, seen(&first)), None);
     }
 
     #[test]

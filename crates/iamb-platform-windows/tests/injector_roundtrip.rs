@@ -18,8 +18,11 @@
 mod support;
 
 use iamb_platform::core_types::{AppId, KeyName};
+use std::time::Duration;
+
 use iamb_platform::{
-    ClipboardAccess, ClipboardContent, InjectionOutcome, InjectionRequest, InjectionStep, Injector,
+    CancelReason, ClipboardAccess, ClipboardContent, InjectionOutcome, InjectionRequest,
+    InjectionStep, Injector,
 };
 use iamb_platform_windows::Platform;
 
@@ -350,4 +353,50 @@ fn clipboard_is_restored_after_every_one_of_fifty_pastes() {
             );
         }
     }
+}
+
+/// Review 2.8, finding 1: the focus moves to another window while the expansion waits. The
+/// steps after the wait do not reach that window, and no end marker is posted (the service
+/// answers with `InjectionCancelled`).
+#[test]
+fn a_focus_change_during_a_wait_stops_the_expansion() {
+    let _alone = alone();
+    let Some(desk) = Desk::open() else { return };
+    let Some(other) = TestWindow::open() else {
+        skip("this session cannot create a second window");
+        return;
+    };
+    desk.window.set_text("");
+    if !desk.window.focus() {
+        skip("the test window could not take the foreground and the keyboard focus");
+        return;
+    }
+    let (outcome, moved) = std::thread::scope(|scope| {
+        let mover = scope.spawn(|| {
+            std::thread::sleep(Duration::from_millis(100));
+            other.focus()
+        });
+        let outcome = desk.inject_raw(
+            vec![text("first"), InjectionStep::Wait(800), text("second")],
+            &[],
+        );
+        (
+            outcome,
+            mover.join().expect("the thread that moves the focus"),
+        )
+    });
+    if !moved {
+        skip("the second window could not take the foreground");
+        return;
+    }
+    assert_eq!(
+        outcome,
+        InjectionOutcome::Cancelled(CancelReason::FocusMoved)
+    );
+    assert_eq!(desk.window.wait_for("first"), "first");
+    assert_eq!(
+        other.text(),
+        "",
+        "nothing reached the window that took the focus"
+    );
 }

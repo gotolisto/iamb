@@ -57,6 +57,16 @@ pub(crate) fn frontmost() -> Option<AppIdentity> {
     })
 }
 
+/// The process id of the frontmost application, and nothing else about it: one property read
+/// of the workspace, for the injector's focus guard, which asks before every step.
+pub(crate) fn frontmost_pid() -> Option<i32> {
+    autoreleasepool(|_| {
+        NSWorkspace::sharedWorkspace()
+            .frontmostApplication()
+            .map(|app| app.processIdentifier())
+    })
+}
+
 /// The frontmost application and the token of its front window (window 0 when it shows no
 /// ordinary window).
 pub(crate) fn front() -> Option<(AppIdentity, FocusToken)> {

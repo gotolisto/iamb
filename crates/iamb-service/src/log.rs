@@ -15,7 +15,8 @@
 //! error codes and process ids. Call sites pass `format_args!`; there is no way to log a
 //! `Sensitive` value because it implements neither `Debug` nor `Display`, and IPC messages'
 //! `Debug` prints only their names. `tests/log_scan.rs` types canary strings through the whole
-//! service and checks that no log file contains them.
+//! service and checks that no log file contains them, neither whole nor one character at a
+//! time (one key per line, or at a constant stride).
 //!
 //! # Files
 //!

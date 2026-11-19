@@ -95,11 +95,16 @@ impl System {
         u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
     }
 
+    /// Hands `event` to the sink; a key with the window it goes to, so the service can tell a
+    /// key typed into a window the focus watcher has not reported yet (`KeyTarget`).
     fn deliver(&mut self, event: ListenerEvent) {
         if let ListenerEvent::Composing { on, .. } = &event {
             self.shared.composing.store(*on, Ordering::Relaxed);
         }
-        self.sink.deliver(event);
+        match event.is_real_key().then(os::key_target).flatten() {
+            Some(target) => self.sink.deliver_to(event, target),
+            None => self.sink.deliver(event),
+        }
     }
 
     /// After a hook call's work: asks for the table of a layout met for the first time.

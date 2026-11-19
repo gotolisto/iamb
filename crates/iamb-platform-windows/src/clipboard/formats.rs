@@ -165,8 +165,8 @@ pub(crate) fn file_list(paths: &[Vec<u16>]) -> Vec<u8> {
     out
 }
 
-/// The delays between attempts to open the clipboard, which another program may hold: about
-/// a tenth of a second in all.
+/// The delays between attempts to open the clipboard for `read_text` (the `{clipboard}`
+/// token, on the engine thread, which must not wait long): about a tenth of a second in all.
 pub(crate) const OPEN_RETRY_DELAYS: [Duration; 9] = [
     Duration::from_millis(1),
     Duration::from_millis(2),
@@ -177,6 +177,37 @@ pub(crate) const OPEN_RETRY_DELAYS: [Duration; 9] = [
     Duration::from_millis(16),
     Duration::from_millis(16),
     Duration::from_millis(20),
+];
+
+/// The delays between attempts to open the clipboard for the steps of a paste (snapshot,
+/// transient write, restore), on the injector's thread: about half a second in all.
+///
+/// A paste opens the clipboard at the moments other programs do too. Right after anything
+/// is copied, every clipboard monitor (the history, the cloud clipboard, a remote-desktop
+/// client's clipboard channel) opens it to read the new content or to see the markers that
+/// tell it not to; after the paste shortcut, the target application opens it to read the
+/// paste. On a busy machine one of them can hold it for longer than a tenth of a second
+/// (seen on a CI runner: the snapshot right after the test's own copy failed with access
+/// denied). Giving up then would fail the paste, or leave the transient content on the
+/// clipboard when it is the restore that gives up; waiting half a second is the smaller harm.
+/// With [`paste::RESTORE_ATTEMPTS`](super::paste::RESTORE_ATTEMPTS) a restore waits at most
+/// about 1.6 s before it reports that the clipboard was not put back.
+pub(crate) const PASTE_OPEN_RETRY_DELAYS: [Duration; 15] = [
+    Duration::from_millis(1),
+    Duration::from_millis(2),
+    Duration::from_millis(4),
+    Duration::from_millis(8),
+    Duration::from_millis(16),
+    Duration::from_millis(32),
+    Duration::from_millis(48),
+    Duration::from_millis(48),
+    Duration::from_millis(48),
+    Duration::from_millis(48),
+    Duration::from_millis(48),
+    Duration::from_millis(48),
+    Duration::from_millis(48),
+    Duration::from_millis(48),
+    Duration::from_millis(48),
 ];
 
 /// Calls `attempt` until it succeeds, sleeping the given delays in between: one attempt more
@@ -369,5 +400,38 @@ mod tests {
 
         let result: Result<u8, &str> = retry(&[], || Ok(1), |_| panic!("no sleep"));
         assert_eq!(result, Ok(1));
+    }
+
+    /// CI failure on PR #9: a paste's snapshot found the clipboard held for longer than the
+    /// tenth of a second `read_text` waits. A paste waits about half a second, starting with
+    /// short delays so that the usual brief hold costs a millisecond or two.
+    #[test]
+    fn a_paste_waits_longer_for_the_clipboard_than_read_text() {
+        let total = |delays: &[Duration]| delays.iter().sum::<Duration>();
+        let paste = total(&PASTE_OPEN_RETRY_DELAYS);
+        assert!(paste >= Duration::from_millis(450), "{paste:?}");
+        assert!(paste <= Duration::from_millis(550), "{paste:?}");
+        assert!(paste >= 4 * total(&OPEN_RETRY_DELAYS));
+        assert_eq!(PASTE_OPEN_RETRY_DELAYS[0], Duration::from_millis(1));
+        assert!(
+            PASTE_OPEN_RETRY_DELAYS
+                .windows(2)
+                .all(|pair| pair[0] <= pair[1]),
+            "the delays grow"
+        );
+        // A holder that lets go after 300 ms: the paste gets the clipboard.
+        let waited = std::cell::Cell::new(Duration::ZERO);
+        let result: Result<(), &str> = retry(
+            &PASTE_OPEN_RETRY_DELAYS,
+            || {
+                if waited.get() >= Duration::from_millis(300) {
+                    Ok(())
+                } else {
+                    Err("held")
+                }
+            },
+            |d| waited.set(waited.get() + d),
+        );
+        assert_eq!(result, Ok(()));
     }
 }

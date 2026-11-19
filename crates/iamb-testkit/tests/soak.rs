@@ -5,6 +5,7 @@
 
 #![cfg(feature = "soak")]
 
+use std::fmt::Write as _;
 use std::path::Path;
 use std::process::Command;
 
@@ -85,6 +86,31 @@ fn a_short_soak_passes_and_its_scan_can_fail() {
     for rule in report["rules"].as_array().expect("rules") {
         assert_ne!(rule["verdict"], "fail", "{rule}");
     }
+    let rule = |name: &str| {
+        report["rules"]
+            .as_array()
+            .expect("rules")
+            .iter()
+            .find(|r| r["rule"] == name)
+            .cloned()
+            .unwrap_or_else(|| panic!("no rule {name}"))
+    };
+    // Every shape of every canary was planted and found, and no core file was left.
+    let control = rule("canary-scanner-control");
+    assert!(
+        control["value"]
+            .as_str()
+            .expect("value")
+            .contains("145 of 145 planted shapes found"),
+        "{control}"
+    );
+    assert_eq!(rule("no-crash-dumps")["verdict"], "pass");
+    assert!(
+        !report["git_sha_source"]
+            .as_str()
+            .expect("source")
+            .is_empty()
+    );
 
     let samples = std::fs::read_to_string(out.join("samples.jsonl")).expect("samples");
     let lines: Vec<Value> = samples
@@ -116,6 +142,11 @@ fn a_short_soak_passes_and_its_scan_can_fail() {
     }
     let log = read_dir_bytes(&out.join("work/data/logs"));
     assert!(contains(&log, b"ipc in put_snippet"));
+    // The worker and the supervisor opted out of core-file memory, as the service does.
+    assert!(
+        contains(&log, b"crash dumps: coredump-filter-0 ok"),
+        "the crash-dump line"
+    );
     assert!(
         contains(&log, b"exited abnormally"),
         "the supervisor logged the kill"
@@ -149,6 +180,15 @@ fn a_short_soak_passes_and_its_scan_can_fail() {
     let utf16: Vec<u8> = texts[2].encode_utf16().flat_map(u16::to_le_bytes).collect();
     let planted = base64(&[b"x: ".as_slice(), &utf16].concat());
     std::fs::write(out.join("work/data/logs/planted.log"), &planted).expect("plant");
+    // And canary 4 one key per line, as a log that records every key would hold it.
+    let mut per_key = String::new();
+    for (n, c) in texts[3].chars().enumerate() {
+        let _ = writeln!(
+            per_key,
+            "2026-11-18T22:35:55.{n:03}Z INFO worker[7]: key {c:?} seq {n}"
+        );
+    }
+    std::fs::write(out.join("work/data/logs/per-key.log"), per_key).expect("plant");
     let scan = Command::new(BIN)
         .current_dir(dir.path())
         .args([
@@ -170,7 +210,11 @@ fn a_short_soak_passes_and_its_scan_can_fail() {
         ),
         "{printed}"
     );
-    assert_eq!(printed.matches("HIT").count(), 1, "{printed}");
+    assert!(
+        printed.contains("HIT canary #4 (excluded-app) as per-line in data-root/logs/per-key.log"),
+        "{printed}"
+    );
+    assert_eq!(printed.matches("HIT").count(), 2, "{printed}");
     for t in &texts {
         assert!(!printed.contains(t.as_str()), "the scan printed a canary");
     }

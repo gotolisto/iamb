@@ -1,0 +1,37 @@
+# ADR-0008 and architecture §2, check 3: no network code in the service, the IPC crate, the
+# store and the platform crates. The same file is in each of the six crates
+# (`crates/iamb-service/tests/no_network.rs` checks that they agree and list everything below).
+# `std::net::Shutdown`, which Unix sockets take, is the one item of `std::net` allowed.
+
+disallowed-types = [
+    { path = "std::net::TcpStream", reason = "no network code (ADR-0008)" },
+    { path = "std::net::TcpListener", reason = "no network code (ADR-0008)" },
+    { path = "std::net::UdpSocket", reason = "no network code (ADR-0008)" },
+    { path = "std::net::SocketAddr", reason = "no network code (ADR-0008)" },
+    { path = "std::net::SocketAddrV4", reason = "no network code (ADR-0008)" },
+    { path = "std::net::SocketAddrV6", reason = "no network code (ADR-0008)" },
+    { path = "std::net::IpAddr", reason = "no network code (ADR-0008)" },
+    { path = "std::net::Ipv4Addr", reason = "no network code (ADR-0008)" },
+    { path = "std::net::Ipv6Addr", reason = "no network code (ADR-0008)" },
+    { path = "std::net::ToSocketAddrs", reason = "no network code (ADR-0008)" },
+]
+
+disallowed-methods = [
+    { path = "std::net::TcpStream::connect", reason = "no network code (ADR-0008)" },
+    { path = "std::net::TcpStream::connect_timeout", reason = "no network code (ADR-0008)" },
+    { path = "std::net::TcpListener::bind", reason = "no network code (ADR-0008)" },
+    { path = "std::net::UdpSocket::bind", reason = "no network code (ADR-0008)" },
+    { path = "std::net::ToSocketAddrs::to_socket_addrs", reason = "no name resolution (ADR-0008)" },
+    { path = "libc::socket", reason = "no network code (ADR-0008)", allow-invalid = true },
+    { path = "libc::connect", reason = "no network code (ADR-0008)", allow-invalid = true },
+    { path = "libc::bind", reason = "no network code (ADR-0008)", allow-invalid = true },
+    { path = "libc::listen", reason = "no network code (ADR-0008)", allow-invalid = true },
+    { path = "libc::accept", reason = "no network code (ADR-0008)", allow-invalid = true },
+    { path = "libc::sendto", reason = "no network code (ADR-0008)", allow-invalid = true },
+    { path = "libc::sendmsg", reason = "no network code (ADR-0008)", allow-invalid = true },
+    { path = "libc::recvfrom", reason = "no network code (ADR-0008)", allow-invalid = true },
+    { path = "libc::recvmsg", reason = "no network code (ADR-0008)", allow-invalid = true },
+    { path = "libc::getaddrinfo", reason = "no name resolution (ADR-0008)", allow-invalid = true },
+    { path = "libc::gethostbyname", reason = "no name resolution (ADR-0008)", allow-invalid = true },
+    { path = "libc::getnameinfo", reason = "no name resolution (ADR-0008)", allow-invalid = true },
+]

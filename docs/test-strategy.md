@@ -155,9 +155,10 @@ only in a PR that says why, e.g. a new bench, an accepted slowdown or a runner i
 2. During the run: capture all network traffic of the machine (`tcpdump` on macOS, `pktmon` on
    Windows) and all IPC frames (the soak harness serves the service endpoint through a tapping
    endpoint wrapper, §5.5; on CI a dependency check replaces the capture).
-3. After the run: search for every canary, in UTF-8, UTF-16LE and Base64 forms, in the data root,
-   logs, crash dumps, OS temp directories, the whole user profile, the IPC tap and the packet
-   capture.
+3. After the run: search for every canary, as a whole string (UTF-8, UTF-16 and UTF-32 in both
+   byte orders, Base64, hex, escapes) and one character at a time (at a constant stride, or one
+   character per log line), in the data root, logs, crash dumps, OS temp directories, the whole
+   user profile, the IPC tap and the packet capture.
 4. Pass: 0 hits outside the probe window's own text and the driver's own input file. A worker memory
    dump taken after a boundary event is also scanned; hits there are reported, not gating.
 
@@ -221,7 +222,7 @@ artifact `soak-<run id>`):
 | File | Holds |
 | --- | --- |
 | `samples.jsonl` | One line per sample (`iamb-soak-sample/1`): `t_ms`, `unix_ms`, `supervisor` and `worker` (`pid, alive, rss_kb, private_kb, cpu_ms, handles, threads`), `worker_life`, `life_started_ms`, running totals of expansions, keys, edits, kills |
-| `report.json` | `iamb-soak-report/1`: options, totals (keys, rate, expansions, edits, CPU, max memory, restarts the supervisor logged), every recovery (control, `Health` and probe times), unexpected events, the first 50 expansion failures (snippet number, shape, case mode; never field text), per canary its context and checks (never its text), the network check, every rule's verdict |
+| `report.json` | `iamb-soak-report/1`: the commit (`git_sha`: `GITHUB_SHA`, else `git rev-parse HEAD` in the current directory or the soak binary's; `git_sha_source` says which, or why it is null), options, totals (keys, rate, expansions, edits, CPU, max memory, restarts the supervisor logged), every recovery (control, `Health` and probe times), unexpected events, the first 50 expansion failures (snippet number, shape, case mode; never field text), per canary its context and checks (never its text), the crash dumps found and where the search looked, the network check, every rule's verdict |
 | `canary-scan.json` | Locations with files and bytes scanned; hits as canary number, context, form, location, file and byte offset; unreadable files |
 | `summary.txt` | The verdicts in plain text (also printed) |
 | `input/canaries.json` | The driver's own input file: the only file the harness writes canaries to; not uploaded |
@@ -296,14 +297,41 @@ artifact `soak-<run id>`):
   last three an abbreviation is typed after the canary and must not expand, and `GetStatus` must
   report the engine suspended (and paused); in the first two it must not be. A canary counts as
   typed only when the field then holds exactly the expected text.
-- **Scan.** Forms: UTF-8, UTF-16LE, and Base64 of both (standard and URL-safe alphabets, at each
-  of the three alignments, only the characters that do not depend on neighbouring bytes).
-  Locations: the data root (library, WAL, logs, locks), the temp directory the service processes
-  used, the IPC tap, their standard error, the control directory, the samples file, and any
-  `--scan` path. A file that cannot be read fails the rule (0 hits cannot be claimed for it).
-  Scanning the driver's own input must find every canary (the rule `canary-scanner-control`), so
-  a broken scanner cannot pass. Hits are reported by canary number, context, form, location, file
-  and byte offset; no report, summary or progress line contains a canary or the bytes around it.
+- **Scan.** Whole-string forms (`soak::canary`): UTF-8, UTF-16 and UTF-32 in both byte orders,
+  upper case, reversed, hex, JSON `\u` escapes and percent encoding (both cases of hex digit),
+  the debug form of a byte slice (`113, 122, …`), and Base64 of UTF-8 and UTF-16LE (standard and
+  URL-safe alphabets, at each of the three alignments, only the characters that do not depend on
+  neighbouring bytes). Per-character forms (`soak::spread`, finding 2 of the 2.8 review): the
+  canary's bytes at a constant stride from 2 to 512 bytes (UTF-16, UTF-32, arrays of `char`, the
+  debug form `['q', 'z', …]`, fixed-size records such as a 96-byte queue slot, fixed-width log
+  lines), and one character per line of one template after removing digits (a log that records
+  every key: the lines are the same apart from one column, and the canary stands in that column
+  in consecutive lines of that template, at most 16 other lines between two of them). Both need
+  all 16 characters in order, so ordinary output does not trigger them (a random letter matches
+  a fixed start and stride with probability 26^-15; repeated log lines stop a chain at the first
+  wrong letter); the unit tests feed them random text, random bytes and real logs; on the 2.8 review's own
+  runs the 3-minute run gives 0 hits, while the 40-second run of its build that logs every key
+  gives a hit for each of its 10 canaries. Not found: characters written as numbers, records of varying length that are not
+  lines, compressed output, another order. Locations: the data root (library, WAL, logs, locks),
+  the temp directory the service processes used, the IPC tap, their standard error, the control
+  directory, the samples file, core files and crash dumps of the service processes (below), and
+  any `--scan` path. A file that cannot be read fails the rule (0 hits cannot be claimed for
+  it). The rule `canary-scanner-control` requires that scanning the driver's own input finds
+  every canary and that every shape of every canary (29: each whole-string form inside other
+  text, each Base64 alignment, 96-byte records, the debug form of a `char` slice, one key per log
+  line in the service's log format), planted in files of its own next to the input and removed
+  again, is found, so a scanner that stops finding a form cannot pass. Hits are reported by
+  canary number, context, form, location, file and byte offset (for `per-line`, of the line with
+  the first character); no report, summary or progress line contains a canary or the bytes
+  around it.
+- **Crash dumps.** The two service processes opt out of crash dumps first, as the service's
+  `main` does (architecture §8, "Crash handling"): on Linux a core file of the worker holds no
+  memory. After the run the driver looks for core files and crash dumps changed during the run:
+  `core` and `core.*` in the service processes' working directory (the driver's), the directory
+  of `/proc/sys/kernel/core_pattern` when that names one (a pattern that hands cores to a
+  program is reported as not searched), `/cores/core.<pid>` on macOS for the run's pids, and
+  `iamb-soak.exe.*` in `%LOCALAPPDATA%\CrashDumps` on Windows. Each one found is scanned
+  (location `crash-dump`) and fails the rule `no-crash-dumps`: no service process may crash.
 - **Network.** CI cannot capture traffic. Instead the rule `no-networking-crate` runs
   `cargo tree -p iamb-service -e normal --target all` and checks every package against the deny
   list of `crates/iamb-service/tests/no_network.rs` (a unit test keeps the two lists equal). The
@@ -320,7 +348,7 @@ What the CI form leaves to the lab run:
 | --- | --- | --- |
 | Real OS layer typing into the probe window | The probe window exists (§6) but `iamb-soak` cannot drive it yet: its worker runs the mock platform in-process and the driver types and reads back through the worker's control endpoint. A `--target probe` needs a worker on the real platform (the service's own worker, with the tap), a typist fast enough for 15 keys/s bursts (the compat typist starts a process per call, 0.3–1 s), the probe's text check in place of the control endpoint's `Check` (a probe command that compares without returning the text), two more probe windows for the `secure-field` and `excluded-app` canary contexts (a password control and a second app id), and the recovery probe expansion through it | Until then a lab run is the mock-platform run on the lab machine (the service minus its OS layer) |
 | Packet capture of the whole machine | Not possible on hosted runners | `tcpdump` (macOS) or `pktmon` (Windows) for the whole run; scan the capture with `iamb-soak scan --location capture=…` or `run --scan` |
-| Crash dumps, the whole user profile | Too large and too shared on CI | `--scan "$HOME"` (or `%USERPROFILE%`) plus the OS crash-dump directories |
+| Crash dumps of other programs, the whole user profile | Too large and too shared on CI (the run's own core files and dumps are found and scanned automatically) | `--scan "$HOME"` (or `%USERPROFILE%`) plus the OS crash-dump directories by name: `%LOCALAPPDATA%\CrashDumps` and `C:\ProgramData\Microsoft\Windows\WER` (Windows), `/cores` and `~/Library/Logs/DiagnosticReports` (macOS) |
 | UI host restart every 24 h | No UI host yet | Add to the driver with task 3.x |
 | Disk quota of the data root full for 5 min | Needs a quota'd volume | Lab procedure |
 | Worker memory dump after a boundary event (reported, not gating) | Needs an OS dump tool | Lab procedure; scan the dump with `iamb-soak scan` |

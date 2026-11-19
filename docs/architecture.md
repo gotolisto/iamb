@@ -52,9 +52,10 @@ Rules enforced by CI:
   Four checks together enforce it: (1) its resolved dependency tree, per target, is compared with
   a deny list of networking crates; (2) the enabled features of the `windows` bindings are compared
   with an allow list that excludes the networking namespaces; (3) a lint forbids `std::net` in
-  `iamb-service`, `iamb-ipc`, `iamb-store` and the platform crates; (4) the release binary is
-  built with `-p iamb-service` alone, so feature unification with other workspace members cannot
-  add code to it.
+  `iamb-service`, `iamb-ipc`, `iamb-store` and the platform crates (clippy's `disallowed-types`
+  and `disallowed-methods` in a `clippy.toml` of each, also for the socket calls of `libc`); (4)
+  the release binary is built with `-p iamb-service` alone, so feature unification with other
+  workspace members cannot add code to it. `docs/ci.md` says where each runs.
 - `iamb-core` builds for every desktop and mobile target with default features off.
 
 ## 3. Processes
@@ -78,7 +79,7 @@ Plain threads and bounded channels, no async runtime
 
 | Thread | Does |
 | --- | --- |
-| Listener | Runs the OS hook or event tap and the hotkey registration; translates each key; stamps it with a sequence number; pushes it to the engine channel; returns |
+| Listener | Runs the OS hook or event tap and the hotkey registration; translates each key; stamps it with a sequence number and, where the OS says, the window it goes to; puts it in the key queue (§8 rule 1) and pushes a notice to the engine channel; returns |
 | Engine | Owns the keystroke buffer and the current snapshot; turns events into actions; sends a heartbeat to the supervisor every 500 ms |
 | Injector | Executes action lists against the OS; reports start and end of each injection |
 | Focus | Watches the focused app and window; answers "is this a secure field?" with a 100 ms timeout |
@@ -96,9 +97,10 @@ presses are dispatched by that loop; the threads above run beside it.
 
 The listener is observe-only: it never blocks, delays or swallows a key
 ([ADR-0010](decisions/0010-observe-only-listener.md)). Work in the hook callback is bounded:
-translate, push, return (under 1 ms at the 99th percentile). If the channel is full the listener
-drops the event and sets an overflow flag; the next event it delivers is `Overflow`, which clears
-the buffer.
+translate, push, return (under 1 ms at the 99th percentile); the push writes into the fixed key
+queue and the bounded engine channel and allocates nothing. If either is full the listener drops
+the event and sets an overflow flag; the next event it delivers is `Overflow`, which clears the
+buffer.
 
 ### 3.2 Supervision and start-up
 
@@ -114,6 +116,10 @@ when no heartbeat arrives for 3 seconds. The heartbeat comes from the engine thr
 deadlocked engine is caught. Every 30 seconds the worker posts a marked no-op key event and checks
 that its own listener sees it within 1 second; on failure it reinstalls the hook or tap, and after
 two failures it exits for a restart. This catches a hook the operating system removed silently.
+With every heartbeat the engine thread also asks whether the focus watcher still runs
+(`FocusInspector::is_watching`); while it does not, the focus counts as unknown (the engine is
+suspended, and a verdict for the focus the watcher last saw is taken as unknown) and the watcher
+is started again, whose first report brings the next verdict.
 
 Single instance is guaranteed by an exclusive lock on `run/supervisor.lock`.
 
@@ -170,6 +176,13 @@ impl Engine {
 
 Rules for the listener that the events rely on:
 
+- Where the OS tells it cheaply, the listener says which window a key went to (on Windows the
+  window in front and its process, read in the hook; the macOS listener does not say yet). A
+  focus change reaches the engine later than the keys typed right after it (the watcher hears of
+  it after the application, and it crosses the focus thread), so the thread that feeds the engine
+  hands it no key whose window differs from the last `FocusChanged` it delivered: such a key is
+  neither stored nor matched, and an expansion waiting for its start marker is cancelled. A move
+  to another field of the same window is not seen this way.
 - A key is a `Char` whenever translation yields text. AltGr combinations on Windows and Option
   combinations on macOS are therefore characters, not boundaries.
 - Translation never disturbs the target application's keyboard state. The Windows listener
@@ -342,12 +355,35 @@ them instead (`iamb_platform::TypedHandoff`). It is armed when the engine emits 
 the real `Char`s it forwards from then until the start marker into a separate `Sensitive` buffer
 of at most 64 characters in one fixed, lockable allocation, and is zeroed when the expansion ends.
 Only the injector thread reads it, after it has seen its own start marker. The hook or tap thread
-itself never copies keys: it cannot know a trigger happened until the engine has matched, so a
+keeps no copy of its own: it cannot know a trigger happened until the engine has matched, so a
 copy there would have to hold every key all the time, including keys the engine drops in secure
-fields. A boundary, an over-deleting Backspace, a 65th character, composition, overflow or a focus
-change cancels the expansion. So does a dead key still waiting when the start marker arrives: the
+fields. What it does hold is each key on its way to the engine thread, in the key queue, which
+overwrites a character as soon as the engine thread has taken it (§8 rule 1). A boundary, an
+over-deleting Backspace, a 65th character, composition, overflow, a focus change, a pause, or a
+key the listener says went to another window than the last focus change (§4.1) cancels the
+expansion. So does a dead key still waiting when the start marker arrives: the
 listener reports it as a boundary just before `InjectionStarted`, because the target would spend
 the first Backspace on it. The 2.8 privacy review checks this.
+
+After the start marker the hand-off is sealed and no longer cancels, so the injector watches the
+focus itself (`iamb_platform::FocusGuard`). Right before the start marker it notes where keys go,
+and before each batch (Windows) or each key operation (macOS) it compares: when the window, its
+process or the field it can see changed, it stops with `Cancelled(FocusMoved)` and posts no end
+marker; the service answers with `InjectionCancelled`. What it compares never waits for the
+target: on Windows the foreground window, its process and the focused control the system names
+(a browser engine draws its fields in one window, so a move between them is not seen there); on
+macOS the frontmost process, the secure-input flag and the count of the focus watcher's
+notifications. Steps sent before the stop stay where they went. Once the expansion itself sends a
+key that may move the focus (Tab, Enter, Escape, Space, an arrow other than Left, a line break
+or a tab in text), the comparisons end for that expansion, because the move it causes cannot be
+told from another. The trigger key's own move can happen before the injector notes the focus;
+that part of the 2.8 review's finding 1 is the delimiter decision
+([ADR-0026](decisions/0026-enter-and-tab-not-default-delimiters.md)), not this check.
+
+A paste never replaces clipboard content that its snapshot could not save whole (a format the
+owner did not deliver, a handle, a format past the size or time limit), because the restore
+could not put that part back (§8 rule 8). Plain text is then typed with keys instead; content
+that keys cannot carry (HTML, files) stops the expansion with `Cancelled(ClipboardNotRestorable)`.
 
 ### 4.7 Latency budget (plain text, up to 500 characters)
 
@@ -368,8 +404,8 @@ the first Backspace on it. The 2.8 privacy review checks this.
 | --- | --- | --- | --- | --- |
 | `KeyListener` | `start(sink)`, `stop()`, `self_test(timeout)` | service | Low-level keyboard and mouse hooks on a message-loop thread; stateless layout-aware translation | Event tap; re-enables itself when the system disables it |
 | `Injector` | `inject(request, handoff)`: one call per expansion, which posts the start marker, applies the compensation of §4.6 and the steps, and posts the end marker; `configure(settings_json)`: the user's per-app settings (default: accepts only the empty string) | service | Synthesised Unicode input in atomic batches; clipboard paste with restore; per-app strategy table keyed by executable name, settings add `paste_keys` and `batch_delay_ms` | Synthesised key events; pasteboard paste with restore; per-app strategy table keyed by bundle identifier, settings add `chunk_units` and more line breaks |
-| `FocusInspector` | `focused_app()`, `secure_state(target, timeout)`, `focus_token()`, `restore_focus(token)`, `allow_foreground(pid)`, `watch(sink)`, `unwatch()` | service, UI host | Foreground window, its process and integrity level; window-event hooks for focus changes; password fields by the edit control's style, and through UI Automation `IsPassword` on a dedicated thread | Frontmost app and its front window; activation notifications and an Accessibility observer for focus changes; secure fields by the session's secure-input state, and by the focused element's role and subrole on a dedicated thread |
-| `ClipboardAccess` | `read_text`, `snapshot`, `write(content, transient)`, `restore` | service | Clipboard API, with the formats that keep content out of clipboard history | Pasteboard API, with the transient and concealed markers |
+| `FocusInspector` | `focused_app()`, `secure_state(target, timeout)`, `focus_token()`, `restore_focus(token)`, `allow_foreground(pid)`, `watch(sink)`, `unwatch()`, `is_watching()` (false once the watcher's thread has ended by itself) | service, UI host | Foreground window, its process and integrity level; window-event hooks for focus changes; password fields by the edit control's style, and through UI Automation `IsPassword` on a dedicated thread | Frontmost app and its front window; activation notifications and an Accessibility observer for focus changes; secure fields by the session's secure-input state, and by the focused element's role and subrole on a dedicated thread |
+| `ClipboardAccess` | `read_text`, `snapshot`, `write(content, transient)`, `restore` | service | Clipboard API, with the formats that keep content out of clipboard history | Pasteboard API, with the transient and concealed markers, for this device only |
 | `Hotkeys` | `register(id, chord)`, `unregister(id)` | service | OS hotkey API on the listener thread | OS hotkey API on the listener's run loop |
 | `Permissions` | `permission_status()`, `open_settings(kind)` | service | Always granted | Accessibility and Input Monitoring, checked in the worker, which is the process that holds them |
 | `LoginItem` | `enable()`, `disable()`, `login_item_status()` | UI host | Per-user Run key | Login-item registration of the helper app |
@@ -544,11 +580,16 @@ These hold for every phase and are what the Phase 2 privacy review checks
 ([ADR-0012](decisions/0012-keystroke-privacy.md),
 [ADR-0022](decisions/0022-shared-snippet-trust.md)).
 
-1. Typed characters exist in exactly two places, both in locked memory: the engine's
-   66-character buffer, and, only while an expansion is in flight, the engine-feeding thread's
-   copy of the characters typed after its trigger (at most 64, for the injector to type again,
-   §4.6), zeroed when the expansion ends. No API returns either. They are never serialised, logged or sent over
-   IPC.
+1. Typed characters exist in exactly three places, all in locked memory: the key queue between
+   the listener and the engine thread (one fixed allocation of 256 slots; each character only
+   until the engine thread takes it, when its slot is overwritten with zero, and every slot is
+   zeroed when the worker stops; the engine channel itself carries a notice without content),
+   the engine's 66-character buffer, and, only while an expansion is in flight, the
+   engine-feeding thread's copy of the characters typed after its trigger (at most 64, for the
+   injector to type again, §4.6), zeroed when the expansion ends. Every key passes through the
+   queue, also keys typed into a secure field, an excluded app or under pause, which the engine
+   then drops unstored. No API returns any of them. They are never serialised, logged or sent
+   over IPC.
 2. User-entered values (form values, clipboard content read for `{clipboard}`, palette queries,
    dry-run input) are never written to disk or logs. Form values are remembered only as described
    in §4.5.
@@ -565,14 +606,24 @@ These hold for every phase and are what the Phase 2 privacy review checks
    lives in `iamb-sync` or `iamb-desktop`, which never receive key events.
 6. Account tokens live in the OS keychain and are read only by `iamb-sync`.
 7. Secure fields, excluded apps, input-method composition and Iamb's own windows suspend the
-   engine before a character is stored, and an unknown state counts as suspended.
+   engine before a character is stored, and an unknown state counts as suspended. "Unknown"
+   means a question that got no answer, not "nothing to inspect": what the platform layers
+   cannot see (a password prompt in a terminal, a field nobody describes, some input methods)
+   counts as an ordinary field, and the remedy is the exclusion list or the pause. Those limits
+   are listed under "Detection limits" below.
 8. Content that Iamb puts on the clipboard to paste is marked so that clipboard history and cloud
-   clipboard services skip it, and the previous clipboard content is restored afterwards.
+   clipboard services skip it, and the previous clipboard content is restored afterwards. On
+   Windows that is three formats on every write and restore; on macOS the nspasteboard.org
+   transient and concealed markers, and the write is for this device only, so the system does not
+   offer it to the user's other devices; a restore is for this device only too when the saved
+   content carried either marker. A paste whose snapshot is incomplete is not made (§4.6). A
+   restore makes Iamb the clipboard's owner and moves its change count, so an application that
+   clears its own copy "if unchanged" leaves the restored copy in place.
 9. Each process writes crash reports locally without heap contents and opts out of the operating
    system's own crash-dump collection where the OS allows. Only `iamb-desktop` uploads reports,
    and only after opt-in. Limit: an administrator who configures full-memory dumps for all
    processes can capture the typed-character buffers; Iamb cannot prevent that and says so in its
-   privacy documentation.
+   privacy documentation. How the service does it is under "Crash handling" below.
 10. Snippets written by other people are treated as untrusted input:
     - A template can type text, press the keys listed in the template spec (Shift is the only
       modifier), wait, and read the clipboard. That is enough to run a command in a terminal or
@@ -589,6 +640,43 @@ These hold for every phase and are what the Phase 2 privacy review checks
 Threat model: Iamb protects typed text from itself (bugs, logs, sync), from other users on the
 machine, and from other members of shared folders. It does not defend against malware already
 running as the same user, which can observe the keyboard directly.
+
+**Crash handling (rule 9).** The supervisor and the worker do two things first in `main`
+(`iamb_service::crash`); the UI host must do the same when it lands (Phase 3):
+
+| | Opt-out of the system's dumps (before any thread starts) | Where |
+| --- | --- | --- |
+| Windows | `SetErrorMode` adds `SEM_NOGPFAULTERRORBOX` (the system does not invoke Windows Error Reporting for the process) and `SEM_FAILCRITICALERRORS`; `WerSetFlags(WER_FAULT_REPORTING_FLAG_NOHEAP)` so that a report WER still makes (a hang, a fail-fast exit) holds no heap. Inherited by the worker | `iamb_platform_windows::harden_process` |
+| macOS | `RLIMIT_CORE` 0, soft and hard: no core file in `/cores`. The system's crash report (`~/Library/Logs/DiagnosticReports`) is still written; it holds backtraces, registers and the loaded images, not heap memory | `iamb_platform_macos::harden_process` |
+| Linux (development and CI only) | `/proc/self/coredump_filter` set to 0: a core file still appears but holds no memory mapping. The core limit and `PR_SET_DUMPABLE` need `unsafe`, which the service forbids and for which Linux has no platform crate | `iamb_service::crash` |
+
+The worker logs which steps took effect (`crash dumps: … ok`), a warning when one did not. Then
+the panic hook: a panic writes a local crash report `logs/crash-<process>-<unix ms>.txt` (user
+only, the last 10 per process kept) with the process, version, system, time, process id, thread
+name and source location, and nothing else: never the panic message, which can quote data, nor
+a backtrace or memory. The hook then exits with status 70 (`EXIT_PANIC`) instead of aborting, so
+a Rust panic never becomes an operating-system crash, and the supervisor restarts the worker as
+after any abnormal exit. What still ends the process the system's way is a fault that is not a
+panic (in the OS crates' `unsafe` code, or a signal); the opt-outs above apply to it. Not
+prevented: a dump taken from outside the process (a debugger, Task Manager, a full-memory dump
+policy), the limit of rule 9. `iamb-desktop` will read the local reports for its opt-in upload.
+
+**Detection limits (rule 7).** The platform layers suspend the engine for what they can
+recognise. What they cannot is treated as an ordinary field, because refusing every window that
+describes nothing would stop Iamb in most terminals and several editors. The remedy for each is
+the exclusion list (or the pause), which is why an exclusion must never fail silently. The module
+docs named here hold the details; `docs/compatibility-run.md` has the manual checks.
+
+| Limit | Windows | macOS |
+| --- | --- | --- |
+| A password prompt in a terminal (`ssh`, `sudo`, `runas`) | Not detected: a console does not say that it stopped echoing (`focus.rs`) | Detected only while the terminal has Secure Keyboard Entry on (`focus.rs`) |
+| An application that draws its own fields and describes none (games, remote-desktop and virtual-machine windows, Java without the accessibility bridge) | `Normal`, not `Unknown` | Not recognised unless it switches secure keyboard entry on or reports a secure text field; no focused element at all is `Unknown` |
+| A field that becomes a password field, or stops being one, without a focus change (a "show password" switch) | Seen at the next focus change | Seen when secure keyboard entry changes, else at the next application or window change |
+| Input methods | One on an ordinary layout handle (Vietnamese Telex, Indic transliteration) is not recognised; a switch the listener does not notice is seen one key late (`listener/ime.rs`). Otherwise fails closed: an unanswered question counts as composing | The layout is published by the main thread, so a key typed right after a switch is read with the old one; the press-and-hold accent menu is invisible (`listener/inputs.rs`). Otherwise fails closed: no key is text while an input method is selected |
+
+In each case what is typed passes through the 66-character buffer in locked memory like any
+typing (never stored, logged or sent, cleared at the next boundary), and an abbreviation in it
+can expand.
 
 ## 9. Sync
 

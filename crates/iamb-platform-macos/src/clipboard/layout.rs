@@ -26,6 +26,17 @@
 //! [`restore_items`]: the saved items, type for type and byte for byte, each with
 //! [`TRANSIENT_TYPE`] added when it did not have it, so that putting the user's own content
 //! back does not record it in their clipboard history a second time.
+//!
+//! # This device only
+//!
+//! The markers above are for clipboard managers. The system's own clipboard, which offers
+//! the pasteboard to the user's other devices, does not read them; it honours the "current
+//! host only" option of the write instead ([`Reach`], §8 rule 8; the 2.8 review's finding
+//! 7). Transient content is always written with it. A restore uses it when the saved content
+//! carried either marker ([`restore_reach`]): the application that copied it asked for it to
+//! be kept out of sight, and a password it copied must not become fetchable from another
+//! device because Iamb put it back. Other content is put back as it was, offered to the
+//! other devices again.
 
 use std::borrow::Cow;
 use std::fmt::Write as _;
@@ -53,6 +64,37 @@ pub(crate) const UNREADABLE: u32 = 0x4942_0002;
 /// The most bytes a snapshot keeps. Larger types (a big image) are left out and the snapshot
 /// is incomplete.
 pub(crate) const SNAPSHOT_LIMIT: usize = 64 * 1024 * 1024;
+
+/// Which devices a write is offered to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Reach {
+    /// The user's other devices too, as any copy is.
+    AnyDevice,
+    /// This device only (`NSPasteboardContentsCurrentHostOnly`).
+    ThisDevice,
+}
+
+/// The reach of a write of new content: transient content stays on this device.
+pub(crate) const fn content_reach(transient: bool) -> Reach {
+    if transient {
+        Reach::ThisDevice
+    } else {
+        Reach::AnyDevice
+    }
+}
+
+/// The reach of a restore of `saved`: this device only when any item carried the transient
+/// or the concealed marker; see the module docs.
+pub(crate) fn restore_reach(saved: &[SavedItem<'_>]) -> Reach {
+    let marked = saved.iter().any(|item| {
+        item.types
+            .iter()
+            .map(|(uti, _)| *uti)
+            .chain(item.unreadable.iter().copied())
+            .any(|uti| uti == TRANSIENT_TYPE || uti == CONCEALED_TYPE)
+    });
+    content_reach(marked)
+}
 
 /// One item as the pasteboard handed it out: each type with its data, `None` when the
 /// pasteboard gave none. No `Debug`: it holds the user's content.

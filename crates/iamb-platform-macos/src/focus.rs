@@ -129,6 +129,10 @@ use iamb_platform::PermissionKind;
 
 #[cfg(target_os = "macos")]
 pub(crate) use mac::State;
+#[cfg(target_os = "macos")]
+pub(crate) use system::{frontmost_pid, secure_input};
+#[cfg(target_os = "macos")]
+pub(crate) use watcher::focus_notes;
 
 use crate::permissions::policy::Probe;
 

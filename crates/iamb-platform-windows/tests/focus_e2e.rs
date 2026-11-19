@@ -267,6 +267,7 @@ fn the_watcher_reports_the_focus_at_once_and_every_change() {
         platform.watch(Box::new(|_: FocusChange| {})),
         Err(PlatformError::AlreadyRunning)
     );
+    assert!(platform.is_watching(), "the watcher's thread runs");
 
     // Another window comes to the front.
     let Some(second) = open(Field::Plain) else {
@@ -302,6 +303,7 @@ fn the_watcher_reports_the_focus_at_once_and_every_change() {
 
     // Stopping drops the sink; stopping again is not an error; watching again works.
     assert_eq!(platform.unwatch(), Ok(()));
+    assert!(!platform.is_watching());
     loop {
         match changes.recv_timeout(Duration::from_secs(5)) {
             Ok(_) => {}

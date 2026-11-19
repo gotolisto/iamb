@@ -74,16 +74,16 @@ pub use handoff::{
 };
 pub use hotkeys::{Chord, ChordError, HotkeyId, HotkeyKey, Hotkeys, Modifiers};
 pub use inject::{
-    Compensated, ExpansionBatch, InjectionOutcome, InjectionOverrides, InjectionRequest,
-    InjectionStep, Injector, TextMethod, compensate, split_actions,
+    Compensated, ExpansionBatch, FocusGuard, InjectionOutcome, InjectionOverrides,
+    InjectionRequest, InjectionStep, Injector, TextMethod, compensate, split_actions,
 };
 pub use injection_settings::{
     INJECTION_SETTINGS_KEY, InjectionEntry, InjectionMethod, InjectionSettings, LineBreakChoice,
     MAX_APPS, PasteShortcut, SettingsBounds, SettingsDialect, SettingsError,
 };
 pub use listener::{
-    ChannelSink, DEFAULT_EVENT_CAPACITY, EventSink, KeyListener, ListenerEvent, OverflowSink,
-    Routed, SeqSource, event_channel,
+    ChannelSink, DEFAULT_EVENT_CAPACITY, EventSink, KeyListener, KeyTarget, ListenerEvent,
+    OverflowSink, Routed, SeqSource, event_channel,
 };
 pub use login_item::{LoginItem, LoginItemStatus};
 pub use marker::{Marker, PAYLOAD_BITS};

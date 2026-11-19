@@ -107,8 +107,9 @@ first. How a password field is detected, and what is not, is in the module docs 
    tell that a console is asking for a password, so today this expands; record what happened.
    Then exclude the terminal and repeat; nothing may expand, and the diagnostics show "excluded
    app". An exclusion is a row of the table `app_exclusion`, written like the setting under
-   "Per-app overrides" below, while the service is stopped. Its `app_id` must be the name exactly
-   as the diagnostics show it, which on Windows is the executable's file name in lower case:
+   "Per-app overrides" below, while the service is stopped. Its `app_id` is the name as the
+   diagnostics show it, which on Windows is the executable's file name in lower case; the service
+   rewrites another spelling (another case, a full path) into that form when it starts:
 
    ```sh
    sqlite> INSERT INTO app_exclusion (app_id, display_name, created_at)
@@ -247,7 +248,30 @@ the mouse while it runs.
    printed address in another browser instead to measure that one. Click into the field once
    and keep the tab in front; the run starts when the page has connected.
 
-## Notes for the cells
+## What the secure-field and input-method checks cannot see
+
+These are known limits, not failures of a cell: the platform layers treat what they cannot
+recognise as an ordinary field. The full table is "Detection limits" in `docs/architecture.md` §8;
+record what you see for each one you meet, and check that excluding the app stops it.
+
+- **Password prompts in terminals.** Not detected on Windows; on macOS only while the terminal
+  has Secure Keyboard Entry on. An abbreviation typed at such a prompt expands (step 5 of each OS section above).
+- **Applications that describe no field** (games, remote-desktop and virtual-machine windows,
+  Java applications without the accessibility bridge): a password field there is an ordinary
+  field on Windows; on macOS too, unless the app switches secure keyboard entry on.
+- **A field that changes kind without a focus change** (a "show password" switch): the change is
+  seen at the next focus change (Windows) or when secure keyboard entry changes (macOS).
+- **Input methods.** Windows: one that runs on an ordinary layout (Vietnamese Telex, Indic
+  transliteration) is not recognised, and a switch the listener does not notice is seen one key
+  late. macOS: the first key after switching the input source is read with the previous layout,
+  and the press-and-hold accent menu is not seen. Both fail closed otherwise (nothing expands
+  while an input method is, or may be, composing).
+
+The remedy in every case is the exclusion list or the pause. An exclusion's `app_id` names the
+application as the diagnostics show it (above). The service stores and compares it in that form
+(on Windows without regard to case or a directory, on macOS without regard to case) and refuses
+an id that no application of the system can have.
+
 
 - **T4 and the date.** The harness asks for today's local date once and accepts the next day too,
   for a run that crosses midnight. The caret is checked by the `^` it types after the expansion.

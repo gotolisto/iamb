@@ -6,6 +6,7 @@
 //! | Step fails | Then |
 //! | --- | --- |
 //! | snapshot | nothing is written: without a snapshot the previous content could not come back. The paste fails |
+//! | snapshot incomplete (a type the owner did not deliver, or past [`SNAPSHOT_LIMIT`](super::layout::SNAPSHOT_LIMIT)) | nothing is written either: that part could not come back. The paste fails with [`SNAPSHOT_INCOMPLETE`]; the injector types plain text with keys instead and stops for other content (the 2.8 review's finding 14) |
 //! | write | restore at once (the write may have cleared the pasteboard); the paste fails |
 //! | paste shortcut | restore at once; the paste fails |
 //! | — | wait `settle` (the application reads the pasteboard when it handles the shortcut, which can be later than the post), then restore |
@@ -16,7 +17,13 @@
 
 use std::time::Duration;
 
-use iamb_platform::{ClipboardAccess, ClipboardContent, ClipboardSnapshot, Result};
+use iamb_platform::{ClipboardAccess, ClipboardContent, ClipboardSnapshot, PlatformError, Result};
+
+/// The error of a paste that did not start because the snapshot could not save everything on
+/// the pasteboard. Nothing was written.
+pub(crate) const SNAPSHOT_INCOMPLETE: PlatformError = PlatformError::Invalid {
+    context: "the pasteboard holds content that cannot be saved and put back after a paste",
+};
 
 /// The pause before the second restore attempt.
 pub(crate) const RETRY_DELAY: Duration = Duration::from_millis(20);
@@ -31,6 +38,9 @@ pub(crate) fn paste_with_restore(
     sleep: &mut dyn FnMut(Duration),
 ) -> Result<()> {
     let saved = clipboard.snapshot()?;
+    if !saved.is_complete() {
+        return Err(SNAPSHOT_INCOMPLETE);
+    }
     if let Err(error) = clipboard.write(content, true) {
         // A failure to restore is less important than the write's own error.
         let _ = restore(clipboard, saved, sleep);
@@ -60,7 +70,6 @@ fn restore(
 mod tests {
     use std::sync::{Mutex, PoisonError};
 
-    use iamb_platform::PlatformError;
     use iamb_platform::core_types::Sensitive;
     use iamb_platform::mock::MockPlatform;
 
@@ -80,6 +89,7 @@ mod tests {
     struct Scripted {
         calls: Mutex<Vec<Call>>,
         fail_snapshot: bool,
+        incomplete: bool,
         fail_write: bool,
         restore_failures: Mutex<usize>,
     }
@@ -114,7 +124,7 @@ mod tests {
             if self.fail_snapshot {
                 Err(err("snapshot"))
             } else {
-                Ok(ClipboardSnapshot::default())
+                Ok(ClipboardSnapshot::new(Vec::new(), !self.incomplete))
             }
         }
 
@@ -187,6 +197,17 @@ mod tests {
         };
         let (result, calls) = run(&clipboard, false);
         assert_eq!(result, Err(err("snapshot")));
+        assert_eq!(calls, [Call::Snapshot]);
+    }
+
+    #[test]
+    fn an_incomplete_snapshot_writes_nothing() {
+        let clipboard = Scripted {
+            incomplete: true,
+            ..Scripted::default()
+        };
+        let (result, calls) = run(&clipboard, false);
+        assert_eq!(result, Err(SNAPSHOT_INCOMPLETE));
         assert_eq!(calls, [Call::Snapshot]);
     }
 

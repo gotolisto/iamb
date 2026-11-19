@@ -11,6 +11,9 @@
 //!   endpoint served through the [`tap`](super::tap), and the [`control`](super::control)
 //!   endpoint for the driver.
 //!
+//! Both opt out of crash dumps and install the panic hook first, as the service's `main` does
+//! ([`iamb_service::crash`]): on Linux a core file of the soak worker holds no memory.
+//!
 //! Peers are checked with [`PeerPolicy::SameUser`] in every build: the soak binary is not the
 //! signed, installed Iamb binary, so the release policy would refuse the driver.
 
@@ -24,6 +27,7 @@ use std::thread;
 use iamb_platform::mock::{MockPlatform, MockWindow};
 use iamb_platform::{FocusToken, LocalEndpoint, PeerPolicy};
 use iamb_service::EXIT_RESTART;
+use iamb_service::crash::{self, Hardening};
 use iamb_service::log::Logger;
 use iamb_service::paths::{DataDirs, create_private_dir};
 use iamb_service::supervisor::{self, SupervisorConfig};
@@ -32,18 +36,15 @@ use iamb_service::worker::{ExitReason, Worker, WorkerConfig};
 use super::control::{self, Command, EDITOR_APP, EXCLUDED_APP, Reply, SECURE_APP, Window};
 use super::tap::TapEndpoint;
 
-/// Panics are logged by location only, as the service does: a message could quote data.
-fn log_panics(log: &Arc<Logger>) {
-    let log = Arc::clone(log);
-    std::panic::set_hook(Box::new(move |info| {
-        let at = info
-            .location()
-            .map_or_else(String::new, |l| format!(" at {}:{}", l.file(), l.line()));
-        log.error(format_args!(
-            "panic in thread {}{at}",
-            thread::current().name().unwrap_or("?")
-        ));
-    }));
+/// The service's crash handling (module docs): the panic hook, and the line that says which
+/// crash-dump opt-outs of `hardening` took effect.
+fn crash_handling(log: &Arc<Logger>, data: &DataDirs, process: &'static str, h: &Hardening) {
+    crash::install_panic_hook(log, &data.logs(), process);
+    if h.complete() {
+        log.info(format_args!("{}", h.summary()));
+    } else {
+        log.warn(format_args!("{}", h.summary()));
+    }
 }
 
 /// The directories of one run's service processes.
@@ -79,9 +80,10 @@ impl HostDirs<'_> {
 
 /// `iamb-soak serve-supervisor`.
 pub fn serve_supervisor(dirs: &HostDirs<'_>) -> ExitCode {
+    let hardening = crash::harden_process();
     let data = DataDirs::new(dirs.data);
     let log = Arc::new(Logger::open(&data.logs(), "supervisor"));
-    log_panics(&log);
+    crash_handling(&log, &data, "supervisor", &hardening);
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,
         Err(e) => {
@@ -184,9 +186,10 @@ impl Desk {
 
 /// `iamb-soak serve-worker`; returns like the service's worker (0 stop, 75 restart me).
 pub fn serve_worker(dirs: &HostDirs<'_>) -> ExitCode {
+    let hardening = crash::harden_process();
     let data = DataDirs::new(dirs.data);
     let log = Arc::new(Logger::open(&data.logs(), "worker"));
-    log_panics(&log);
+    crash_handling(&log, &data, "worker", &hardening);
     let _ = create_private_dir(&data.run());
     log.warn(format_args!(
         "running against the mock platform (soak harness): no real keyboard"

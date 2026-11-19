@@ -6,7 +6,7 @@
 
 use std::ptr;
 
-use iamb_platform::{Marker, PlatformError, Result};
+use iamb_platform::{FocusToken, KeyTarget, Marker, PlatformError, Result};
 use windows_sys::Win32::Foundation::{
     ERROR_HOTKEY_ALREADY_REGISTERED, GetLastError, HWND, LPARAM, LRESULT, WPARAM,
 };
@@ -262,6 +262,22 @@ pub(super) fn foreground() -> Front {
         thread,
         layout: layout_of_thread(thread),
     }
+}
+
+/// Where the key being handled goes: the window in front and its process, the same two
+/// numbers the focus watcher puts in its token (`focus/os.rs`). `None` while the system names
+/// no window in front.
+pub(super) fn key_target() -> Option<KeyTarget> {
+    // SAFETY: the call takes no arguments.
+    let window = unsafe { GetForegroundWindow() };
+    if window.is_null() {
+        return None;
+    }
+    let mut pid = 0;
+    // SAFETY: a handle that is no longer valid is answered with 0; `pid` is a valid place for
+    // the process id.
+    let thread = unsafe { GetWindowThreadProcessId(window, &raw mut pid) };
+    (thread != 0).then(|| KeyTarget::window(FocusToken::from_raw(pid, window as usize as u64)))
 }
 
 /// The keyboard layout handle of `thread`; of the calling thread for 0.

@@ -27,6 +27,7 @@ use iamb_core::sensitive::Sensitive;
 use iamb_core::template::KeyName;
 
 use crate::error::Result;
+use crate::focus::FocusToken;
 use crate::hotkeys::HotkeyId;
 
 /// A capacity for the listener's channel that absorbs a burst of key repeats while the engine
@@ -239,6 +240,57 @@ impl SeqSource {
     }
 }
 
+/// Where a key went: the window (or at least the process) that had the keyboard focus when the
+/// listener saw the key, as the OS told the listener at that moment.
+///
+/// The focus watcher reports a change some time after it happened (an out-of-context window
+/// event on Windows, a notification through two run loops on macOS), and the keys typed in
+/// that time reach the service first. The service compares a key's target with the last focus
+/// change it delivered to the engine ([`is`](Self::is)) and does not let the engine see a key
+/// that went somewhere else (the 2.8 review's finding 5). A listener that cannot tell where a
+/// key went reports it without a target ([`EventSink::deliver`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct KeyTarget {
+    pid: u32,
+    window: Option<u64>,
+}
+
+impl KeyTarget {
+    /// The window of `token` (and its process): what the Windows listener and the mock know.
+    #[must_use]
+    pub const fn window(token: FocusToken) -> Self {
+        Self {
+            pid: token.pid(),
+            window: Some(token.window()),
+        }
+    }
+
+    /// Only the process: a key that went to some window of process `pid`.
+    #[must_use]
+    pub const fn process(pid: u32) -> Self {
+        Self { pid, window: None }
+    }
+
+    /// The process.
+    #[must_use]
+    pub const fn pid(self) -> u32 {
+        self.pid
+    }
+
+    /// The OS window number, when the listener knows it.
+    #[must_use]
+    pub const fn window_number(self) -> Option<u64> {
+        self.window
+    }
+
+    /// True when the key went to the window `token` names: the same process and, when the
+    /// window is known, the same window.
+    #[must_use]
+    pub fn is(self, token: &FocusToken) -> bool {
+        self.pid == token.pid() && self.window.is_none_or(|w| w == token.window())
+    }
+}
+
 /// Where the listener puts what it observes.
 ///
 /// [`deliver`](Self::deliver) is called on the listener's OS loop thread, from inside the hook
@@ -249,6 +301,15 @@ impl SeqSource {
 pub trait EventSink: Send {
     /// Takes one event. Never blocks.
     fn deliver(&mut self, event: ListenerEvent);
+
+    /// Takes one event of the key stream with the window it went to ([`KeyTarget`]). The
+    /// listeners call it for `Char`, `Backspace` and `Boundary` when the OS tells them where
+    /// the key went. Never blocks. Sinks that have no use for the target need not implement
+    /// it: by default the target is dropped and the event delivered.
+    fn deliver_to(&mut self, event: ListenerEvent, target: KeyTarget) {
+        let _ = target;
+        self.deliver(event);
+    }
 }
 
 impl<F: FnMut(ListenerEvent) + Send> EventSink for F {
@@ -600,6 +661,28 @@ mod tests {
             }),
             "hotkey 2"
         );
+    }
+
+    #[test]
+    fn a_key_target_names_a_window_or_a_process() {
+        let token = FocusToken::from_raw(42, 7);
+        let exact = KeyTarget::window(token);
+        assert_eq!((exact.pid(), exact.window_number()), (42, Some(7)));
+        assert!(exact.is(&token));
+        assert!(!exact.is(&FocusToken::from_raw(42, 8)), "another window");
+        assert!(!exact.is(&FocusToken::from_raw(43, 7)), "another process");
+        let process = KeyTarget::process(42);
+        assert_eq!(process.window_number(), None);
+        assert!(process.is(&token) && process.is(&FocusToken::from_raw(42, 8)));
+        assert!(!process.is(&FocusToken::from_raw(43, 7)));
+
+        // A sink without a use for the target gets the event.
+        let mut seen = Vec::new();
+        {
+            let mut sink = |event: ListenerEvent| seen.push(event);
+            sink.deliver_to(ListenerEvent::char('a', 1), exact);
+        }
+        assert_eq!(seen, [ListenerEvent::char('a', 1)]);
     }
 
     #[test]

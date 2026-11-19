@@ -8,7 +8,8 @@
 //! 2. A hand-off already cancelled for this expansion: `Cancelled`, nothing posted.
 //! 3. The plan of the steps after the leading deletion is made now, before the start marker,
 //!    so that only posting remains between the hand-off sealing and the output.
-//! 4. The output is opened (the private event source) and the start marker posted.
+//! 4. The output is opened (the private event source), where the keys go is noted
+//!    ([`Output::focus`]), and the start marker posted.
 //! 5. [`TypedHandoff::wait_sealed`] gives `k`, or the reason to cancel (no end marker then).
 //! 6. [`compensate`] gives the deletion, `n + k` Backspaces, posted first; then the bursts;
 //!    then the `k` characters, copied out of the hand-off into a stack buffer inside
@@ -19,21 +20,43 @@
 //! marker and answers `Failed`, as the trait requires; the service then sends
 //! `InjectionCancelled`, which ends the flight in the engine. A paste restores the pasteboard
 //! on every path before its error reaches the driver (`clipboard::paste`).
+//!
+//! # The focus between steps
+//!
+//! macOS posts every event on its own, so the [`FocusGuard`] is asked before every key
+//! operation (the deletion, each run of one key, each text chunk), before every paste and
+//! before the retyped characters. When the keys would go elsewhere than at the start marker,
+//! the driver stops with `Cancelled(FocusMoved)` and posts no end marker (the 2.8 review's
+//! finding 1). A key operation that may move the focus itself (Tab, Return, Escape, Space,
+//! an arrow other than Left) ends the comparisons for the expansion: the move it causes
+//! cannot be told from another one.
+//!
+//! # A pasteboard that cannot be saved whole
+//!
+//! A paste whose snapshot came back incomplete wrote nothing (`clipboard::paste`). Plain text
+//! is then typed with keys, as the strategy would type it with the `keys` method; other
+//! content stops the expansion with `Cancelled(ClipboardNotRestorable)` (finding 14).
 
 use std::hint::black_box;
 use std::time::Duration;
 
 use iamb_platform::{
-    ClipboardContent, HANDOFF_CAPACITY, InjectionOutcome, InjectionRequest, Marker, PlatformError,
-    Result, START_MARKER_TIMEOUT, TypedHandoff, compensate,
+    CancelReason, ClipboardContent, FocusGuard, HANDOFF_CAPACITY, InjectionOutcome,
+    InjectionRequest, Marker, PlatformError, Result, START_MARKER_TIMEOUT, TypedHandoff,
+    compensate,
 };
 
 use super::chunk::{TextChunk, TextChunks};
-use super::plan::{Burst, KeyPress, Op, Planner};
-use super::strategy::Strategy;
+use super::plan::{Burst, KeyPress, Op, Planner, keycode};
+use super::strategy::{Method, Strategy};
+use crate::clipboard::paste::SNAPSHOT_INCOMPLETE;
 
 /// Where the injector's events go.
 pub(crate) trait Output {
+    /// Where keys go, as the [`FocusGuard`] compares it.
+    type Focus: PartialEq;
+    /// Where keys go now. Must not wait for any application.
+    fn focus(&mut self) -> Self::Focus;
     /// Posts a no-op event carrying `marker`.
     fn marker(&mut self, marker: Marker) -> Result<()>;
     /// Posts one press and release of `key`, marked as output.
@@ -43,7 +66,55 @@ pub(crate) trait Output {
     /// Sleeps.
     fn pause(&mut self, duration: Duration);
     /// Pastes `content`: snapshot, transient write, paste shortcut, `settle`, restore.
+    /// [`SNAPSHOT_INCOMPLETE`] when the snapshot could not save everything; nothing was
+    /// written then.
     fn paste(&mut self, content: &ClipboardContent, settle: Duration) -> Result<()>;
+}
+
+/// True when pressing `key` may move the focus by itself (see the module docs): every key
+/// but Backspace, forward Delete and Left.
+pub(crate) const fn may_move_focus(key: KeyPress) -> bool {
+    !matches!(
+        key.code,
+        keycode::DELETE | keycode::FORWARD_DELETE | keycode::LEFT
+    )
+}
+
+/// The secure-input part of where keys go, asked through the main thread: an answer at the
+/// start marker, then the same question before each step.
+///
+/// When the main thread did not answer at the start marker (it runs no run loop, as in a test
+/// harness), the flag is not asked again: the expansion is not held up by a wait per step,
+/// and the flag counts as unchanged. When it answered then but not later, the late question
+/// counts as unchanged too: a busy main thread is not a move of the focus. The process and
+/// the watcher's notifications are still compared.
+#[derive(Debug, Default)]
+pub(crate) struct SecureInputReads {
+    first: FirstRead,
+}
+
+/// What the first question of an injection got.
+#[derive(Debug, Clone, Copy, Default)]
+enum FirstRead {
+    #[default]
+    NotAsked,
+    Unanswered,
+    Answered(bool),
+}
+
+impl SecureInputReads {
+    /// The flag for this read; `ask` asks the main thread.
+    pub(crate) fn read(&mut self, ask: impl FnOnce() -> Option<bool>) -> Option<bool> {
+        match self.first {
+            FirstRead::NotAsked => {
+                let answer = ask();
+                self.first = answer.map_or(FirstRead::Unanswered, FirstRead::Answered);
+                answer
+            }
+            FirstRead::Unanswered => None,
+            FirstRead::Answered(first) => Some(ask().unwrap_or(first)),
+        }
+    }
 }
 
 /// Runs the protocol for `request`. `permitted` is the permission check; `open` creates the
@@ -96,6 +167,7 @@ pub(crate) fn inject_with_timeout<O: Output>(
         Ok(output) => output,
         Err(error) => return InjectionOutcome::Failed(error),
     };
+    let mut guard = FocusGuard::new(output.focus());
     if let Err(error) = output.marker(Marker::InjectionStart(expansion)) {
         return InjectionOutcome::Failed(error);
     }
@@ -112,6 +184,7 @@ pub(crate) fn inject_with_timeout<O: Output>(
         plan.delete_first,
         &bursts,
         plan.retype,
+        &mut guard,
     ) {
         Ok(()) => {}
         Err(Stop::Failed(error)) => return InjectionOutcome::Failed(error),
@@ -125,7 +198,7 @@ pub(crate) fn inject_with_timeout<O: Output>(
 
 enum Stop {
     Failed(PlatformError),
-    Cancelled(iamb_platform::CancelReason),
+    Cancelled(CancelReason),
 }
 
 impl From<PlatformError> for Stop {
@@ -134,6 +207,7 @@ impl From<PlatformError> for Stop {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // The protocol's state, passed down once.
 fn send<O: Output>(
     output: &mut O,
     request: &InjectionRequest,
@@ -142,36 +216,79 @@ fn send<O: Output>(
     delete_first: usize,
     bursts: &[Burst],
     retype: usize,
+    guard: &mut FocusGuard<O::Focus>,
 ) -> std::result::Result<(), Stop> {
     let gap = strategy.key_delay();
-    let mut paced = Paced::new(output, gap);
-    paced.press(KeyPress::DELETE, delete_first)?;
+    let mut paced = Paced::new(output, gap, guard);
+    if delete_first > 0 {
+        paced.check()?;
+        paced.press(KeyPress::DELETE, delete_first)?;
+    }
     for burst in bursts {
         match burst {
             Burst::Events { ops, gap } => {
                 paced.gap = *gap;
-                for op in ops {
-                    match op {
-                        Op::Press { key, times } => paced.press(*key, *times)?,
-                        Op::Text(chunk) => paced.text(chunk)?,
-                    }
-                }
+                paced.ops(ops)?;
             }
             Burst::Wait(duration) => {
                 paced.output.pause(*duration);
                 paced.first = true;
             }
             Burst::Paste { content, settle } => {
-                paced.output.paste(content, *settle)?;
+                paced.check()?;
+                match paced.output.paste(content, *settle) {
+                    Ok(()) => {}
+                    Err(error) if error == SNAPSHOT_INCOMPLETE => {
+                        let ops = typed_instead(content, strategy)
+                            .ok_or(Stop::Cancelled(CancelReason::ClipboardNotRestorable))?;
+                        paced.gap = gap;
+                        paced.ops(&ops)?;
+                    }
+                    Err(error) => return Err(Stop::Failed(error)),
+                }
                 paced.first = true;
             }
         }
     }
     if retype > 0 {
+        paced.check()?;
         paced.gap = gap;
         retype_typed(&mut paced, request, typed, strategy)?;
     }
     Ok(())
+}
+
+/// The key operations that type `content` instead of pasting it: its plain text as the
+/// strategy types text with the `keys` method. `None` for content that is more than plain
+/// text (HTML, files), which keys cannot carry.
+fn typed_instead(content: &ClipboardContent, strategy: &Strategy) -> Option<Vec<Op>> {
+    let ClipboardContent {
+        text: Some(text),
+        html: None,
+        files,
+    } = content
+    else {
+        return None;
+    };
+    if !files.is_empty() {
+        return None;
+    }
+    let keys = Strategy {
+        method: Method::Keys,
+        ..*strategy
+    };
+    let mut planner = Planner::new(&keys);
+    planner.step(&iamb_platform::InjectionStep::TypeText(text.clone()));
+    Some(
+        planner
+            .finish()
+            .into_iter()
+            .flat_map(|burst| match burst {
+                Burst::Events { ops, .. } => ops,
+                Burst::Wait(_) | Burst::Paste { .. } => Vec::new(),
+            })
+            .collect(),
+    )
 }
 
 /// Copies the characters typed after the trigger out of the hand-off, types them, and zeroes
@@ -212,21 +329,47 @@ fn retype_typed<O: Output>(
     result
 }
 
-/// Posts key operations with the strategy's delay between two of them.
+/// Posts key operations with the strategy's delay between two of them, asking the focus
+/// guard before each.
 struct Paced<'o, O: Output> {
     output: &'o mut O,
     gap: Duration,
     /// True until the first event of a run is posted: no delay before it.
     first: bool,
+    guard: &'o mut FocusGuard<O::Focus>,
 }
 
 impl<'o, O: Output> Paced<'o, O> {
-    const fn new(output: &'o mut O, gap: Duration) -> Self {
+    const fn new(output: &'o mut O, gap: Duration, guard: &'o mut FocusGuard<O::Focus>) -> Self {
         Self {
             output,
             gap,
             first: true,
+            guard,
         }
+    }
+
+    /// `Cancelled(FocusMoved)` when the keys would go elsewhere now.
+    fn check(&mut self) -> std::result::Result<(), Stop> {
+        let output = &mut *self.output;
+        self.guard.check(|| output.focus()).map_err(Stop::Cancelled)
+    }
+
+    /// Posts `ops`, each after a look at the focus.
+    fn ops(&mut self, ops: &[Op]) -> std::result::Result<(), Stop> {
+        for op in ops {
+            self.check()?;
+            match op {
+                Op::Press { key, times } => {
+                    self.press(*key, *times)?;
+                    if may_move_focus(*key) {
+                        self.guard.own_move();
+                    }
+                }
+                Op::Text(chunk) => self.text(chunk)?,
+            }
+        }
+        Ok(())
     }
 
     fn pace(&mut self) {
@@ -278,6 +421,13 @@ mod tests {
         seen: Vec<Seen>,
         fail_at: Option<usize>,
         calls: usize,
+        /// Where keys go.
+        focus: u64,
+        /// After this many recorded entries the focus is `.1`.
+        move_focus: Option<(usize, u64)>,
+        focus_reads: usize,
+        /// Pastes find the pasteboard impossible to save whole.
+        paste_incomplete: bool,
     }
 
     impl Recorder {
@@ -292,6 +442,18 @@ mod tests {
     }
 
     impl Output for &mut Recorder {
+        type Focus = u64;
+
+        fn focus(&mut self) -> u64 {
+            self.focus_reads += 1;
+            if let Some((after, to)) = self.move_focus
+                && self.seen.len() >= after
+            {
+                self.focus = to;
+            }
+            self.focus
+        }
+
         fn marker(&mut self, marker: Marker) -> Result<()> {
             self.call()?;
             self.seen.push(Seen::Marker(marker));
@@ -312,6 +474,9 @@ mod tests {
         }
         fn paste(&mut self, content: &ClipboardContent, settle: Duration) -> Result<()> {
             self.call()?;
+            if self.paste_incomplete {
+                return Err(SNAPSHOT_INCOMPLETE);
+            }
             self.seen
                 .push(Seen::Paste(content.text.clone(), settle.as_millis()));
             Ok(())
@@ -653,6 +818,10 @@ mod tests {
             typed: &'a TypedHandoff,
         }
         impl Output for Clearing<'_> {
+            type Focus = u64;
+            fn focus(&mut self) -> u64 {
+                (&mut *self.inner).focus()
+            }
             fn marker(&mut self, marker: Marker) -> Result<()> {
                 (&mut *self.inner).marker(marker)
             }
@@ -692,6 +861,157 @@ mod tests {
                 .seen
                 .contains(&Seen::Marker(Marker::InjectionEnd(E)))
         );
+    }
+
+    /// Review 2.8, finding 1: the trigger key moved the focus while the start marker
+    /// travelled.
+    #[test]
+    fn a_focus_moved_after_the_start_marker_gets_nothing() {
+        let request =
+            InjectionRequest::new(E, vec![InjectionStep::DeleteBack(3), text("be right back")]);
+        let mut recorder = Recorder {
+            move_focus: Some((1, 2)),
+            ..Recorder::default()
+        };
+        let outcome = run(&request, &sealed(&[]), &Strategy::DEFAULT, &mut recorder);
+        assert_eq!(
+            outcome,
+            InjectionOutcome::Cancelled(CancelReason::FocusMoved)
+        );
+        assert_eq!(recorder.seen, [Seen::Marker(Marker::InjectionStart(E))]);
+    }
+
+    #[test]
+    fn a_focus_moved_between_two_steps_gets_nothing_after_it() {
+        let request = InjectionRequest::new(
+            E,
+            vec![
+                InjectionStep::DeleteBack(1),
+                text("a"),
+                InjectionStep::Wait(40),
+                text("b"),
+            ],
+        );
+        // The start marker, the deletion, «a» and the pause are recorded; then it moves.
+        let mut recorder = Recorder {
+            move_focus: Some((4, 2)),
+            ..Recorder::default()
+        };
+        let outcome = run(&request, &sealed(&['q']), &Strategy::DEFAULT, &mut recorder);
+        assert_eq!(
+            outcome,
+            InjectionOutcome::Cancelled(CancelReason::FocusMoved)
+        );
+        assert_eq!(
+            recorder.seen,
+            [
+                Seen::Marker(Marker::InjectionStart(E)),
+                delete(),
+                delete(),
+                Seen::Text("a".to_owned()),
+                Seen::Pause(40),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_snippets_own_tab_ends_the_focus_check() {
+        let request = InjectionRequest::new(
+            E,
+            vec![
+                text("ann"),
+                InjectionStep::PressKey {
+                    key: KeyName::Tab,
+                    shift: false,
+                    times: 1,
+                },
+                text("next"),
+            ],
+        );
+        // The Tab moves to the next field, as it should.
+        let mut recorder = Recorder {
+            move_focus: Some((3, 2)),
+            ..Recorder::default()
+        };
+        let outcome = run(&request, &sealed(&[]), &Strategy::DEFAULT, &mut recorder);
+        assert_eq!(outcome, InjectionOutcome::Finished { retyped: 0 });
+        assert_eq!(
+            recorder.seen.last(),
+            Some(&Seen::Marker(Marker::InjectionEnd(E)))
+        );
+        assert!(may_move_focus(KeyPress::plain(keycode::RETURN)));
+        assert!(may_move_focus(KeyPress::plain(keycode::ESCAPE)));
+        assert!(!may_move_focus(KeyPress::DELETE));
+        assert!(!may_move_focus(KeyPress::plain(keycode::LEFT)));
+    }
+
+    #[test]
+    fn a_plain_expansion_reads_the_focus_once_per_operation() {
+        let request =
+            InjectionRequest::new(E, vec![InjectionStep::DeleteBack(3), text("be right back")]);
+        let mut recorder = Recorder::default();
+        let outcome = run(&request, &sealed(&['x']), &Strategy::DEFAULT, &mut recorder);
+        assert_eq!(outcome, InjectionOutcome::Finished { retyped: 1 });
+        // Start marker, the deletion, the text chunk, the retyped characters.
+        assert_eq!(recorder.focus_reads, 4);
+    }
+
+    #[test]
+    fn a_main_thread_that_does_not_answer_counts_as_unchanged() {
+        let mut reads = SecureInputReads::default();
+        assert_eq!(reads.read(|| None), None);
+        assert_eq!(
+            reads.read(|| unreachable!("not asked again without a first answer")),
+            None
+        );
+        let mut reads = SecureInputReads::default();
+        assert_eq!(reads.read(|| Some(false)), Some(false));
+        assert_eq!(reads.read(|| None), Some(false), "a busy main thread");
+        assert_eq!(reads.read(|| Some(true)), Some(true), "a password field");
+    }
+
+    /// Review 2.8, finding 14.
+    #[test]
+    fn text_is_typed_when_the_pasteboard_cannot_be_saved_whole() {
+        let long = "word ".repeat(100);
+        let request = InjectionRequest::new(E, vec![InjectionStep::DeleteBack(1), text(&long)]);
+        let mut recorder = Recorder {
+            paste_incomplete: true,
+            ..Recorder::default()
+        };
+        let outcome = run(&request, &sealed(&[]), &Strategy::DEFAULT, &mut recorder);
+        assert_eq!(outcome, InjectionOutcome::Finished { retyped: 0 });
+        let typed: String = recorder
+            .seen
+            .iter()
+            .filter_map(|s| match s {
+                Seen::Text(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(typed, long);
+        assert!(!recorder.seen.iter().any(|s| matches!(s, Seen::Paste(..))));
+    }
+
+    #[test]
+    fn rich_content_is_not_pasted_when_the_pasteboard_cannot_be_saved_whole() {
+        let request = InjectionRequest::new(
+            E,
+            vec![
+                InjectionStep::Paste(ClipboardContent::rich("x", "<b>x</b>")),
+                text("after"),
+            ],
+        );
+        let mut recorder = Recorder {
+            paste_incomplete: true,
+            ..Recorder::default()
+        };
+        let outcome = run(&request, &sealed(&[]), &Strategy::DEFAULT, &mut recorder);
+        assert_eq!(
+            outcome,
+            InjectionOutcome::Cancelled(CancelReason::ClipboardNotRestorable)
+        );
+        assert_eq!(recorder.seen, [Seen::Marker(Marker::InjectionStart(E))]);
     }
 
     #[test]

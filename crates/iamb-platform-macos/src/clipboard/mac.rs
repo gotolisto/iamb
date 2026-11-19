@@ -8,11 +8,13 @@ use iamb_platform::core_types::Sensitive;
 use iamb_platform::{ClipboardAccess, ClipboardContent, ClipboardSnapshot, PlatformError, Result};
 use objc2::rc::{Retained, autoreleasepool};
 use objc2::runtime::ProtocolObject;
-use objc2_app_kit::{NSPasteboard, NSPasteboardItem, NSPasteboardWriting};
+use objc2_app_kit::{
+    NSPasteboard, NSPasteboardContentsOptions, NSPasteboardItem, NSPasteboardWriting,
+};
 use objc2_foundation::{NSArray, NSData, NSString};
 
 use super::board::{self, Board, Rules};
-use super::layout::{PLAIN_TEXT_TYPE, RawItem, WriteItem};
+use super::layout::{PLAIN_TEXT_TYPE, RawItem, Reach, WriteItem};
 use crate::Platform;
 
 /// The clipboard's state: the change-count ledger.
@@ -64,8 +66,15 @@ impl Board for General {
         Ok(self.0.stringForType(&uti).map(|text| text.to_string()))
     }
 
-    fn replace(&self, items: &[WriteItem<'_>]) -> Result<()> {
-        self.0.clearContents();
+    fn replace(&self, items: &[WriteItem<'_>], reach: Reach) -> Result<()> {
+        // Both clear the pasteboard and make this process its owner; the option keeps what
+        // follows from being offered to the user's other devices.
+        match reach {
+            Reach::AnyDevice => self.0.clearContents(),
+            Reach::ThisDevice => self
+                .0
+                .prepareForNewContentsWithOptions(NSPasteboardContentsOptions::CurrentHostOnly),
+        };
         if items.is_empty() {
             return Ok(());
         }

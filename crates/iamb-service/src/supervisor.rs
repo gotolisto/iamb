@@ -106,18 +106,28 @@ pub enum Outcome {
     Stopped,
 }
 
-/// Takes `run/supervisor.lock`, or `None` when another supervisor holds it.
+/// Takes `run/supervisor.lock`, or `None` when another supervisor holds it. The file is
+/// readable by the user only (`0600` on Unix, as the store's lock), also when an older build
+/// created it with the default mode.
 ///
 /// # Errors
 ///
 /// I/O errors other than the lock being held.
 pub fn take_lock(dirs: &DataDirs) -> io::Result<Option<File>> {
     create_private_dir(&dirs.run())?;
-    let file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(dirs.supervisor_lock())?;
+    let mut options = OpenOptions::new();
+    options.create(true).truncate(false).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options.open(dirs.supervisor_lock())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
     match file.try_lock() {
         Ok(()) => Ok(Some(file)),
         Err(TryLockError::WouldBlock) => Ok(None),
@@ -277,5 +287,30 @@ mod tests {
         assert!(take_lock(&dirs).expect("io").is_none());
         drop(first);
         assert!(take_lock(&dirs).expect("io").is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_lock_file_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let dirs = DataDirs::new(dir.path());
+        let mode = |dirs: &DataDirs| {
+            std::fs::metadata(dirs.supervisor_lock())
+                .expect("lock file")
+                .permissions()
+                .mode()
+                & 0o777
+        };
+        drop(take_lock(&dirs).expect("io"));
+        assert_eq!(mode(&dirs), 0o600);
+        // A file an older build left with the default mode is tightened.
+        std::fs::set_permissions(
+            dirs.supervisor_lock(),
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .expect("chmod");
+        drop(take_lock(&dirs).expect("io"));
+        assert_eq!(mode(&dirs), 0o600);
     }
 }

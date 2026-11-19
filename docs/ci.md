@@ -11,7 +11,12 @@ errors (`RUSTFLAGS=-D warnings`). The pipeline should finish in under ten minute
   `aarch64-apple-darwin`; see "Checking Windows and macOS code on Linux" below), the banned-term
   check, and the template spec examples checked against the reference implementation.
 - `test` (Linux, Windows, macOS, not fail-fast): `cargo build` and `cargo test` for the whole
-  workspace with `--locked`. The Windows and macOS legs then run clippy with `-D warnings` for
+  workspace with `--locked`. Between the two, each leg builds the service on its own in
+  release (`cargo build -p iamb-service --release`, check 4 of ADR-0008: no feature that
+  another workspace member, such as `iamb-testkit` with `probe`, turns on in a shared
+  dependency is unified into it) and runs clippy on that build alone; the Linux leg also
+  fails when the binary imports a name-resolution function (`getaddrinfo`, `gethostbyname`,
+  `getnameinfo`, read with `objdump -T`). The Windows and macOS legs then run clippy with `-D warnings` for
   the whole workspace, so code that exists only on one OS is linted, with its tests, on that
   OS; the step runs even when a test failed. The Linux leg skips it because `lint` already
   does it.
@@ -48,6 +53,7 @@ a merge.
     cargo fmt --all -- --check
     cargo clippy --workspace --all-targets --locked -- -D warnings
     cargo build --workspace --all-targets --locked
+    cargo build -p iamb-service --release --locked
     cargo test --workspace --locked
     cargo xtask banned-terms
     python3 spec/template/reference.py
@@ -83,6 +89,26 @@ break these commands; the OS crates' dependencies are chosen so that none does
 (`crates/iamb-platform/tests/lints.rs` also checks that they stay behind their `cfg`, that the
 two crates keep the workspace lints apart from allowing documented `unsafe`, and that no
 networking namespace of the Windows bindings is enabled).
+
+## No network code in the service
+
+Architecture §2 and ADR-0008 name four checks; CI runs all of them.
+
+1. No networking crate in the service's resolved dependency tree:
+   `crates/iamb-service/tests/no_network.rs` walks `Cargo.lock` from `iamb-service` and
+   compares every package with a deny list.
+2. No networking namespace of the Windows bindings: `crates/iamb-platform/tests/lints.rs`.
+3. No `std::net` (but `Shutdown`, which Unix sockets take) and no socket or name-resolution
+   call of `libc` in the six crates `iamb-service`, `iamb-ipc`, `iamb-store`, `iamb-platform`,
+   `iamb-platform-windows` and `iamb-platform-macos`: clippy's `disallowed-types` and
+   `disallowed-methods`, configured in a `clippy.toml` in each of them, so every clippy run
+   with `-D warnings` above enforces it. The lint resolves paths, so a nested import
+   (`use std::{io, net::TcpStream};`) is caught as well as a qualified one. The six files are
+   one configuration copied (clippy uses the nearest `clippy.toml` and does not merge them);
+   `no_network.rs` fails when one is missing, when they differ, or when an entry is missing.
+   `iamb-testkit` is not one of the six: the probe's browser page needs a local TCP socket.
+4. The release binary built with `-p iamb-service` alone: the step "Build the service alone
+   (release)" of `test`, on every OS.
 
 ## Banned terms
 

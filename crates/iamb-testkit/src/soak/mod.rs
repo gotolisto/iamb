@@ -23,7 +23,8 @@
 //! | [`fixture`] | The fixture library and the key stream, with the exact text each step must leave |
 //! | [`control`] | The driver ↔ worker control protocol (type, focus, settle, read the field) |
 //! | [`tap`] | A [`LocalEndpoint`](iamb_platform::LocalEndpoint) wrapper that copies every byte of every IPC connection to files |
-//! | [`canary`] | Canaries, their UTF-8, UTF-16LE and Base64 forms, and the scanner |
+//! | [`canary`] | Canaries, their whole-string forms (UTF-8, UTF-16 and UTF-32 in both byte orders, Base64, hex, escapes) and the scanner |
+//! | [`spread`] | The per-character forms: a canary at a constant stride, or one character per log line |
 //! | [`probe`] | Process samples: memory, CPU time, handles or descriptors, threads |
 //! | [`rules`] | The pass rules of §5.2, scaled to the run length |
 //! | [`netcheck`] | The service links no networking crate (`cargo tree`) |
@@ -47,6 +48,9 @@ pub mod netcheck;
 pub mod probe;
 pub mod rng;
 pub mod rules;
+pub mod spread;
+#[cfg(test)]
+mod spread_tests;
 pub mod tap;
 
 use std::time::Duration;

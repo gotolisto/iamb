@@ -3,6 +3,7 @@
 //! thread through [`SharedView`] (architecture §3.1: "an atomically swapped pointer").
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::sync::{Arc, PoisonError, RwLock};
 
 use iamb_core::datetime::{Format, Locale};
@@ -34,6 +35,8 @@ pub struct View {
     pub settings: Arc<BTreeMap<String, String>>,
     /// The app exclusions.
     pub exclusions: Arc<Vec<AppExclusion>>,
+    /// The exclusions in the form [`AppIdRule::key_of`] compares, for [`is_excluded`](Self::is_excluded).
+    pub exclusion_keys: Arc<BTreeSet<String>>,
 }
 
 impl View {
@@ -44,11 +47,158 @@ impl View {
             .filter_map(|id| self.snapshot.snippet(*id))
     }
 
-    /// Whether the focus verdict must say `excluded` for `app`.
+    /// Whether the focus verdict must say `excluded` for `app`, the application id the focus
+    /// inspector reported. Compared in the form of [`AppIdRule::this_os`], so an exclusion
+    /// stored in another spelling still applies.
     #[must_use]
     pub fn is_excluded(&self, app: &str) -> bool {
-        self.exclusions.iter().any(|e| e.app_id == app)
+        self.exclusion_keys
+            .contains(&AppIdRule::this_os().key_of(app))
     }
+}
+
+/// How the focus inspector of an operating system names an application, and so the one form
+/// an exclusion is stored and compared in (the 2.8 review's finding 6).
+///
+/// The focus inspectors report a fixed spelling (`crates/iamb-platform-*/src/focus/identity.rs`
+/// on Windows, the bundle identifier on macOS); an exclusion is useful only if it is stored in
+/// that spelling, so [`normalise`](Self::normalise) is used when one is written and when the
+/// stored ones are read, and a value that can never be reported is refused rather than stored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppIdRule {
+    /// Windows: the executable's file name in lower case (`mybank.exe`). A path is reduced to
+    /// its file name; Windows compares file names without regard to case.
+    WindowsExecutable,
+    /// macOS: the bundle identifier (`com.example.bank`), compared without regard to ASCII
+    /// case. Only letters, digits, `-`, `.` and `_` occur in one; a path never names one.
+    MacBundle,
+    /// Any other system (development and the mock): trimmed and in lower case.
+    Plain,
+}
+
+/// Why an application id can never be reported by the focus inspector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InvalidAppId {
+    /// Nothing but white space.
+    Empty,
+    /// A path, where the system reports a bundle identifier.
+    Path,
+    /// A character that cannot occur in what the system reports.
+    Character,
+}
+
+impl fmt::Display for InvalidAppId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Empty => "the app id is empty",
+            Self::Path => "the app id is a path; give the application's bundle identifier",
+            Self::Character => "the app id has a character no application id of this system has",
+        })
+    }
+}
+
+impl AppIdRule {
+    /// The rule of the system this build runs on.
+    #[must_use]
+    pub const fn this_os() -> Self {
+        if cfg!(windows) {
+            Self::WindowsExecutable
+        } else if cfg!(target_os = "macos") {
+            Self::MacBundle
+        } else {
+            Self::Plain
+        }
+    }
+
+    /// `raw` in the form the focus inspector reports it.
+    ///
+    /// # Errors
+    ///
+    /// [`InvalidAppId`] when no application can ever be reported under `raw`.
+    pub fn normalise(self, raw: &str) -> Result<String, InvalidAppId> {
+        let raw = raw.trim();
+        if raw.chars().any(char::is_control) {
+            return Err(InvalidAppId::Character);
+        }
+        let id = match self {
+            Self::WindowsExecutable => {
+                let file = raw.rsplit(['\\', '/']).next().unwrap_or(raw).trim();
+                // `?` is what the inspector reports for a process it cannot name.
+                if file.contains(['<', '>', ':', '"', '|', '?', '*']) {
+                    return Err(InvalidAppId::Character);
+                }
+                file.to_lowercase()
+            }
+            Self::MacBundle => {
+                if raw.contains(['/', '\\']) {
+                    return Err(InvalidAppId::Path);
+                }
+                if !raw
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_'))
+                {
+                    return Err(InvalidAppId::Character);
+                }
+                raw.to_ascii_lowercase()
+            }
+            Self::Plain => raw.to_lowercase(),
+        };
+        if id.is_empty() {
+            Err(InvalidAppId::Empty)
+        } else {
+            Ok(id)
+        }
+    }
+
+    /// The form an id the focus inspector reported is compared in. Never matches a stored
+    /// exclusion when it cannot be normalised (the Windows inspector's `?`).
+    #[must_use]
+    pub fn key_of(self, reported: &str) -> String {
+        self.normalise(reported)
+            .unwrap_or_else(|_| format!("\0{reported}"))
+    }
+}
+
+/// What [`migrate_exclusions`] did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ExclusionMigration {
+    /// Rows rewritten in the form of the rule.
+    pub rewritten: usize,
+    /// Rows that can never apply, left as they are (the user can still remove them).
+    pub unusable: usize,
+}
+
+/// Rewrites stored exclusions in the form `rule` compares (worker start). A row whose
+/// normalised form is stored already is dropped as a duplicate.
+///
+/// # Errors
+///
+/// Store errors.
+pub fn migrate_exclusions(
+    store: &mut Store,
+    rule: AppIdRule,
+) -> Result<ExclusionMigration, StoreError> {
+    let mut done = ExclusionMigration::default();
+    let rows = store.list_app_exclusions()?;
+    let stored: BTreeSet<String> = rows.iter().map(|r| r.app_id.clone()).collect();
+    for row in rows {
+        match rule.normalise(&row.app_id) {
+            Ok(key) if key == row.app_id => {}
+            Ok(key) => {
+                if !stored.contains(&key) && store.get_app_exclusion(&key)?.is_none() {
+                    store.put_app_exclusion(&AppExclusion {
+                        app_id: key,
+                        display_name: row.display_name.clone(),
+                        created_at: row.created_at,
+                    })?;
+                }
+                store.delete_app_exclusion(&row.app_id)?;
+                done.rewritten += 1;
+            }
+            Err(_) => done.unusable += 1,
+        }
+    }
+    Ok(done)
 }
 
 /// The current [`View`], swapped whole by the store thread. Readers clone the `Arc` and never
@@ -170,6 +320,12 @@ pub fn build_view(store: &Store, profile: Id, revision: u64) -> Result<View, Sto
     let snippet_ids = snippets.iter().map(|s| s.meta.id).collect();
     let settings = store.list_settings()?;
     let engine = engine_settings(&settings).map_err(StoreError::InvalidData)?;
+    let exclusions = store.list_app_exclusions()?;
+    let rule = AppIdRule::this_os();
+    let exclusion_keys = exclusions
+        .iter()
+        .filter_map(|e| rule.normalise(&e.app_id).ok())
+        .collect();
     Ok(View {
         revision,
         profile,
@@ -177,7 +333,8 @@ pub fn build_view(store: &Store, profile: Id, revision: u64) -> Result<View, Sto
         snippet_ids: Arc::new(snippet_ids),
         folders: Arc::new(folders),
         settings: Arc::new(settings),
-        exclusions: Arc::new(store.list_app_exclusions()?),
+        exclusions: Arc::new(exclusions),
+        exclusion_keys: Arc::new(exclusion_keys),
     })
 }
 
@@ -221,5 +378,118 @@ mod tests {
         assert_eq!(shared.get().revision, 2);
         store.put_setting("date_format", "%Q%").expect("setting");
         assert!(build_view(&store, profile, 3).is_err());
+    }
+
+    #[test]
+    fn windows_ids_are_lower_case_file_names() {
+        let rule = AppIdRule::WindowsExecutable;
+        // The same spellings `iamb-platform-windows/src/focus/identity.rs` reduces.
+        for (raw, id) in [
+            (r"C:\Windows\System32\notepad.exe", "notepad.exe"),
+            (r"C:\Program Files\Office\EXCEL.EXE", "excel.exe"),
+            ("C:/tools/Editor.exe", "editor.exe"),
+            (r"\\?\C:\x\WindowsTerminal.exe", "windowsterminal.exe"),
+            ("ÄPFEL.EXE", "äpfel.exe"),
+            ("  MyBank.exe ", "mybank.exe"),
+            ("no-extension", "no-extension"),
+        ] {
+            assert_eq!(rule.normalise(raw), Ok(id.to_owned()), "{raw}");
+            assert_eq!(
+                rule.key_of(id),
+                id,
+                "what the inspector reports is its own key"
+            );
+        }
+        for (raw, why) in [
+            ("", InvalidAppId::Empty),
+            (r"C:\dir\", InvalidAppId::Empty),
+            ("?", InvalidAppId::Character),
+            ("bank*.exe", InvalidAppId::Character),
+            ("a\u{7}.exe", InvalidAppId::Character),
+        ] {
+            assert_eq!(rule.normalise(raw), Err(why), "{raw:?}");
+        }
+        // The name of a process Windows cannot name matches no exclusion.
+        assert_ne!(rule.key_of("?"), "?");
+    }
+
+    #[test]
+    fn mac_ids_are_bundle_identifiers_in_ascii_lower_case() {
+        let rule = AppIdRule::MacBundle;
+        assert_eq!(
+            rule.normalise("Com.Example.Bank"),
+            Ok("com.example.bank".to_owned())
+        );
+        assert_eq!(
+            rule.normalise(" org.ex-ample_2 "),
+            Ok("org.ex-ample_2".to_owned())
+        );
+        assert_eq!(
+            rule.normalise("/Applications/Bank.app"),
+            Err(InvalidAppId::Path)
+        );
+        assert_eq!(rule.normalise("Bank App"), Err(InvalidAppId::Character));
+        assert_eq!(rule.normalise("com.exämple"), Err(InvalidAppId::Character));
+        assert_eq!(rule.normalise(""), Err(InvalidAppId::Empty));
+        assert_eq!(rule.key_of("com.Example.BANK"), "com.example.bank");
+        for why in [
+            InvalidAppId::Empty,
+            InvalidAppId::Path,
+            InvalidAppId::Character,
+        ] {
+            assert!(why.to_string().starts_with("the app id"));
+        }
+    }
+
+    #[test]
+    fn stored_exclusions_are_compared_and_migrated_in_the_rules_form() {
+        let mut store = Store::open_in_memory().expect("store");
+        let mut n = 0_u8;
+        let mut new_id = || {
+            n += 1;
+            Id::from_bytes([n; 16])
+        };
+        let profile =
+            ensure_personal_profile(&mut store, &mut new_id, Timestamp(1)).expect("profile");
+        let put = |store: &mut Store, app_id: &str| {
+            store
+                .put_app_exclusion(&AppExclusion {
+                    app_id: app_id.to_owned(),
+                    display_name: String::new(),
+                    created_at: Timestamp(2),
+                })
+                .expect("stored");
+        };
+        put(&mut store, "Org.Example.Bank");
+        put(&mut store, "org.example\u{1}");
+        // Compared in the rule's form even before the rows are rewritten.
+        let view = build_view(&store, profile, 1).expect("view");
+        assert!(view.is_excluded("org.example.bank"));
+        assert!(view.is_excluded("ORG.example.bank"));
+        assert!(!view.is_excluded("org.example.editor"));
+
+        put(&mut store, "org.example.bank");
+        let done = migrate_exclusions(&mut store, AppIdRule::Plain).expect("migrated");
+        assert_eq!(
+            done,
+            ExclusionMigration {
+                rewritten: 1,
+                unusable: 1
+            }
+        );
+        let ids: Vec<String> = store
+            .list_app_exclusions()
+            .expect("rows")
+            .into_iter()
+            .map(|e| e.app_id)
+            .collect();
+        assert_eq!(ids, ["org.example\u{1}", "org.example.bank"]);
+        assert_eq!(
+            migrate_exclusions(&mut store, AppIdRule::Plain).expect("again"),
+            ExclusionMigration {
+                rewritten: 0,
+                unusable: 1
+            }
+        );
     }
 }
