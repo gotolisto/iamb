@@ -72,6 +72,7 @@ use crate::library::SharedView;
 use crate::log::Logger;
 use crate::paths::DataDirs;
 
+pub use engine::{RESYNC_AFTER, RESYNC_AFTER_KEYS};
 pub use ipc::MAX_CLIENTS;
 
 /// How long the worker waits for `run/store.lock` at start (§6.3).

@@ -24,9 +24,32 @@
 //! delivered here is not handed to the engine at all (nor to the hand-off, which is disturbed
 //! instead, so an expansion waiting for its start marker is cancelled). Nothing is stored for
 //! it, and the engine's buffer still describes the text before the caret of the window it
-//! belongs to; the `FocusChanged` that follows clears it as usual. A key without a target (the
-//! macOS listener, an event that is not a key) is handled as before. A move to another field
-//! of the same window is not seen this way: the target names a window, not a field.
+//! belongs to; the `FocusChanged` that follows clears it as usual. A key without a target (a
+//! listener that could not tell where it went, an event that is not a key) is handled as
+//! before. A move to another field of the same window is not seen this way: the target names
+//! a window, not a field.
+//!
+//! # When the report does not come (the follow-up review's N5)
+//!
+//! If the watcher missed the change, those keys would be dropped until the next focus event,
+//! without a word. So after [`RESYNC_AFTER_KEYS`] such keys, or [`RESYNC_AFTER`] of them, the
+//! diagnostic `keys_for_unreported_window` is recorded (a code, nothing typed, no application)
+//! and the focus is read from the inspector as it is now. When it names another window than
+//! the last report, that reading goes to the focus thread as if the watcher had reported it,
+//! and brings its verdict. When it names the same window, the listener's stamp and the
+//! inspector disagree about where keys go (a key window owned by a helper process of the
+//! frontmost application, say). Once that has lasted [`RESYNC_AFTER`], keys with that stamp
+//! are handled as keys without a target, as before the stamp existed, until the next focus
+//! change: a stamp the inspector cannot confirm must not stop expansion in a window for good.
+//! It is logged as a warning, with numbers only.
+//!
+//! # Where an expansion's keys belong (the follow-up review's N1)
+//!
+//! Every [`InjectionRequest`] names the window of the last `FocusChanged` delivered here
+//! ([`InjectionRequest::target`]), the window every key let through was compared with, so the
+//! trigger's. Before any `FocusChanged`, it is the trigger key's own target, if it has one.
+//! The injector compares it with where its keys would go right before its start marker and
+//! does not start when that is another window (`injection_focus_moved`, nothing sent).
 //!
 //! # A focus watcher that stopped (the 2.8 review's finding 15)
 //!
@@ -42,8 +65,9 @@
 //!
 //! Every outcome but `Finished` becomes `InjectionCancelled`, whose diagnostic is
 //! `injection_cancelled`. Two reasons of the injector get a code of their own instead, because
-//! the user can act on them: `injection_focus_moved` (the focus changed after the start marker,
-//! the injector stopped there) and `injection_clipboard_not_restorable` (the clipboard held
+//! the user can act on them: `injection_focus_moved` (the keys would have gone to another
+//! window than the trigger's before the start marker, and nothing was sent, or the focus
+//! changed after it and the injector stopped there) and `injection_clipboard_not_restorable` (the clipboard held
 //! content its snapshot could not save whole, and the expansion needed a paste). Like every
 //! diagnostic they name the snippet and the app, nothing typed.
 
@@ -69,7 +93,7 @@ use iamb_platform::{
 
 use super::keys::KeyQueue;
 use super::store::StoreMsg;
-use super::{EngineMsg, EngineStatus, Explicit, PALETTE_HOTKEY, Shared, WakeCounters};
+use super::{EngineMsg, EngineStatus, Explicit, FocusMsg, PALETTE_HOTKEY, Shared, WakeCounters};
 
 /// How long a parked request waits for the focus change of its window: the UI host's
 /// `restore_focus` limit (500 ms) and some margin.
@@ -80,6 +104,23 @@ pub const FORM_ACK_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// How long remembered form values live without use (§4.5).
 pub const FORM_VALUES_TTL: Duration = Duration::from_mins(30);
+
+/// After this many keys for a window the focus thread has not reported, the focus is read
+/// again (module docs).
+pub const RESYNC_AFTER_KEYS: u32 = 3;
+
+/// After this long of keys for a window the focus thread has not reported, the focus is read
+/// again; a stamp the inspector still contradicts then is no longer trusted (module docs).
+pub const RESYNC_AFTER: Duration = Duration::from_millis(500);
+
+/// Keys that went to a window the focus thread has not reported (module docs).
+struct Elsewhere {
+    target: KeyTarget,
+    since: Instant,
+    keys: u32,
+    /// When the focus was last read again for these keys.
+    synced: Option<Instant>,
+}
 
 struct Env<'a> {
     shared: &'a Shared,
@@ -138,6 +179,13 @@ pub(crate) struct EngineThread {
     cancel_code: Option<&'static str>,
     /// The focus watcher stopped by itself and is not running again yet (module docs).
     watcher_down: bool,
+    /// Keys are going to a window the focus thread has not reported (module docs).
+    elsewhere: Option<Elsewhere>,
+    /// A stamp the inspector contradicted: keys with it are handled as keys without a target
+    /// until the next focus change (module docs).
+    unconfirmed: Option<KeyTarget>,
+    /// The target of the key being handled, for the request of an expansion it triggers.
+    trigger: Option<KeyTarget>,
 }
 
 impl EngineThread {
@@ -170,6 +218,9 @@ impl EngineThread {
             paused: false,
             cancel_code: None,
             watcher_down: false,
+            elsewhere: None,
+            unconfirmed: None,
+            trigger: None,
         }
     }
 
@@ -355,14 +406,23 @@ impl EngineThread {
     }
 
     fn on_key(&mut self, event: ListenerEvent, target: Option<KeyTarget>) {
+        // A stamp the inspector contradicted counts as none (module docs).
+        let target = target.filter(|t| self.unconfirmed != Some(*t));
         if let (Some(target), Some(focus)) = (target, &self.focus)
             && !target.is(&focus.token)
         {
             // The key went to a window the focus thread has not reported yet: neither the
             // engine nor the hand-off may see it (module docs).
             self.handoff.disturb();
+            self.went_elsewhere(target);
             return;
         }
+        self.trigger = target;
+        self.route(event);
+        self.trigger = None;
+    }
+
+    fn route(&mut self, event: ListenerEvent) {
         // The hand-off sees every listener event, before the engine does.
         self.handoff.observe(&event);
         if let ListenerEvent::InjectionFinished { expansion, .. } = &event {
@@ -382,6 +442,68 @@ impl EngineThread {
                 }
             }
             Routed::Hotkey(_) => {}
+        }
+    }
+
+    /// A key went to `target`, a window the focus thread has not reported: counts it, and
+    /// reads the focus again when it is time (module docs).
+    fn went_elsewhere(&mut self, target: KeyTarget) {
+        let now = Instant::now();
+        let episode = match &mut self.elsewhere {
+            Some(e) if e.target == target => e,
+            slot => slot.insert(Elsewhere {
+                target,
+                since: now,
+                keys: 0,
+                synced: None,
+            }),
+        };
+        episode.keys = episode.keys.saturating_add(1);
+        let due = match episode.synced {
+            None => {
+                episode.keys >= RESYNC_AFTER_KEYS
+                    || now.duration_since(episode.since) >= RESYNC_AFTER
+            }
+            Some(at) => now.duration_since(at) >= RESYNC_AFTER,
+        };
+        if !due {
+            return;
+        }
+        let first = episode.synced.is_none();
+        episode.synced = Some(now);
+        let lasted = now.duration_since(episode.since) >= RESYNC_AFTER;
+        if first {
+            self.shared
+                .diagnostic(WireDiagnostic::code("keys_for_unreported_window"));
+        }
+        self.resync(target, lasted);
+    }
+
+    /// Reads where the focus is now. Another window than the last report goes to the focus
+    /// thread as a change; the same window, once the keys have gone elsewhere for
+    /// [`RESYNC_AFTER`], makes `target` a stamp that is no longer trusted (module docs).
+    fn resync(&mut self, target: KeyTarget, lasted: bool) {
+        let platform = &self.shared.platform;
+        let (Ok(app), Ok(token)) = (platform.focused_app(), platform.focus_token()) else {
+            return;
+        };
+        if self.focus.as_ref().map(|c| c.token) != Some(token) {
+            self.shared.logger.info(format_args!(
+                "keys went to a window the focus watcher did not report; the focus was read again"
+            ));
+            let _ = self
+                .shared
+                .focus_tx
+                .send(FocusMsg::Change(FocusChange { app, token }));
+        } else if lasted {
+            self.shared.logger.warn(format_args!(
+                "the listener names process {} for keys while the focus is in process {}; \
+                 keys are handled without a target until the focus changes",
+                target.pid(),
+                token.pid()
+            ));
+            self.unconfirmed = Some(target);
+            self.elsewhere = None;
         }
     }
 
@@ -421,6 +543,8 @@ impl EngineThread {
         self.handle(Event::FocusChanged(change.app.app.clone()));
         let token = change.token;
         self.focus = Some(change);
+        self.elsewhere = None;
+        self.unconfirmed = None;
         if self.parked.as_ref().is_some_and(|p| p.token == token)
             && let Some(parked) = self.parked.take()
         {
@@ -527,6 +651,16 @@ impl EngineThread {
             let mut request = InjectionRequest::for_batch(&batch);
             if let Some(change) = &self.focus {
                 request = request.in_app(change.app.app.clone());
+            }
+            // Where its keys belong (module docs): the window every key let through was
+            // compared with, or, before any focus report, the trigger key's own target.
+            if let Some(target) = self
+                .focus
+                .as_ref()
+                .map(|c| KeyTarget::window(c.token))
+                .or(self.trigger)
+            {
+                request = request.for_target(target);
             }
             self.injecting += 1;
             if self.injector_tx.send(request).is_err() {

@@ -221,7 +221,8 @@ impl From<&FieldSpec> for WireField {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WireDiagnostic {
     /// The reason code: an engine reason (`injection_cancelled`, `E_…`, …) or a service code
-    /// (`form_no_ui_host`, `form_not_acknowledged`, `request_focus_timeout`).
+    /// (`form_no_ui_host`, `form_not_acknowledged`, `request_focus_timeout`,
+    /// `keys_for_unreported_window`, …).
     pub code: String,
     /// The snippet, when a match or request named one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -735,9 +736,11 @@ pub enum RequestBody {
     ///
     /// The service stores the id in the form the focus inspector reports it (Windows: the
     /// executable's file name in lower case, a path reduced to it; macOS: the bundle
-    /// identifier, compared without regard to case), so the answer may spell it differently
-    /// from the request. An id no application of the system can have (empty, a path on macOS,
-    /// a character no file name or bundle identifier holds) is refused with `invalid`.
+    /// identifier, or the executable's file name for a program without one, compared without
+    /// regard to ASCII case), so the answer may spell it differently from the request. An id
+    /// no application of the system can have (empty, a control character, a path on macOS, a
+    /// character no Windows file name holds) is refused with `invalid`. Since protocol 2; in
+    /// protocol 1 the answer was `Done`.
     PutExclusion {
         /// Bundle id (macOS) or executable name (Windows).
         app_id: String,

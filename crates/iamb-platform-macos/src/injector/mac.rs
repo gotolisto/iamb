@@ -7,8 +7,8 @@ use std::thread;
 use std::time::Duration;
 
 use iamb_platform::{
-    ClipboardContent, InjectionOutcome, InjectionRequest, Injector, Marker, PermissionKind,
-    PlatformError, Result, TypedHandoff,
+    ClipboardContent, InjectionOutcome, InjectionRequest, Injector, KeyTarget, Marker,
+    PermissionKind, PlatformError, Result, TypedHandoff,
 };
 use objc2_core_foundation::CFRetained;
 use objc2_core_graphics::{
@@ -196,6 +196,13 @@ impl Output for Events<'_> {
                 .read(|| crate::focus::secure_input(SECURE_INPUT_LIMIT)),
             notes: crate::focus::focus_notes(),
         }
+    }
+
+    fn target_of(focus: &KeysGoTo) -> Option<KeyTarget> {
+        focus
+            .app
+            .and_then(|pid| u32::try_from(pid).ok())
+            .map(KeyTarget::process)
     }
 
     fn marker(&mut self, marker: Marker) -> Result<()> {

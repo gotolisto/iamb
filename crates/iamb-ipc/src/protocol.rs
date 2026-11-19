@@ -19,7 +19,21 @@ use crate::messages::{EventBody, RequestBody, ResponseBody};
 
 /// The protocol major version this build speaks. A `hello` with another major version is
 /// refused with [`ErrorCode::UnsupportedProtocol`].
-pub const PROTOCOL_VERSION: u32 = 1;
+///
+/// # When it is raised (architecture §6.1)
+///
+/// By one whenever a build could misread what a build of the previous version sends or
+/// answers: a request, response or event removed or renamed, a field removed, renamed or given
+/// another meaning or type, a new required field, or a request answered with another response
+/// type. Additions an older peer can ignore do not raise it: a new request (an older service
+/// answers `unknown_request`), a new event, a new optional field. The golden files in
+/// `tests/golden/` change with every such step, which is where a review sees it.
+///
+/// | Version | Change |
+/// | --- | --- |
+/// | 1 | The first protocol. |
+/// | 2 | `PutExclusion` answers `Exclusions` (the rows written or removed) instead of `Done` (the 2.8 privacy review's finding 6; its follow-up's N7). |
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Who a client is (architecture §6.2). Fixed by the `hello` for the life of the connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

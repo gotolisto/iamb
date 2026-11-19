@@ -289,6 +289,19 @@ impl KeyTarget {
     pub fn is(self, token: &FocusToken) -> bool {
         self.pid == token.pid() && self.window.is_none_or(|w| w == token.window())
     }
+
+    /// True when `self` and `other` can be the same place: the same process and, when both
+    /// name a window, the same window. What the injectors compare before their start marker
+    /// ([`FocusGuard::for_request`](crate::FocusGuard::for_request)), where one side may know
+    /// only the process (macOS).
+    #[must_use]
+    pub fn same_place(self, other: Self) -> bool {
+        self.pid == other.pid
+            && match (self.window, other.window) {
+                (Some(a), Some(b)) => a == b,
+                _ => true,
+            }
+    }
 }
 
 /// Where the listener puts what it observes.

@@ -339,6 +339,8 @@ pub(crate) fn raw_event(kind: CGEventType, event: Option<&CGEvent>) -> Option<Ra
         raw.keyboard_type =
             u32::try_from(field(CGEventField::KeyboardEventKeyboardType)).unwrap_or(0);
         raw.flags = CGEvent::flags(Some(event)).0;
+        // Where the system routes the key, if it has filled that in yet (`target`).
+        raw.target_pid = field(CGEventField::EventTargetUnixProcessID);
     }
     Some(raw)
 }
@@ -485,6 +487,7 @@ fn install(shared: &Arc<Shared>, parts: Parts) -> Result<Installed> {
             inputs: parts.inputs,
             self_tests: Arc::clone(&shared.self_tests),
             stats: Arc::clone(&shared.stats),
+            frontmost: &super::target::FRONTMOST,
         }));
         #[cfg(test)]
         {

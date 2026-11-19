@@ -69,8 +69,12 @@ pub enum AppIdRule {
     /// Windows: the executable's file name in lower case (`mybank.exe`). A path is reduced to
     /// its file name; Windows compares file names without regard to case.
     WindowsExecutable,
-    /// macOS: the bundle identifier (`com.example.bank`), compared without regard to ASCII
-    /// case. Only letters, digits, `-`, `.` and `_` occur in one; a path never names one.
+    /// macOS: what the inspector reports (`crates/iamb-platform-macos/src/focus/identity.rs`):
+    /// the bundle identifier as the application spells it (`com.example.bank`), or, for a
+    /// program without one, its executable's file name, which may hold spaces, `+`, letters
+    /// outside ASCII and anything else but `/` (`My Tool`, `python3.12`). Compared without
+    /// regard to ASCII case, as macOS compares bundle identifiers. Only what neither can be
+    /// is refused: nothing, a control character, a `/` (a path, which names neither).
     MacBundle,
     /// Any other system (development and the mock): trimmed and in lower case.
     Plain,
@@ -130,14 +134,9 @@ impl AppIdRule {
                 file.to_lowercase()
             }
             Self::MacBundle => {
-                if raw.contains(['/', '\\']) {
+                // The follow-up review's N2: a file name may hold any character but `/`.
+                if raw.contains('/') {
                     return Err(InvalidAppId::Path);
-                }
-                if !raw
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_'))
-                {
-                    return Err(InvalidAppId::Character);
                 }
                 raw.to_ascii_lowercase()
             }
@@ -428,8 +427,24 @@ mod tests {
             rule.normalise("/Applications/Bank.app"),
             Err(InvalidAppId::Path)
         );
-        assert_eq!(rule.normalise("Bank App"), Err(InvalidAppId::Character));
-        assert_eq!(rule.normalise("com.exämple"), Err(InvalidAppId::Character));
+        // Every name the inspector can report (the follow-up review's N2): bundle identifiers
+        // as applications spell them, and executable file names of programs without one.
+        for (reported, key) in [
+            ("com.apple.TextEdit", "com.apple.textedit"),
+            ("some-tool", "some-tool"),
+            ("python3.12", "python3.12"),
+            ("qemu-system-x86_64", "qemu-system-x86_64"),
+            ("My Tool", "my tool"),
+            ("com.example.app+beta", "com.example.app+beta"),
+            ("com.exämple", "com.exämple"),
+            ("Bäckerei Kasse", "bäckerei kasse"),
+            (r"back\slash", r"back\slash"),
+        ] {
+            assert_eq!(rule.normalise(reported), Ok(key.to_owned()), "{reported:?}");
+            assert_eq!(rule.key_of(reported), key, "{reported:?}");
+        }
+        assert_eq!(rule.normalise("Bank App"), Ok("bank app".to_owned()));
+        assert_eq!(rule.normalise("a\u{7}b"), Err(InvalidAppId::Character));
         assert_eq!(rule.normalise(""), Err(InvalidAppId::Empty));
         assert_eq!(rule.key_of("com.Example.BANK"), "com.example.bank");
         for why in [

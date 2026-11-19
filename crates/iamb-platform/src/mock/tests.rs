@@ -1019,6 +1019,49 @@ fn a_focus_change_after_the_start_marker_stops_the_expansion_before_its_first_st
     assert!(matches!(events[0], ListenerEvent::InjectionStarted { .. }));
 }
 
+/// Follow-up review of 2.8, N1: a window took the focus between the trigger key and the
+/// injector's first look. The request names the trigger's window, so nothing is sent, not
+/// even the start marker; the same request in the trigger's window goes ahead.
+#[test]
+fn a_request_for_another_window_than_the_focused_one_sends_nothing() {
+    let os = MockPlatform::new();
+    let form = editor(&os);
+    let password = os.open_window(MockWindow::new("org.example.bank", 200).secure());
+    os.set_text(password, "hunter22");
+    let handoff = Arc::new(TypedHandoff::new());
+    let seen = listening_with(&os, &handoff);
+    os.type_text("brb ");
+    take(&seen);
+
+    handoff.arm(id(1));
+    os.script_at(InjectionPoint::BeforeStartMarker, move |os| {
+        os.focus(password).expect("open");
+    });
+    let steps = vec![InjectionStep::DeleteBack(4), text_step("be right back ")];
+    let request = InjectionRequest::new(id(1), steps.clone()).for_target(KeyTarget::window(form));
+    assert_eq!(
+        os.inject(&request, &handoff),
+        InjectionOutcome::Cancelled(CancelReason::FocusMoved)
+    );
+    assert_eq!(os.text(password).as_deref(), Some("hunter22"), "untouched");
+    assert_eq!(
+        os.injected(),
+        [Injected::Cancelled(id(1), CancelReason::FocusMoved)]
+    );
+    assert!(take(&seen).is_empty(), "no marker was posted");
+
+    // Back in the trigger's window, the same request is injected.
+    os.focus(form).expect("open");
+    handoff.finish(id(1));
+    handoff.arm(id(2));
+    let request = InjectionRequest::new(id(2), steps).for_target(KeyTarget::window(form));
+    assert_eq!(
+        os.inject(&request, &handoff),
+        InjectionOutcome::Finished { retyped: 0 }
+    );
+    assert_eq!(os.text(form).as_deref(), Some("be right back "));
+}
+
 #[test]
 fn a_focus_change_during_a_wait_stops_the_steps_after_it() {
     let os = MockPlatform::new();

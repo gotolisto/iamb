@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
-use iamb_platform::{EventSink, ListenerEvent, SeqSource};
+use iamb_platform::{EventSink, KeyTarget, ListenerEvent, SeqSource};
 
 use super::core::{CoreParts, ListenerCore, RawEvent};
 use super::inputs::{InputSnapshot, InputSources};
@@ -20,6 +20,7 @@ use super::modifiers::layout_state::{CAPS_LOCK, OPTION, SHIFT};
 use super::recovery::TapSwitch;
 use super::selftest::SelfTests;
 use super::stats::ListenerStats;
+use super::target::Frontmost;
 use super::translate::{KeyLayout, KeyOutput, KeyPress, MAX_UNITS};
 
 /// The text of a key output, for assertions. Test data only.
@@ -441,25 +442,51 @@ impl InputSources for FakeInputs {
     }
 }
 
-/// A sink that keeps what it is given.
+/// A sink that keeps what it is given, and the target each event was delivered with.
 #[derive(Clone, Default)]
 pub(crate) struct Recorder {
     events: Arc<Mutex<Vec<ListenerEvent>>>,
+    targets: Arc<Mutex<Vec<Option<KeyTarget>>>>,
 }
 
 impl Recorder {
     /// Takes the events recorded so far.
     pub(crate) fn take(&self) -> Vec<ListenerEvent> {
+        self.targets
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
         std::mem::take(&mut *self.events.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// Takes the targets of the events recorded so far (`None`: delivered without one).
+    pub(crate) fn take_targets(&self) -> Vec<Option<KeyTarget>> {
+        self.events
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+        std::mem::take(&mut *self.targets.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    fn push(&self, event: ListenerEvent, target: Option<KeyTarget>) {
+        self.events
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(event);
+        self.targets
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(target);
     }
 }
 
 impl EventSink for Recorder {
     fn deliver(&mut self, event: ListenerEvent) {
-        self.events
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(event);
+        self.push(event, None);
+    }
+
+    fn deliver_to(&mut self, event: ListenerEvent, target: KeyTarget) {
+        self.push(event, Some(target));
     }
 }
 
@@ -471,6 +498,8 @@ pub(crate) struct Rig {
     pub(crate) self_tests: Arc<SelfTests>,
     pub(crate) stats: Arc<ListenerStats>,
     pub(crate) seq: Arc<SeqSource>,
+    /// The rig's own frontmost application, as the focus watcher would note it.
+    pub(crate) frontmost: &'static Frontmost,
     recorder: Recorder,
 }
 
@@ -489,6 +518,8 @@ impl Rig {
         let self_tests = Arc::new(SelfTests::new());
         let stats = Arc::new(ListenerStats::default());
         let seq = Arc::new(SeqSource::new());
+        // One per rig, so that rigs on parallel test threads do not share it; a few bytes.
+        let frontmost: &'static Frontmost = Box::leak(Box::new(Frontmost::new()));
         let core = ListenerCore::new(CoreParts {
             seq: Arc::clone(&seq),
             sink,
@@ -496,6 +527,7 @@ impl Rig {
             inputs: Arc::clone(&inputs) as Arc<dyn InputSources>,
             self_tests: Arc::clone(&self_tests),
             stats: Arc::clone(&stats),
+            frontmost,
         });
         Self {
             core,
@@ -504,6 +536,7 @@ impl Rig {
             self_tests,
             stats,
             seq,
+            frontmost,
             recorder: Recorder::default(),
         }
     }
@@ -516,5 +549,10 @@ impl Rig {
     /// The events delivered since the last call, as short strings.
     pub(crate) fn take(&mut self) -> Vec<String> {
         shown(&self.recorder.take())
+    }
+
+    /// The targets of the events delivered since the last call.
+    pub(crate) fn take_targets(&mut self) -> Vec<Option<KeyTarget>> {
+        self.recorder.take_targets()
     }
 }

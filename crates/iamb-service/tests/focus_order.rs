@@ -1,4 +1,5 @@
-//! Keys and focus changes that overtake each other (the 2.8 review's findings 5 and 18).
+//! Keys and focus changes that overtake each other (the 2.8 review's findings 5 and 18; the
+//! follow-up review's N1 and N5).
 //!
 //! A key reaches the engine thread straight from the hook, a focus change through the OS
 //! watcher and the focus thread. The other service tests wait for the engine after every focus
@@ -107,12 +108,15 @@ fn cancelled_as_disturbed(log: &[Injected]) -> bool {
         .any(|i| matches!(i, Injected::Cancelled(_, CancelReason::Disturbed)))
 }
 
+/// The service's own cancel. The focus comes back before the injector looks, so its start
+/// check (N1) passes and only the hand-off can stop the expansion.
 #[test]
 fn a_focus_change_before_the_start_marker_cancels_the_expansion() {
     let h = Harness::start(LIBRARY);
     let other = h.os.open_window(MockWindow::new("org.example.chat", 300));
     let log = between_trigger_and_start_marker(&h, || {
         h.os.focus(other).expect("window is open");
+        h.os.focus(h.editor).expect("window is open");
     });
     assert!(cancelled_as_disturbed(&log), "{log:?}");
     assert_eq!(
@@ -143,6 +147,8 @@ fn a_key_typed_into_another_window_before_the_start_marker_cancels_the_expansion
         h.os.hold_focus_reports(true);
         h.os.focus(bank).expect("window is open");
         h.os.type_text("x");
+        // Back before the injector looks: only the key's stamp can cancel (as above).
+        h.os.focus(h.editor).expect("window is open");
     });
     assert!(cancelled_as_disturbed(&log), "{log:?}");
     assert_eq!(
@@ -155,10 +161,104 @@ fn a_key_typed_into_another_window_before_the_start_marker_cancels_the_expansion
     h.settle();
 }
 
+/// Follow-up review N1: a window takes the focus between the trigger key and the injector's
+/// first look, and the watcher has not told the service yet. The request names the
+/// trigger's window, so the injector does not start: nothing deleted or typed, no marker.
+#[test]
+fn a_window_that_takes_the_focus_before_the_injector_looks_gets_nothing() {
+    let h = Harness::start(LIBRARY);
+    let bank = h.os.open_window(
+        MockWindow::new("org.example.bank", 200)
+            .secure()
+            .text("hunter22"),
+    );
+    h.os.hold_focus_reports(true);
+    h.os.script_at(InjectionPoint::BeforeStartMarker, move |os| {
+        os.focus(bank).expect("window is open");
+    });
+    h.os.type_text("brb ");
+    h.settle();
+    let log = h.os.injected();
+    assert_eq!(h.text(bank), "hunter22", "{log:?}");
+    assert_eq!(h.text(h.editor), "brb ");
+    assert_eq!(
+        log,
+        [Injected::Cancelled(
+            iamb_platform::core_types::ExpansionId::from_raw(1),
+            CancelReason::FocusMoved
+        )],
+        "no marker, no step"
+    );
+    let mut c = h.client(Role::Ui);
+    assert!(diagnostic_codes(&mut c).contains(&"injection_focus_moved".to_owned()));
+    h.os.hold_focus_reports(false);
+    h.settle();
+}
+
+/// Follow-up review N5: the watcher never reports that another window took the focus. The
+/// keys typed there are not matched, but after a few of them the service says so and reads
+/// the focus itself, and expansion works in that window again.
+#[test]
+fn keys_for_a_window_the_watcher_never_reported_bring_a_diagnostic_and_a_new_look() {
+    let h = Harness::start(LIBRARY);
+    let mut c = h.client(Role::Ui);
+    let notes = h.os.open_window(MockWindow::new("org.example.notes", 300));
+    h.os.hold_focus_reports(true);
+    h.os.focus(notes).expect("window is open");
+    h.os.type_text("brb ");
+    h.settle();
+    h.worker().sync();
+    assert!(
+        diagnostic_codes(&mut c).contains(&"keys_for_unreported_window".to_owned()),
+        "a diagnostic, without anything typed"
+    );
+    h.os.type_text("brb ");
+    h.settle();
+    assert_eq!(h.text(notes), "brb be right back ");
+    assert!(
+        !h.os
+            .injected()
+            .iter()
+            .any(|i| matches!(i, Injected::Cancelled(..))),
+        "{:?}",
+        h.os.injected()
+    );
+    h.os.hold_focus_reports(false);
+    h.settle();
+}
+
+/// Follow-up review N5 and finding 5 on macOS: a listener whose stamp names another process
+/// than the inspector (a key window that belongs to a helper process, a field that holds
+/// something else than expected). Its keys are dropped while that may be a late report; once
+/// the inspector has said for half a second that the focus did not move, they are handled as
+/// keys without a target, as before stamps existed, so expansion does not stop there for good.
+#[test]
+fn a_stamp_the_inspector_keeps_contradicting_stops_being_trusted() {
+    let (h, wrapper) = wrapped_harness();
+    let mut c = h.client(Role::Ui);
+    *wrapper
+        .restamp
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) =
+        Some(iamb_platform::KeyTarget::process(4_000_000));
+    h.os.type_text("brb ");
+    h.settle();
+    h.worker().sync();
+    assert!(nothing_injected(&h), "{:?}", h.os.injected());
+    assert!(diagnostic_codes(&mut c).contains(&"keys_for_unreported_window".to_owned()));
+    std::thread::sleep(iamb_service::worker::RESYNC_AFTER + Duration::from_millis(50));
+    h.os.type_text("x");
+    h.settle();
+    h.worker().sync();
+    h.os.type_text(" brb ");
+    h.settle();
+    assert_eq!(h.text(h.editor), "brb x be right back ");
+}
+
 /// The mock with a few behaviours a test can change: an inspection that waits until the test
 /// lets it go on (the focus thread has then sent `FocusChanged` and the verdict is not there
 /// yet; a real inspection may take up to 100 ms), an injector outcome forced on the next
-/// expansion, and a focus watcher that cannot be started.
+/// expansion, a focus watcher that cannot be started, and key stamps replaced by another.
 mod wrapped {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc::{Receiver, Sender};
@@ -170,9 +270,10 @@ mod wrapped {
     use iamb_platform::{
         AppIdentity, Chord, ClipboardAccess, ClipboardContent, ClipboardSnapshot, EndpointName,
         EventSink, FieldSecurity, FocusInspector, FocusSink, FocusToken, HotkeyId, Hotkeys,
-        InjectionOutcome, InjectionRequest, Injector, KeyListener, LocalEndpoint, LocalListener,
-        LocalStream, LoginItem, LoginItemStatus, MemoryLock, MemoryRegion, PeerPolicy,
-        PermissionKind, PermissionStatus, Permissions, PlatformError, Result, TypedHandoff,
+        InjectionOutcome, InjectionRequest, Injector, KeyListener, KeyTarget, ListenerEvent,
+        LocalEndpoint, LocalListener, LocalStream, LoginItem, LoginItemStatus, MemoryLock,
+        MemoryRegion, PeerPolicy, PermissionKind, PermissionStatus, Permissions, PlatformError,
+        Result, TypedHandoff,
     };
 
     pub struct Wrapped {
@@ -184,6 +285,25 @@ mod wrapped {
         pub outcome: Mutex<Option<InjectionOutcome>>,
         /// While true, starting the focus watcher fails.
         pub refuse_watch: AtomicBool,
+        /// When set: every stamped key is delivered with this target instead.
+        pub restamp: Arc<Mutex<Option<KeyTarget>>>,
+    }
+
+    /// The listener's sink with the stamps of [`Wrapped::restamp`].
+    struct Restamp {
+        inner: Box<dyn EventSink>,
+        to: Arc<Mutex<Option<KeyTarget>>>,
+    }
+
+    impl EventSink for Restamp {
+        fn deliver(&mut self, event: ListenerEvent) {
+            self.inner.deliver(event);
+        }
+        fn deliver_to(&mut self, event: ListenerEvent, target: KeyTarget) {
+            let target =
+                (*self.to.lock().unwrap_or_else(PoisonError::into_inner)).unwrap_or(target);
+            self.inner.deliver_to(event, target);
+        }
     }
 
     pub fn around(os: &MockPlatform) -> Arc<Wrapped> {
@@ -192,6 +312,7 @@ mod wrapped {
             gate: Mutex::new(None),
             outcome: Mutex::new(None),
             refuse_watch: AtomicBool::new(false),
+            restamp: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -235,7 +356,10 @@ mod wrapped {
 
     impl KeyListener for Wrapped {
         fn start(&self, sink: Box<dyn EventSink>) -> Result<()> {
-            self.os.start(sink)
+            self.os.start(Box::new(Restamp {
+                inner: sink,
+                to: Arc::clone(&self.restamp),
+            }))
         }
         fn stop(&self) -> Result<()> {
             self.os.stop()
@@ -372,6 +496,9 @@ fn a_focus_change_cancels_before_its_verdict_is_known() {
     // The focus thread has sent `FocusChanged` and waits for the inspection; a status request
     // goes to the engine behind it.
     inspected.recv_timeout(T).expect("inspecting");
+    // The focus comes back before the injector looks, so its start check (N1) passes and
+    // only the service's cancel can stop the expansion.
+    h.os.focus(h.editor).expect("window is open");
     let mut c = h.client(Role::Cli);
     assert!(matches!(
         c.call(RequestBody::GetStatus {}),

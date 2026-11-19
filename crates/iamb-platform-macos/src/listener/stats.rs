@@ -9,6 +9,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use super::target::TargetSource;
+
 /// Exclusive upper bounds of the histogram buckets, in nanoseconds. A duration falls in the
 /// first bucket whose bound it is below; the last bucket takes everything else.
 const BOUNDS_NANOS: [u64; 13] = [
@@ -37,6 +39,10 @@ pub(crate) struct ListenerStats {
     key_downs: AtomicU64,
     own_events: AtomicU64,
     panics: AtomicU64,
+    targets_from_event: AtomicU64,
+    targets_from_frontmost: AtomicU64,
+    targets_unknown: AtomicU64,
+    target_disagreements: AtomicU64,
 }
 
 /// A copy of the counters at one moment.
@@ -55,6 +61,14 @@ pub(crate) struct StatsSnapshot {
     pub(crate) own_events: u64,
     /// Panics caught at the callback boundary. Always 0 unless there is a bug.
     pub(crate) panics: u64,
+    /// Key presses stamped from the event's own `kCGEventTargetUnixProcessID`.
+    pub(crate) targets_from_event: u64,
+    /// Key presses stamped with the frontmost application as last noted (the field was 0).
+    pub(crate) targets_from_frontmost: u64,
+    /// Key presses delivered without a stamp: neither source knew.
+    pub(crate) targets_unknown: u64,
+    /// Key presses whose field named another process than the frontmost application.
+    pub(crate) target_disagreements: u64,
 }
 
 impl ListenerStats {
@@ -79,6 +93,20 @@ impl ListenerStats {
     /// Counts an event that carried an Iamb marker.
     pub(crate) fn count_own_event(&self) {
         self.own_events.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Counts which source stamped a key press, and whether the event's field disagreed
+    /// with the frontmost application.
+    pub(crate) fn count_target(&self, source: TargetSource, disagrees: bool) {
+        let counter = match source {
+            TargetSource::Event => &self.targets_from_event,
+            TargetSource::Frontmost => &self.targets_from_frontmost,
+            TargetSource::Unknown => &self.targets_unknown,
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+        if disagrees {
+            self.target_disagreements.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     /// Counts a panic caught at the callback boundary.
@@ -125,6 +153,10 @@ impl ListenerStats {
             key_downs: stats.key_downs.load(Ordering::Relaxed),
             own_events: stats.own_events.load(Ordering::Relaxed),
             panics: stats.panics.load(Ordering::Relaxed),
+            targets_from_event: stats.targets_from_event.load(Ordering::Relaxed),
+            targets_from_frontmost: stats.targets_from_frontmost.load(Ordering::Relaxed),
+            targets_unknown: stats.targets_unknown.load(Ordering::Relaxed),
+            target_disagreements: stats.target_disagreements.load(Ordering::Relaxed),
         }
     }
 }
@@ -213,10 +245,23 @@ mod tests {
         stats.count_key_down();
         stats.count_own_event();
         stats.count_panic();
+        stats.count_target(TargetSource::Event, true);
+        stats.count_target(TargetSource::Event, false);
+        stats.count_target(TargetSource::Frontmost, false);
+        stats.count_target(TargetSource::Unknown, false);
         let snapshot = stats.snapshot();
         assert_eq!(
             (snapshot.key_downs, snapshot.own_events, snapshot.panics),
             (2, 1, 1)
+        );
+        assert_eq!(
+            (
+                snapshot.targets_from_event,
+                snapshot.targets_from_frontmost,
+                snapshot.targets_unknown,
+                snapshot.target_disagreements
+            ),
+            (2, 1, 1, 1)
         );
     }
 

@@ -16,6 +16,10 @@
 //!    below): a key press is translated ([`translate`](super::translate)), a mouse button
 //!    press is `Boundary(Click)`, key releases and modifier changes are not reported.
 //!
+//! What a key press produces is stamped with where the key went
+//! ([`target`](super::target): the event's target process, else the frontmost application as
+//! last noted, else no stamp). A click is not stamped.
+//!
 //! Every reported event takes the next sequence number, in the callback.
 //!
 //! # Synthetic events of other software
@@ -44,6 +48,7 @@ use super::modifiers::Modifiers;
 use super::recovery::{DisableReason, Recovery, RecoveryStats, TapCheck, TapHealth, TapSwitch};
 use super::selftest::SelfTests;
 use super::stats::ListenerStats;
+use super::target::{self, Frontmost};
 use super::translate::{KeyEffect, Translator};
 
 /// What kind of event the tap delivered.
@@ -79,6 +84,8 @@ pub(crate) struct RawEvent {
     pub(crate) keyboard_type: u32,
     /// The event-source user data, where Iamb's marker lives.
     pub(crate) user_data: i64,
+    /// `kCGEventTargetUnixProcessID` (key presses); 0 when the system did not fill it in.
+    pub(crate) target_pid: i64,
 }
 
 impl RawEvent {
@@ -91,6 +98,7 @@ impl RawEvent {
             flags: 0,
             keyboard_type: 0,
             user_data: 0,
+            target_pid: 0,
         }
     }
 }
@@ -109,6 +117,9 @@ pub(crate) struct CoreParts {
     pub(crate) self_tests: Arc<SelfTests>,
     /// The counters.
     pub(crate) stats: Arc<ListenerStats>,
+    /// The frontmost application as the focus watcher last noted it
+    /// ([`FRONTMOST`](super::target::FRONTMOST) outside tests).
+    pub(crate) frontmost: &'static Frontmost,
 }
 
 /// The listener's logic and the little state it keeps. Lives on the listener thread.
@@ -119,6 +130,7 @@ pub(crate) struct ListenerCore {
     inputs: Arc<dyn InputSources>,
     self_tests: Arc<SelfTests>,
     stats: Arc<ListenerStats>,
+    frontmost: &'static Frontmost,
     translator: Translator,
     recovery: Recovery,
     snapshot: Option<Arc<InputSnapshot>>,
@@ -137,6 +149,7 @@ impl ListenerCore {
             inputs: parts.inputs,
             self_tests: parts.self_tests,
             stats: parts.stats,
+            frontmost: parts.frontmost,
             translator: Translator::new(),
             recovery: Recovery::new(),
             snapshot: None,
@@ -229,20 +242,30 @@ impl ListenerCore {
             raw.keyboard_type,
             layout,
         );
+        let (target, source, disagrees) = target::stamp(raw.target_pid, self.frontmost);
+        self.stats.count_target(source, disagrees);
         for ch in output.text() {
             let seq = self.seq.next();
-            self.sink.deliver(ListenerEvent::Char { ch, seq });
+            self.deliver_key(ListenerEvent::Char { ch, seq }, target);
         }
         match output.key_effect() {
             KeyEffect::None => {}
             KeyEffect::Named(name) => {
                 let seq = self.seq.next();
-                self.sink.deliver(ListenerEvent::named_key(name, seq));
+                self.deliver_key(ListenerEvent::named_key(name, seq), target);
             }
             KeyEffect::Boundary(kind) => {
                 let seq = self.seq.next();
-                self.sink.deliver(ListenerEvent::Boundary { kind, seq });
+                self.deliver_key(ListenerEvent::Boundary { kind, seq }, target);
             }
+        }
+    }
+
+    /// A key's event, with its stamp when there is one; without, as an unstamped key.
+    fn deliver_key(&mut self, event: ListenerEvent, target: Option<iamb_platform::KeyTarget>) {
+        match target {
+            Some(target) => self.sink.deliver_to(event, target),
+            None => self.sink.deliver(event),
         }
     }
 
@@ -360,6 +383,49 @@ mod tests {
         assert_eq!(rig.take(), ["h#2", "i#3", "!#4", " #5"]);
         assert_eq!(rig.stats.snapshot().key_downs, 4);
         assert_eq!(rig.stats.snapshot().callbacks, 4);
+    }
+
+    /// The 2.8 review's finding 5 on macOS: keys say where they went, from the event's field
+    /// when the system filled it in, else from the frontmost application as last noted; with
+    /// neither, and for clicks, they are delivered without a target.
+    #[test]
+    fn keys_are_stamped_from_the_event_then_the_frontmost_application_else_not_at_all() {
+        use iamb_platform::KeyTarget;
+
+        let mut rig = us_rig();
+        // Nothing known: no stamp, as before.
+        rig.send(&key(vk::ANSI_H));
+        rig.send(&key(vk::DELETE));
+        assert_eq!(rig.take_targets(), [None, None]);
+
+        rig.frontmost.note(Some(501));
+        rig.send(&key(vk::ANSI_H));
+        rig.send(&key(vk::RETURN));
+        rig.send(&RawEvent::of(RawKind::MouseDown));
+        let front = Some(KeyTarget::process(501));
+        assert_eq!(
+            rig.take_targets(),
+            [front, front, None],
+            "a click is not stamped"
+        );
+
+        // The event's own field wins.
+        rig.send(&RawEvent {
+            target_pid: 733,
+            ..key(vk::ANSI_I)
+        });
+        assert_eq!(rig.take_targets(), [Some(KeyTarget::process(733))]);
+
+        let stats = rig.stats.snapshot();
+        assert_eq!(
+            (
+                stats.targets_unknown,
+                stats.targets_from_frontmost,
+                stats.targets_from_event,
+                stats.target_disagreements
+            ),
+            (2, 2, 1, 1)
+        );
     }
 
     #[test]

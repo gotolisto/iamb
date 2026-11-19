@@ -76,7 +76,11 @@ fn an_id_that_can_never_be_reported_is_refused() {
     #[cfg(target_os = "macos")]
     {
         assert!(refused(put(&mut c, "/Applications/Bank.app", true)));
-        assert!(refused(put(&mut c, "Bank App", true)));
+        // A program without a bundle identifier is reported by its file name, which may hold
+        // a space (the follow-up review's N2): it can be excluded.
+        let stored = put(&mut c, "Bank App", true).expect("stored");
+        assert_eq!(stored[0].app_id, "bank app");
+        assert!(put(&mut c, "Bank App", false).is_ok());
     }
     #[cfg(windows)]
     {

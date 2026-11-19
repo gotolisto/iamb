@@ -32,6 +32,7 @@ use iamb_core::template::KeyName;
 use crate::clipboard::ClipboardContent;
 use crate::error::{self, PlatformError};
 use crate::handoff::{CancelReason, TypedHandoff};
+use crate::listener::KeyTarget;
 
 /// One thing to send to the focused application.
 ///
@@ -208,6 +209,14 @@ pub struct InjectionRequest {
     pub app: Option<AppId>,
     /// The user's overrides for that application.
     pub overrides: InjectionOverrides,
+    /// Where the keys of the expansion belong: the window (or, where only that is known, the
+    /// process) the trigger key was typed in, which for an explicit request is the window it
+    /// was parked for. The service takes it from the last focus change it delivered to the
+    /// engine, which every key it let through was compared with, or from the trigger key's
+    /// own [`KeyTarget`] when no focus change was delivered yet. The injector refuses to start
+    /// when the keys would go elsewhere ([`FocusGuard::for_request`]). `None`: nothing is
+    /// known, and the injector guards from where the keys go at its start marker.
+    pub target: Option<KeyTarget>,
 }
 
 impl InjectionRequest {
@@ -219,6 +228,7 @@ impl InjectionRequest {
             steps,
             app: None,
             overrides: InjectionOverrides::default(),
+            target: None,
         }
     }
 
@@ -232,6 +242,13 @@ impl InjectionRequest {
     #[must_use]
     pub fn in_app(mut self, app: AppId) -> Self {
         self.app = Some(app);
+        self
+    }
+
+    /// The same request, for keys that belong in `target`.
+    #[must_use]
+    pub const fn for_target(mut self, target: KeyTarget) -> Self {
+        self.target = Some(target);
         self
     }
 }
@@ -266,15 +283,27 @@ pub fn compensate(steps: &[InjectionStep], typed_after: usize) -> Compensated<'_
     }
 }
 
-/// Stops an injection whose keys would land somewhere else than at its start marker (§4.6,
-/// the 2.8 review's finding 1).
+/// Stops an injection whose keys would land somewhere else than where its trigger was typed
+/// (§4.6, the 2.8 review's finding 1 and its follow-up's N1).
 ///
 /// The service cancels an expansion when it hears of a focus change before the start marker
-/// has come back (the hand-off). Once the marker is back, the injector is on its own: the
-/// trigger key (a Tab, an Enter) may have moved the focus while the marker travelled, and a
-/// `Wait` or a paste keeps the injection open for as long as they last. So each injector
-/// notes where the keys go right before its start marker (`F`: window, process and, where the
-/// OS can say it cheaply, the field) and asks the guard before each batch or step it sends.
+/// has come back (the hand-off). That leaves two gaps, and the guard closes both as far as
+/// the window goes:
+///
+/// - **Before the start marker.** A window that took the focus between the trigger key and
+///   the injector's first look is where the injector's keys would go, and the focus watcher
+///   may not have told the service yet. So the request names the window the trigger belongs
+///   to ([`InjectionRequest::target`]), and [`for_request`](Self::for_request), called right
+///   before the start marker, refuses to start when the keys would go to another window:
+///   [`FocusMoved`](CancelReason::FocusMoved), nothing sent, not even the start marker.
+/// - **After it.** The trigger key (a Tab, an Enter) may move the focus while the marker
+///   travels, and a `Wait` or a paste keeps the injection open for as long as they last. The
+///   guard keeps the focus read at that start check (`F`: window, process and, where the OS
+///   can say it cheaply, the field) and each injector asks it before each batch or step it
+///   sends.
+///
+/// A move to another field of the trigger's window before the start check is not seen: the
+/// request names a window, not a field.
 ///
 /// # What `F` may cost
 ///
@@ -318,6 +347,44 @@ impl<F: PartialEq> FocusGuard<F> {
         }
     }
 
+    /// The start check of an injection whose keys belong in `trigger`
+    /// ([`InjectionRequest::target`]): `now` is where the keys go, read right before the start
+    /// marker, and `target_of` says which window (or process) that is. When it is another
+    /// place than `trigger`, or none at all, the injection must not start:
+    /// [`FocusMoved`](CancelReason::FocusMoved). Otherwise the guard watches from `now`, the
+    /// same reading the check was made on. Without a `trigger` nothing is compared and the
+    /// guard starts from `now`, as [`new`](Self::new).
+    ///
+    /// ```
+    /// use iamb_platform::{CancelReason, FocusGuard, FocusToken, KeyTarget};
+    ///
+    /// let editor = KeyTarget::window(FocusToken::from_raw(7, 100));
+    /// let place = |pid: u32, window: u64| KeyTarget::window(FocusToken::from_raw(pid, window));
+    /// // The trigger was typed in the editor, and the keys still go there.
+    /// assert!(FocusGuard::for_request(Some(editor), (7, 100), |f| Some(place(f.0, f.1))).is_ok());
+    /// // Another window took the focus before the start marker: nothing is sent.
+    /// assert_eq!(
+    ///     FocusGuard::for_request(Some(editor), (9, 200), |f| Some(place(f.0, f.1))),
+    ///     Err(CancelReason::FocusMoved)
+    /// );
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`CancelReason::FocusMoved`], with which the injector stops before its start marker.
+    pub fn for_request(
+        trigger: Option<KeyTarget>,
+        now: F,
+        target_of: impl FnOnce(&F) -> Option<KeyTarget>,
+    ) -> Result<Self, CancelReason> {
+        if let Some(trigger) = trigger
+            && !target_of(&now).is_some_and(|here| here.same_place(trigger))
+        {
+            return Err(CancelReason::FocusMoved);
+        }
+        Ok(Self::new(now))
+    }
+
     /// Before a batch or a step: reads the focus with `now` and answers
     /// [`FocusMoved`](CancelReason::FocusMoved) when it differs from the one at the start
     /// marker. After [`own_move`](Self::own_move) it reads nothing and answers `Ok`.
@@ -356,6 +423,7 @@ pub enum InjectionOutcome {
     },
     /// The expansion was not sent, or not to the end: no end marker was posted. For the
     /// reasons of the hand-off nothing but, at most, the start marker reached the OS; for
+    /// [`FocusMoved`](CancelReason::FocusMoved) at the start check nothing did; for a later
     /// [`FocusMoved`](CancelReason::FocusMoved) and
     /// [`ClipboardNotRestorable`](CancelReason::ClipboardNotRestorable) the steps before the
     /// stop did.
@@ -381,8 +449,11 @@ impl InjectionOutcome {
 ///
 /// 1. If `typed` is already cancelled for this expansion, return
 ///    [`Cancelled`](InjectionOutcome::Cancelled) without sending anything.
-/// 2. Note where the keys go ([`FocusGuard::new`]), then post the start marker: a no-op event
-///    marked [`Marker::InjectionStart`](crate::Marker::InjectionStart).
+/// 2. Note where the keys go and compare it with [`InjectionRequest::target`]
+///    ([`FocusGuard::for_request`]): when they would go to another window, return
+///    [`Cancelled`](InjectionOutcome::Cancelled)`(`[`FocusMoved`](CancelReason::FocusMoved)`)`
+///    without sending anything. Otherwise post the start marker: a no-op event marked
+///    [`Marker::InjectionStart`](crate::Marker::InjectionStart).
 /// 3. [`typed.wait_sealed`](TypedHandoff::wait_sealed) with
 ///    [`START_MARKER_TIMEOUT`](crate::START_MARKER_TIMEOUT). An error is a
 ///    [`Cancelled`](InjectionOutcome::Cancelled) outcome; no end marker follows.
@@ -449,6 +520,7 @@ mod tests {
     use iamb_core::model::Sha256;
 
     use super::*;
+    use crate::focus::FocusToken;
 
     fn id(n: u8) -> Id {
         Id::from_bytes([n; 16])
@@ -672,6 +744,39 @@ mod tests {
             guard.check(|| unreachable!("no read after an own move")),
             Ok(())
         );
+    }
+
+    #[test]
+    fn the_start_check_refuses_another_window_and_guards_from_its_own_reading() {
+        let place =
+            |(pid, window): (u32, u64)| KeyTarget::window(FocusToken::from_raw(pid, window));
+        let editor = place((7, 100));
+        // The keys still go to the trigger's window: the guard watches from that reading.
+        let mut guard = FocusGuard::for_request(Some(editor), Some((7, 100)), |f| f.map(place))
+            .expect("starts");
+        assert_eq!(guard.check(|| Some((7, 100))), Ok(()));
+        assert_eq!(
+            guard.check(|| Some((7, 101))),
+            Err(CancelReason::FocusMoved)
+        );
+        // Another window, another process, no window at all: no start.
+        for now in [Some((7, 101)), Some((9, 100)), None] {
+            assert_eq!(
+                FocusGuard::for_request(Some(editor), now, |f| f.map(place)).err(),
+                Some(CancelReason::FocusMoved),
+                "{now:?}"
+            );
+        }
+        // Where only the process is known (macOS), the process decides.
+        let process = |pid: Option<u32>| pid.map(KeyTarget::process);
+        assert!(FocusGuard::for_request(Some(editor), Some(7), |f| process(*f)).is_ok());
+        assert!(
+            FocusGuard::for_request(Some(KeyTarget::process(7)), Some(7), |f| process(*f)).is_ok()
+        );
+        assert!(FocusGuard::for_request(Some(editor), Some(8), |f| process(*f)).is_err());
+        // Without a trigger nothing is compared, and nothing is asked.
+        let guard = FocusGuard::for_request(None, 5, |_| unreachable!("no comparison"));
+        assert_eq!(guard, Ok(FocusGuard::new(5)));
     }
 
     #[test]

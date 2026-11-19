@@ -1,7 +1,9 @@
 //! The injector's system calls: `SendInput` batches, the state of the modifier keys, and the
 //! paste through the clipboard.
 
-use iamb_platform::{ClipboardContent, ClipboardSnapshot, PlatformError, Result};
+use iamb_platform::{
+    ClipboardContent, ClipboardSnapshot, FocusToken, KeyTarget, PlatformError, Result,
+};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
     KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MAPVK_VK_TO_VSC, MapVirtualKeyW, SendInput,
@@ -142,6 +144,12 @@ impl Desk for SystemDesk {
 
     fn focus(&mut self) -> Self::Focus {
         crate::focus::keyboard_focus()
+    }
+
+    fn target_of(focus: &Self::Focus) -> Option<KeyTarget> {
+        // The foreground window and its process: the two numbers the listener stamps keys
+        // with (`listener::os::key_target`) and the watcher puts in its token.
+        focus.map(|(window, pid, _)| KeyTarget::window(FocusToken::from_raw(pid, window)))
     }
 
     fn batch(&mut self, capacity: usize) -> Inputs {

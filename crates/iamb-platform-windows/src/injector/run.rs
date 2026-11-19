@@ -7,8 +7,11 @@
 //!
 //! 1. A hand-off already cancelled for this expansion: [`Cancelled`](InjectionOutcome::Cancelled),
 //!    nothing sent.
-//! 2. Where the keys go ([`Desk::focus`]), then the start marker, in a call of its own.
-//!    Refused: [`Failed`](InjectionOutcome::Failed), nothing else is sent.
+//! 2. Where the keys go ([`Desk::focus`]). When that is another window than the trigger's
+//!    ([`InjectionRequest::target`]: the foreground window and its process, the numbers the
+//!    listener stamps keys with), [`Cancelled(FocusMoved)`](InjectionOutcome::Cancelled) and
+//!    nothing is sent (the follow-up review's N1). Then the start marker, in a call of its
+//!    own. Refused: [`Failed`](InjectionOutcome::Failed), nothing else is sent.
 //! 3. [`TypedHandoff::wait_sealed`]; an error is `Cancelled`, and no end marker follows (the
 //!    listener reports nothing more for this expansion).
 //! 4. The [`Plan`] of the compensated steps: every batch before the last, the pauses and the
@@ -17,7 +20,7 @@
 //!    under the hand-off's lock, nothing else done there), the end marker.
 //!
 //! Before every batch and every paste the [`FocusGuard`] compares where the keys go with where
-//! they went at the start marker; when the window, its process or its focused control changed,
+//! they went at the start check; when the window, its process or its focused control changed,
 //! the injector stops with `Cancelled(FocusMoved)` and posts no end marker (2.8 review, finding
 //! 1). For most expansions that is one comparison, between the sealing of the hand-off and the
 //! single batch: three reads of what the system keeps, none of which waits for the target.
@@ -37,7 +40,7 @@ use std::time::Duration;
 
 use iamb_platform::{
     CancelReason, ClipboardContent, FocusGuard, HandoffStatus, InjectionOutcome, InjectionRequest,
-    Marker, PlatformError, TypedHandoff, compensate,
+    KeyTarget, Marker, PlatformError, TypedHandoff, compensate,
 };
 
 use super::plan::{KeyEvent, Op, Plan, may_move_focus, push_text, release_held};
@@ -54,6 +57,10 @@ pub(crate) trait Desk {
 
     /// Where keys go now. Must not wait for any application.
     fn focus(&mut self) -> Self::Focus;
+
+    /// The window (and process) of `focus`, as the listener stamps keys: what the start check
+    /// compares with the request's target. `None` when no window is in front.
+    fn target_of(focus: &Self::Focus) -> Option<KeyTarget>;
 
     /// An empty batch with room for `capacity` events, so that filling it does not move the
     /// events already in it (they may be retyped characters).
@@ -107,7 +114,11 @@ pub(crate) fn inject<D: Desk>(
         return InjectionOutcome::Cancelled(reason);
     }
 
-    let mut guard = FocusGuard::new(desk.focus());
+    let now = desk.focus();
+    let mut guard = match FocusGuard::for_request(request.target, now, D::target_of) {
+        Ok(guard) => guard,
+        Err(reason) => return InjectionOutcome::Cancelled(reason),
+    };
     if let Err(error) = send_markers(desk, Marker::InjectionStart(expansion)) {
         return InjectionOutcome::Failed(error);
     }
@@ -240,7 +251,7 @@ mod tests {
     use std::fmt::Write as _;
 
     use iamb_platform::core_types::{BoundaryKind, ExpansionId, KeyName, Sensitive};
-    use iamb_platform::{CancelReason, InjectionStep, ListenerEvent};
+    use iamb_platform::{CancelReason, FocusToken, InjectionStep, ListenerEvent};
 
     use super::super::plan::{
         Key, VK_BACK, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_RETURN, VK_SHIFT, VK_UNASSIGNED, push_char,
@@ -345,6 +356,12 @@ mod tests {
         fn focus(&mut self) -> u64 {
             self.focus_reads += 1;
             self.focus
+        }
+
+        /// Window `n` of process 40 + `n`.
+        fn target_of(focus: &u64) -> Option<KeyTarget> {
+            let pid = u32::try_from(*focus).map_or(0, |n| n + 40);
+            Some(KeyTarget::window(FocusToken::from_raw(pid, *focus)))
         }
 
         fn batch(&mut self, capacity: usize) -> Self::Batch {
@@ -717,6 +734,37 @@ mod tests {
         );
         // No deletion, no text, no end marker: the service answers with `InjectionCancelled`.
         assert_eq!(desk.did, [sent("[S]")]);
+    }
+
+    /// The follow-up review's N1: another window took the foreground between the trigger key
+    /// and the injector's first look. Nothing is sent, not even the start marker; in the
+    /// trigger's window the same request goes ahead.
+    #[test]
+    fn a_request_for_another_window_sends_nothing() {
+        let typed = TypedHandoff::new();
+        typed.arm(E);
+        let mut desk = Recorder::new(&typed);
+        desk.focus = 2;
+        let trigger = Recorder::target_of(&1).expect("a window");
+        assert_eq!(
+            run(&mut desk, &brb().for_target(trigger)),
+            InjectionOutcome::Cancelled(CancelReason::FocusMoved)
+        );
+        assert_eq!(desk.did, []);
+        // The same process with another window is another place too.
+        let same_process = KeyTarget::window(FocusToken::from_raw(42, 9));
+        assert_eq!(
+            run(&mut desk, &brb().for_target(same_process)),
+            InjectionOutcome::Cancelled(CancelReason::FocusMoved)
+        );
+        assert_eq!(desk.did, []);
+
+        desk.focus = 1;
+        assert_eq!(
+            run(&mut desk, &brb().for_target(trigger)),
+            InjectionOutcome::Finished { retyped: 0 }
+        );
+        assert_eq!(desk.did.first(), Some(&sent("[S]")));
     }
 
     #[test]
