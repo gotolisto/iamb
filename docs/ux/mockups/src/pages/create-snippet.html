@@ -1,0 +1,312 @@
+<section class="intro">
+  <h1>Flow 2: Create a snippet</h1>
+  <p>From “I keep typing this” to a saved snippet without leaving the keyboard: new snippet, abbreviation, content, save. Macros are inserted as chips, and the preview comes from the same parser that expands.</p>
+  <div class="facts">
+    <span class="fact">Shortest path <b>4 keys</b> besides the text: [[Mod+N]] [[Tab]] [[Tab]] [[Mod+S]]</span>
+    <span class="fact">List <b>60 fps</b> with 10,000 snippets</span>
+    <span class="fact">Preview <b>within 150 ms</b> of a pause in typing</span>
+  </div>
+  <p class="legend"><span><span class="chip insert"><svg class="i" aria-hidden="true"><use href="#i-date"/></svg>inserts</span></span><span><span class="chip ask"><svg class="i" aria-hidden="true"><use href="#i-field"/></svg>asks you</span></span><span><span class="chip act"><svg class="i" aria-hidden="true"><use href="#i-key"/></svg>does something</span></span><span><span class="chip read"><svg class="i" aria-hidden="true"><use href="#i-clipboard"/></svg>reads</span></span><span><span class="msg">Message</span> service message, architecture §6</span></p>
+</section>
+
+<div class="steps">
+
+  <figure class="step wide">
+    <div class="step-head"><span class="n">1</span><h3>The library: where it starts</h3></div>
+    <div class="stage">
+      <div class="win w-xl" data-os="mac">
+        <div class="win-bar"><span class="title">Iamb</span></div>
+        <div class="win-body lib">
+          <!--#include sidebar sel=replies -->
+          <section class="list" aria-label="Snippets in Replies">
+            <div class="list-head"><div class="input"><svg class="i" aria-hidden="true"><use href="#i-search"/></svg><span class="ph">Filter Replies</span></div><button class="btn primary is-hover" type="button"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>New [[Mod+N]]</button></div>
+            <div class="rows" role="listbox">
+              <!--#include snippet-rows sel=rty -->
+            </div>
+          </section>
+          <section class="editor" aria-label="Snippet">
+            <div class="ed-head"><span class="ttl">Thanks for your order</span><label class="switch on"><span class="track"></span><span>On</span></label><button class="btn icon ghost" type="button" aria-label="More actions"><svg class="i" aria-hidden="true"><use href="#i-more"/></svg></button><button class="btn" type="button" disabled>Save</button></div>
+            <div class="ed-body">
+              <div class="grid2">
+                <div class="field"><label>Abbreviation</label><div class="input mono">;rty</div></div>
+                <div class="field"><label>Label <span class="opt">optional</span></label><div class="input">Thanks for your order</div></div>
+              </div>
+              <div class="field"><label>Content</label>
+                <div class="tpl">Thank you for your order. We build every wheel by hand, so it ships within <span class="chip ask"><svg class="i" aria-hidden="true"><use href="#i-choice"/></svg>Lead time</span> working days.
+
+<span class="chip insert"><svg class="i" aria-hidden="true"><use href="#i-snippet"/></svg>;sig</span></div></div>
+              <div class="preview"><span class="ovl">Preview</span><div class="out">Thank you for your order. We build every wheel by hand, so it ships within 5 working days.
+
+Ines Marchetti
+Brindlewood Cycles</div></div>
+            </div>
+            <div class="ed-foot"><span>Expands after a space or punctuation</span><span>Case: exactly as written</span><span>Used 31 times on this computer</span></div>
+          </section>
+        </div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>[[Mod+N]] new snippet in the selected folder. [[Mod+F]] filter. [[Up]] [[Down]] move in the list, [[Enter]] moves into the editor, [[Esc]] back to the list. [[Mod+1]] sidebar, [[Mod+2]] list, [[Mod+3]] editor.</dd></div>
+      <div><dt>Screen</dt><dd>Three panes: folders and tags, the snippets of the selection, the selected snippet. Entry points for “new”: this button, the tray or menu-bar menu (“New snippet…”), and the search palette when nothing matches.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">ListFolders</span>, <span class="msg">ListSnippets</span> once, kept in memory and refreshed on <span class="msg">LibraryChanged</span>; <span class="msg">Health</span> for the Broken badge. The list draws only visible rows.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">2</span><h3>New snippet: abbreviation first</h3></div>
+    <div class="stage">
+      <div class="win w-md" data-os="mac">
+        <div class="win-bar"><span class="title">Iamb: editor pane</span></div>
+        <section class="win-body editor">
+          <div class="ed-head"><span class="ttl">New snippet</span><div class="seg" role="group" aria-label="Kind"><span class="on">Plain text</span><span>Formatted</span></div><button class="btn ghost" type="button">Cancel</button><button class="btn primary" type="button" disabled>Save [[Mod+S]]</button></div>
+          <div class="ed-body">
+            <div class="grid2">
+              <div class="field"><label>Abbreviation</label><div class="input mono is-focus">;r<span class="caret"></span></div><p class="help">Starts with <span class="abbr">;r</span>, the prefix of the folder Replies.</p></div>
+              <div class="field"><label>Label <span class="opt">optional</span></label><div class="input"><span class="ph">Shown in lists and search</span></div></div>
+            </div>
+            <div class="field"><label>Content</label>
+              <div class="tpl"><span class="ph" style="color:var(--color-text-secondary)">The text Iamb types for you. Type { to insert a date, a fill-in field and more.</span></div></div>
+            <div class="grid2">
+              <div class="field"><label>Folder</label><div class="select">Replies<svg class="i" aria-hidden="true"><use href="#i-down"/></svg></div></div>
+              <div class="field"><label>Tags <span class="opt">optional</span></label><div class="input"><span class="ph">Add a tag</span></div></div>
+            </div>
+          </div>
+          <div class="ed-foot"><span>Expands after a space or punctuation</span><span>Case: exactly as written</span><button class="btn link sm" type="button">Options</button></div>
+        </section>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>Focus starts in Abbreviation, after the folder’s prefix. [[Tab]] Label, [[Tab]] Content. [[Esc]] or Cancel discards an untouched draft without asking.</dd></div>
+      <div><dt>Screen</dt><dd>A new snippet is a draft. Nothing reaches the library, and nothing can expand, until it is saved.</dd></div>
+      <div><dt>Service</dt><dd>None yet. The draft lives in the window.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">3</span><h3>Content: type { to insert</h3></div>
+    <div class="stage">
+      <div class="win w-md" data-os="mac">
+        <div class="win-bar"><span class="title">Iamb: editor pane</span></div>
+        <section class="win-body editor">
+          <div class="ed-body">
+            <div class="field"><label>Content</label>
+              <div class="tpl-bar" role="toolbar" aria-label="Insert">
+                <button class="btn sm ghost" type="button"><svg class="i" aria-hidden="true"><use href="#i-date"/></svg>Date</button>
+                <button class="btn sm ghost" type="button"><svg class="i" aria-hidden="true"><use href="#i-field"/></svg>Fill-in field</button>
+                <button class="btn sm ghost" type="button"><svg class="i" aria-hidden="true"><use href="#i-cursor"/></svg>Cursor</button>
+                <button class="btn sm ghost" type="button"><svg class="i" aria-hidden="true"><use href="#i-clipboard"/></svg>Clipboard</button>
+                <span class="sep"></span>
+                <button class="btn sm ghost" type="button">More<svg class="i" aria-hidden="true"><use href="#i-down"/></svg></button>
+              </div>
+              <div class="tpl is-focus">Hi <span class="chip ask"><svg class="i" aria-hidden="true"><use href="#i-field"/></svg>First name</span>,
+
+Thank you for your patience. Your order <span class="chip ask"><svg class="i" aria-hidden="true"><use href="#i-field"/></svg>Order number</span> left our workshop today and should reach you by {<span class="caret"></span></div>
+            </div>
+            <div class="ac inset" role="listbox" aria-label="Insert">
+              <div class="mi on" role="option" aria-selected="true"><svg class="i" aria-hidden="true"><use href="#i-date"/></svg>Date<small>today, or shifted</small></div>
+              <div class="mi" role="option"><svg class="i" aria-hidden="true"><use href="#i-time"/></svg>Time<small>now, or shifted</small></div>
+              <div class="mi" role="option"><svg class="i" aria-hidden="true"><use href="#i-field"/></svg>Fill-in field<small>ask when expanding</small></div>
+              <div class="mi" role="option"><svg class="i" aria-hidden="true"><use href="#i-if"/></svg>Optional part<small>only if a field says so</small></div>
+              <div class="mi" role="option"><svg class="i" aria-hidden="true"><use href="#i-cursor"/></svg>Cursor position<small>where typing continues</small></div>
+              <div class="mi" role="option"><svg class="i" aria-hidden="true"><use href="#i-clipboard"/></svg>Clipboard<small>what you last copied</small></div>
+              <div class="mi" role="option"><svg class="i" aria-hidden="true"><use href="#i-snippet"/></svg>Another snippet<small>by abbreviation</small></div>
+              <div class="mi" role="option"><svg class="i" aria-hidden="true"><use href="#i-key"/></svg>Key press<small>Enter, Tab, arrows…</small></div>
+              <div class="mi" role="option"><svg class="i" aria-hidden="true"><use href="#i-wait"/></svg>Wait<small>pause before the next step</small></div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>Typing <kbd>{</kbd> opens the list; keep typing to filter (“da” leaves Date), [[Up]] [[Down]] and [[Enter]] insert, [[Esc]] keeps a plain brace. A chip is one character for the arrow keys and [[Backspace]]; [[Enter]] on a chip opens its settings.</dd></div>
+      <div><dt>Screen</dt><dd>The same nine items are on the toolbar for the mouse. A brace that is not followed by a macro name stays ordinary text, as the template language says; JSON and code paste in unchanged.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">ParseTemplate(source)</span> after every change gives the token list the chips are drawn from, so the editor and expansion cannot disagree (ADR-0017).</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">4</span><h3>A chip’s settings</h3></div>
+    <div class="stage">
+      <div class="win w-md" data-os="mac">
+        <div class="win-bar"><span class="title">Iamb: editor pane</span></div>
+        <section class="win-body editor">
+          <div class="ed-body">
+            <div class="field"><label>Content</label>
+              <div class="tpl">Hi <span class="chip ask"><svg class="i" aria-hidden="true"><use href="#i-field"/></svg>First name</span>,
+
+Thank you for your patience. Your order <span class="chip ask"><svg class="i" aria-hidden="true"><use href="#i-field"/></svg>Order number</span> left our workshop today and should reach you by <span class="chip insert is-selected"><svg class="i" aria-hidden="true"><use href="#i-date"/></svg>Date +3 working days</span>.</div>
+            </div>
+            <div class="popover" role="dialog" aria-label="Date" style="justify-self:end;margin-top:calc(-1 * var(--space-2))">
+              <h5><svg class="i" aria-hidden="true"><use href="#i-date"/></svg>Date</h5>
+              <div class="field"><label>Format</label><div class="select is-focus">Wednesday 18 March<svg class="i" aria-hidden="true"><use href="#i-down"/></svg></div></div>
+              <div class="field"><label>Shift</label>
+                <div style="display:grid;grid-template-columns:72px minmax(0,1fr);gap:var(--space-2)"><div class="input">+3</div><div class="select">working days<svg class="i" aria-hidden="true"><use href="#i-down"/></svg></div></div>
+                <p class="help">Working days are Monday to Friday. Public holidays are not known.</p></div>
+              <div class="preview"><span class="ovl">Today this gives</span><div class="out">Monday 23 March</div></div>
+              <div class="actions"><button class="btn sm ghost" type="button">Remove</button><span class="grow"></span><button class="btn sm primary" type="button">Done [[Enter]]</button></div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>[[Enter]] on a chip opens it; [[Tab]] moves through its settings; [[Enter]] or [[Esc]] closes and returns to the text, caret after the chip.</dd></div>
+      <div><dt>Screen</dt><dd>Formats are offered as today’s date written each way, with “Custom…” for a format string. Every macro has such a card; the fill-in field’s card sets name, type, default and options.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">RenderPreview(source)</span> of the one macro for “Today this gives”. A bad custom format comes back as <code>E_BAD_FORMAT</code> and is shown under the field.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">5</span><h3>Preview while writing</h3></div>
+    <div class="stage">
+      <div class="win w-md" data-os="mac">
+        <div class="win-bar"><span class="title">Iamb: editor pane</span></div>
+        <section class="win-body editor">
+          <div class="ed-head"><span class="ttl">Late delivery</span><span class="badge">Not saved</span><button class="btn ghost" type="button">Cancel</button><button class="btn primary" type="button">Save [[Mod+S]]</button></div>
+          <div class="ed-body">
+            <div class="grid2">
+              <div class="field"><label>Abbreviation</label><div class="input mono">;rlate</div></div>
+              <div class="field"><label>Label <span class="opt">optional</span></label><div class="input">Late delivery</div></div>
+            </div>
+            <div class="field"><label>Content</label>
+              <div class="tpl">Hi <span class="chip ask"><svg class="i" aria-hidden="true"><use href="#i-field"/></svg>First name</span>,
+
+Thank you for your patience. Your order <span class="chip ask"><svg class="i" aria-hidden="true"><use href="#i-field"/></svg>Order number</span> left our workshop today and should reach you by <span class="chip insert"><svg class="i" aria-hidden="true"><use href="#i-date"/></svg>Date +3 working days</span>.
+
+<span class="chip ask"><svg class="i" aria-hidden="true"><use href="#i-if"/></svg>If Add voucher</span>As an apology, here is 10% off your next order: <span class="chip ask"><svg class="i" aria-hidden="true"><use href="#i-field"/></svg>Voucher code</span>.<span class="chip ask"><svg class="i" aria-hidden="true"><use href="#i-if"/></svg>End if</span>
+
+<span class="chip insert"><svg class="i" aria-hidden="true"><use href="#i-snippet"/></svg>;sig</span></div>
+            </div>
+            <div class="preview">
+              <div style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap"><span class="ovl" style="flex:1">Preview</span><span class="count">Asks for 4 values</span><button class="btn sm" type="button">Try the form</button></div>
+              <div class="out">Hi <span class="chip">First name</span>,
+
+Thank you for your patience. Your order <span class="chip">Order number</span> left our workshop today and should reach you by Monday 23 March.
+
+Ines Marchetti
+Brindlewood Cycles</div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>[[Mod+Shift+P]] moves to the preview and back. “Try the form” opens the real fill-in form over the editor; its result fills the preview and is typed nowhere.</dd></div>
+      <div><dt>Screen</dt><dd>Empty fields show as grey name tags; the optional part is left out because its toggle starts off. Key presses appear as key badges and the cursor position as a caret.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">RenderPreview(source, values)</span> 150 ms after the last change. Test values are sent only in that request and are never stored.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">6</span><h3>Options</h3></div>
+    <div class="stage">
+      <div class="win w-md" data-os="mac">
+        <div class="win-bar"><span class="title">Iamb: editor pane</span></div>
+        <section class="win-body editor">
+          <div class="ed-body">
+            <div class="field"><span class="label">Expand</span>
+              <div class="optlist" role="radiogroup" aria-label="Expand">
+                <label class="radio on"><span class="box"></span><span><b style="font-weight:var(--font-weight-medium)">After a space or punctuation</b><br><span style="color:var(--color-text-secondary)">When the word is finished. Enter and Tab do not count.</span></span></label>
+                <label class="radio"><span class="box"></span><span><b style="font-weight:var(--font-weight-medium)">Immediately</b><br><span style="color:var(--color-text-secondary)">On the last character. Good for abbreviations that are never part of a word.</span></span></label>
+              </div>
+            </div>
+            <div class="field"><span class="label">Capital letters</span>
+              <div class="optlist" role="radiogroup" aria-label="Capital letters">
+                <label class="radio on"><span class="box"></span><span>Exactly as written: only <span class="abbr">;rlate</span></span></label>
+                <label class="radio"><span class="box"></span><span>Ignore: <span class="abbr">;RLate</span> works too</span></label>
+                <label class="radio"><span class="box"></span><span>Ignore, and follow mine: <span class="abbr">;Rlate</span> starts with a capital, <span class="abbr">;RLATE</span> is all capitals</span></label>
+              </div>
+            </div>
+            <label class="check on"><span class="box"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg></span><span>Only at the start of a word<br><span style="color:var(--color-text-secondary)">Does not expand in the middle of other text.</span></span></label>
+          </div>
+        </section>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>[[Mod+Shift+O]] opens Options below the content. Arrow keys choose inside a group, [[Tab]] moves between groups, <kbd>Space</kbd> toggles the checkbox.</dd></div>
+      <div><dt>Screen</dt><dd>Closed by default; the footer of the editor always states the current choices in words. New snippets take the folder’s defaults.</dd></div>
+      <div><dt>Service</dt><dd>Part of the snippet row: <code>trigger</code>, <code>case_mode</code>, <code>word_start</code>. Saved with <span class="msg">PutSnippet</span>.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">7</span><h3>Warnings before saving</h3></div>
+    <div class="stage">
+      <div class="win w-md" data-os="mac">
+        <div class="win-bar"><span class="title">Iamb: editor pane</span></div>
+        <section class="win-body editor">
+          <div class="ed-body">
+            <div class="field"><label>Abbreviation <span class="opt">already in use: cannot be saved</span></label><div class="input mono is-error">;rty</div><p class="err" role="alert"><svg class="i" aria-hidden="true"><use href="#i-warn"/></svg><span><b>;rty</b> is already the abbreviation of “Thanks for your order” in Replies. Each abbreviation can belong to one snippet. <a href="#">Show that snippet</a></span></p></div>
+            <div class="field"><label>Abbreviation <span class="opt">hides another: can be saved</span></label><div class="input mono">;rl</div><p class="warnmsg" role="status"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg><span>This snippet expands immediately, so <b>;rl</b> will fire before you can finish typing <b>;rlate</b>. Use a different abbreviation, or let it wait for a space.</span></p></div>
+            <div class="field"><label>Content <span class="opt">template error: can be saved, will not expand</span></label>
+              <div class="tpl"><span class="chip ask is-error"><svg class="i" aria-hidden="true"><use href="#i-if"/></svg>If Add voucher</span>As an apology, here is 10% off your next order.</div>
+              <p class="err" role="alert"><svg class="i" aria-hidden="true"><use href="#i-warn"/></svg><span>This optional part has a start but no end. Put the caret where it should stop and insert “End if”. <a href="#">Insert it at the end</a></span></p></div>
+          </div>
+        </section>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>Messages appear as you type and are announced. [[Mod+S]] with a blocking error moves focus to the field and reads its message.</dd></div>
+      <div><dt>Screen</dt><dd>Only a duplicate abbreviation or an invalid one (empty, a space, over 64 characters) blocks saving. A snippet with a template error can be saved, is marked Broken and does not expand.</dd></div>
+      <div><dt>Service</dt><dd>Checked in the window against the list in memory as you type; the service decides: <span class="msg">PutSnippet</span> answers <code>conflict</code>. Template errors come from <span class="msg">ParseTemplate</span> and <span class="msg">RenderPreview</span> as a code and a position (<code>E_UNBALANCED_IF</code> here).</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">8</span><h3>Saved</h3></div>
+    <div class="stage">
+      <div class="win w-md" data-os="mac">
+        <div class="win-bar"><span class="title">Iamb: list pane</span></div>
+        <section class="win-body list" style="border-right:0">
+          <div class="rows" role="listbox">
+            <div class="row" aria-selected="true"><div class="l1"><span class="nm">Late delivery</span><svg class="i" aria-label="Asks for values"><use href="#i-field"/></svg><span class="abbr">;rlate</span></div><div class="l2">Hi ‹First name›, thank you for your patience. Your order ‹Order number› left…</div></div>
+            <div class="row"><div class="l1"><span class="nm">Thanks for your order</span><span class="abbr">;rty</span></div><div class="l2">Thank you for your order. We build every wheel by hand, so it ships within…</div></div>
+          </div>
+        </section>
+      </div>
+      <div class="toast" role="status"><span>Saved. Type <b>;rlate</b> and a space to use it.</span></div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>[[Mod+S]]. Focus stays where it was, so writing can continue. [[Mod+N]] starts the next one.</dd></div>
+      <div><dt>Screen</dt><dd>The toast names the abbreviation and how it triggers (“…and a space” or, for immediate snippets, “Type ;rlate to use it.”). It leaves after 4 seconds and needs no answer.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">PutSnippet</span> → <span class="msg">Saved</span>; then <span class="msg">LibraryChanged(revision)</span> reaches every window. The snippet expands from that moment.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">+</span><h3>Leaving with changes</h3></div>
+    <div class="stage">
+      <div class="dialog" role="alertdialog" aria-label="Save changes" data-os="mac">
+        <h4>Save your changes to “Late delivery”?</h4>
+        <div class="body"><p>If you do not save, the changes you made to this snippet are lost.</p></div>
+        <div class="actions"><button class="btn grow" type="button" style="flex:0 1 auto">Do not save</button><span class="grow"></span><button class="btn" type="button">Cancel</button><button class="btn primary is-focus" type="button">Save [[Enter]]</button></div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>[[Enter]] saves, [[Esc]] cancels and returns to the editor. “Do not save” is one [[Shift+Tab]] away.</dd></div>
+      <div><dt>Screen</dt><dd>Asked when another snippet is selected, the window closes or Iamb quits with unsaved edits. Buttons follow the system’s order: the main action is on the right on macOS and on the left on Windows.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">PutSnippet</span> on Save only.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">+</span><h3>Empty library</h3></div>
+    <div class="stage">
+      <div class="win w-md" data-os="mac">
+        <div class="win-bar"><span class="title">Iamb</span></div>
+        <div class="win-body empty">
+          <svg class="i mark" aria-hidden="true"><use href="#i-iamb"/></svg>
+          <h4>No snippets yet</h4>
+          <p>A snippet is text you save once and type with a short abbreviation from then on.</p>
+          <div class="actions" style="justify-content:center"><button class="btn primary" type="button"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>New snippet [[Mod+N]]</button><button class="btn" type="button"><svg class="i" aria-hidden="true"><use href="#i-import"/></svg>Import…</button></div>
+        </div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>[[Mod+N]] works here as everywhere in the window.</dd></div>
+      <div><dt>Screen</dt><dd>An empty folder says “This folder is empty” with the same button. A filter with no match says “Nothing in Replies matches ‘xyz’” with “Clear filter”.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">Import(path, format)</span> for JSON or CSV → <span class="msg">Imported</span> with counts: “Imported 212 snippets. 3 were skipped because their abbreviations are already in use.”</dd></div>
+    </dl>
+  </figure>
+
+</div>
