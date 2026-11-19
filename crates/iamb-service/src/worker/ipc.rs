@@ -11,7 +11,7 @@ use std::time::Duration;
 use iamb_ipc::{ConnectionWriter, EventBody, HELLO_TIMEOUT, MessageLog, Role, ServerConnection};
 use iamb_platform::{LocalListener, LocalStream, PlatformError};
 
-use super::{Shared, WakeCounters, handlers};
+use super::{EngineMsg, Shared, WakeCounters, handlers};
 
 /// The most clients served at once (ADR-0009).
 pub const MAX_CLIENTS: usize = 8;
@@ -168,10 +168,18 @@ fn serve(shared: &Arc<Shared>, stream: Box<dyn LocalStream>) {
     // is counted already (a UI host that connects just before a form is shown gets the form).
     // Events queued before the welcome wait in the channel until the pump starts.
     let mut registered = None;
-    let accepted = ServerConnection::accept_with(stream, crate::VERSION, HELLO_TIMEOUT, log, |c| {
-        registered = Some(shared.clients.add(c.role(), c.peer().pid, c.writer()));
-        Ok(())
-    });
+    // The role must be one the client's executable may take (finding 10, `iamb_ipc::roles`).
+    let accepted = ServerConnection::accept_for(
+        stream,
+        crate::VERSION,
+        HELLO_TIMEOUT,
+        log,
+        shared.policy,
+        |c| {
+            registered = Some(shared.clients.add(c.role(), c.peer().pid, c.writer()));
+            Ok(())
+        },
+    );
     let conn = match accepted {
         Ok(conn) => conn,
         Err(e) => {
@@ -212,6 +220,10 @@ fn serve(shared: &Arc<Shared>, stream: Box<dyn LocalStream>) {
         handlers::handle(shared, role, body)
     });
     shared.clients.remove(id);
+    if role == Role::Ui && !shared.clients.ui_connected() {
+        // The forms this host was showing can no longer be answered (task 3.2 report).
+        let _ = shared.to_engine(EngineMsg::UiHostGone);
+    }
     writer.shutdown();
     if let Ok(pump) = pump {
         let _ = pump.join();

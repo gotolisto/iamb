@@ -430,6 +430,15 @@ impl DeadKeys {
         !matches!(self.state, State::Clear)
     }
 
+    /// The dead character that waits, if one does (tests).
+    #[cfg(test)]
+    pub(crate) fn pending(&self) -> Option<u16> {
+        match &self.state {
+            State::Pending(ch) => Some(*ch.expose()),
+            State::Clear | State::Uncertain => None,
+        }
+    }
+
     /// Forgets everything: the layout changed, or events were lost.
     pub(crate) fn reset(&mut self) {
         self.set(State::Clear);

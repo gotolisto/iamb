@@ -1,0 +1,89 @@
+<section class="intro">
+  <h1>Iamb mock-ups</h1>
+  <p>Six flows, drawn screen by screen for the review of task 3.1. Each page shows the steps side by side with the keys the user presses, what the screen does and what the service is asked. Use the switches at the top right to see light and dark, and macOS and Windows window chrome.</p>
+  <p>The written specification is in <a href="../spec.md">spec.md</a>, the tokens and components in <a href="../design-system.md">design-system.md</a>, and the sheet to fill in while reviewing in <a href="../review.md">review.md</a>.</p>
+</section>
+
+<div class="cards">
+  <a class="card" href="onboarding.html"><span class="n">FLOW 1</span><h3>Onboarding</h3><p>Install, grant permissions, save a first snippet and see it expand. Under 2 minutes, no help.</p></a>
+  <a class="card" href="create-snippet.html"><span class="n">FLOW 2</span><h3>Create a snippet</h3><p>The library, the editor with macros as chips, the live preview, the warnings before saving.</p></a>
+  <a class="card" href="expand.html"><span class="n">FLOW 3</span><h3>Expand</h3><p>What happens in other apps, the menu-bar and tray menu, and “Why didn’t it expand?”.</p></a>
+  <a class="card" href="fill-in.html"><span class="n">FLOW 4</span><h3>Fill-in</h3><p>The form for snippets with blanks: every field type, insert, cancel, the same form again.</p></a>
+  <a class="card" href="search.html"><span class="n">FLOW 5</span><h3>Search</h3><p>The palette behind one shortcut: find a snippet by a few letters and insert it.</p></a>
+  <a class="card" href="share-folder.html"><span class="n">FLOW 6</span><h3>Share a folder</h3><p>Share with a group, receive a folder, and review snippets that can press keys.</p></a>
+</div>
+
+<h2 class="section-title">The design system at a glance</h2>
+<p class="section-lead">Everything on these pages is drawn with the tokens of <a href="../tokens.json">tokens.json</a>. The swatches and components below follow the theme switch.</p>
+
+<div class="gallery">
+  <div class="specimen"><h3>Backgrounds</h3><div class="swatches"><div class="swatch"><i style="background:var(--color-bg-app)"></i><span>bg-app</span></div><div class="swatch"><i style="background:var(--color-bg-surface)"></i><span>bg-surface</span></div><div class="swatch"><i style="background:var(--color-bg-subtle)"></i><span>bg-subtle</span></div><div class="swatch"><i style="background:var(--color-bg-hover)"></i><span>bg-hover</span></div><div class="swatch"><i style="background:var(--color-bg-selected)"></i><span>bg-selected</span></div><div class="swatch"><i style="background:var(--color-bg-highlight)"></i><span>bg-highlight</span></div><div class="swatch"><i style="background:var(--color-bg-inverse)"></i><span>bg-inverse</span></div></div></div>
+  <div class="specimen"><h3>Text, borders, accent</h3><div class="swatches"><div class="swatch"><i style="background:var(--color-text-primary)"></i><span>text-primary</span></div><div class="swatch"><i style="background:var(--color-text-secondary)"></i><span>text-secondary</span></div><div class="swatch"><i style="background:var(--color-text-disabled)"></i><span>text-disabled</span></div><div class="swatch"><i style="background:var(--color-border-subtle)"></i><span>border-subtle</span></div><div class="swatch"><i style="background:var(--color-border-control)"></i><span>border-control</span></div><div class="swatch"><i style="background:var(--color-border-focus)"></i><span>border-focus</span></div><div class="swatch"><i style="background:var(--color-accent-solid)"></i><span>accent-solid</span></div><div class="swatch"><i style="background:var(--color-accent-solid-hover)"></i><span>accent-solid-hover</span></div><div class="swatch"><i style="background:var(--color-accent-text)"></i><span>accent-text</span></div></div></div>
+  <div class="specimen"><h3>Status</h3><div class="swatches"><div class="swatch"><i style="background:var(--color-status-success-text)"></i><span>status-success-text</span></div><div class="swatch"><i style="background:var(--color-status-success-bg)"></i><span>status-success-bg</span></div><div class="swatch"><i style="background:var(--color-status-warning-text)"></i><span>status-warning-text</span></div><div class="swatch"><i style="background:var(--color-status-warning-bg)"></i><span>status-warning-bg</span></div><div class="swatch"><i style="background:var(--color-status-danger-text)"></i><span>status-danger-text</span></div><div class="swatch"><i style="background:var(--color-status-danger-bg)"></i><span>status-danger-bg</span></div><div class="swatch"><i style="background:var(--color-status-danger-solid)"></i><span>status-danger-solid</span></div></div></div>
+  <div class="specimen"><h3>Macro chips and tags</h3><div class="swatches"><div class="swatch"><i style="background:var(--color-macro-insert-bg)"></i><span>macro-insert-bg</span></div><div class="swatch"><i style="background:var(--color-macro-ask-bg)"></i><span>macro-ask-bg</span></div><div class="swatch"><i style="background:var(--color-macro-act-bg)"></i><span>macro-act-bg</span></div><div class="swatch"><i style="background:var(--color-macro-read-bg)"></i><span>macro-read-bg</span></div><div class="swatch"><i style="background:var(--color-tag-red)"></i><span>tag-red</span></div><div class="swatch"><i style="background:var(--color-tag-orange)"></i><span>tag-orange</span></div><div class="swatch"><i style="background:var(--color-tag-yellow)"></i><span>tag-yellow</span></div><div class="swatch"><i style="background:var(--color-tag-green)"></i><span>tag-green</span></div><div class="swatch"><i style="background:var(--color-tag-teal)"></i><span>tag-teal</span></div><div class="swatch"><i style="background:var(--color-tag-blue)"></i><span>tag-blue</span></div><div class="swatch"><i style="background:var(--color-tag-purple)"></i><span>tag-purple</span></div><div class="swatch"><i style="background:var(--color-tag-grey)"></i><span>tag-grey</span></div></div></div>
+  <div class="specimen"><h3>Type</h3>
+    <div style="font:var(--type-display);letter-spacing:var(--type-display-tracking)">Display 28</div>
+    <div style="font:var(--type-heading)">Heading 22</div>
+    <div style="font:var(--type-title)">Title 18</div>
+    <div style="font:var(--type-input)">Input 15: fill-in form and palette</div>
+    <div style="font:var(--type-body)">Body 13: rows, labels, buttons</div>
+    <div style="font:var(--type-caption);color:var(--color-text-secondary)">Caption 12: help text and metadata</div>
+    <div style="font:var(--type-overline);letter-spacing:var(--type-overline-tracking);text-transform:uppercase;color:var(--color-text-secondary)">Overline 11</div>
+    <div style="font:var(--type-code)">;rlate {date shift=+3bd} Code 13</div>
+  </div>
+  <div class="specimen"><h3>Buttons</h3>
+    <div class="line"><span class="state">Primary</span><button class="btn primary" type="button">Save</button><button class="btn primary is-hover" type="button">Hover</button><button class="btn primary is-focus" type="button">Focus</button><button class="btn primary" type="button" disabled>Disabled</button></div>
+    <div class="line"><span class="state">Default</span><button class="btn" type="button">Cancel</button><button class="btn is-hover" type="button">Hover</button><button class="btn is-focus" type="button">Focus</button><button class="btn" type="button" disabled>Disabled</button></div>
+    <div class="line"><span class="state">Quiet</span><button class="btn ghost" type="button">Back</button><button class="btn ghost is-hover" type="button">Hover</button><button class="btn link" type="button">Link</button><button class="btn icon ghost" type="button" aria-label="More"><svg class="i" aria-hidden="true"><use href="#i-more"/></svg></button></div>
+    <div class="line"><span class="state">Danger</span><button class="btn danger" type="button">Stop sharing</button><button class="btn sm" type="button">Small</button><button class="btn primary lg" type="button">Large [[Enter]]</button></div>
+  </div>
+  <div class="specimen"><h3>Inputs</h3>
+    <div class="field"><label>Default</label><div class="input"><span class="ph">Placeholder</span></div></div>
+    <div class="field"><label>Focused</label><div class="input is-focus">Thanks for your order<span class="caret"></span></div></div>
+    <div class="field"><label>Error</label><div class="input mono is-error">;rty</div><p class="err"><svg class="i" aria-hidden="true"><use href="#i-warn"/></svg><span>Already used by another snippet.</span></p></div>
+    <div class="field"><label>Disabled</label><div class="input is-disabled">Read-only folder</div></div>
+    <div class="field"><label>Select</label><div class="select">Replies<svg class="i" aria-hidden="true"><use href="#i-down"/></svg></div></div>
+  </div>
+  <div class="specimen"><h3>Choices</h3>
+    <div class="line"><label class="check"><span class="box"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg></span><span>Off</span></label><label class="check on"><span class="box"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg></span><span>On</span></label><label class="check on is-focus"><span class="box"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg></span><span>Focus</span></label></div>
+    <div class="line"><label class="radio"><span class="box"></span><span>Off</span></label><label class="radio on"><span class="box"></span><span>On</span></label></div>
+    <div class="line"><label class="switch"><span class="track"></span><span>Off</span></label><label class="switch on"><span class="track"></span><span>On</span></label></div>
+    <div class="line"><div class="seg" role="group" aria-label="Example"><span class="on">Plain text</span><span>Formatted</span></div></div>
+  </div>
+  <div class="specimen"><h3>Macro chips</h3>
+    <div class="line"><span class="state">Insert</span><span class="chip insert"><svg class="i" aria-hidden="true"><use href="#i-date"/></svg>Date</span><span class="chip insert"><svg class="i" aria-hidden="true"><use href="#i-time"/></svg>Time</span><span class="chip insert"><svg class="i" aria-hidden="true"><use href="#i-snippet"/></svg>;sig</span></div>
+    <div class="line"><span class="state">Ask</span><span class="chip ask"><svg class="i" aria-hidden="true"><use href="#i-field"/></svg>First name</span><span class="chip ask"><svg class="i" aria-hidden="true"><use href="#i-area"/></svg>Notes</span><span class="chip ask"><svg class="i" aria-hidden="true"><use href="#i-choice"/></svg>Bike</span><span class="chip ask"><svg class="i" aria-hidden="true"><use href="#i-toggle"/></svg>In stock</span><span class="chip ask"><svg class="i" aria-hidden="true"><use href="#i-if"/></svg>If In stock</span><span class="chip ask"><svg class="i" aria-hidden="true"><use href="#i-if"/></svg>Else</span><span class="chip ask"><svg class="i" aria-hidden="true"><use href="#i-if"/></svg>End if</span></div>
+    <div class="line"><span class="state">Act</span><span class="chip act"><svg class="i" aria-hidden="true"><use href="#i-key"/></svg>Enter</span><span class="chip act"><svg class="i" aria-hidden="true"><use href="#i-key"/></svg>Tab ×2</span><span class="chip act"><svg class="i" aria-hidden="true"><use href="#i-wait"/></svg>Wait 0.5 s</span><span class="chip act"><svg class="i" aria-hidden="true"><use href="#i-cursor"/></svg>Cursor</span></div>
+    <div class="line"><span class="state">Read</span><span class="chip read"><svg class="i" aria-hidden="true"><use href="#i-clipboard"/></svg>Clipboard</span></div>
+    <div class="line"><span class="state">States</span><span class="chip insert is-selected"><svg class="i" aria-hidden="true"><use href="#i-date"/></svg>Selected</span><span class="chip ask is-error"><svg class="i" aria-hidden="true"><use href="#i-if"/></svg>Error</span><span class="chip">In preview</span></div>
+  </div>
+  <div class="specimen"><h3>Tags, badges, keys</h3>
+    <div class="line"><span class="tag" style="--tag:var(--color-tag-red)">urgent</span><span class="tag" style="--tag:var(--color-tag-teal)">español</span><span class="tag" style="--tag:var(--color-tag-orange)">returns</span><span class="tag">no colour</span></div>
+    <div class="line"><span class="abbr">;rlate</span><span class="badge">Off</span><span class="badge ok"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Granted</span><span class="badge warn"><svg class="i" aria-hidden="true"><use href="#i-eye"/></svg>Needs review</span><span class="badge bad"><svg class="i" aria-hidden="true"><use href="#i-warn"/></svg>Broken</span></div>
+    <div class="line">[[Mod+N]] [[Mod+Shift+S]] [[Enter]] [[Esc]] [[Tab]] [[Up]] [[Down]] <kbd>Space</kbd></div>
+  </div>
+  <div class="specimen"><h3>List rows and tree</h3>
+    <div class="rows" style="padding:0">
+      <div class="row"><div class="l1"><span class="nm">Default row</span><span class="abbr">;rty</span></div><div class="l2">Thank you for your order.</div></div>
+      <div class="row is-hover"><div class="l1"><span class="nm">Hovered</span><span class="abbr">;rhours</span></div><div class="l2">We are open Tuesday to Saturday.</div></div>
+      <div class="row" aria-selected="true"><div class="l1"><span class="nm">Selected</span><svg class="i" aria-label="Asks for values"><use href="#i-field"/></svg><span class="abbr">;rlate</span></div><div class="l2">Hi ‹First name›, thank you for your patience.</div></div>
+      <div class="row is-off"><div class="l1"><span class="nm">Switched off</span><span class="badge">Off</span><span class="abbr">;rxmas</span></div><div class="l2">The workshop is closed.</div></div>
+    </div>
+    <div class="tree">
+      <div class="tr" aria-selected="true"><svg class="i" aria-hidden="true"><use href="#i-down"/></svg><svg class="i" aria-hidden="true"><use href="#i-folder"/></svg><span class="nm">Replies</span><span class="count">42</span></div>
+      <div class="tr l2"><svg class="i" aria-hidden="true"><use href="#i-folder"/></svg><span class="nm">Returns</span><span class="count">11</span></div>
+      <div class="tr is-hover"><svg class="i" aria-hidden="true"><use href="#i-right"/></svg><svg class="i" aria-hidden="true"><use href="#i-people"/></svg><span class="nm">Shop replies (shared)</span><span class="count">19</span></div>
+    </div>
+  </div>
+  <div class="specimen"><h3>Messages</h3>
+    <div class="banner ok"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="txt">Success banner</span></div>
+    <div class="banner warn"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg><span class="txt">Warning banner</span><button class="btn" type="button">Action</button></div>
+    <div class="banner bad"><svg class="i" aria-hidden="true"><use href="#i-warn"/></svg><span class="txt">Error banner</span></div>
+    <div class="toast"><span>Saved. Type <b>;rlate</b> and a space to use it.</span></div>
+    <div class="toast"><span>Deleted “Opening hours”.</span><span class="act">Undo</span></div>
+  </div>
+  <div class="specimen full"><h3>Permission status rows</h3>
+    <div class="perm"><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-eye"/></svg></span><div class="t"><b>Input Monitoring</b><span>Lets Iamb notice when you type an abbreviation.</span></div><div class="do"><span class="st">Not granted yet</span><button class="btn" type="button">Open settings</button></div></div>
+    <div class="perm ok"><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg></span><div class="t"><b>Accessibility</b><span>Lets Iamb type your snippet for you.</span></div><div class="do"><span class="st">Granted</span></div></div>
+  </div>
+</div>

@@ -50,8 +50,10 @@
 //! its target process (`listener::target`). Its tap callback may not call into `AppKit`, so the
 //! watcher notes the process in [`FRONTMOST`](crate::listener::target::FRONTMOST): the
 //! application each activation notification names (on the main thread, while a watcher
-//! lives), and the one each look finds. When the watcher thread ends, the note is cleared, so
-//! keys are delivered without a stamp rather than with a stale one.
+//! lives), and the one each look finds, unless an activation was noted while the look was
+//! under way (that one is newer; the close-out review's C2). When the watcher thread ends,
+//! the note is cleared, so keys are delivered without a stamp rather than with a stale one.
+//! The rules of these three writes are in `listener::target`, where every system tests them.
 //!
 //! # Lifetimes
 //!
@@ -187,9 +189,7 @@ fn notify_watchers(pid: Option<u32>) {
         watcher.activated.store(true, Ordering::Release);
         watcher.wake();
     }
-    if living && pid.is_some() {
-        FRONTMOST.note(pid);
-    }
+    FRONTMOST.activated(living, pid);
 }
 
 /// The process id of the application an activation notification names.
@@ -393,11 +393,10 @@ impl Watcher {
     /// Looks at the system and reports to the sink what the tracker says is new. Asks no
     /// application anything. `true` when something was reported.
     fn look(&mut self, signal: Signal<Element>) -> bool {
-        let front = system::front();
+        // The note for the listener is compared with the activations noted meanwhile, so a
+        // newer one is not overwritten with what this look read (the close-out review's C2).
+        let front = FRONTMOST.look(system::front, |(app, _)| app.pid);
         self.front = front.as_ref().map(|(app, _)| app.pid);
-        if self.front.is_some() {
-            FRONTMOST.note(self.front);
-        }
         let seen = Seen {
             change: front.map(|(app, token)| FocusChange { app, token }),
             // A main thread that does not answer counts as "off": the inspection, which
@@ -510,7 +509,7 @@ struct Exit<'a>(&'a Shared);
 impl Drop for Exit<'_> {
     fn drop(&mut self) {
         // No watcher keeps the listener's note up to date any more (module docs).
-        FRONTMOST.note(None);
+        FRONTMOST.watcher_ended();
         self.0.mark_exited();
     }
 }

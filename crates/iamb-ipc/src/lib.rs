@@ -28,6 +28,7 @@ pub mod linux;
 pub mod log;
 pub mod messages;
 pub mod protocol;
+pub mod roles;
 pub mod secret;
 pub mod server;
 
@@ -46,6 +47,7 @@ pub use protocol::{
     DecodeError, ErrorBody, ErrorCode, Group, Hello, PROTOCOL_VERSION, Request, Response, Role,
     Welcome, Wire,
 };
+pub use roles::{CLIENT_BINARIES, RoleRefusal, check_role, role_of_binary};
 pub use secret::Secret;
 pub use server::{ConnectionWriter, HELLO_TIMEOUT, ServerConnection};
 

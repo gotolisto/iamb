@@ -9,13 +9,15 @@
 //! ```
 //!
 //! [`ServerConnection::serve`] enforces the roles: a request whose group the client's role may
-//! not call is answered with [`ErrorCode::NotPermitted`] and never reaches the handler. Every
+//! not call is answered with [`ErrorCode::NotPermitted`] and never reaches the handler. The
+//! role itself must be one the client's executable may take ([`crate::roles`]): a hello that
+//! states another is refused. Every
 //! frame is reported to the [`MessageLog`] by name, size and duration; bodies never are.
 
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use iamb_platform::{LocalStream, PeerIdentity};
+use iamb_platform::{LocalStream, PeerIdentity, PeerPolicy};
 
 use crate::error::IpcError;
 use crate::frame::{FrameError, read_frame, write_frame};
@@ -24,6 +26,7 @@ use crate::messages::{EventBody, RequestBody, ResponseBody};
 use crate::protocol::{
     ErrorBody, ErrorCode, PROTOCOL_VERSION, Request, Response, Role, Welcome, Wire,
 };
+use crate::roles::check_role;
 
 /// How long a server waits for a new connection's hello.
 pub const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
@@ -151,6 +154,34 @@ impl ServerConnection {
         log: Arc<dyn MessageLog>,
         before_welcome: impl FnOnce(&Self) -> Result<(), IpcError>,
     ) -> Result<Self, IpcError> {
+        Self::accept_for(
+            stream,
+            server_version,
+            hello_timeout,
+            log,
+            PeerPolicy::SameUser,
+            before_welcome,
+        )
+    }
+
+    /// Like [`ServerConnection::accept_with`], and the role the hello states must be one the
+    /// peer's executable may take under `policy`, the policy the endpoint verified the peer
+    /// with ([`check_role`]); otherwise the hello is refused with
+    /// [`ErrorCode::NotPermitted`]. [`accept`](Self::accept) and
+    /// [`accept_with`](Self::accept_with) check under [`PeerPolicy::SameUser`]: Iamb's own
+    /// clients are held to their roles, other programs (tests) are not.
+    ///
+    /// # Errors
+    ///
+    /// As [`ServerConnection::accept_with`].
+    pub fn accept_for(
+        stream: Box<dyn LocalStream>,
+        server_version: &str,
+        hello_timeout: Duration,
+        log: Arc<dyn MessageLog>,
+        policy: PeerPolicy,
+        before_welcome: impl FnOnce(&Self) -> Result<(), IpcError>,
+    ) -> Result<Self, IpcError> {
         let reader = stream.try_clone()?;
         let writer = ConnectionWriter {
             stream: Arc::new(Mutex::new(stream)),
@@ -169,9 +200,14 @@ impl ServerConnection {
             Ok(Wire::Hello(hello)) => {
                 conn.record_in("hello", payload.len());
                 if hello.protocol == PROTOCOL_VERSION {
-                    conn.role = hello.role;
-                    conn.client_version = hello.client_version;
-                    None
+                    match check_role(hello.role, conn.reader.peer(), policy) {
+                        Ok(()) => {
+                            conn.role = hello.role;
+                            conn.client_version = hello.client_version;
+                            None
+                        }
+                        Err(why) => Some(ErrorBody::from(why)),
+                    }
                 } else {
                     Some(ErrorBody::new(
                         ErrorCode::UnsupportedProtocol,

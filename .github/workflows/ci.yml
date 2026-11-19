@@ -30,7 +30,7 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --exclude iamb-desktop --all-targets --locked -- -D warnings
       # The OS crates are empty on Linux. Type-check and lint them for their own targets here
       # (no SDK needed), so a mistake shows in this job before the Windows and macOS legs of
       # `test` have finished building.
@@ -67,8 +67,11 @@ jobs:
       - name: Install toolchain from rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      # The UI host (`iamb-desktop`) has a job of its own, `desktop`: it needs the system web
+      # view's development files on Linux and a front-end build, and its Tauri dependencies
+      # would slow every leg here.
       - name: Build
-        run: cargo build --workspace --all-targets --locked
+        run: cargo build --workspace --exclude iamb-desktop --all-targets --locked
       # ADR-0008, check 4: the service as it ships, built on its own. In the workspace build
       # above, features that other members turn on in shared dependencies (test-only crates
       # such as iamb-testkit with `probe`) are unified into the service's dependencies; here
@@ -79,22 +82,34 @@ jobs:
         run: |
           cargo build -p iamb-service --release --locked
           cargo clippy -p iamb-service --release --locked -- -D warnings
-          if [ "$RUNNER_OS" = Linux ]; then
-            if objdump -T target/release/iamb-service | grep -E 'getaddrinfo|gethostbyname|getnameinfo'; then
-              echo "the service binary imports a name-resolution function (ADR-0008)" >&2
-              exit 1
-            fi
+      # Follow-up review N6: the service binary imports no name-resolution or HTTP function, on
+      # every OS. The import list is printed so a new import can be looked at.
+      - name: Service binary imports (ADR-0008)
+        shell: bash
+        run: |
+          rustup component add llvm-tools
+          bin="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin"
+          case "$RUNNER_OS" in
+            Linux)   "$bin/llvm-nm" -D -u target/release/iamb-service > imports.txt ;;
+            macOS)   { "$bin/llvm-nm" -u target/release/iamb-service; "$bin/llvm-objdump" --macho --dylibs-used target/release/iamb-service; } > imports.txt ;;
+            Windows) "$bin/llvm-objdump" -p target/release/iamb-service.exe > imports.txt ;;
+          esac
+          grep -Eio 'dll name: .*|^[[:space:]]*/.*dylib.*|^[[:space:]]*/.*framework.*' imports.txt | sort -u || true
+          pattern='getaddrinfo|gethostbyname|gethostbyaddr|getnameinfo|GetAddrInfo|GetNameInfo|DnsQuery|WinHttp|InternetOpen|dnsapi\.dll|winhttp\.dll|wininet\.dll|CFNetwork|Network\.framework'
+          if grep -Ei "$pattern" imports.txt; then
+            echo "the service binary imports networking (ADR-0008)" >&2
+            exit 1
           fi
       - name: Test
         if: runner.os != 'Windows'
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --exclude iamb-desktop --locked
       # Hosted Windows runners have an interactive desktop, so keyboard tests that need one
       # must run there: IAMB_REQUIRE_DESKTOP turns their "skipped, no desktop" into a failure.
       - name: Test (Windows, desktop required)
         if: runner.os == 'Windows'
         env:
           IAMB_REQUIRE_DESKTOP: "1"
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --exclude iamb-desktop --locked
       # The probe (feature `probe`): its browser page end to end on every OS, and its native
       # window on Windows (desktop required) and macOS (skipped without a window in front).
       - name: Test (probe)
@@ -111,7 +126,75 @@ jobs:
       # Runs even when a test failed, so one failing test does not hide lint errors.
       - name: Clippy (this OS)
         if: ${{ !cancelled() && runner.os != 'Linux' }}
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --exclude iamb-desktop --all-targets --locked -- -D warnings
+
+  # The UI host (apps/desktop, docs/test-strategy.md §8): the front end and the Rust crate on
+  # every OS, and the cold-open measurement. The other jobs leave the crate out.
+  desktop:
+    name: desktop (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      # Tauri 2 on Linux: the WebKitGTK web view, the tray (application indicator), SVG icons,
+      # the menu's key emulation; Xvfb for the cold-open measurement.
+      - name: Install the web view and tray libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev xvfb
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: desktop
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: apps/desktop/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+      - name: Front end (install, typecheck, unit tests, build)
+        working-directory: apps/desktop
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm typecheck
+          pnpm test
+          pnpm build
+      # `tauri/custom-protocol` embeds the built front end as a release does. The tests do not
+      # need it; one feature set for every step builds the crate once.
+      - name: Build
+        run: cargo build -p iamb-desktop --all-targets --locked --features tauri/custom-protocol
+      - name: Clippy
+        run: cargo clippy -p iamb-desktop --all-targets --locked --features tauri/custom-protocol -- -D warnings
+      - name: Test
+        run: cargo test -p iamb-desktop --locked --features tauri/custom-protocol
+      # The cold-open KPI (docs/test-strategy.md §8.1): Linux under Xvfb is held to the KPI's
+      # 400 ms; Windows and macOS print their numbers for the record (a runner's desktop is not
+      # the lab's machine) and do not fail the job.
+      - name: Cold open of the library window
+        if: ${{ !cancelled() }}
+        continue-on-error: ${{ runner.os != 'Linux' }}
+        timeout-minutes: 3
+        run: |
+          exe=target/debug/iamb-desktop
+          if [ "$RUNNER_OS" = Windows ]; then exe="$exe.exe"; fi
+          data="$RUNNER_TEMP/iamb-cold-open"
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a "$exe" --data-dir "$data" --measure-open 10 --budget-ms 800
+          else
+            "$exe" --data-dir "$data" --measure-open 10
+          fi
 
   coverage:
     name: coverage
@@ -136,7 +219,7 @@ jobs:
     name: ci-ok
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [lint, test, coverage]
+    needs: [lint, test, coverage, desktop]
     if: always()
     steps:
       - name: Require all jobs to have succeeded

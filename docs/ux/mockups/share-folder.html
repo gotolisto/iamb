@@ -1,0 +1,1188 @@
+<!doctype html>
+<html lang="en" data-os="mac">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Iamb flow 6: share a folder</title>
+<!-- Built by docs/ux/mockups/build.py from src/pages/share-folder.html. Edit the sources, then run the script. -->
+<style>
+/* Generated from docs/ux/tokens.json by docs/ux/mockups/build.py. Do not edit here. */
+:root {
+  --font-family-ui: system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --font-family-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Segoe UI Mono", Consolas, Menlo, monospace;
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 13px;
+  --font-size-lg: 15px;
+  --font-size-xl: 18px;
+  --font-size-2xl: 22px;
+  --font-size-3xl: 28px;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-line-height-xs: 1.4545;
+  --font-line-height-sm: 1.3333;
+  --font-line-height-md: 1.5385;
+  --font-line-height-lg: 1.4667;
+  --font-line-height-xl: 1.3333;
+  --font-line-height-2xl: 1.2727;
+  --font-line-height-3xl: 1.2143;
+  --type-overline: 600 11px/1.4545 var(--font-family-ui);
+  --type-overline-tracking: 0.4px;
+  --type-caption: 400 12px/1.3333 var(--font-family-ui);
+  --type-body: 400 13px/1.5385 var(--font-family-ui);
+  --type-body-strong: 600 13px/1.5385 var(--font-family-ui);
+  --type-input: 400 15px/1.4667 var(--font-family-ui);
+  --type-title: 600 18px/1.3333 var(--font-family-ui);
+  --type-heading: 600 22px/1.2727 var(--font-family-ui);
+  --type-display: 600 28px/1.2143 var(--font-family-ui);
+  --type-display-tracking: -0.2px;
+  --type-code: 400 13px/1.5385 var(--font-family-mono);
+  --type-code-small: 400 12px/1.3333 var(--font-family-mono);
+  --type-kbd: 500 11px/1.4545 var(--font-family-mono);
+  --space-0-5: 2px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-full: 999px;
+  --size-control-sm: 24px;
+  --size-control-md: 28px;
+  --size-control-lg: 36px;
+  --size-icon-sm: 16px;
+  --size-icon-md: 20px;
+  --size-sidebar: 220px;
+  --size-list: 320px;
+  --size-form-panel: 440px;
+  --size-palette: 620px;
+  --size-focus-ring: 2px;
+  --size-border: 1px;
+  --duration-instant: 0ms;
+  --duration-fast: 80ms;
+  --duration-base: 140ms;
+  --duration-slow: 220ms;
+  --easing-standard: cubic-bezier(0.2, 0, 0, 1);
+  --easing-exit: cubic-bezier(0.4, 0, 1, 1);
+  --color-bg-app: #F6F6F9;
+  --color-bg-surface: #FFFFFF;
+  --color-bg-subtle: #EDEEF3;
+  --color-bg-hover: #E9EAF1;
+  --color-bg-selected: #E1E4FA;
+  --color-bg-highlight: #FFE9A8;
+  --color-bg-inverse: #23252E;
+  --color-bg-scrim: rgb(22 24 31 / 0.4);
+  --color-text-primary: #16181F;
+  --color-text-secondary: #535868;
+  --color-text-disabled: #8C90A0;
+  --color-text-on-accent: #FFFFFF;
+  --color-text-on-inverse: #F1F2F6;
+  --color-text-on-danger: #FFFFFF;
+  --color-border-subtle: #DEE0E8;
+  --color-border-control: #7C8192;
+  --color-border-focus: #3B45C4;
+  --color-accent-solid: #3B45C4;
+  --color-accent-solid-hover: #2F38A8;
+  --color-accent-text: #3640BD;
+  --color-status-success-text: #176B3A;
+  --color-status-success-bg: #E3F4EA;
+  --color-status-warning-text: #7A4A00;
+  --color-status-warning-bg: #FCF0D6;
+  --color-status-danger-text: #B3261E;
+  --color-status-danger-bg: #FCE8E6;
+  --color-status-danger-solid: #B3261E;
+  --color-macro-insert-text: #2C3599;
+  --color-macro-insert-bg: #E4E6FB;
+  --color-macro-ask-text: #0B5D54;
+  --color-macro-ask-bg: #D9F2EE;
+  --color-macro-act-text: #8F1D57;
+  --color-macro-act-bg: #FBE3EF;
+  --color-macro-read-text: #7A4A00;
+  --color-macro-read-bg: #FBEBCB;
+  --color-tag-red: #C4372F;
+  --color-tag-orange: #B85C00;
+  --color-tag-yellow: #8F7200;
+  --color-tag-green: #2B7F47;
+  --color-tag-teal: #0F7C80;
+  --color-tag-blue: #2F6BD0;
+  --color-tag-purple: #7D4CC2;
+  --color-tag-grey: #6A6F7E;
+  --shadow-popover: 0px 2px 8px 0px rgb(22 24 31 / 0.12), 0px 0px 0px 1px rgb(22 24 31 / 0.08);
+  --shadow-panel: 0px 12px 32px 0px rgb(22 24 31 / 0.18), 0px 0px 0px 1px rgb(22 24 31 / 0.08);
+  --shadow-dialog: 0px 24px 64px 0px rgb(22 24 31 / 0.24), 0px 0px 0px 1px rgb(22 24 31 / 0.08);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-bg-app: #121318;
+    --color-bg-surface: #1A1C23;
+    --color-bg-subtle: #262933;
+    --color-bg-hover: #2A2D38;
+    --color-bg-selected: #2B3060;
+    --color-bg-highlight: #5A4A12;
+    --color-bg-inverse: #E6E8F0;
+    --color-bg-scrim: rgb(0 0 0 / 0.6);
+    --color-text-primary: #ECEEF5;
+    --color-text-secondary: #A8ADBD;
+    --color-text-disabled: #6B7082;
+    --color-text-on-accent: #14163A;
+    --color-text-on-inverse: #16181F;
+    --color-text-on-danger: #3B0D0A;
+    --color-border-subtle: #30333F;
+    --color-border-control: #767C90;
+    --color-border-focus: #9BA4FF;
+    --color-accent-solid: #9BA4FF;
+    --color-accent-solid-hover: #B4BBFF;
+    --color-accent-text: #A9B1FF;
+    --color-status-success-text: #7ED9A0;
+    --color-status-success-bg: #15301F;
+    --color-status-warning-text: #F2C063;
+    --color-status-warning-bg: #3A2C0E;
+    --color-status-danger-text: #FF9A91;
+    --color-status-danger-bg: #3F1A17;
+    --color-status-danger-solid: #FF9A91;
+    --color-macro-insert-text: #C2C8FF;
+    --color-macro-insert-bg: #2A2F5E;
+    --color-macro-ask-text: #8FE0D3;
+    --color-macro-ask-bg: #123A36;
+    --color-macro-act-text: #F7A8CE;
+    --color-macro-act-bg: #4A1D36;
+    --color-macro-read-text: #F0C674;
+    --color-macro-read-bg: #40300F;
+    --color-tag-red: #FF8A80;
+    --color-tag-orange: #FFA65C;
+    --color-tag-yellow: #E6C84F;
+    --color-tag-green: #74D197;
+    --color-tag-teal: #5CD0D3;
+    --color-tag-blue: #8AB4FF;
+    --color-tag-purple: #C3A1FF;
+    --color-tag-grey: #A8ADBD;
+    --shadow-popover: 0px 2px 8px 0px rgb(0 0 0 / 0.26), 0px 0px 0px 1px rgb(0 0 0 / 0.6);
+    --shadow-panel: 0px 12px 32px 0px rgb(0 0 0 / 0.4), 0px 0px 0px 1px rgb(0 0 0 / 0.6);
+    --shadow-dialog: 0px 24px 64px 0px rgb(0 0 0 / 0.53), 0px 0px 0px 1px rgb(0 0 0 / 0.6);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --color-bg-app: #121318;
+  --color-bg-surface: #1A1C23;
+  --color-bg-subtle: #262933;
+  --color-bg-hover: #2A2D38;
+  --color-bg-selected: #2B3060;
+  --color-bg-highlight: #5A4A12;
+  --color-bg-inverse: #E6E8F0;
+  --color-bg-scrim: rgb(0 0 0 / 0.6);
+  --color-text-primary: #ECEEF5;
+  --color-text-secondary: #A8ADBD;
+  --color-text-disabled: #6B7082;
+  --color-text-on-accent: #14163A;
+  --color-text-on-inverse: #16181F;
+  --color-text-on-danger: #3B0D0A;
+  --color-border-subtle: #30333F;
+  --color-border-control: #767C90;
+  --color-border-focus: #9BA4FF;
+  --color-accent-solid: #9BA4FF;
+  --color-accent-solid-hover: #B4BBFF;
+  --color-accent-text: #A9B1FF;
+  --color-status-success-text: #7ED9A0;
+  --color-status-success-bg: #15301F;
+  --color-status-warning-text: #F2C063;
+  --color-status-warning-bg: #3A2C0E;
+  --color-status-danger-text: #FF9A91;
+  --color-status-danger-bg: #3F1A17;
+  --color-status-danger-solid: #FF9A91;
+  --color-macro-insert-text: #C2C8FF;
+  --color-macro-insert-bg: #2A2F5E;
+  --color-macro-ask-text: #8FE0D3;
+  --color-macro-ask-bg: #123A36;
+  --color-macro-act-text: #F7A8CE;
+  --color-macro-act-bg: #4A1D36;
+  --color-macro-read-text: #F0C674;
+  --color-macro-read-bg: #40300F;
+  --color-tag-red: #FF8A80;
+  --color-tag-orange: #FFA65C;
+  --color-tag-yellow: #E6C84F;
+  --color-tag-green: #74D197;
+  --color-tag-teal: #5CD0D3;
+  --color-tag-blue: #8AB4FF;
+  --color-tag-purple: #C3A1FF;
+  --color-tag-grey: #A8ADBD;
+  --shadow-popover: 0px 2px 8px 0px rgb(0 0 0 / 0.26), 0px 0px 0px 1px rgb(0 0 0 / 0.6);
+  --shadow-panel: 0px 12px 32px 0px rgb(0 0 0 / 0.4), 0px 0px 0px 1px rgb(0 0 0 / 0.6);
+  --shadow-dialog: 0px 24px 64px 0px rgb(0 0 0 / 0.53), 0px 0px 0px 1px rgb(0 0 0 / 0.6);
+  color-scheme: dark;
+}
+/* Mock-up styles. Two parts: (1) the review page around the screens, (2) the components of
+   docs/ux/design-system.md, drawn with the tokens above. Mock-only colours (the desktop behind a
+   window, the operating system's own chrome) are the --mock-* properties; they are not tokens. */
+
+:root {
+  --mock-desk: #cfd3e1;
+  --mock-desk-ink: #454a5c;
+  --mock-mac-close: #ec6a5e;
+  --mock-mac-min: #f4bf4f;
+  --mock-mac-max: #61c554;
+  --mock-os-bar: rgb(246 246 249 / 0.82);
+  --mock-note: #fff6d6;
+  --mock-note-ink: #5d4500;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --mock-desk: #07080b;
+    --mock-desk-ink: #a8adbd;
+    --mock-os-bar: rgb(26 28 35 / 0.82);
+    --mock-note: #3a2f0c;
+    --mock-note-ink: #f3d98a;
+  }
+}
+:root[data-theme="dark"] {
+  --mock-desk: #07080b;
+  --mock-desk-ink: #a8adbd;
+  --mock-os-bar: rgb(26 28 35 / 0.82);
+  --mock-note: #3a2f0c;
+  --mock-note-ink: #f3d98a;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--color-bg-app);
+  color: var(--color-text-primary);
+  font: var(--type-body);
+  overflow-x: hidden;
+}
+[hidden] { display: none !important; }
+h1, h2, h3, p, figure, ul, ol, dl, dd { margin: 0; }
+ul, ol { padding: 0; list-style: none; }
+button, input, textarea, select { font: inherit; color: inherit; }
+a { color: var(--color-accent-text); }
+:focus-visible { outline: var(--size-focus-ring) solid var(--color-border-focus); outline-offset: 2px; }
+svg.i {
+  width: var(--size-icon-sm); height: var(--size-icon-sm); flex: none;
+  fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round;
+}
+svg.i.lg { width: var(--size-icon-md); height: var(--size-icon-md); }
+code, .mono { font-family: var(--font-family-mono); font-size: 0.95em; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* ---------------------------------------------------------------------------------------------
+   1. The review page
+   --------------------------------------------------------------------------------------------- */
+
+.page-head, main, .page-foot {
+  max-width: 1280px; margin-inline: auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.page-head {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-5);
+  padding-block: var(--space-4);
+}
+.brand { display: inline-flex; align-items: center; gap: var(--space-2); color: inherit; text-decoration: none; font: var(--type-title); }
+.brand .i { width: 22px; height: 22px; color: var(--color-accent-text); }
+.page-head nav { display: flex; flex-wrap: wrap; gap: var(--space-1); flex: 1 1 320px; min-width: 0; }
+.page-head nav a {
+  padding: var(--space-1) var(--space-2); border-radius: var(--radius-md);
+  color: var(--color-text-secondary); text-decoration: none; white-space: nowrap;
+}
+.page-head nav a:hover { background: var(--color-bg-hover); color: var(--color-text-primary); }
+.page-head nav a[aria-current="page"] { background: var(--color-bg-selected); color: var(--color-text-primary); font-weight: var(--font-weight-semibold); }
+.switches { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.page-foot { padding-block: var(--space-8); color: var(--color-text-secondary); font: var(--type-caption); }
+
+.intro { display: grid; gap: var(--space-3); padding-block: var(--space-4) var(--space-6); max-width: 76ch; }
+.intro h1 { font: var(--type-display); letter-spacing: var(--type-display-tracking); text-wrap: balance; }
+.intro p { font-size: var(--font-size-lg); line-height: var(--font-line-height-lg); color: var(--color-text-secondary); }
+.facts { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.fact {
+  display: inline-flex; gap: var(--space-2); align-items: baseline; padding: var(--space-1) var(--space-3);
+  border: var(--size-border) solid var(--color-border-subtle); border-radius: var(--radius-full);
+  background: var(--color-bg-surface); font: var(--type-caption);
+}
+.fact b { font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; }
+.legend { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); font: var(--type-caption); color: var(--color-text-secondary); }
+.legend span { display: inline-flex; align-items: center; gap: var(--space-2); }
+
+.section-title { font: var(--type-heading); padding-block: var(--space-6) var(--space-3); text-wrap: balance; }
+.section-lead { color: var(--color-text-secondary); max-width: 76ch; padding-bottom: var(--space-4); }
+
+.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 500px), 1fr)); gap: var(--space-6); align-items: start; }
+.step { display: grid; gap: var(--space-3); min-width: 0; }
+.step.wide { grid-column: 1 / -1; }
+.step-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.step-head .n {
+  display: inline-grid; place-items: center; min-width: 24px; height: 24px; padding-inline: 6px;
+  border-radius: var(--radius-full); background: var(--color-text-primary); color: var(--color-bg-surface);
+  font: var(--type-kbd); font-size: var(--font-size-sm);
+}
+.step-head h3 { font: var(--type-body-strong); font-size: var(--font-size-lg); }
+.step-head .os-note { margin-left: auto; }
+.stage {
+  position: relative; display: grid; gap: var(--space-4); justify-items: center; align-content: center;
+  min-height: 220px; padding: var(--space-6) var(--space-4);
+  background: var(--mock-desk); border-radius: var(--radius-lg); overflow-x: auto;
+}
+.stage.top { align-content: start; }
+.stage.pair { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+@media (max-width: 760px) { .stage.pair { grid-template-columns: minmax(0, 1fr); } }
+.step:not(.wide) > .stage.pair { grid-template-columns: minmax(0, 1fr); }
+.stage > * { max-width: 100%; }
+.stage .cap { font: var(--type-overline); letter-spacing: var(--type-overline-tracking); text-transform: uppercase; color: var(--mock-desk-ink); }
+.stage .col { display: grid; gap: var(--space-2); justify-items: center; min-width: 0; width: 100%; }
+.callout {
+  justify-self: stretch; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md);
+  background: var(--mock-note); color: var(--mock-note-ink); font: var(--type-caption);
+}
+.notes { display: grid; gap: var(--space-2); }
+.notes > div { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: var(--space-3); align-items: baseline; }
+.notes dt { font: var(--type-overline); letter-spacing: var(--type-overline-tracking); text-transform: uppercase; color: var(--color-text-secondary); }
+.notes dd { overflow-wrap: anywhere; }
+.msg {
+  font: var(--type-code-small); padding: 1px 5px; border-radius: var(--radius-sm);
+  background: var(--color-bg-subtle); color: var(--color-text-primary); overflow-wrap: anywhere;
+  box-decoration-break: clone; -webkit-box-decoration-break: clone;
+}
+.msg.todo { background: var(--color-status-warning-bg); color: var(--color-status-warning-text); }
+html[data-os="mac"] .only-win, html[data-os="win"] .only-mac { display: none; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: var(--space-4); }
+.card {
+  display: grid; gap: var(--space-2); align-content: start; padding: var(--space-4);
+  background: var(--color-bg-surface); border: var(--size-border) solid var(--color-border-subtle); border-radius: var(--radius-lg);
+  color: inherit; text-decoration: none;
+}
+a.card:hover { border-color: var(--color-border-control); }
+.card h3 { font: var(--type-title); }
+.card p { color: var(--color-text-secondary); }
+.card .n { font: var(--type-kbd); color: var(--color-accent-text); }
+
+.gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: var(--space-4); }
+.specimen {
+  display: grid; gap: var(--space-3); align-content: start; padding: var(--space-4); min-width: 0;
+  background: var(--color-bg-surface); border: var(--size-border) solid var(--color-border-subtle); border-radius: var(--radius-lg);
+}
+.specimen h3 { font: var(--type-overline); letter-spacing: var(--type-overline-tracking); text-transform: uppercase; color: var(--color-text-secondary); }
+.specimen .line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.specimen .state { font: var(--type-caption); color: var(--color-text-secondary); min-width: 64px; }
+.swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: var(--space-2); }
+.swatch { display: grid; gap: var(--space-1); font: var(--type-caption); color: var(--color-text-secondary); min-width: 0; }
+.swatch i { height: 36px; border-radius: var(--radius-md); border: var(--size-border) solid var(--color-border-subtle); }
+.swatch span { overflow-wrap: anywhere; }
+
+/* ---------------------------------------------------------------------------------------------
+   2. Windows and operating-system chrome
+   --------------------------------------------------------------------------------------------- */
+
+.win {
+  display: grid; grid-template-rows: auto minmax(0, 1fr); width: 100%; text-align: left;
+  background: var(--color-bg-surface); border-radius: var(--radius-lg); box-shadow: var(--shadow-panel); overflow: hidden;
+}
+.win[data-os="win"] { border-radius: 8px; }
+.win-bar {
+  position: relative; display: flex; align-items: center; justify-content: center; gap: var(--space-2);
+  height: 36px; padding-inline: var(--space-3); background: var(--color-bg-app);
+  border-bottom: var(--size-border) solid var(--color-border-subtle); font: var(--type-body-strong); color: var(--color-text-secondary);
+}
+.win-bar .title { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.win-bar::before {
+  content: ""; position: absolute; left: 14px; top: 12px; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--mock-mac-close); box-shadow: 20px 0 0 var(--mock-mac-min), 40px 0 0 var(--mock-mac-max);
+}
+.win-bar::after { content: none; }
+.win[data-os="win"] .win-bar { justify-content: flex-start; height: 32px; font-weight: var(--font-weight-regular); }
+.win[data-os="win"] .win-bar::before { content: none; }
+.win[data-os="win"] .win-bar::after {
+  content: "—\2003\2003▢\2003\2003✕"; position: absolute; right: 14px; top: 0; line-height: 32px;
+  font-size: 11px; color: var(--color-text-secondary); letter-spacing: 0;
+}
+.win[data-os="mac"] .win-bar .title { padding-inline: 64px; }
+.win[data-os="win"] .win-bar .title { padding-right: 110px; }
+.win.w-sm { max-width: 420px; }
+.win.w-md { max-width: 560px; }
+.win.w-lg { max-width: 760px; }
+.win.w-xl { max-width: 1040px; min-width: 820px; }
+.win-body { min-width: 0; }
+
+/* Another application, where the user is typing. */
+.host .win-bar { background: var(--color-bg-surface); }
+.host .doc { display: grid; gap: var(--space-2); padding: var(--space-4); font-size: var(--font-size-lg); line-height: var(--font-line-height-lg); min-height: 150px; align-content: start; }
+.host .doc .hdr { display: flex; gap: var(--space-2); padding-bottom: var(--space-2); border-bottom: var(--size-border) solid var(--color-border-subtle); color: var(--color-text-secondary); font: var(--type-body); }
+.host .doc .hdr b { color: var(--color-text-primary); font-weight: var(--font-weight-regular); }
+.caret { display: inline-block; width: 1.5px; height: 1.15em; margin-inline: 1px; vertical-align: text-bottom; background: var(--color-text-primary); }
+.typed { border-bottom: 2px dotted var(--color-accent-text); }
+.typed-in { background: var(--color-bg-highlight); border-radius: 2px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.term { font-family: var(--font-family-mono); font-size: var(--font-size-md); }
+.pwd { letter-spacing: 3px; }
+
+/* Menu bar (macOS) and taskbar (Windows). */
+.os-strip {
+  display: flex; align-items: center; gap: var(--space-3); width: 100%; height: 26px; padding-inline: var(--space-3);
+  background: var(--mock-os-bar); border-radius: var(--radius-md); color: var(--color-text-primary); font: var(--type-caption);
+}
+.os-strip .sp { flex: 1; }
+.os-strip .tray-icon { display: inline-grid; place-items: center; width: 26px; height: 22px; border-radius: var(--radius-sm); }
+.os-strip .tray-icon.open { background: var(--color-bg-selected); }
+.os-strip.taskbar { height: 40px; }
+.tray-icon { position: relative; }
+.tray-icon .dot { position: absolute; right: 2px; bottom: 2px; width: 7px; height: 7px; border-radius: 50%; background: var(--color-status-warning-text); border: 1.5px solid var(--color-bg-surface); }
+.tray-icon.paused .i { opacity: 0.45; }
+.tray-states { display: flex; flex-wrap: wrap; gap: var(--space-4); justify-content: center; }
+.tray-state { display: grid; justify-items: center; gap: var(--space-1); font: var(--type-caption); color: var(--mock-desk-ink); }
+.tray-state .tray-icon { display: inline-grid; place-items: center; width: 34px; height: 28px; border-radius: var(--radius-md); background: var(--mock-os-bar); color: var(--color-text-primary); }
+
+/* ---------------------------------------------------------------------------------------------
+   3. Components
+   --------------------------------------------------------------------------------------------- */
+
+/* Buttons */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); flex: none;
+  height: var(--size-control-md); padding: 0 var(--space-3); border: 0; border-radius: var(--radius-md);
+  background: var(--color-bg-subtle); color: var(--color-text-primary); font: var(--type-body); font-weight: var(--font-weight-medium);
+  white-space: nowrap; cursor: default; text-decoration: none;
+  transition: background-color var(--duration-fast) var(--easing-standard);
+}
+.btn:hover, .btn.is-hover { background: var(--color-bg-hover); }
+.btn.primary { background: var(--color-accent-solid); color: var(--color-text-on-accent); }
+.btn.primary:hover, .btn.primary.is-hover { background: var(--color-accent-solid-hover); }
+.btn.danger { background: var(--color-status-danger-solid); color: var(--color-text-on-danger); }
+.btn.ghost { background: transparent; }
+.btn.ghost:hover, .btn.ghost.is-hover { background: var(--color-bg-hover); }
+.btn.link { background: transparent; color: var(--color-accent-text); padding-inline: var(--space-1); }
+.btn.sm { height: var(--size-control-sm); padding-inline: var(--space-2); font-size: var(--font-size-sm); }
+.btn.lg { height: var(--size-control-lg); padding-inline: var(--space-4); }
+.btn.icon { width: var(--size-control-md); padding: 0; }
+.btn.icon.sm { width: var(--size-control-sm); }
+.btn[disabled], .btn.is-disabled { background: var(--color-bg-subtle); color: var(--color-text-disabled); }
+.is-focus { outline: var(--size-focus-ring) solid var(--color-border-focus); outline-offset: 2px; }
+.actions { display: flex; flex-wrap: wrap; gap: var(--space-2); justify-content: flex-end; align-items: center; }
+.actions .grow { flex: 1 1 auto; min-width: 0; }
+/* Keyed to the component's own data-os, not the page's, so a frame fixed to one system keeps its order. */
+:is(.win, .panel, .dialog)[data-os="win"] .actions :is(.primary, .danger) { order: -1; }
+:is(.win, .panel, .dialog)[data-os="win"] .actions .grow { order: -2; }
+
+/* Keyboard hint badge */
+kbd, .kbd {
+  display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px; flex: none;
+  border-radius: var(--radius-sm); background: var(--color-bg-subtle); color: var(--color-text-secondary);
+  box-shadow: inset 0 -1px 0 var(--color-border-control); font: var(--type-kbd); white-space: nowrap;
+}
+.keys { display: inline-flex; gap: 3px; align-items: center; vertical-align: middle; }
+kbd { margin-inline: 1px; vertical-align: middle; }
+.btn.primary kbd, .btn.primary .kbd { background: transparent; color: inherit; box-shadow: inset 0 0 0 1px currentColor; opacity: 0.85; }
+
+/* Inputs */
+.field { display: grid; gap: var(--space-1); min-width: 0; }
+.field > label, .field > .label { font: var(--type-body); font-weight: var(--font-weight-medium); display: flex; gap: var(--space-2); align-items: baseline; }
+.field .opt { font: var(--type-caption); color: var(--color-text-secondary); font-weight: var(--font-weight-regular); }
+.field .help { font: var(--type-caption); color: var(--color-text-secondary); }
+.field .err, .field .warnmsg { display: flex; gap: var(--space-1); align-items: flex-start; font: var(--type-caption); }
+.field .err { color: var(--color-status-danger-text); }
+.field .warnmsg { color: var(--color-status-warning-text); }
+.field .err .i, .field .warnmsg .i { width: 14px; height: 14px; margin-top: 1px; }
+.input, .select, .textarea {
+  display: flex; align-items: center; gap: var(--space-2); width: 100%; min-width: 0; min-height: var(--size-control-md);
+  padding: 0 var(--space-2); border: var(--size-border) solid var(--color-border-control); border-radius: var(--radius-md);
+  background: var(--color-bg-surface); color: var(--color-text-primary); font: var(--type-body);
+}
+.input.lg, .select.lg, .textarea.lg { min-height: var(--size-control-lg); padding-inline: var(--space-3); font: var(--type-input); }
+.input.mono, .textarea.mono { font-family: var(--font-family-mono); }
+.textarea { align-items: flex-start; padding-block: var(--space-2); white-space: pre-wrap; overflow-wrap: anywhere; display: block; }
+.select { justify-content: space-between; }
+.select .i { color: var(--color-text-secondary); }
+.input .ph, .textarea .ph { color: var(--color-text-secondary); }
+.input.is-focus, .textarea.is-focus, .select.is-focus { outline-offset: 1px; }
+.input.is-error, .textarea.is-error { border-color: var(--color-status-danger-text); box-shadow: inset 0 0 0 1px var(--color-status-danger-text); }
+.input.is-disabled { background: var(--color-bg-subtle); color: var(--color-text-disabled); border-color: var(--color-border-subtle); }
+.sel { background: var(--color-bg-selected); }
+
+.check, .radio { display: inline-flex; align-items: flex-start; gap: var(--space-2); }
+.check .box, .radio .box {
+  display: inline-grid; place-items: center; width: 16px; height: 16px; margin-top: 2px; flex: none;
+  border: var(--size-border) solid var(--color-border-control); border-radius: var(--radius-sm); background: var(--color-bg-surface);
+}
+.radio .box { border-radius: 50%; }
+.check.on .box { background: var(--color-accent-solid); border-color: var(--color-accent-solid); color: var(--color-text-on-accent); }
+.check .box .i { width: 12px; height: 12px; stroke-width: 2.2; visibility: hidden; }
+.check.on .box .i { visibility: visible; }
+.radio.on .box { border-color: var(--color-accent-solid); border-width: 5px; }
+.switch { display: inline-flex; align-items: center; gap: var(--space-2); }
+.switch .track {
+  position: relative; width: 30px; height: 18px; flex: none; border-radius: var(--radius-full);
+  background: var(--color-bg-surface); border: var(--size-border) solid var(--color-border-control);
+}
+.switch .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--color-border-control); }
+.switch.on .track { background: var(--color-accent-solid); border-color: var(--color-accent-solid); }
+.switch.on .track::after { left: 14px; background: var(--color-text-on-accent); }
+
+.seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: var(--radius-md); background: var(--color-bg-subtle); max-width: 100%; }
+.seg > * {
+  display: inline-flex; align-items: center; gap: var(--space-1); height: var(--size-control-sm); padding: 0 var(--space-2);
+  border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--color-text-secondary);
+  font: var(--type-caption); font-weight: var(--font-weight-medium); white-space: nowrap; cursor: default;
+}
+.seg > [aria-pressed="true"], .seg > .on { background: var(--color-bg-surface); color: var(--color-text-primary); box-shadow: var(--shadow-popover); }
+
+/* Chips, tags, badges */
+.chip {
+  display: inline-flex; align-items: center; gap: 3px; height: 20px; padding: 0 6px 0 4px; vertical-align: middle;
+  border-radius: var(--radius-sm); background: var(--color-bg-subtle); color: var(--color-text-secondary);
+  font: var(--type-caption); font-weight: var(--font-weight-medium); white-space: nowrap;
+}
+.chip .i { width: 13px; height: 13px; }
+.chip.insert { background: var(--color-macro-insert-bg); color: var(--color-macro-insert-text); }
+.chip.ask { background: var(--color-macro-ask-bg); color: var(--color-macro-ask-text); }
+.chip.act { background: var(--color-macro-act-bg); color: var(--color-macro-act-text); }
+.chip.read { background: var(--color-macro-read-bg); color: var(--color-macro-read-text); }
+.chip.is-selected { outline: var(--size-focus-ring) solid var(--color-border-focus); outline-offset: 1px; }
+.chip.is-error { box-shadow: inset 0 0 0 1.5px var(--color-status-danger-text); }
+.tag {
+  display: inline-flex; align-items: center; gap: var(--space-1); height: 20px; padding: 0 var(--space-2); vertical-align: middle;
+  border-radius: var(--radius-full); background: var(--color-bg-subtle); color: var(--color-text-primary); font: var(--type-caption); white-space: nowrap;
+}
+.tag::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--tag, var(--color-tag-grey)); }
+.abbr {
+  display: inline-flex; align-items: center; height: 20px; padding: 0 6px; flex: none; vertical-align: middle;
+  border-radius: var(--radius-sm); background: var(--color-bg-subtle); color: var(--color-text-primary); font: var(--type-code-small); white-space: nowrap;
+}
+.badge {
+  display: inline-flex; align-items: center; gap: var(--space-1); height: 20px; padding: 0 var(--space-2); flex: none;
+  border-radius: var(--radius-full); background: var(--color-bg-subtle); color: var(--color-text-secondary);
+  font: var(--type-caption); font-weight: var(--font-weight-medium); white-space: nowrap;
+}
+.badge .i { width: 12px; height: 12px; }
+.badge.ok { background: var(--color-status-success-bg); color: var(--color-status-success-text); }
+.badge.warn { background: var(--color-status-warning-bg); color: var(--color-status-warning-text); }
+.badge.bad { background: var(--color-status-danger-bg); color: var(--color-status-danger-text); }
+.count { color: var(--color-text-secondary); font: var(--type-caption); font-variant-numeric: tabular-nums; }
+
+/* Banners, toasts, notices */
+.banner {
+  display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); align-items: center; padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md); background: var(--color-bg-subtle); color: var(--color-text-primary);
+}
+.banner > .i { align-self: flex-start; margin-top: 2px; }
+.banner .txt { flex: 1 1 200px; min-width: 0; }
+.banner.ok { background: var(--color-status-success-bg); color: var(--color-status-success-text); }
+.banner.warn { background: var(--color-status-warning-bg); color: var(--color-status-warning-text); }
+.banner.bad { background: var(--color-status-danger-bg); color: var(--color-status-danger-text); }
+.banner .btn { background: var(--color-bg-surface); color: var(--color-text-primary); }
+.toast {
+  display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); max-width: 420px; padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md); background: var(--color-bg-inverse); color: var(--color-text-on-inverse); box-shadow: var(--shadow-popover);
+}
+.toast .act { font-weight: var(--font-weight-semibold); text-decoration: underline; }
+.toast kbd, .toast .kbd { background: transparent; color: inherit; box-shadow: inset 0 0 0 1px currentColor; }
+.notice { display: flex; gap: var(--space-3); align-items: flex-start; max-width: 380px; padding: var(--space-3) var(--space-4); border-radius: var(--radius-lg); }
+.toast.notice { flex-wrap: nowrap; }
+.notice > div { min-width: 0; }
+.notice .i { margin-top: 2px; }
+.notice b { display: block; font-weight: var(--font-weight-semibold); }
+.notice span { opacity: 0.86; }
+
+/* Menus and popovers */
+.menu {
+  display: grid; width: 268px; max-width: 100%; padding: var(--space-1); text-align: left;
+  background: var(--color-bg-surface); border-radius: var(--radius-lg); box-shadow: var(--shadow-popover);
+}
+.menu .mi { display: flex; align-items: center; gap: var(--space-2); min-height: var(--size-control-md); padding: 0 var(--space-2); border-radius: var(--radius-md); }
+.menu .mi .grow { flex: 1; min-width: 0; }
+.menu .mi.on { background: var(--color-bg-hover); }
+.menu .mi.is-disabled { color: var(--color-text-disabled); }
+.menu .mi .i { color: var(--color-text-secondary); }
+.menu .head { display: flex; gap: var(--space-2); align-items: center; padding: var(--space-2); }
+.menu .head .st { display: grid; }
+.menu .head small { font: var(--type-caption); color: var(--color-text-secondary); }
+.menu hr { border: 0; border-top: var(--size-border) solid var(--color-border-subtle); margin: var(--space-1) 0; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--color-status-success-text); }
+.dot.warn { background: var(--color-status-warning-text); }
+.dot.off { background: var(--color-text-disabled); }
+
+/* Dialog */
+.dialog {
+  display: grid; gap: var(--space-4); width: 100%; max-width: 480px; padding: var(--space-5); text-align: left;
+  background: var(--color-bg-surface); border-radius: var(--radius-lg); box-shadow: var(--shadow-dialog);
+}
+.dialog.w { max-width: 620px; }
+.dialog h4 { margin: 0; font: var(--type-title); text-wrap: balance; }
+.dialog .body { display: grid; gap: var(--space-3); min-width: 0; }
+.dialog .body p { color: var(--color-text-secondary); }
+.scrim { display: grid; place-items: center; padding: var(--space-5) var(--space-3); background: var(--color-bg-scrim); }
+
+/* Library window */
+.lib { display: grid; grid-template-columns: var(--size-sidebar) var(--size-list) minmax(0, 1fr); min-height: 430px; }
+.lib.two { grid-template-columns: var(--size-sidebar) minmax(0, 1fr); }
+.side { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: var(--space-2); padding: var(--space-2); background: var(--color-bg-app); border-right: var(--size-border) solid var(--color-border-subtle); min-width: 0; }
+.side .grp { font: var(--type-overline); letter-spacing: var(--type-overline-tracking); text-transform: uppercase; color: var(--color-text-secondary); padding: var(--space-3) var(--space-2) var(--space-1); }
+.tree { display: grid; align-content: start; }
+.tr {
+  display: flex; align-items: center; gap: var(--space-2); height: var(--size-control-md); padding: 0 var(--space-2);
+  border-radius: var(--radius-md); min-width: 0; white-space: nowrap;
+}
+.tr .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tr .i { color: var(--color-text-secondary); }
+.tr.l2 { padding-left: var(--space-6); }
+.tr[aria-selected="true"] { background: var(--color-bg-selected); font-weight: var(--font-weight-semibold); }
+.tr.is-hover { background: var(--color-bg-hover); }
+.tr .tagdot { width: 8px; height: 8px; margin: 0 4px; border-radius: 50%; background: var(--tag, var(--color-tag-grey)); flex: none; }
+.side .foot { display: grid; gap: 2px; padding-top: var(--space-2); border-top: var(--size-border) solid var(--color-border-subtle); }
+.status-line { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-2); font: var(--type-caption); color: var(--color-text-secondary); }
+
+.list { display: grid; grid-template-rows: auto minmax(0, 1fr); border-right: var(--size-border) solid var(--color-border-subtle); min-width: 0; }
+.list-head { display: flex; gap: var(--space-2); align-items: center; padding: var(--space-2); border-bottom: var(--size-border) solid var(--color-border-subtle); }
+.list-head .input { flex: 1; }
+.rows { display: grid; align-content: start; padding: var(--space-1); }
+.row { display: grid; gap: 2px; padding: var(--space-2); border-radius: var(--radius-md); min-width: 0; }
+.row .l1 { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.row .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--font-weight-medium); }
+.row .l2 { color: var(--color-text-secondary); font: var(--type-caption); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .l1 > .i { color: var(--color-text-secondary); width: 14px; height: 14px; }
+.row[aria-selected="true"] { background: var(--color-bg-selected); }
+.row.is-hover { background: var(--color-bg-hover); }
+.row.is-off .nm, .row.is-off .abbr { color: var(--color-text-secondary); text-decoration: line-through; }
+mark { background: var(--color-bg-highlight); color: var(--color-text-primary); font-weight: var(--font-weight-semibold); border-radius: 2px; }
+
+.editor { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; }
+.ed-head { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; padding: var(--space-2) var(--space-4); border-bottom: var(--size-border) solid var(--color-border-subtle); min-height: 45px; }
+.ed-head .ttl { flex: 1 1 120px; min-width: 0; font: var(--type-body-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed-body { display: grid; gap: var(--space-4); align-content: start; padding: var(--space-4); min-width: 0; }
+.ed-foot { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); align-items: center; padding: var(--space-2) var(--space-4); border-top: var(--size-border) solid var(--color-border-subtle); color: var(--color-text-secondary); font: var(--type-caption); }
+.grid2 { align-items: start; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: var(--space-3) var(--space-4); }
+.tpl {
+  min-height: 112px; padding: var(--space-2) var(--space-3); border: var(--size-border) solid var(--color-border-control); border-radius: var(--radius-md);
+  background: var(--color-bg-surface); font: var(--type-body); line-height: 24px; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.tpl.is-focus { outline-offset: 1px; }
+.tpl-bar { display: flex; flex-wrap: wrap; gap: var(--space-1); align-items: center; }
+.tpl-bar .sep { width: 1px; height: 16px; background: var(--color-border-subtle); margin-inline: var(--space-1); }
+.preview {
+  display: grid; gap: var(--space-2); padding: var(--space-3); border-radius: var(--radius-md); background: var(--color-bg-subtle);
+}
+.preview .out { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 22px; }
+.preview .ovl, .ovl { font: var(--type-overline); letter-spacing: var(--type-overline-tracking); text-transform: uppercase; color: var(--color-text-secondary); }
+.popover { display: grid; gap: var(--space-3); width: 280px; max-width: 100%; padding: var(--space-3); background: var(--color-bg-surface); border-radius: var(--radius-lg); box-shadow: var(--shadow-popover); text-align: left; }
+.popover h5 { margin: 0; font: var(--type-body-strong); display: flex; gap: var(--space-2); align-items: center; }
+.ac { display: grid; width: 330px; max-width: 100%; padding: var(--space-1); background: var(--color-bg-surface); border-radius: var(--radius-lg); box-shadow: var(--shadow-popover); text-align: left; }
+.ac .mi { display: flex; align-items: center; gap: var(--space-2); min-height: var(--size-control-md); padding: 0 var(--space-2); border-radius: var(--radius-md); }
+.ac .mi.on { background: var(--color-bg-selected); }
+.ac .mi small { margin-left: auto; color: var(--color-text-secondary); font: var(--type-caption); }
+
+.empty { display: grid; gap: var(--space-3); justify-items: center; align-content: center; text-align: center; padding: var(--space-8) var(--space-5); color: var(--color-text-secondary); }
+.empty h4 { margin: 0; font: var(--type-title); color: var(--color-text-primary); text-wrap: balance; }
+.empty p { max-width: 44ch; }
+.empty .mark { width: 40px; height: 40px; color: var(--color-accent-text); }
+
+/* Permission status row */
+.perm {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--space-2) var(--space-3); align-items: center;
+  padding: var(--space-3); border: var(--size-border) solid var(--color-border-subtle); border-radius: var(--radius-lg); background: var(--color-bg-surface);
+}
+.perm .ic { display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--color-status-warning-bg); color: var(--color-status-warning-text); }
+.perm.ok .ic { background: var(--color-status-success-bg); color: var(--color-status-success-text); }
+.perm .t { display: grid; gap: 2px; min-width: 0; }
+.perm .t b { font-weight: var(--font-weight-semibold); }
+.perm .t span { color: var(--color-text-secondary); font: var(--type-caption); }
+.perm .st { font: var(--type-caption); font-weight: var(--font-weight-semibold); color: var(--color-status-warning-text); }
+.perm.ok .st { color: var(--color-status-success-text); }
+.perm .do { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; justify-content: flex-end; }
+@media (max-width: 520px) { .perm { grid-template-columns: auto minmax(0, 1fr); } .perm .do { grid-column: 1 / -1; justify-content: flex-start; } }
+
+/* Onboarding */
+.ob { display: grid; gap: var(--space-5); padding: var(--space-6); }
+.ob h4 { margin: 0; font: var(--type-heading); text-wrap: balance; }
+.ob .lead { color: var(--color-text-secondary); font-size: var(--font-size-lg); line-height: var(--font-line-height-lg); max-width: 52ch; }
+.ob .progress { display: flex; gap: var(--space-1); align-items: center; font: var(--type-caption); color: var(--color-text-secondary); }
+.ob .progress i { width: 18px; height: 4px; border-radius: 2px; background: var(--color-border-subtle); }
+.ob .progress i.done { background: var(--color-accent-solid); }
+.ob .progress span { margin-left: var(--space-2); }
+.ob .stack { display: grid; gap: var(--space-3); }
+.ob .points { display: grid; gap: var(--space-3); }
+.ob .points li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-3); align-items: start; }
+.ob .points .i { margin-top: 2px; color: var(--color-accent-text); }
+.ob .points b { font-weight: var(--font-weight-semibold); }
+.ob .points span { display: block; color: var(--color-text-secondary); }
+.pairrow { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 2fr); gap: var(--space-2) var(--space-3); align-items: end; }
+.pairrow .arrow { height: var(--size-control-lg); display: grid; place-items: center; color: var(--color-text-secondary); }
+@media (max-width: 520px) { .pairrow { grid-template-columns: minmax(0, 1fr); } .pairrow .arrow { display: none; } }
+.input.testfield { min-height: 84px; align-items: flex-start; padding-block: var(--space-3); line-height: 24px; }
+.hero-demo { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; padding: var(--space-4); border-radius: var(--radius-lg); background: var(--color-bg-subtle); font-size: var(--font-size-lg); }
+.hero-demo .i { color: var(--color-text-secondary); }
+
+/* Fill-in form panel and search palette */
+.panel { width: 100%; text-align: left; background: var(--color-bg-surface); border-radius: var(--radius-lg); box-shadow: var(--shadow-panel); overflow: hidden; }
+.formp { max-width: var(--size-form-panel); display: grid; }
+.formp .hd { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-bottom: var(--size-border) solid var(--color-border-subtle); }
+.formp .hd .ttl { flex: 1; min-width: 0; font: var(--type-body-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.formp .bd { display: grid; gap: var(--space-3); padding: var(--space-4); }
+.formp .ft { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; padding: var(--space-3) var(--space-4); background: var(--color-bg-app); border-top: var(--size-border) solid var(--color-border-subtle); }
+.formp .ft .hint { flex: 1 1 140px; min-width: 0; color: var(--color-text-secondary); font: var(--type-caption); }
+.optlist { display: grid; gap: 2px; }
+.optlist .radio { padding: var(--space-1) var(--space-2); border-radius: var(--radius-md); }
+.optlist .radio.on { background: var(--color-bg-selected); }
+
+.pal { max-width: var(--size-palette); display: grid; }
+.pal .q { display: flex; align-items: center; gap: var(--space-3); height: 48px; padding: 0 var(--space-4); border-bottom: var(--size-border) solid var(--color-border-subtle); font: var(--type-input); }
+.pal .q .i { color: var(--color-text-secondary); }
+.pal .q .txt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; }
+.pal .q .ph { color: var(--color-text-secondary); }
+.pal .res { display: grid; padding: var(--space-1); }
+.pal .r { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px var(--space-3); align-items: center; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); }
+.pal .r .nm { font-weight: var(--font-weight-medium); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pal .r .nm .i { width: 14px; height: 14px; margin-right: 6px; vertical-align: -2px; color: var(--color-text-secondary); }
+.pal .r .sub { grid-column: 1 / -1; color: var(--color-text-secondary); font: var(--type-caption); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pal .r.on { background: var(--color-bg-selected); }
+.pal .grp { padding: var(--space-2) var(--space-3) var(--space-1); }
+.pal .pv { padding: var(--space-3) var(--space-4); border-top: var(--size-border) solid var(--color-border-subtle); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--color-text-secondary); max-height: 110px; overflow: hidden; }
+.pal .ft { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); align-items: center; padding: var(--space-2) var(--space-4); background: var(--color-bg-app); border-top: var(--size-border) solid var(--color-border-subtle); color: var(--color-text-secondary); font: var(--type-caption); }
+.pal .ft span { display: inline-flex; gap: var(--space-1); align-items: center; }
+.pal .ft .sp { flex: 1; }
+.pal .none { display: grid; gap: var(--space-2); padding: var(--space-5) var(--space-4); color: var(--color-text-secondary); }
+
+/* Review of a received snippet */
+.diff { display: grid; border: var(--size-border) solid var(--color-border-subtle); border-radius: var(--radius-md); overflow: hidden; font: var(--type-code-small); line-height: 20px; }
+.diff div { padding: 1px var(--space-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff .add { background: var(--color-status-success-bg); color: var(--color-status-success-text); }
+.diff .del { background: var(--color-status-danger-bg); color: var(--color-status-danger-text); text-decoration: line-through; }
+.who { display: flex; align-items: center; gap: var(--space-2); }
+.avatar { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--color-bg-selected); color: var(--color-text-primary); font: var(--type-kbd); flex: none; }
+.does { display: grid; gap: var(--space-1); }
+.does li { display: flex; gap: var(--space-2); align-items: center; }
+.members { display: grid; }
+.members li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-2) 0; border-top: var(--size-border) solid var(--color-border-subtle); }
+.members li:first-child { border-top: 0; }
+.members .grow { flex: 1 1 140px; min-width: 0; display: grid; }
+.members small { color: var(--color-text-secondary); font: var(--type-caption); overflow-wrap: anywhere; }
+
+/* Diagnostics log and settings rows */
+.log { display: grid; }
+.log .le { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; gap: var(--space-1) var(--space-3); align-items: start; padding: var(--space-3) var(--space-4); border-top: var(--size-border) solid var(--color-border-subtle); }
+.log .le:first-child { border-top: 0; }
+.log time { color: var(--color-text-secondary); font: var(--type-caption); font-variant-numeric: tabular-nums; line-height: 20px; }
+.log .what { display: grid; gap: 2px; min-width: 0; }
+.log .what b { font-weight: var(--font-weight-medium); }
+.log .what span { color: var(--color-text-secondary); font: var(--type-caption); }
+@media (max-width: 520px) { .log .le { grid-template-columns: 56px minmax(0, 1fr); } .log .le .btn { grid-column: 2; justify-self: start; } }
+.pane-head { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; padding: var(--space-3) var(--space-4); border-bottom: var(--size-border) solid var(--color-border-subtle); }
+.pane-head h4 { margin: 0; flex: 1 1 160px; font: var(--type-title); }
+.pane { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; align-content: start; }
+.pad { padding: var(--space-4); display: grid; gap: var(--space-4); align-content: start; }
+.setrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-1) var(--space-4); align-items: center; padding: var(--space-3) 0; border-top: var(--size-border) solid var(--color-border-subtle); }
+.setrow:first-child { border-top: 0; }
+.setrow .t { display: grid; gap: 2px; }
+.setrow .t span { color: var(--color-text-secondary); font: var(--type-caption); }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+@media (max-width: 640px) {
+  .intro h1 { font: var(--type-heading); }
+  .ob { padding: var(--space-4); }
+  .notes > div { grid-template-columns: minmax(0, 1fr); gap: 0; }
+}
+
+/* Typed → result examples, the tray menus side by side, a form over another app. */
+.variants { display: grid; gap: var(--space-2); width: 100%; }
+.variant { display: grid; grid-template-columns: minmax(0, 5fr) auto minmax(0, 7fr); gap: var(--space-2) var(--space-3); align-items: center; padding: var(--space-3); background: var(--color-bg-surface); border-radius: var(--radius-lg); text-align: left; }
+.variant .ovl { grid-column: 1 / -1; }
+.variant .i { color: var(--color-text-secondary); }
+.variant > div { min-width: 0; overflow-wrap: anywhere; font-size: var(--font-size-lg); line-height: var(--font-line-height-lg); }
+@media (max-width: 520px) { .variant { grid-template-columns: minmax(0, 1fr); } .variant > .i { transform: rotate(90deg); } }
+.over { display: grid; width: 100%; justify-items: center; }
+.over > * { grid-area: 1 / 1; }
+.over > .host { align-self: start; }
+.over > .panel, .over > .toast { align-self: start; margin-top: 76px; margin-bottom: var(--space-4); z-index: 1; width: calc(100% - 32px); }
+.over > .toast { align-self: end; margin: 0 0 var(--space-4); width: auto; }
+.host.tall .doc { min-height: 430px; }
+.host.mid .doc { min-height: 300px; }
+.host.inactive .win-bar { color: var(--color-text-disabled); }
+.host.inactive[data-os="mac"] .win-bar::before { background: var(--color-border-control); box-shadow: 20px 0 0 var(--color-border-control), 40px 0 0 var(--color-border-control); opacity: 0.5; }
+.bubble { justify-self: end; max-width: 80%; padding: var(--space-2) var(--space-3); border-radius: 14px 14px 4px 14px; background: var(--color-bg-selected); }
+.bubble.them { justify-self: start; border-radius: 14px 14px 14px 4px; background: var(--color-bg-subtle); }
+.compose { display: flex; gap: var(--space-2); align-items: center; margin-top: auto; padding: var(--space-2) var(--space-3); border: var(--size-border) solid var(--color-border-control); border-radius: var(--radius-full); color: var(--color-text-secondary); }
+.host .doc.chat { display: flex; flex-direction: column; gap: var(--space-2); }
+
+/* Single-column grids must be allowed to shrink below their content's widest word, or a long
+   line pushes the page sideways on a phone. */
+.intro, .step, .stage:not(.pair), .stage .col, .over, .card, .specimen, .win, .field, .ed-body, .editor, .pane, .pad,
+.ob, .ob .stack, .ob .points, .dialog, .dialog .body, .formp, .formp .bd, .pal, .pal .res, .preview, .popover, .ac,
+.rows, .row, .tree, .optlist, .members, .log, .variants, .empty, .notes, .menu, .does, .diff, .list { grid-template-columns: minmax(0, 1fr); }
+.win.w-xl { justify-self: start; margin-inline: auto; }
+.fact { flex-wrap: wrap; }
+.ac.inset { margin-top: calc(-1 * var(--space-3)); margin-left: min(32px, 8%); max-width: calc(100% - min(32px, 8%)); }
+.specimen.full { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <!-- 16 × 16, drawn with a 1.5 px stroke in currentColor. The Iamb mark is the scansion of an iamb: a breve (short) and a macron (long). -->
+    <symbol id="i-iamb" viewBox="0 0 16 16"><path d="M1.75 6.25a2.9 2.9 0 0 0 5.8 0"/><path d="M9.75 7.9h4.75" stroke-width="1.9"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 16 16"><path d="M1.5 4.5a1 1 0 0 1 1-1h3L7 5h6.5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"/></symbol>
+    <symbol id="i-people" viewBox="0 0 16 16"><circle cx="6" cy="5.5" r="2.2"/><path d="M1.8 13c.3-2.4 2-3.7 4.2-3.7s3.9 1.3 4.2 3.7"/><path d="M10.6 3.6a2 2 0 0 1 0 3.9M12 9.7c1.4.4 2.2 1.5 2.4 3.3"/></symbol>
+    <symbol id="i-user" viewBox="0 0 16 16"><circle cx="8" cy="5.5" r="2.5"/><path d="M3 13.5c.5-2.7 2.4-4 5-4s4.5 1.3 5 4"/></symbol>
+    <symbol id="i-tag" viewBox="0 0 16 16"><path d="M2 2.5h5.2l6.3 6.3-5.2 5.2L2 7.7z"/><circle cx="5" cy="5.5" r=".6"/></symbol>
+    <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 16 16"><path d="M2 5h6.5M12.5 5H14M2 11h1.5M7.5 11H14"/><circle cx="10.5" cy="5" r="1.7"/><circle cx="5.5" cy="11" r="1.7"/></symbol>
+    <symbol id="i-check" viewBox="0 0 16 16"><path d="M3 8.5l3.2 3.2L13 5"/></symbol>
+    <symbol id="i-x" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></symbol>
+    <symbol id="i-warn" viewBox="0 0 16 16"><path d="M8 2.2 14.3 13H1.7z"/><path d="M8 6.5v3M8 11.3v.1"/></symbol>
+    <symbol id="i-info" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 7.3v3.9M8 4.9v.1"/></symbol>
+    <symbol id="i-right" viewBox="0 0 16 16"><path d="M6 3.5 10.5 8 6 12.5"/></symbol>
+    <symbol id="i-down" viewBox="0 0 16 16"><path d="M3.5 6 8 10.5 12.5 6"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 16 16"><path d="M5.5 3.5v9M10.5 3.5v9"/></symbol>
+    <symbol id="i-date" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6.5h12M5 1.8v2.4M11 1.8v2.4"/></symbol>
+    <symbol id="i-time" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/></symbol>
+    <symbol id="i-clipboard" viewBox="0 0 16 16"><rect x="3.5" y="3" width="9" height="11" rx="1"/><rect x="6" y="1.8" width="4" height="2.4" rx=".8"/></symbol>
+    <symbol id="i-cursor" viewBox="0 0 16 16"><path d="M5.5 2.5c1.5 0 2.5.5 2.5 1.5v8c0 1-1 1.5-2.5 1.5M10.5 2.5C9 2.5 8 3 8 4M10.5 13.5C9 13.5 8 13 8 12M6.5 8h3"/></symbol>
+    <symbol id="i-field" viewBox="0 0 16 16"><rect x="1.5" y="4.5" width="13" height="7" rx="1.5"/><path d="M4.5 7v2"/></symbol>
+    <symbol id="i-area" viewBox="0 0 16 16"><path d="M2.5 4h11M2.5 8h11M2.5 12h7"/></symbol>
+    <symbol id="i-choice" viewBox="0 0 16 16"><circle cx="3.5" cy="4.5" r="1.3"/><circle cx="3.5" cy="11.5" r="1.3"/><path d="M7 4.5h7M7 11.5h7"/></symbol>
+    <symbol id="i-toggle" viewBox="0 0 16 16"><rect x="1.5" y="4.5" width="13" height="7" rx="3.5"/><circle cx="10.8" cy="8" r="1.6"/></symbol>
+    <symbol id="i-key" viewBox="0 0 16 16"><path d="M12.5 3.5v4a1.5 1.5 0 0 1-1.5 1.5H4M6.5 6.2 3.7 9l2.8 2.8"/></symbol>
+    <symbol id="i-wait" viewBox="0 0 16 16"><path d="M4.5 2.5h7M4.5 13.5h7M5.5 2.5v2.2L8 8l2.5-3.3V2.5M5.5 13.5v-2.2L8 8l2.5 3.3v2.2"/></symbol>
+    <symbol id="i-snippet" viewBox="0 0 16 16"><path d="M6 2.5c-1.5 0-2 .7-2 2v1.7c0 .9-.5 1.5-1.5 1.8 1 .3 1.5.9 1.5 1.8v1.7c0 1.3.5 2 2 2M10 2.5c1.5 0 2 .7 2 2v1.7c0 .9.5 1.5 1.5 1.8-1 .3-1.5.9-1.5 1.8v1.7c0 1.3-.5 2-2 2"/></symbol>
+    <symbol id="i-if" viewBox="0 0 16 16"><path d="M4 2.5v11M12 13.5V11c0-2.5-8-2-8-5"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 16 16"><path d="M8 1.8l5 2v4c0 3-2.2 5.2-5 6.4-2.8-1.2-5-3.4-5-6.4v-4z"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="6.5" rx="1.2"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 16 16"><path d="M9 1.8 3.8 9h3.7L7 14.2 12.2 7H8.5z"/></symbol>
+    <symbol id="i-pulse" viewBox="0 0 16 16"><path d="M1.5 8h3l1.7-4 3 8 1.8-4h3.5"/></symbol>
+    <symbol id="i-log" viewBox="0 0 16 16"><path d="M5.5 4h8M5.5 8h8M5.5 12h8M2.5 4v.1M2.5 8v.1M2.5 12v.1"/></symbol>
+    <symbol id="i-more" viewBox="0 0 16 16"><path d="M3.5 8v.1M8 8v.1M12.5 8v.1" stroke-width="2.2"/></symbol>
+    <symbol id="i-external" viewBox="0 0 16 16"><path d="M9.5 2.5h4v4M13.5 2.5 8 8M11.5 9.5v3a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h3"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 16 16"><path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></symbol>
+    <symbol id="i-import" viewBox="0 0 16 16"><path d="M8 2v8M4.8 7 8 10.2 11.2 7M2.5 13.5h11"/></symbol>
+    <symbol id="i-return" viewBox="0 0 16 16"><path d="M12.5 3.5v4a1.5 1.5 0 0 1-1.5 1.5H4M6.5 6.2 3.7 9l2.8 2.8"/></symbol>
+  </defs>
+</svg>
+<header class="page-head">
+  <a class="brand" href="index.html" aria-label="Iamb mock-ups, overview"><svg class="i" aria-hidden="true"><use href="#i-iamb"/></svg><span>Iamb</span></a>
+  <nav aria-label="Flows">
+    <a href="index.html">Overview</a>
+    <a href="onboarding.html">1 Onboarding</a>
+    <a href="create-snippet.html">2 Create a snippet</a>
+    <a href="expand.html">3 Expand</a>
+    <a href="fill-in.html">4 Fill-in</a>
+    <a href="search.html">5 Search</a>
+    <a href="share-folder.html" aria-current="page">6 Share a folder</a>
+  </nav>
+  <div class="switches">
+    <div class="seg" role="group" aria-label="Theme">
+      <button type="button" data-set-theme="system" aria-pressed="true">System</button>
+      <button type="button" data-set-theme="light" aria-pressed="false">Light</button>
+      <button type="button" data-set-theme="dark" aria-pressed="false">Dark</button>
+    </div>
+    <div class="seg" role="group" aria-label="Window chrome">
+      <button type="button" data-set-os="mac" aria-pressed="true">macOS</button>
+      <button type="button" data-set-os="win" aria-pressed="false">Windows</button>
+    </div>
+  </div>
+</header>
+<main>
+<section class="intro">
+  <h1>Flow 6: Share a folder</h1>
+  <p>One person shares one folder with a group: a family or a team. Everyone in the group gets its snippets within seconds. Snippets from other people that could do more than type a line of text wait for the recipient’s approval first.</p>
+  <div class="facts">
+    <span class="fact">Shared folder appears <b>within 10 s</b> on the other devices</span>
+    <span class="fact">Built in <b>Phase 4</b> (account, sync); designed here</span>
+    <span class="fact">No public links: <b>groups only</b></span>
+  </div>
+  <p class="legend"><span><span class="msg">Message</span> service or account message, architecture §6.2 and §6.4</span><span><span class="msg todo">Message</span> not specified yet</span></p>
+</section>
+
+<h2 class="section-title">The person who shares</h2>
+<div class="steps">
+
+  <figure class="step wide">
+    <div class="step-head"><span class="n">1</span><h3>Choose the folder</h3></div>
+    <div class="stage">
+      <div class="win w-xl" data-os="mac">
+        <div class="win-bar"><span class="title">Iamb</span></div>
+        <div class="win-body lib two">
+          <nav class="side" aria-label="Library">
+  <div class="tree">
+    <div class="tr" data-id="all"><svg class="i" aria-hidden="true"><use href="#i-snippet"/></svg><span class="nm">All snippets</span><span class="count">76</span></div>
+    <div class="grp">Folders</div>
+    <div class="tr" data-id="replies"><svg class="i" aria-hidden="true"><use href="#i-folder"/></svg><span class="nm">Replies</span><span class="count">42</span></div>
+    <div class="tr l2" data-id="returns"><svg class="i" aria-hidden="true"><use href="#i-folder"/></svg><span class="nm">Returns</span><span class="count">11</span></div>
+    <div class="tr" data-id="signatures"><svg class="i" aria-hidden="true"><use href="#i-folder"/></svg><span class="nm">Signatures</span><span class="count">6</span></div>
+    <div class="tr" data-id="dates"><svg class="i" aria-hidden="true"><use href="#i-folder"/></svg><span class="nm">Dates and times</span><span class="count">9</span></div>
+    <div class="tr" data-id="shop" aria-selected="true"><svg class="i" aria-hidden="true"><use href="#i-folder"/></svg><span class="nm">Shop replies</span><span class="count">19</span></div>
+    <div class="grp">Tags</div>
+    <div class="tr" data-id="tag-urgent"><span class="tagdot" style="--tag: var(--color-tag-red)"></span><span class="nm">urgent</span><span class="count">4</span></div>
+    <div class="tr" data-id="tag-es"><span class="tagdot" style="--tag: var(--color-tag-teal)"></span><span class="nm">español</span><span class="count">12</span></div>
+  </div>
+  <span></span>
+  <div class="foot">
+    <div class="tr" data-id="health"><svg class="i" aria-hidden="true"><use href="#i-pulse"/></svg><span class="nm">Library health</span><span class="badge warn">3</span></div>
+    <div class="tr" data-id="log"><svg class="i" aria-hidden="true"><use href="#i-log"/></svg><span class="nm">Why didn’t it expand?</span></div>
+    <div class="tr" data-id="settings"><svg class="i" aria-hidden="true"><use href="#i-settings"/></svg><span class="nm">Settings</span></div>
+    <div class="status-line"><span class="dot"></span>Iamb is on</div>
+  </div>
+</nav>
+          <section class="pane" aria-label="Shop replies">
+            <div class="pane-head"><h4>Shop replies</h4><span class="badge"><svg class="i" aria-hidden="true"><use href="#i-lock"/></svg>Only you</span><button class="btn primary is-focus" type="button"><svg class="i" aria-hidden="true"><use href="#i-people"/></svg>Share… <kbd class="only-mac">⌘⇧S</kbd><kbd class="only-win">Ctrl+Shift+S</kbd></button><button class="btn icon ghost" type="button" aria-label="Folder actions"><svg class="i" aria-hidden="true"><use href="#i-more"/></svg></button></div>
+            <div class="rows" role="listbox" style="align-content:start">
+              <div class="row"><div class="l1"><span class="nm">Wheel build quote</span><svg class="i" aria-label="Asks for values"><use href="#i-field"/></svg><span class="abbr">;wq</span></div><div class="l2">Thank you for asking. A hand-built ‹Rim› wheelset with ‹Hub› comes to…</div></div>
+              <div class="row"><div class="l1"><span class="nm">Wheel retensioning</span><span class="abbr">;wten</span></div><div class="l2">New wheels settle in. Bring it back after 200 km and we retension it free of charge.</div></div>
+              <div class="row"><div class="l1"><span class="nm">Wheel pickup steps</span><span class="abbr">;wpick</span></div><div class="l2">1. Bring your order number. 2. Ring the bell at the blue door. 3. We fit the…</div></div>
+              <div class="row"><div class="l1"><span class="nm">Paste tracking link</span><span class="abbr">;wtrack</span></div><div class="l2">You can follow your parcel here: ‹clipboard›</div></div>
+              <div class="row"><div class="l1"><span class="nm">Workshop address</span><span class="abbr">;addr</span></div><div class="l2">Brindlewood Cycles, 12 Millrace Lane, Unit 4 (blue door behind the bakery)</div></div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>Select the folder in the sidebar, then <kbd class="only-mac">⌘⇧S</kbd><kbd class="only-win">Ctrl+Shift+S</kbd>. Also in the folder’s context menu (<kbd>Shift+F10</kbd> or the menu key on Windows, <kbd>⌃⏎</kbd> on macOS).</dd></div>
+      <div><dt>Screen</dt><dd>Every folder header says who can see it: “Only you”, “Shared with Brindlewood team”, or “Shared by Ines”. Sub-folders are shared with their parent. Only the folder’s owner sees the Share button.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">AccountStatus</span> (account endpoint) decides whether step 2 is needed.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">2</span><h3>Sign in, if not yet</h3></div>
+    <div class="stage">
+      <div class="dialog" role="dialog" aria-label="Sign in to share" data-os="mac">
+        <h4>Sign in to share “Shop replies”</h4>
+        <div class="body">
+          <p>Sharing needs an Iamb account, so the people you share with can be recognised. Signing in happens in your browser; Iamb never sees your password.</p>
+          <p>Your other folders stay on this computer until you choose to sync or share them.</p>
+        </div>
+        <div class="actions"><button class="btn" type="button">Cancel</button><button class="btn primary is-focus" type="button">Continue in browser <kbd class="only-mac">⏎</kbd><kbd class="only-win">Enter</kbd></button></div>
+      </div>
+      <div class="dialog" role="dialog" aria-label="Waiting for sign-in" data-os="mac">
+        <h4>Finish signing in in your browser</h4>
+        <div class="body"><p>This window continues by itself when you are done.</p></div>
+        <div class="actions"><button class="btn link grow" type="button" style="justify-content:flex-start;flex:0 1 auto">Open the browser again</button><span class="grow"></span><button class="btn" type="button">Cancel <kbd class="only-mac">esc</kbd><kbd class="only-win">Esc</kbd></button></div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd><kbd class="only-mac">⏎</kbd><kbd class="only-win">Enter</kbd> opens the browser. <kbd class="only-mac">esc</kbd><kbd class="only-win">Esc</kbd> cancels at any point and returns to the folder with nothing changed.</dd></div>
+      <div><dt>Screen</dt><dd>Skipped when already signed in. If sign-in fails or is closed: “Sign-in did not finish. Nothing was shared.” with Try again.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">BeginSignIn(provider)</span> → system browser, authorisation-code flow with PKCE (ADR-0020) → <span class="msg">AccountChanged</span>. <span class="msg">CancelSignIn</span> on cancel.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">3</span><h3>Choose the group and what it may do</h3></div>
+    <div class="stage">
+      <div class="dialog" role="dialog" aria-label="Share Shop replies" data-os="mac">
+        <h4>Share “Shop replies”</h4>
+        <div class="body">
+          <div class="field"><span class="label">With</span>
+            <div class="optlist" role="radiogroup" aria-label="Group">
+              <label class="radio on is-focus"><span class="box"></span><span><b style="font-weight:var(--font-weight-medium)">Brindlewood team</b><br><span style="color:var(--color-text-secondary)">Team · 4 people: you, Tomás, Jun and Odile</span></span></label>
+              <label class="radio"><span class="box"></span><span><b style="font-weight:var(--font-weight-medium)">Home</b><br><span style="color:var(--color-text-secondary)">Family · 3 people</span></span></label>
+              <label class="radio"><span class="box"></span><span>New group…</span></label>
+            </div>
+          </div>
+          <div class="field"><span class="label">They can</span>
+            <div class="optlist" role="radiogroup" aria-label="Permission">
+              <label class="radio on"><span class="box"></span><span>Use the snippets</span></label>
+              <label class="radio"><span class="box"></span><span>Use, add and change snippets</span></label>
+            </div>
+          </div>
+          <p>All 19 snippets and the sub-folders of “Shop replies” go to everyone in Brindlewood team, now and as the group grows. Only you can rename, move, delete or stop sharing the folder.</p>
+        </div>
+        <div class="actions"><button class="btn" type="button">Cancel</button><button class="btn primary" type="button">Share <kbd class="only-mac">⏎</kbd><kbd class="only-win">Enter</kbd></button></div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd><kbd>↑</kbd> <kbd>↓</kbd> choose within a group of options, <kbd class="only-mac">⇥</kbd><kbd class="only-win">Tab</kbd> moves on, <kbd class="only-mac">⏎</kbd><kbd class="only-win">Enter</kbd> shares.</dd></div>
+      <div><dt>Screen</dt><dd>A folder is shared with a group, never with single addresses or by link. The sentence at the bottom always states the count and the group in words. “New group…” leads to step 4 and comes back here.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">Profiles</span>, <span class="msg">Members(profile)</span> to list groups; <span class="msg">SetFolderShare(folder, profile, permission)</span> with <code>view</code> or <code>edit</code>.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">4</span><h3>A new group and its people</h3></div>
+    <div class="stage">
+      <div class="dialog" role="dialog" aria-label="New group" data-os="mac">
+        <h4>New group</h4>
+        <div class="body">
+          <div class="grid2">
+            <div class="field"><label>Name</label><div class="input">Brindlewood team</div></div>
+            <div class="field"><span class="label">Kind</span><div class="seg" role="group" aria-label="Kind"><span>Family</span><span class="on">Team</span></div></div>
+          </div>
+          <div class="field"><label>Invite by email</label>
+            <div style="display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:var(--space-2)"><div class="input is-focus">odile@brindlewood.example<span class="caret"></span></div><div class="select" style="width:auto">Member<svg class="i" aria-hidden="true"><use href="#i-down"/></svg></div><button class="btn" type="button">Invite</button></div>
+            <p class="help">They get an email asking them to open Iamb. They accept inside Iamb.</p></div>
+          <ul class="members" aria-label="People">
+            <li><span class="avatar" aria-hidden="true">IM</span><span class="grow"><span>Ines Marchetti (you)</span><small>ines@brindlewood.example</small></span><span class="badge">Owner</span></li>
+            <li><span class="avatar" aria-hidden="true">T</span><span class="grow"><span>tomas@brindlewood.example</span><small>Invited just now</small></span><span class="badge warn">Waiting</span><button class="btn sm ghost" type="button">Withdraw</button></li>
+            <li><span class="avatar" aria-hidden="true">J</span><span class="grow"><span>jun@brindlewood.example</span><small>Invited just now</small></span><span class="badge warn">Waiting</span><button class="btn sm ghost" type="button">Withdraw</button></li>
+          </ul>
+        </div>
+        <div class="actions"><button class="btn" type="button">Cancel</button><button class="btn primary" type="button">Create group</button></div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>Type an address, <kbd class="only-mac">⏎</kbd><kbd class="only-win">Enter</kbd> invites and clears the field for the next one. <kbd class="only-mac">⌘⏎</kbd><kbd class="only-win">Ctrl+Enter</kbd> creates the group.</dd></div>
+      <div><dt>Screen</dt><dd>Roles: Member, Admin (may invite and remove people), Owner. Family and Team work the same way; the kind only changes the wording. A bad address: “That does not look like an email address.”</dd></div>
+      <div><dt>Service</dt><dd><span class="msg todo">CreateProfile(kind, name)</span>, then <span class="msg">Invite(profile, email, role)</span> per person. Listing and withdrawing invitations that were sent needs <span class="msg todo">SentInvitations</span> and <span class="msg todo">WithdrawInvitation</span>.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">5</span><h3>Shared</h3></div>
+    <div class="stage">
+      <div class="win w-md" data-os="mac">
+        <div class="win-bar"><span class="title">Iamb: folder header</span></div>
+        <section class="win-body pane">
+          <div class="pane-head"><h4>Shop replies</h4><span class="badge ok"><svg class="i" aria-hidden="true"><use href="#i-people"/></svg>Shared with Brindlewood team</span><button class="btn" type="button">Manage sharing</button></div>
+          <div class="pad">
+            <div class="setrow"><div class="t"><b style="font-weight:var(--font-weight-medium)">Brindlewood team</b><span>4 people · can use the snippets</span></div><div class="select" style="width:auto">Use<svg class="i" aria-hidden="true"><use href="#i-down"/></svg></div></div>
+            <div class="actions" style="justify-content:flex-start"><button class="btn danger" type="button">Stop sharing</button></div>
+          </div>
+        </section>
+      </div>
+      <div class="toast" role="status"><span>Shared. Brindlewood team now has “Shop replies”.</span></div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>“Manage sharing” is the same <kbd class="only-mac">⌘⇧S</kbd><kbd class="only-win">Ctrl+Shift+S</kbd>.</dd></div>
+      <div><dt>Screen</dt><dd>The folder gets a people icon in the sidebar. Stop sharing asks first: “Stop sharing ‘Shop replies’? It is removed from the devices of the 3 other people. Your copy stays.” [Stop sharing] [Cancel]. While offline: “Will be shared when you are back online.”</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">SyncProgress</span> until pushed; <span class="msg">RemoveFolderShare</span> to stop, after which the other devices purge the folder (<span class="msg">PurgeFolder</span> on theirs).</dd></div>
+    </dl>
+  </figure>
+
+</div>
+
+<h2 class="section-title">The person who receives</h2>
+<div class="steps">
+
+  <figure class="step">
+    <div class="step-head"><span class="n">6</span><h3>The invitation, inside Iamb</h3></div>
+    <div class="stage">
+      <div class="win w-md" data-os="mac">
+        <div class="win-bar"><span class="title">Iamb</span></div>
+        <div class="win-body pad">
+          <div class="banner" role="status"><svg class="i" aria-hidden="true"><use href="#i-people"/></svg><span class="txt"><b>Ines Marchetti invited you to “Brindlewood team”.</b> You will get the folders shared with this group. Nothing of yours is shared.</span><div class="actions"><button class="btn" type="button">Decline</button><button class="btn primary is-focus" type="button">Join</button></div></div>
+        </div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>The banner is the first stop of <kbd class="only-mac">⇥</kbd><kbd class="only-win">Tab</kbd> in the window; <kbd class="only-mac">⏎</kbd><kbd class="only-win">Enter</kbd> joins.</dd></div>
+      <div><dt>Screen</dt><dd>The email only says “open Iamb”: there is no link to click and nothing to paste. The invitation appears after sign-in with the invited address and waits until answered.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">Invitations</span> after sign-in and on <span class="msg">AccountChanged</span>; <span class="msg">AcceptInvitation(id)</span>. Declining needs <span class="msg todo">DeclineInvitation(id)</span>.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">7</span><h3>The folder arrives</h3></div>
+    <div class="stage">
+      <div class="win w-md" data-os="mac">
+        <div class="win-bar"><span class="title">Iamb: folder</span></div>
+        <section class="win-body pane">
+          <div class="pane-head"><h4>Shop replies</h4><span class="badge"><svg class="i" aria-hidden="true"><use href="#i-people"/></svg>Shared by Ines · you can use</span></div>
+          <div>
+            <div class="pad" style="padding-bottom:0"><div class="banner warn" role="status"><svg class="i" aria-hidden="true"><use href="#i-eye"/></svg><span class="txt"><b>2 snippets wait for your review.</b> They press keys or read your clipboard, so Iamb asks you before it types them. The other 17 work now.</span><button class="btn is-focus" type="button">Review</button></div></div>
+            <div class="rows" role="listbox">
+              <div class="row"><div class="l1"><span class="nm">Wheel pickup steps</span><span class="badge warn"><svg class="i" aria-hidden="true"><use href="#i-eye"/></svg>Needs review</span><span class="abbr">;wpick</span></div><div class="l2">Several lines · by Ines</div></div>
+              <div class="row"><div class="l1"><span class="nm">Paste tracking link</span><span class="badge warn"><svg class="i" aria-hidden="true"><use href="#i-eye"/></svg>Needs review</span><span class="abbr">;wtrack</span></div><div class="l2">Reads the clipboard · by Ines</div></div>
+              <div class="row"><div class="l1"><span class="nm">Wheel retensioning</span><span class="abbr">;wten</span></div><div class="l2">New wheels settle in. Bring it back after 200 km and we retension it free of charge.</div></div>
+              <div class="row"><div class="l1"><span class="nm">Workshop address</span><span class="badge">Yours is used</span><span class="abbr">;addr</span></div><div class="l2">You have your own ;addr. On this computer yours expands, this one does not.</div></div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd><kbd class="only-mac">⏎</kbd><kbd class="only-win">Enter</kbd> on the banner opens the first review; in the list, <kbd class="only-mac">⏎</kbd><kbd class="only-win">Enter</kbd> on a “Needs review” row opens that one.</dd></div>
+      <div><dt>Screen</dt><dd>A toast announces the folder once: “‘Shop replies’ was shared with you: 19 snippets.” Single-line text snippets work at once. A read-only folder shows its snippets without Save; “Copy to my snippets” is offered instead.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">LibraryChanged</span> when the sync agent applies the folder; <span class="msg">ListPendingReviews</span>; <span class="msg">Health</span> for the abbreviation that lost to the user’s own. Listing folders of other profiles needs <span class="msg todo">ListFolders and ListSnippets for the whole effective library</span>.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step wide">
+    <div class="step-head"><span class="n">8</span><h3>Review before a snippet can press keys or read the clipboard</h3></div>
+    <div class="stage pair">
+      <div class="col">
+        <span class="cap">First time: the whole snippet</span>
+        <div class="dialog w" role="dialog" aria-label="Review Paste tracking link" data-os="mac">
+          <h4>Review “Paste tracking link”</h4>
+          <div class="body">
+            <div class="who"><span class="avatar" aria-hidden="true">IM</span><span>Written by <b>Ines Marchetti</b> in “Shop replies” · today 14:02</span></div>
+            <div class="field"><span class="label">Besides typing text, this snippet</span>
+              <ul class="does">
+                <li><span class="chip read"><svg class="i" aria-hidden="true"><use href="#i-clipboard"/></svg>Clipboard</span> types whatever you last copied</li>
+                <li><span class="chip act"><svg class="i" aria-hidden="true"><use href="#i-key"/></svg>Enter</span> presses Enter once at the end</li>
+              </ul></div>
+            <div class="field"><span class="label">What it types</span>
+              <div class="tpl" style="min-height:0">You can follow your parcel here: <span class="chip read"><svg class="i" aria-hidden="true"><use href="#i-clipboard"/></svg>Clipboard</span><span class="chip act"><svg class="i" aria-hidden="true"><use href="#i-key"/></svg>Enter</span></div></div>
+            <p>Approve only if you trust Ines with this. Once approved, typing <span class="abbr">;wtrack</span> does exactly what you see here, in whatever app you are in: in a chat, the Enter sends the message.</p>
+          </div>
+          <div class="actions"><span class="count grow">1 of 2</span><button class="btn is-focus" type="button">Not now <kbd class="only-mac">esc</kbd><kbd class="only-win">Esc</kbd></button><button class="btn primary" type="button">Approve</button></div>
+        </div>
+      </div>
+      <div class="col">
+        <span class="cap">After a change: what is different</span>
+        <div class="dialog w" role="dialog" aria-label="Review the change to Wheel pickup steps" data-os="mac">
+          <h4>Review the change to “Wheel pickup steps”</h4>
+          <div class="body">
+            <div class="who"><span class="avatar" aria-hidden="true">T</span><span>Changed by <b>Tomás Arce</b> · today 16:40. You approved the earlier text on 12 March.</span></div>
+            <div class="field"><span class="label">What changed</span>
+              <div class="diff" role="group" aria-label="Changes">
+                <div>1. Bring your order number.</div>
+                <div class="del" aria-label="Removed: ">2. Ring the bell at the blue door.</div>
+                <div class="add" aria-label="Added: ">2. Ring the bell at the green door on Millrace Lane.</div>
+                <div>3. We fit the wheel while you wait.</div>
+              </div></div>
+            <p>Until you approve, <span class="abbr">;wpick</span> keeps typing the text you approved before.</p>
+          </div>
+          <div class="actions"><span class="count grow">2 of 2</span><button class="btn is-focus" type="button">Not now <kbd class="only-mac">esc</kbd><kbd class="only-win">Esc</kbd></button><button class="btn primary" type="button">Approve</button></div>
+        </div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>Focus starts on “Not now”, so a stray <kbd class="only-mac">⏎</kbd><kbd class="only-win">Enter</kbd> approves nothing. Approve is one <kbd class="only-mac">⇥</kbd><kbd class="only-win">Tab</kbd> away, or <kbd class="only-mac">⌘⏎</kbd><kbd class="only-win">Ctrl+Enter</kbd>. After a decision the next review opens.</dd></div>
+      <div><dt>Screen</dt><dd>Held for review: snippets from other people that press keys, wait, read the clipboard or have more than one line (ADR-0022). The dialog names the author, lists in words what the snippet does besides typing, and shows the text with those parts as chips. Removed lines are struck through and added lines marked “Added”, not told apart by colour alone. Approval counts for this computer only, and is asked again after every change by someone else.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">ListPendingReviews</span> → snippet, revision, author; <span class="msg">ApproveSnippet(id, rev)</span>. Showing the difference and the author’s name needs <span class="msg todo">the approved body and the author’s display name</span>.</dd></div>
+    </dl>
+  </figure>
+
+</div>
+</main>
+<footer class="page-foot">Mock-up for review (task 3.1). Static HTML: nothing here is wired to the service. Sample names, addresses and apps are invented.</footer>
+<script>
+// Theme and window-chrome switches of the mock-up pages. Without JavaScript the pages follow
+// the system theme and show macOS chrome.
+(function () {
+  var root = document.documentElement;
+  function read(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+  function write(key, value) { try { localStorage.setItem(key, value); } catch (e) { /* private window */ } }
+  function press(attr, value) {
+    document.querySelectorAll("[" + attr + "]").forEach(function (b) {
+      b.setAttribute("aria-pressed", String(b.getAttribute(attr) === value));
+    });
+  }
+  function setTheme(theme) {
+    if (theme === "light" || theme === "dark") { root.setAttribute("data-theme", theme); } else { theme = "system"; root.removeAttribute("data-theme"); }
+    press("data-set-theme", theme);
+    write("iamb-mock-theme", theme);
+  }
+  function setOs(os) {
+    if (os !== "win") { os = "mac"; }
+    // Frames marked data-os-fixed show one system on purpose (the two are side by side).
+    document.querySelectorAll("[data-os]:not([data-os-fixed])").forEach(function (el) { el.setAttribute("data-os", os); });
+    press("data-set-os", os);
+    write("iamb-mock-os", os);
+  }
+  document.addEventListener("click", function (event) {
+    var b = event.target.closest("[data-set-theme], [data-set-os]");
+    if (!b) { return; }
+    if (b.hasAttribute("data-set-theme")) { setTheme(b.getAttribute("data-set-theme")); } else { setOs(b.getAttribute("data-set-os")); }
+  });
+  var query = new URLSearchParams(location.search);
+  setTheme(query.get("theme") || read("iamb-mock-theme") || "system");
+  setOs(query.get("os") || read("iamb-mock-os") || "mac");
+})();
+</script>
+</body>
+</html>

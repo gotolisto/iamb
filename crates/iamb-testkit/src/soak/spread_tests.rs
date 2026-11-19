@@ -24,6 +24,16 @@ fn line_hits(spread: &Spread, hay: &[u8], chunk: usize) -> Vec<(usize, u64)> {
     out
 }
 
+fn number_hits(spread: &Spread, hay: &[u8], chunk: usize) -> Vec<(usize, u64)> {
+    let mut out = Vec::new();
+    let mut numbers = spread.numbers();
+    for part in hay.chunks(chunk.max(1)) {
+        numbers.feed(part, &mut |c, o| out.push((c, o)));
+    }
+    numbers.finish(&mut |c, o| out.push((c, o)));
+    out
+}
+
 /// Lower-case letters from a fixed generator, as a stand-in for ordinary text.
 fn letters(n: usize, seed: u64) -> Vec<u8> {
     let mut rng = SplitMix64::new(seed);
@@ -162,4 +172,79 @@ fn short_canaries_are_left_out() {
     let spread = Spread::new(&[b"qzab".as_slice()]);
     assert!(strided_hits(&spread, b"q.z.a.b.").is_empty());
     assert_eq!(spread.span(), 1);
+}
+
+/// The follow-up review's N3: one key per log line written as its decimal code. The letter
+/// chain cannot see it (removing digits erases the key), the number chain does.
+#[test]
+fn one_key_per_log_line_as_a_number_is_a_number_chain() {
+    let spread = Spread::new(&[CANARY]);
+    let mut log = String::new();
+    log.push_str("2026-11-18T22:35:55.076Z INFO worker[4103]: worker ready\n");
+    for (k, &b) in CANARY.iter().enumerate() {
+        let _ = writeln!(
+            log,
+            "2026-11-18T22:35:55.{:03}Z INFO worker[4103]: key {} seq {}",
+            k * 7,
+            b,
+            k + 4
+        );
+        if k == 7 {
+            log.push_str(
+                "2026-11-18T22:35:55.140Z INFO worker[4103]: ipc out status 243 bytes 48 us\n",
+            );
+        }
+    }
+    assert!(
+        line_hits(&spread, log.as_bytes(), 4096).is_empty(),
+        "not a letter chain"
+    );
+    for chunk in [1, 5, 4096] {
+        let hits = number_hits(&spread, log.as_bytes(), chunk);
+        assert_eq!(hits.len(), 1, "chunk {chunk}: {hits:?}");
+        let first = log.find("key 113").expect("first key");
+        let line_start = log[..first].rfind('\n').map_or(0, |n| n + 1);
+        assert_eq!(hits[0], (0, u64::try_from(line_start).expect("fits")));
+    }
+    // A wrong number in the middle, or the last key missing: no hit.
+    let wrong = log.replacen(&format!("key {} ", CANARY[8]), "key 97 ", 1);
+    assert!(number_hits(&spread, wrong.as_bytes(), 4096).is_empty());
+    let cut = log
+        .rfind(&format!("key {} ", CANARY[15]))
+        .expect("last key");
+    assert!(number_hits(&spread, &log.as_bytes()[..cut], 4096).is_empty());
+}
+
+/// Logs full of numbers that vary at random (sizes, durations, counters, the canaries' codes
+/// among them) and a counter that runs through every code: no number chain.
+#[test]
+fn logs_of_varying_numbers_do_not_make_a_number_chain() {
+    let canaries: Vec<Vec<u8>> = (0..15)
+        .map(|i| {
+            let mut c = b"qz".to_vec();
+            c.extend(letters(14, 2000 + i));
+            c
+        })
+        .collect();
+    let spread = Spread::new(&canaries);
+    let mut rng = SplitMix64::new(4242);
+    let mut log = String::new();
+    for k in 0..200_000_u64 {
+        let size = 97 + rng.next_u64() % 26;
+        let us = rng.next_u64() % 400;
+        let _ = writeln!(
+            log,
+            "2026-11-18T22:{:02}:{:02}.{:03}Z INFO worker[4103]: ipc out status {size} bytes {us} us",
+            k / 60_000 % 60,
+            k / 1000 % 60,
+            k % 1000
+        );
+        if k % 3 == 0 {
+            let _ = writeln!(log, "key {} seq {k}", 97 + rng.next_u64() % 26);
+        }
+        if k % 7 == 0 {
+            let _ = writeln!(log, "counter {}", k % 256);
+        }
+    }
+    assert!(number_hits(&spread, log.as_bytes(), 1 << 16).is_empty());
 }

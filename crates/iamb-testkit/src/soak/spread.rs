@@ -4,14 +4,15 @@
 //!
 //! The service handles typed text as `char` values, one key event at a time, so the most likely
 //! leak is not a whole canary in a file but its characters spread out: one per log line, one per
-//! fixed-size record, or one per four bytes (an array of `char` is UTF-32). Two detectors look
-//! for those shapes. Both need every character of a canary, in order, and are built so that
+//! fixed-size record, or one per four bytes (an array of `char` is UTF-32). Three detectors look
+//! for those shapes. All need every character of a canary, in order, and are built so that
 //! ordinary output does not trigger them:
 //!
 //! | Form | What is searched | Catches |
 //! | --- | --- | --- |
 //! | `stride-<s>` | The canary's bytes at `p`, `p + s`, `p + 2s`, … for every stride `s` from 2 to [`MAX_STRIDE`] | UTF-16 and UTF-32 in both byte orders (a canary is ASCII), arrays of `char`, the debug form `['q', 'z', …]`, fixed-size records (a 96-byte queue slot), fixed-width log lines |
 //! | `per-line` | After removing ASCII digits from every line (timestamps, process ids, sequence numbers and sizes change the width of a line), the lines of one template: the same bytes except at one column. The canary must stand at that column in consecutive lines of that template, with at most [`MAX_GAP_LINES`] lines of other templates between two of them | One key per log line (`… key 'q' seq 46`), one character per JSON or CSV record |
+//! | `per-line-decimal` | Every run of ASCII digits in a line read as a decimal number and replaced by one marker, which gives the line's template and its numbers in order. The canary's characters, as numbers (`113` for `q`), must stand at one number's place in consecutive lines of one template, with the same gaps allowed as `per-line` | One key per log line as a number (`… key 113 seq 46`), the follow-up review's N3 |
 //!
 //! Why random text does not trigger them: a strided match fixes all 16 bytes of a canary once
 //! its start and stride are chosen, so in text of lower-case letters each start and stride
@@ -23,10 +24,15 @@
 //! template. The unit tests feed both detectors random letters, random bytes, and the real logs
 //! and frames of a soak run.
 //!
+//! A number chain is as unlikely in ordinary output: it needs 16 lines of one template whose
+//! number at one place is exactly the canary's 16 codes in order, `113`, `122` and 14 codes of
+//! lower-case letters; a counter, a size or a duration at that place would have to take those
+//! values in that order, and a repeated line repeats its number (a chain stops at the first
+//! wrong one). The unit tests feed it logs whose numbers vary at random.
+//!
 //! Not covered (the module docs of `canary` list the whole-string forms): characters written as
-//! numbers (`113` for `q`, which removing digits erases), one character per record of varying
-//! length that is not a line, compressed or encrypted output, and characters in an order other
-//! than the typed one.
+//! hexadecimal numbers one per line, one character per record of varying length that is not a
+//! line, compressed or encrypted output, and characters in an order other than the typed one.
 //!
 //! This file uses only the standard library: `crates/iamb-service/tests/log_scan.rs` compiles
 //! it by path, so the log test and the soak scan apply the same rules.
@@ -124,6 +130,21 @@ impl Spread {
                     }
                 }
             }
+        }
+    }
+
+    /// A fresh detector of characters written as decimal numbers, one per line, for one file.
+    pub fn numbers(&self) -> Numbers<'_> {
+        Numbers {
+            spread: self,
+            chains: Vec::new(),
+            line: 0,
+            template: Vec::new(),
+            values: Vec::new(),
+            number: None,
+            too_long: false,
+            line_start: 0,
+            offset: 0,
         }
     }
 
@@ -237,6 +258,150 @@ impl Lines<'_> {
                     canary,
                     next: 1,
                     column,
+                    template: Rc::clone(&t),
+                    last_line: line,
+                    start: self.line_start,
+                });
+            }
+        }
+    }
+}
+
+/// Stands for a run of digits in a line's template.
+const NUMBER_MARK: u8 = 0;
+
+/// A canary partly found as decimal numbers at one place of one template.
+#[derive(Debug)]
+struct NumberChain {
+    canary: usize,
+    /// The index of the next character to find.
+    next: usize,
+    /// Which number of the line, counted from 0.
+    place: usize,
+    template: Rc<[u8]>,
+    last_line: u64,
+    /// The byte offset of the line holding the first character.
+    start: u64,
+}
+
+/// The detector of characters written as decimal numbers, one per line of one template, fed a
+/// file's bytes in order (module docs, `per-line-decimal`).
+#[derive(Debug)]
+pub struct Numbers<'a> {
+    spread: &'a Spread,
+    chains: Vec<NumberChain>,
+    line: u64,
+    /// The current line with each run of digits replaced by [`NUMBER_MARK`].
+    template: Vec<u8>,
+    /// The current line's numbers, in order; `u32::MAX` for one too large.
+    values: Vec<u32>,
+    /// The number being read.
+    number: Option<u32>,
+    too_long: bool,
+    line_start: u64,
+    offset: u64,
+}
+
+impl Numbers<'_> {
+    /// Feeds the next bytes of the file; calls `found(canary, offset of its first line)`.
+    pub fn feed(&mut self, bytes: &[u8], found: &mut dyn FnMut(usize, u64)) {
+        for &b in bytes {
+            self.offset += 1;
+            if b.is_ascii_digit() {
+                let digit = u32::from(b - b'0');
+                self.number = Some(
+                    self.number
+                        .unwrap_or(0)
+                        .checked_mul(10)
+                        .and_then(|n| n.checked_add(digit))
+                        .unwrap_or(u32::MAX),
+                );
+                continue;
+            }
+            self.end_number();
+            if b == b'\n' {
+                self.end_line(found);
+                self.line_start = self.offset;
+            } else {
+                self.push(b);
+            }
+        }
+    }
+
+    /// The end of the file: the last line counts even without a line break.
+    pub fn finish(&mut self, found: &mut dyn FnMut(usize, u64)) {
+        self.end_number();
+        if !self.template.is_empty() || self.too_long {
+            self.end_line(found);
+        }
+    }
+
+    fn push(&mut self, b: u8) {
+        if self.too_long {
+            return;
+        }
+        if self.template.len() < MAX_LINE {
+            self.template.push(b);
+        } else {
+            self.too_long = true;
+            self.template.clear();
+            self.values.clear();
+        }
+    }
+
+    fn end_number(&mut self) {
+        if let Some(n) = self.number.take() {
+            self.push(NUMBER_MARK);
+            if !self.too_long {
+                self.values.push(n);
+            }
+        }
+    }
+
+    fn end_line(&mut self, found: &mut dyn FnMut(usize, u64)) {
+        let text: Option<Rc<[u8]>> = (!self.too_long).then(|| Rc::from(self.template.as_slice()));
+        let values = std::mem::take(&mut self.values);
+        self.template.clear();
+        self.too_long = false;
+        let line = self.line;
+        self.line += 1;
+        let canaries = &self.spread.canaries;
+        self.chains.retain_mut(|c| {
+            if line - c.last_line > MAX_GAP_LINES + 1 {
+                return false;
+            }
+            let Some(t) = &text else {
+                return true;
+            };
+            if **t != *c.template {
+                // Another template: the chain waits.
+                return true;
+            }
+            let canary = &canaries[c.canary];
+            if values.get(c.place) != Some(&u32::from(canary[c.next])) {
+                // The same template with another number there: not this canary.
+                return false;
+            }
+            c.next += 1;
+            c.last_line = line;
+            if c.next == canary.len() {
+                found(c.canary, c.start);
+                return false;
+            }
+            true
+        });
+        let Some(t) = text else {
+            return;
+        };
+        for (place, &value) in values.iter().enumerate() {
+            let Ok(first) = u8::try_from(value) else {
+                continue;
+            };
+            for &canary in &self.spread.by_first[usize::from(first)] {
+                self.chains.push(NumberChain {
+                    canary,
+                    next: 1,
+                    place,
                     template: Rc::clone(&t),
                     last_line: line,
                     start: self.line_start,

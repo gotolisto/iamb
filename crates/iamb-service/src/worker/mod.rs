@@ -8,7 +8,7 @@
 //! | focus | [`threads::focus`] | a focus change (the OS crate's watcher forwards it) |
 //! | store | [`store`] | a write, a usage record |
 //! | watchdog | [`threads::watchdog`] | every 30 s, for the listener self-test (§3.2) |
-//! | accept | [`ipc`] | a client connects |
+//! | accept | [`endpoint`], [`ipc`] | a client connects; while the endpoint cannot be served, every [`ENDPOINT_RETRY`] |
 //! | reader + event pump, per client (at most 8) | [`ipc`], [`handlers`] | a request; an event to push |
 //!
 //! While idle only the heartbeat and the 30-second self-test fire; every other thread blocks
@@ -39,6 +39,7 @@
 //! - **Where a key went** (§4.1): a key the listener names another window for than the last
 //!   focus change the engine heard of is not handed to the engine ([`engine`]).
 
+mod endpoint;
 mod engine;
 mod handlers;
 mod injection;
@@ -63,8 +64,7 @@ use iamb_core::template::FormValues;
 use iamb_ipc::{EventBody, InjectionStatus, ServiceStatus, WireDiagnostic};
 use iamb_platform::{
     DEFAULT_EVENT_CAPACITY, EventSink, FocusChange, FocusSink, FocusToken, InjectionOutcome,
-    InjectionRequest, LocalEndpoint, LocalListener, MemoryRegion, PeerPolicy, Platform,
-    PlatformError, TypedHandoff,
+    InjectionRequest, LocalEndpoint, MemoryRegion, PeerPolicy, Platform, TypedHandoff,
 };
 use iamb_store::{Store, StoreError};
 
@@ -80,6 +80,10 @@ pub const STORE_LOCK_WAIT: Duration = Duration::from_secs(5);
 
 /// How often the engine thread sends a heartbeat (§3.2).
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(500);
+
+/// How often the worker tries again to serve the service endpoint while it cannot (the 2.8
+/// review's finding 12).
+pub const ENDPOINT_RETRY: Duration = Duration::from_secs(5);
 
 /// How often the listener's self-test runs (§3.2).
 pub const SELF_TEST_INTERVAL: Duration = Duration::from_secs(30);
@@ -111,6 +115,8 @@ pub struct WorkerConfig {
     pub self_test_interval: Duration,
     /// Normally [`STORE_LOCK_WAIT`].
     pub store_lock_wait: Duration,
+    /// Normally [`ENDPOINT_RETRY`].
+    pub endpoint_retry: Duration,
     /// The clock templates see.
     pub clock: Arc<dyn Fn() -> LocalDateTime + Send + Sync>,
     /// Where log lines go.
@@ -135,6 +141,7 @@ impl WorkerConfig {
             heartbeat_interval: HEARTBEAT_INTERVAL,
             self_test_interval: SELF_TEST_INTERVAL,
             store_lock_wait: STORE_LOCK_WAIT,
+            endpoint_retry: ENDPOINT_RETRY,
             clock: Arc::new(crate::clock::local_now),
             logger: Arc::new(Logger::disabled()),
         }
@@ -156,8 +163,6 @@ pub enum StartError {
     /// The store could not be opened (`Locked` when another process holds `run/store.lock`
     /// for longer than the wait).
     Store(StoreError),
-    /// The service endpoint could not be served (`EndpointInUse`: another worker runs).
-    Endpoint(PlatformError),
     /// A thread could not be started.
     Thread(std::io::Error),
 }
@@ -166,7 +171,6 @@ impl fmt::Display for StartError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Store(e) => write!(f, "cannot open the store: {}", store::Logged(e)),
-            Self::Endpoint(e) => write!(f, "cannot serve the service endpoint: {e}"),
             Self::Thread(e) => write!(f, "cannot start a thread: {e}"),
         }
     }
@@ -273,6 +277,9 @@ pub(crate) enum EngineMsg {
     FormCancel(FormSessionId),
     /// From a reader.
     FormAck(FormSessionId),
+    /// From a reader: the last UI host disconnected. Every form session it was sent can no
+    /// longer be submitted or cancelled by anyone, so the engine cancels them all.
+    UiHostGone,
     /// From a reader.
     SetPaused(bool),
     /// From the store thread.
@@ -385,6 +392,8 @@ pub(crate) struct Shared {
     /// The focus watcher was started: the engine thread keeps it running.
     pub watching: AtomicBool,
     pub memory_locked: AtomicBool,
+    /// What clients must be: also what roles their executables may take (finding 10).
+    pub policy: PeerPolicy,
     pub exit: ExitSignal,
     pub clock: Arc<dyn Fn() -> LocalDateTime + Send + Sync>,
 }
@@ -479,7 +488,7 @@ fn focus_sink(tx: Sender<FocusMsg>) -> Box<dyn FocusSink> {
 /// A running worker. See the [module docs](self).
 pub struct Worker {
     shared: Arc<Shared>,
-    endpoint: Arc<dyn LocalListener>,
+    endpoint: Arc<endpoint::Served>,
     handoff: Arc<TypedHandoff>,
     keys: Arc<keys::KeyQueue>,
     threads: Vec<(&'static str, JoinHandle<()>)>,
@@ -509,7 +518,9 @@ fn spawn(
 impl Worker {
     /// Opens the store (waiting for its lock), builds the snapshot, serves the endpoint and
     /// starts every thread. A listener or focus watcher that cannot start (a missing macOS
-    /// permission) is logged; the worker still runs, so `GetPermissions` can say why.
+    /// permission) is logged; the worker still runs, so `GetPermissions` can say why. An
+    /// endpoint that cannot be served is logged too, and tried again until it can
+    /// ([`endpoint`]): expansion does not need it.
     ///
     /// # Errors
     ///
@@ -528,6 +539,7 @@ impl Worker {
             heartbeat_interval,
             self_test_interval,
             store_lock_wait,
+            endpoint_retry,
             clock,
             logger,
         } = config;
@@ -553,10 +565,10 @@ impl Worker {
                 migrated.unusable
             ));
         }
-        let listener = endpoint
-            .bind(&dirs.service_endpoint(), policy)
-            .map_err(StartError::Endpoint)?;
-        let listener: Arc<dyn LocalListener> = Arc::from(listener);
+        // A bind that fails does not stop the worker (finding 12): the accept thread tries
+        // again ([`endpoint`]).
+        let first_bind = endpoint.bind(&dirs.service_endpoint(), policy);
+        let served_at_start = first_bind.is_ok();
 
         let (engine_tx, engine_rx) = sync_channel::<EngineMsg>(DEFAULT_EVENT_CAPACITY);
         let (focus_tx, focus_rx) = channel::<FocusMsg>();
@@ -585,6 +597,7 @@ impl Worker {
             listener_ok: AtomicBool::new(false),
             watching: AtomicBool::new(false),
             memory_locked: AtomicBool::new(false),
+            policy,
             exit: ExitSignal::default(),
             clock,
         });
@@ -651,22 +664,30 @@ impl Worker {
                 });
             })?;
         }
+        let served = Arc::new(endpoint::Served::default());
         {
             let shared = Arc::clone(&shared);
-            let listener = Arc::clone(&listener);
+            let served = Arc::clone(&served);
+            let binder = endpoint::Binder {
+                endpoint,
+                name: dirs.service_endpoint(),
+                policy,
+                retry: endpoint_retry,
+            };
             spawn("accept", &mut threads, move || {
-                ipc::accept(&shared, &listener);
+                endpoint::run(&shared, &served, &binder, first_bind);
             })?;
         }
         logger.info(format_args!(
-            "worker ready: {} snippets, listener {}, memory locked {}",
+            "worker ready: {} snippets, listener {}, memory locked {}, endpoint {}",
             shared.view.get().snapshot.len(),
             shared.listener_ok.load(Ordering::Relaxed),
-            shared.memory_locked.load(Ordering::Relaxed)
+            shared.memory_locked.load(Ordering::Relaxed),
+            served_at_start
         ));
         Ok(Self {
             shared,
-            endpoint: listener,
+            endpoint: served,
             handoff,
             keys,
             threads,
@@ -710,6 +731,13 @@ impl Worker {
     #[must_use]
     pub fn handoff(&self) -> &TypedHandoff {
         &self.handoff
+    }
+
+    /// True while the service endpoint is served: false while the worker runs without it and
+    /// tries the bind again (the 2.8 review's finding 12).
+    #[must_use]
+    pub fn endpoint_served(&self) -> bool {
+        self.endpoint.is_served()
     }
 
     /// The address range of the key queue's character slots (to check it is locked).
@@ -757,7 +785,7 @@ impl Worker {
         self.shared.watching.store(false, Ordering::Relaxed);
         let _ = platform.unwatch();
         let _ = platform.unregister(PALETTE_HOTKEY);
-        let _ = self.endpoint.close();
+        self.endpoint.stop();
         self.shared.clients.shutdown_all();
         let _ = self.watchdog_stop.send(());
         let _ = self.shared.focus_tx.send(FocusMsg::Stop);

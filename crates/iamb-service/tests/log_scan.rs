@@ -45,6 +45,13 @@ fn leaks(bytes: &[u8]) -> Vec<(&'static str, String)> {
     let mut lines = detectors.lines();
     lines.feed(bytes, &mut |i, _| out.push((ALL[i], "per-line".to_owned())));
     lines.finish(&mut |i, _| out.push((ALL[i], "per-line".to_owned())));
+    let mut numbers = detectors.numbers();
+    numbers.feed(bytes, &mut |i, _| {
+        out.push((ALL[i], "per-line-decimal".to_owned()));
+    });
+    numbers.finish(&mut |i, _| {
+        out.push((ALL[i], "per-line-decimal".to_owned()));
+    });
     out
 }
 
@@ -134,6 +141,35 @@ fn no_log_file_contains_what_the_user_typed_or_entered() {
 /// The detectors see a build that logs every key: the service's own logger, one line per typed
 /// character between other lines, as a debugging line in the engine thread would write it.
 /// No line holds a whole canary, so the whole-string check alone passes this log.
+/// The follow-up review's N3: the same build, writing each key as its decimal code.
+#[test]
+fn a_log_that_records_every_key_as_a_number_is_caught() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let log = Logger::open(dir.path(), "worker");
+    log.info(format_args!("worker ready"));
+    let mut seq = 0_u64;
+    for canary in ALL {
+        for (k, c) in format!("note {canary} ").chars().enumerate() {
+            log.info(format_args!("key {} seq {seq}", u32::from(c)));
+            seq += 1;
+            if k % 4 == 1 {
+                log.info(format_args!("ipc out status 243 bytes {seq} us"));
+            }
+        }
+    }
+    drop(log);
+    let bytes = fs::read(dir.path().join("worker.log")).expect("log");
+    let found = leaks(&bytes);
+    for canary in ALL {
+        assert!(
+            found
+                .iter()
+                .any(|(c, form)| *c == canary && form == "per-line-decimal"),
+            "a canary logged one key per line as a number is found: {found:?}"
+        );
+    }
+}
+
 #[test]
 fn a_log_that_records_every_key_is_caught() {
     let dir = tempfile::TempDir::new().expect("temp dir");

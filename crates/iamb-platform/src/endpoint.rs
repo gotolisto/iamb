@@ -7,7 +7,7 @@
 //!
 //! | | Server ([`LocalEndpoint::bind`]) | Client ([`LocalEndpoint::connect`]) |
 //! | --- | --- | --- |
-//! | Exclusive | Creates the endpoint as the first of its name, or fails with `EndpointInUse` | — |
+//! | Exclusive | Creates the endpoint as the first of its name and holds a lock beside it, or fails with `EndpointInUse` | — |
 //! | User-only | Socket in a directory the user owns with mode `0700`; pipe restricted to the user's SID, remote clients rejected | — |
 //! | Verified | Each accepted client is checked against the [`PeerPolicy`] before `accept` returns it | The server is checked before `connect` returns, so nothing is ever sent to an impostor |
 
@@ -42,9 +42,9 @@ impl EndpointKind {
 ///
 /// The OS crate derives the real address from it (architecture §3.3): on macOS the socket
 /// [`socket_path`](Self::socket_path) inside the `run` directory; on Windows the pipe
-/// `\\.\pipe\` + [`pipe_stem`](Self::pipe_stem) + `-<user SID>`, with a suffix derived from
-/// the `run` directory when the data root is not the default one (so tests, which always set
-/// `IAMB_DATA_DIR`, never meet the installed service).
+/// `\\.\pipe\` + [`pipe_stem`](Self::pipe_stem) + `-<user SID>-<secret>`, the secret drawn
+/// for every bind and kept in the `run` directory, so each data root (tests always set
+/// `IAMB_DATA_DIR`) has a pipe of its own that no other user can name in advance.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EndpointName {
     kind: EndpointKind,
@@ -232,7 +232,8 @@ pub trait LocalEndpoint: Send + Sync {
     /// # Errors
     ///
     /// [`EndpointInUse`](crate::PlatformError::EndpointInUse) when the name is taken (the
-    /// server then refuses to start, §6.1); [`Os`](crate::PlatformError::Os) otherwise.
+    /// service's worker then runs without its endpoint and tries again, §6.1);
+    /// [`Os`](crate::PlatformError::Os) otherwise.
     fn bind(&self, name: &EndpointName, policy: PeerPolicy) -> Result<Box<dyn LocalListener>>;
 
     /// Connects to the endpoint and verifies the server before returning.

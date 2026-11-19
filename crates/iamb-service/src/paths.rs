@@ -91,11 +91,14 @@ pub(crate) fn default_root(get: impl Fn(&str) -> Option<OsString>) -> Option<Pat
     }
 }
 
-/// Creates `dir` (and its parents) readable by the user only.
+/// Creates `dir` (and its parents) readable by the user only, and makes an existing `dir` so:
+/// mode `0700` on Unix; on Windows a protected DACL for the user's SID alone, inherited by
+/// what is inside, set through the platform layer
+/// ([`platform::restrict_to_user`](crate::platform::restrict_to_user)).
 ///
 /// # Errors
 ///
-/// I/O errors.
+/// I/O errors, and the system's error when the permissions cannot be set.
 pub fn create_private_dir(dir: &Path) -> io::Result<()> {
     #[cfg(unix)]
     {
@@ -108,7 +111,8 @@ pub fn create_private_dir(dir: &Path) -> io::Result<()> {
     }
     #[cfg(not(unix))]
     {
-        std::fs::create_dir_all(dir)
+        std::fs::create_dir_all(dir)?;
+        crate::platform::restrict_to_user(dir)
     }
 }
 

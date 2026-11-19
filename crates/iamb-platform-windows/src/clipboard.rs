@@ -14,9 +14,10 @@
 //!
 //! - `read_text`: the Unicode text, CR LF turned into LF (the engine's line ending).
 //! - `snapshot`: every format whose data is global memory (text, HTML, RTF, device-independent
-//!   bitmaps, file lists, and the registered formats applications put there), byte for byte;
-//!   formats that are handles to system objects are left out and the snapshot says it is
-//!   incomplete (`formats` has the rules and the limits).
+//!   bitmaps, file lists, and the registered formats applications put there), byte for byte,
+//!   and the enhanced metafile as its records; the bitmap, the palette and the metafile picture
+//!   the system makes again from those; other formats that are handles to system objects are
+//!   left out and the snapshot says it is incomplete (`formats` has the rules and the limits).
 //! - `write`: plain text (CR LF line endings), HTML in the HTML format, files as a file list.
 //!   With `transient`, also the three markers that keep content out of clipboard monitors,
 //!   the clipboard history and the cloud clipboard.
@@ -61,9 +62,9 @@ mod windows {
     };
 
     use super::formats::{
-        CF_HDROP, CF_UNICODETEXT, FIRST_REGISTERED, HISTORY_MARKERS, MAX_FLAVOUR_BYTES,
-        MAX_SNAPSHOT_BYTES, SNAPSHOT_TIME_LIMIT, Treatment, file_list, text_from_unicode,
-        treatment, unicode_text,
+        CF_ENHMETAFILE, CF_HDROP, CF_UNICODETEXT, FIRST_REGISTERED, HISTORY_MARKERS,
+        MAX_FLAVOUR_BYTES, MAX_SNAPSHOT_BYTES, SNAPSHOT_TIME_LIMIT, Treatment, file_list,
+        text_from_unicode, treatment, unicode_text,
     };
     use super::html;
     use super::os::{self, Data, MemoryFormat, Open};
@@ -101,24 +102,30 @@ mod windows {
             } else {
                 None
             };
-            match treatment(format, &present, name.as_deref()) {
+            let treated = treatment(format, &present, name.as_deref());
+            match treated {
                 Treatment::Ignore => continue,
                 Treatment::Skip => {
                     complete = false;
                     continue;
                 }
-                Treatment::Copy => {}
+                Treatment::Copy | Treatment::Metafile => {}
             }
-            let Some(memory) = MemoryFormat::new(format, &present, name.as_deref()) else {
-                complete = false;
-                continue;
-            };
             if started.elapsed() > SNAPSHOT_TIME_LIMIT {
                 complete = false;
                 continue;
             }
             let limit = MAX_FLAVOUR_BYTES.min(MAX_SNAPSHOT_BYTES.saturating_sub(total));
-            match open.read(memory, limit) {
+            let data = if treated == Treatment::Metafile {
+                open.read_enhanced_metafile(limit)
+            } else {
+                let Some(memory) = MemoryFormat::new(format, &present, name.as_deref()) else {
+                    complete = false;
+                    continue;
+                };
+                open.read(memory, limit)
+            };
+            match data {
                 Data::Bytes(bytes) => {
                     total += bytes.len();
                     flavours.push(ClipboardFlavour {
@@ -187,7 +194,13 @@ mod windows {
         // Put back as much as possible; report the first failure.
         let mut first_error: Option<PlatformError> = None;
         for (flavour, format) in snapshot.flavours().iter().zip(formats) {
-            if let Err(error) = open.put(format, flavour.data.expose()) {
+            let put = if format == CF_ENHMETAFILE {
+                // Saved as its records (`formats` module docs): made again here.
+                open.put_enhanced_metafile(flavour.data.expose())
+            } else {
+                open.put(format, flavour.data.expose())
+            };
+            if let Err(error) = put {
                 first_error.get_or_insert(error);
             }
         }

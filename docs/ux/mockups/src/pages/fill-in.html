@@ -1,0 +1,142 @@
+<section class="intro">
+  <h1>Flow 4: Fill-in</h1>
+  <p>A snippet with blanks asks for them in a small form, right where the user is typing. The form opens instantly, is driven entirely from the keyboard, remembers the last answers, and gives the focus back to the app before a single character is typed. Cancelling changes nothing.</p>
+  <div class="facts">
+    <span class="fact">Form visible <b>under 150 ms</b> after the trigger</span>
+    <span class="fact">Acknowledged to the service <b>within 2 s</b>, or the expansion is abandoned</span>
+    <span class="fact">Answers remembered <b>30 minutes</b>, in memory only</span>
+  </div>
+  <p class="legend"><span><span class="typed">;rlate</span> what the user typed</span><span><span class="typed-in">text</span> what Iamb typed (apps show no highlight)</span><span><span class="msg">Message</span> service message, architecture §6</span></p>
+</section>
+
+<div class="steps">
+
+  <figure class="step wide">
+    <div class="step-head"><span class="n">1</span><h3>The form appears over the app</h3></div>
+    <div class="stage pair">
+      <div class="col">
+        <span class="cap">macOS: a panel that does not activate Iamb. Mail stays the active app.</span>
+        <div class="over">
+          <div class="win host tall" data-os="mac" data-os-fixed>
+            <div class="win-bar"><span class="title">Mail: Re: Where is my wheel?</span></div>
+            <div class="win-body doc"><div class="hdr">To: <b>jun@customer.example</b></div><p><span class="typed">;rlate</span> <span class="caret"></span></p></div>
+          </div>
+          <!--#include form-late os=mac fixed=_data-os-fixed esc=esc enter=⏎ -->
+        </div>
+      </div>
+      <div class="col">
+        <span class="cap">Windows: Iamb’s form takes the foreground. Mail’s title bar goes inactive.</span>
+        <div class="over">
+          <div class="win host tall inactive" data-os="win" data-os-fixed>
+            <div class="win-bar"><span class="title">Mail: Re: Where is my wheel?</span></div>
+            <div class="win-body doc"><div class="hdr">To: <b>jun@customer.example</b></div><p><span class="typed">;rlate</span> <span class="caret"></span></p></div>
+          </div>
+          <!--#include form-late os=win fixed=_data-os-fixed esc=Esc enter=Enter -->
+        </div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>The user typed <code>;rlate</code> and a space. Focus is in the first field with its content selected, so typing replaces it.</dd></div>
+      <div><dt>Screen</dt><dd>The abbreviation stays on screen until the form is submitted. The panel sits in the upper third of the display the user is working on, with no animation. Fields are listed in the order they appear in the snippet; every field may be left empty. The footer names the app the text will go into.</dd></div>
+      <div><dt>Service</dt><dd>The engine matched, read the clock and clipboard, and opened the one form session. <span class="msg">FormRequested(session, snippet, spec, focus, last_values)</span> → the UI host shows the pre-warmed panel and answers <span class="msg">FormAck(session)</span>. On Windows the service grants the UI host the foreground with the request.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">2</span><h3>Every kind of field</h3></div>
+    <div class="stage">
+      <div class="panel formp" role="dialog" aria-label="Repair quote" data-os="mac">
+        <div class="hd"><svg class="i" aria-hidden="true" style="color:var(--color-accent-text)"><use href="#i-iamb"/></svg><span class="ttl">Repair quote</span><span class="abbr">;rquote</span></div>
+        <div class="bd">
+          <div class="field"><label>Customer <span class="opt">text</span></label><div class="input lg">Jun</div></div>
+          <div class="field"><span class="label">Bike <span class="opt">choice, up to 6 options</span></span>
+            <div class="optlist" role="radiogroup" aria-label="Bike">
+              <label class="radio"><span class="box"></span><span>Road</span></label>
+              <label class="radio on is-focus"><span class="box"></span><span>Gravel</span></label>
+              <label class="radio"><span class="box"></span><span>City</span></label>
+            </div></div>
+          <div class="field"><label>Rim <span class="opt">choice, 7 options or more</span></label><div class="select lg">700c, 32 holes<svg class="i" aria-hidden="true"><use href="#i-down"/></svg></div></div>
+          <div class="field"><label>Work needed <span class="opt">several lines</span></label><div class="textarea lg" style="min-height:74px">True the rear wheel
+Replace two spokes on the drive side</div></div>
+          <label class="check on"><span class="box"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg></span><span>Parts in stock <span class="opt" style="color:var(--color-text-secondary)">toggle</span></span></label>
+        </div>
+        <div class="ft"><span class="hint">Your last answers. <a href="#">Start empty</a></span><div class="actions"><button class="btn" type="button">Cancel [[Esc]]</button><button class="btn primary" type="button">Insert [[Enter]]</button></div></div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>[[Tab]] and [[Shift+Tab]] move between fields. [[Enter]] inserts from any field except a several-line one, where it starts a new line; [[Mod+Enter]] inserts from everywhere. [[Up]] [[Down]] choose an option, typing a letter jumps to it. <kbd>Space</kbd> flips a toggle. [[Esc]] cancels (it closes an open list first).</dd></div>
+      <div><dt>Screen</dt><dd>When the form was used in the last 30 minutes it opens with those answers, and says so. “Start empty” ([[Mod+Backspace]]) returns every field to the snippet’s defaults. A long form scrolls inside the panel, which never grows beyond 70% of the screen height.</dd></div>
+      <div><dt>Service</dt><dd>The field list is the event’s <code>spec</code>: <code>text</code>, <code>area</code>, <code>choice</code> with its options, <code>toggle</code>, each with a default. <code>last_values</code> pre-fills. Values never leave memory and are never logged.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">3</span><h3>Insert: focus first, then the text</h3></div>
+    <div class="stage">
+      <div class="win host mid" data-os="mac">
+        <div class="win-bar"><span class="title">Mail: Re: Where is my wheel?</span></div>
+        <div class="win-body doc"><div class="hdr">To: <b>jun@customer.example</b></div>
+          <p><span class="typed-in">Hi Jun,</span></p>
+          <p><span class="typed-in">Thank you for your patience. Your order BW-2291 left our workshop today and should reach you by Monday 23 March.</span></p>
+          <p><span class="typed-in">Ines Marchetti<br>Brindlewood Cycles</span> <span class="caret"></span></p></div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>[[Enter]]. The user can keep typing at once: the caret is back in Mail before the text arrives.</dd></div>
+      <div><dt>Screen</dt><dd>The panel disappears with no animation. The date is the day the abbreviation was typed, and the clipboard is what it held then, however long the form stayed open.</dd></div>
+      <div><dt>Service</dt><dd>The UI host hides the panel, returns focus to the token’s window, confirms that it has the focus, and only then sends <span class="msg">FormSubmit(session, values)</span>. The engine waits for the focus verdict <code>normal</code>, then deletes the abbreviation and types the text.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">4</span><h3>Cancel: nothing changes</h3></div>
+    <div class="stage">
+      <div class="win host mid" data-os="mac">
+        <div class="win-bar"><span class="title">Mail: Re: Where is my wheel?</span></div>
+        <div class="win-body doc"><div class="hdr">To: <b>jun@customer.example</b></div><p><span class="typed">;rlate</span> <span class="caret"></span></p></div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>[[Esc]], or the Cancel button. Clicking outside the panel does not cancel; it would be too easy to lose a long answer.</dd></div>
+      <div><dt>Screen</dt><dd>The abbreviation is still there, the caret is where it was, nothing was deleted or typed. The answers of a cancelled form are forgotten.</dd></div>
+      <div><dt>Service</dt><dd>The UI host returns focus, then <span class="msg">FormCancel(session)</span>. The engine closes the session; no action is emitted (ADR-0013).</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">5</span><h3>The same form again, with your answers</h3></div>
+    <div class="stage">
+      <div class="panel pal" role="dialog" aria-label="Search snippets" data-os="mac">
+        <div class="q"><svg class="i" aria-hidden="true"><use href="#i-search"/></svg><span class="txt ph">Search snippets</span></div>
+        <div class="res" role="listbox">
+          <div class="r on" role="option" aria-selected="true"><span class="nm"><svg class="i" aria-hidden="true"><use href="#i-field"/></svg>Fill in “Late delivery” again</span><span class="badge">your last answers</span><span class="sub">First name, Order number, Add voucher, Voucher code</span></div>
+        </div>
+        <div class="ft"><span>[[Enter]] open the form</span><span class="sp"></span><span>[[Esc]] close</span></div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>[[Ctrl+Shift+Space]] then [[Enter]]: the search palette offers the last form as its first row for 30 minutes. A dedicated shortcut can be set in Settings → Shortcuts (none by default).</dd></div>
+      <div><dt>Screen</dt><dd>For the next customer, or when an insert was refused. The form opens pre-filled; nothing is deleted this time because nothing was typed.</dd></div>
+      <div><dt>Service</dt><dd>Focus back to the app, then <span class="msg">ReopenLastForm</span> → <span class="msg">FormRequested</span> with <code>last_values</code>. Answers are held only in the worker’s memory and cleared after 30 minutes without use, on screen lock, on sign-out and on restart. A dedicated shortcut needs <span class="msg todo">a second shortcut setting</span>.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">6</span><h3>When the text cannot be typed</h3></div>
+    <div class="stage">
+      <div class="toast notice" role="alert"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg><div><b>“Late delivery” was not inserted</b><span>The cursor is in a password field. Your answers are kept for 30 minutes: press [[Ctrl+Shift+Space]] where the text should go.</span></div></div>
+      <div class="panel formp" role="dialog" aria-label="Late delivery" data-os="mac">
+        <div class="bd">
+          <div class="banner bad" role="alert"><svg class="i" aria-hidden="true"><use href="#i-warn"/></svg><span class="txt"><b>Iamb could not get back to Mail.</b> Nothing was typed. Click where the text should go and press Insert again, or cancel.</span></div>
+        </div>
+        <div class="ft"><span class="hint">Your answers are still here.</span><div class="actions"><button class="btn" type="button">Cancel [[Esc]]</button><button class="btn primary" type="button">Insert [[Enter]]</button></div></div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>The notice needs no answer and takes no focus; it leaves after 6 seconds. The form with the red banner keeps the focus and every answer.</dd></div>
+      <div><dt>Screen</dt><dd>Top: the service refused after the submit (password field, excluded app, a window Iamb cannot inspect, an input method composing, or the user moved to another app). Bottom: the window to return to is gone or would not take the focus, so nothing was sent. A second abbreviation typed while a form is open does nothing at all.</dd></div>
+      <div><dt>Service</dt><dd>Top: <span class="msg">DiagnosticAdded</span> with <code>refused_secure_field</code>, <code>refused_excluded_app</code>, <code>refused_unknown_focus</code>, <code>refused_composing</code> or <code>request_cancelled</code> for this snippet; the values stay available to <span class="msg">ReopenLastForm</span>. Bottom: focus was not confirmed, so <span class="msg">FormSubmit</span> is not sent. No UI host connected: <code>form_no_ui_host</code>, the abbreviation stays, the supervisor starts the UI host.</dd></div>
+    </dl>
+  </figure>
+
+</div>

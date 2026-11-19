@@ -264,6 +264,28 @@ impl EngineThread {
         next
     }
 
+    /// The last UI host disconnected: every form session it was sent is cancelled. Without
+    /// this a form acknowledged by a UI host that then died stays open, and the engine refuses
+    /// every typed match with `form_open` until the worker restarts.
+    fn ui_host_gone(&mut self) {
+        self.ack_deadline = None;
+        if matches!(
+            &self.parked,
+            Some(Parked {
+                request: Explicit::Submit { .. },
+                ..
+            })
+        ) {
+            self.parked = None;
+        }
+        let sessions: Vec<FormSessionId> = self.forms.drain().map(|(s, _)| s).collect();
+        for session in sessions {
+            self.handle(Event::FormCancelled { session });
+            self.shared
+                .diagnostic(WireDiagnostic::code("form_ui_host_gone"));
+        }
+    }
+
     fn expire(&mut self, now: Instant) {
         if self.parked.as_ref().is_some_and(|p| now >= p.deadline)
             && let Some(parked) = self.parked.take()
@@ -346,6 +368,7 @@ impl EngineThread {
                 }
                 self.handle(Event::FormCancelled { session });
             }
+            EngineMsg::UiHostGone => self.ui_host_gone(),
             EngineMsg::FormAck(session) => {
                 if self.ack_deadline.is_some_and(|(s, _)| s == session) {
                     self.ack_deadline = None;
@@ -482,19 +505,22 @@ impl EngineThread {
     /// Reads where the focus is now. Another window than the last report goes to the focus
     /// thread as a change; the same window, once the keys have gone elsewhere for
     /// [`RESYNC_AFTER`], makes `target` a stamp that is no longer trusted (module docs).
+    ///
+    /// The application and the window come from one consistent reading
+    /// ([`FocusInspector::focus_now`](iamb_platform::FocusInspector::focus_now)): the change
+    /// is judged by the application's name and its keys by the window, so a focus change
+    /// between two separate reads would pair one application's name with another's window
+    /// (the close-out review's C3).
     fn resync(&mut self, target: KeyTarget, lasted: bool) {
-        let platform = &self.shared.platform;
-        let (Ok(app), Ok(token)) = (platform.focused_app(), platform.focus_token()) else {
+        let Ok(change) = self.shared.platform.focus_now() else {
             return;
         };
+        let token = change.token;
         if self.focus.as_ref().map(|c| c.token) != Some(token) {
             self.shared.logger.info(format_args!(
                 "keys went to a window the focus watcher did not report; the focus was read again"
             ));
-            let _ = self
-                .shared
-                .focus_tx
-                .send(FocusMsg::Change(FocusChange { app, token }));
+            let _ = self.shared.focus_tx.send(FocusMsg::Change(change));
         } else if lasted {
             self.shared.logger.warn(format_args!(
                 "the listener names process {} for keys while the focus is in process {}; \

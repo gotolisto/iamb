@@ -221,8 +221,11 @@ pub(crate) struct Pipeline {
     /// The injection marker reported last.
     last_marker: Option<Marker>,
     /// The first half of a character outside the Basic Multilingual Plane that another
-    /// program is injecting.
-    high_surrogate: Option<Sensitive<u16>>,
+    /// program is injecting, while `high_waiting`. The slot is overwritten with zero when the
+    /// half is used or dropped and when the pipeline is dropped (the listener stops), so the
+    /// half does not stay behind in the listener's memory (the 2.8 review's finding 9).
+    high_surrogate: Sensitive<u16>,
+    high_waiting: bool,
     /// Compare the picture of the keyboard with the physical one at the next event, whatever
     /// the clock says.
     resync_due: bool,
@@ -237,6 +240,13 @@ impl fmt::Debug for Pipeline {
             .field("composing", &self.ime.reported())
             .field("hotkeys", &self.hotkeys.len())
             .finish_non_exhaustive()
+    }
+}
+
+impl Drop for Pipeline {
+    /// The listener stopped (the hook thread drops its pipeline).
+    fn drop(&mut self) {
+        self.forget_on_stop();
     }
 }
 
@@ -255,7 +265,8 @@ impl Pipeline {
             layout: 0,
             last_key_ms: now_ms,
             last_marker: None,
-            high_surrogate: None,
+            high_surrogate: Sensitive::new(0),
+            high_waiting: false,
             resync_due: false,
             hotkeys: Vec::new(),
         }
@@ -274,8 +285,41 @@ impl Pipeline {
     pub(crate) fn lost(&mut self) {
         self.dead.reset();
         self.ime.reset();
-        self.high_surrogate = None;
+        self.forget_high_surrogate();
         self.resync_due = true;
+    }
+
+    /// The listener stops: the waiting dead character and the half of a surrogate pair are
+    /// overwritten (the 2.8 review's finding 9). Also run when the pipeline is dropped.
+    pub(crate) fn forget_on_stop(&mut self) {
+        self.dead.reset();
+        self.forget_high_surrogate();
+    }
+
+    /// Takes the waiting half of a surrogate pair, if any, and overwrites its slot.
+    fn take_high_surrogate(&mut self) -> Option<u16> {
+        let high = self.high_waiting.then(|| *self.high_surrogate.expose());
+        self.forget_high_surrogate();
+        high
+    }
+
+    /// Overwrites the slot of the half of a surrogate pair with zero; nothing waits after.
+    fn forget_high_surrogate(&mut self) {
+        *self.high_surrogate.expose_mut() = 0;
+        std::hint::black_box(self.high_surrogate.expose_mut());
+        self.high_waiting = false;
+    }
+
+    /// The slot of the half of a surrogate pair, as it is in memory (tests).
+    #[cfg(test)]
+    pub(crate) const fn high_surrogate_slot(&self) -> u16 {
+        *self.high_surrogate.expose()
+    }
+
+    /// The dead character the listener holds, if one waits (tests).
+    #[cfg(test)]
+    pub(crate) fn dead_key_slot(&self) -> Option<u16> {
+        self.dead.pending()
     }
 
     /// The last `Composing` value reported.
@@ -315,7 +359,7 @@ impl Pipeline {
             // Iamb's own: it never reacts to its own output (§5).
             return;
         }
-        self.high_surrogate = None;
+        self.forget_high_surrogate();
         // A click can switch an input method on (its mode button) or move the focus.
         let step = self.ime.unsettle();
         self.apply(step, host);
@@ -411,17 +455,16 @@ impl Pipeline {
     /// it is decided when the second half arrives.
     fn packet(&mut self, scan: u32, host: &mut impl Host) {
         let unit = u16::try_from(scan & 0xFFFF).unwrap_or(0);
-        let high = self.high_surrogate.take();
+        let high = self.take_high_surrogate();
         let ch = match unit {
             0xD800..=0xDBFF => {
-                self.high_surrogate = Some(Sensitive::new(unit));
+                *self.high_surrogate.expose_mut() = unit;
+                self.high_waiting = true;
                 return;
             }
             0xDC00..=0xDFFF => {
                 let Some(high) = high else { return };
-                char::decode_utf16([*high.expose(), unit])
-                    .next()
-                    .and_then(Result::ok)
+                char::decode_utf16([high, unit]).next().and_then(Result::ok)
             }
             _ => char::from_u32(u32::from(unit)),
         };

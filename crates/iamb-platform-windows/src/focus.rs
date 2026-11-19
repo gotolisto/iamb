@@ -157,8 +157,8 @@ mod windows {
     use std::time::Duration;
 
     use iamb_platform::{
-        AppIdentity, FieldSecurity, FocusInspector, FocusSink, FocusToken, Marker, PlatformError,
-        RESTORE_FOCUS_TIMEOUT, Result,
+        AppIdentity, FieldSecurity, FocusChange, FocusInspector, FocusSink, FocusToken, Marker,
+        PlatformError, RESTORE_FOCUS_TIMEOUT, Result,
     };
 
     use super::inspect::Inspector;
@@ -250,6 +250,17 @@ mod windows {
         fn focus_token(&self) -> Result<FocusToken> {
             os::foreground()
                 .map(secure::Front::token)
+                .ok_or(PlatformError::NoFocus)
+        }
+
+        /// One reading of the window in front gives both the token and the application, as
+        /// the watcher builds its reports (the close-out review's C3).
+        fn focus_now(&self) -> Result<FocusChange> {
+            os::foreground()
+                .map(|front| FocusChange {
+                    app: os::identity_of(front),
+                    token: front.token(),
+                })
                 .ok_or(PlatformError::NoFocus)
         }
 

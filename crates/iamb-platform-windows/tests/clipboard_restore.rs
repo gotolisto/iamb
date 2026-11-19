@@ -190,3 +190,104 @@ fn an_empty_clipboard_stays_empty() {
     let raw = Clip::open().expect("clipboard");
     assert!(raw.formats().is_empty(), "{:?}", raw.formats());
 }
+
+/// `CF_ENHMETAFILE`: its data is a handle to an enhanced metafile.
+const CF_ENHMETAFILE: u32 = 14;
+/// `CF_METAFILEPICT`: the system makes it from an enhanced metafile.
+const CF_METAFILEPICT: u32 = 3;
+
+/// The records of the enhanced metafile on the clipboard, if there is one.
+fn metafile_records(_open: &Clip) -> Option<Vec<u8>> {
+    use windows_sys::Win32::Graphics::Gdi::GetEnhMetaFileBits;
+    use windows_sys::Win32::System::DataExchange::GetClipboardData;
+    // SAFETY: the clipboard is open on this thread (`_open`); the data of `CF_ENHMETAFILE` is
+    // a metafile handle, valid while it is open; a null buffer asks for the size, and the
+    // second call writes at most the length passed.
+    unsafe {
+        let handle = GetClipboardData(CF_ENHMETAFILE);
+        if handle.is_null() {
+            return None;
+        }
+        let size = GetEnhMetaFileBits(handle, 0, std::ptr::null_mut());
+        let mut bytes = vec![0_u8; usize::try_from(size).ok()?];
+        let written = GetEnhMetaFileBits(handle, size, bytes.as_mut_ptr());
+        (written == size && size > 0).then_some(bytes)
+    }
+}
+
+/// The follow-up review's N4: an office program's copy leaves a picture of the selection next
+/// to its text, as an enhanced metafile (a handle). The snapshot copies its records, so it is
+/// complete and a paste can be made; the restore makes the metafile again, and the system
+/// offers the metafile picture from it as before.
+#[test]
+fn a_copy_with_a_picture_of_the_selection_is_saved_and_restored_whole() {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::Graphics::Gdi::{
+        CloseEnhMetaFile, CreateEnhMetaFileW, DeleteEnhMetaFile, Rectangle,
+    };
+    use windows_sys::Win32::System::DataExchange::SetClipboardData;
+
+    let _alone = alone();
+    let Some(raw) = clip() else { return };
+    raw.put(&[(CF_UNICODETEXT, utf16_bytes("cell A1"))]);
+    let bounds = RECT {
+        left: 0,
+        top: 0,
+        right: 2540,
+        bottom: 1270,
+    };
+    // SAFETY: a metafile in memory (no file name), drawn into once and closed; the clipboard
+    // is open on this thread and takes the metafile over when `SetClipboardData` succeeds.
+    unsafe {
+        let dc = CreateEnhMetaFileW(
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            &raw const bounds,
+            std::ptr::null(),
+        );
+        assert!(!dc.is_null(), "CreateEnhMetaFileW");
+        Rectangle(dc, 10, 10, 90, 40);
+        let metafile = CloseEnhMetaFile(dc);
+        assert!(!metafile.is_null(), "CloseEnhMetaFile");
+        if SetClipboardData(CF_ENHMETAFILE, metafile).is_null() {
+            DeleteEnhMetaFile(metafile);
+            panic!("SetClipboardData");
+        }
+    }
+    let records = metafile_records(&raw).expect("the metafile is on the clipboard");
+    let text = raw.get(CF_UNICODETEXT).expect("just put");
+    drop(raw);
+    // The system makes the metafile picture from the enhanced metafile once the clipboard is
+    // closed, so it is listed only after reopening.
+    let raw = Clip::open().expect("clipboard");
+    assert!(
+        raw.formats().contains(&CF_METAFILEPICT),
+        "{:?}",
+        raw.formats()
+    );
+    drop(raw);
+
+    let platform = Platform::new();
+    let snapshot = platform.snapshot().expect("snapshot");
+    assert!(snapshot.is_complete(), "{snapshot:?}");
+    assert!(
+        snapshot
+            .flavours()
+            .iter()
+            .any(|f| f.format == ClipboardFormat::Id(CF_ENHMETAFILE))
+    );
+    platform
+        .write(&ClipboardContent::text("expansion"), true)
+        .expect("write");
+    platform.restore(snapshot).expect("restore");
+
+    let raw = Clip::open().expect("clipboard");
+    assert_eq!(metafile_records(&raw), Some(records), "the same picture");
+    assert_eq!(raw.get(CF_UNICODETEXT), Some(text));
+    assert!(
+        raw.formats().contains(&CF_METAFILEPICT),
+        "{:?}",
+        raw.formats()
+    );
+    assert_eq!(markers_present(&raw), [true, true, true]);
+}

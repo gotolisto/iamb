@@ -1,0 +1,243 @@
+<section class="intro">
+  <h1>Flow 6: Share a folder</h1>
+  <p>One person shares one folder with a group: a family or a team. Everyone in the group gets its snippets within seconds. Snippets from other people that could do more than type a line of text wait for the recipient’s approval first.</p>
+  <div class="facts">
+    <span class="fact">Shared folder appears <b>within 10 s</b> on the other devices</span>
+    <span class="fact">Built in <b>Phase 4</b> (account, sync); designed here</span>
+    <span class="fact">No public links: <b>groups only</b></span>
+  </div>
+  <p class="legend"><span><span class="msg">Message</span> service or account message, architecture §6.2 and §6.4</span><span><span class="msg todo">Message</span> not specified yet</span></p>
+</section>
+
+<h2 class="section-title">The person who shares</h2>
+<div class="steps">
+
+  <figure class="step wide">
+    <div class="step-head"><span class="n">1</span><h3>Choose the folder</h3></div>
+    <div class="stage">
+      <div class="win w-xl" data-os="mac">
+        <div class="win-bar"><span class="title">Iamb</span></div>
+        <div class="win-body lib two">
+          <!--#include sidebar sel=shop -->
+          <section class="pane" aria-label="Shop replies">
+            <div class="pane-head"><h4>Shop replies</h4><span class="badge"><svg class="i" aria-hidden="true"><use href="#i-lock"/></svg>Only you</span><button class="btn primary is-focus" type="button"><svg class="i" aria-hidden="true"><use href="#i-people"/></svg>Share… [[Mod+Shift+S]]</button><button class="btn icon ghost" type="button" aria-label="Folder actions"><svg class="i" aria-hidden="true"><use href="#i-more"/></svg></button></div>
+            <div class="rows" role="listbox" style="align-content:start">
+              <div class="row"><div class="l1"><span class="nm">Wheel build quote</span><svg class="i" aria-label="Asks for values"><use href="#i-field"/></svg><span class="abbr">;wq</span></div><div class="l2">Thank you for asking. A hand-built ‹Rim› wheelset with ‹Hub› comes to…</div></div>
+              <div class="row"><div class="l1"><span class="nm">Wheel retensioning</span><span class="abbr">;wten</span></div><div class="l2">New wheels settle in. Bring it back after 200 km and we retension it free of charge.</div></div>
+              <div class="row"><div class="l1"><span class="nm">Wheel pickup steps</span><span class="abbr">;wpick</span></div><div class="l2">1. Bring your order number. 2. Ring the bell at the blue door. 3. We fit the…</div></div>
+              <div class="row"><div class="l1"><span class="nm">Paste tracking link</span><span class="abbr">;wtrack</span></div><div class="l2">You can follow your parcel here: ‹clipboard›</div></div>
+              <div class="row"><div class="l1"><span class="nm">Workshop address</span><span class="abbr">;addr</span></div><div class="l2">Brindlewood Cycles, 12 Millrace Lane, Unit 4 (blue door behind the bakery)</div></div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>Select the folder in the sidebar, then [[Mod+Shift+S]]. Also in the folder’s context menu (<kbd>Shift+F10</kbd> or the menu key on Windows, <kbd>⌃⏎</kbd> on macOS).</dd></div>
+      <div><dt>Screen</dt><dd>Every folder header says who can see it: “Only you”, “Shared with Brindlewood team”, or “Shared by Ines”. Sub-folders are shared with their parent. Only the folder’s owner sees the Share button.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">AccountStatus</span> (account endpoint) decides whether step 2 is needed.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">2</span><h3>Sign in, if not yet</h3></div>
+    <div class="stage">
+      <div class="dialog" role="dialog" aria-label="Sign in to share" data-os="mac">
+        <h4>Sign in to share “Shop replies”</h4>
+        <div class="body">
+          <p>Sharing needs an Iamb account, so the people you share with can be recognised. Signing in happens in your browser; Iamb never sees your password.</p>
+          <p>Your other folders stay on this computer until you choose to sync or share them.</p>
+        </div>
+        <div class="actions"><button class="btn" type="button">Cancel</button><button class="btn primary is-focus" type="button">Continue in browser [[Enter]]</button></div>
+      </div>
+      <div class="dialog" role="dialog" aria-label="Waiting for sign-in" data-os="mac">
+        <h4>Finish signing in in your browser</h4>
+        <div class="body"><p>This window continues by itself when you are done.</p></div>
+        <div class="actions"><button class="btn link grow" type="button" style="justify-content:flex-start;flex:0 1 auto">Open the browser again</button><span class="grow"></span><button class="btn" type="button">Cancel [[Esc]]</button></div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>[[Enter]] opens the browser. [[Esc]] cancels at any point and returns to the folder with nothing changed.</dd></div>
+      <div><dt>Screen</dt><dd>Skipped when already signed in. If sign-in fails or is closed: “Sign-in did not finish. Nothing was shared.” with Try again.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">BeginSignIn(provider)</span> → system browser, authorisation-code flow with PKCE (ADR-0020) → <span class="msg">AccountChanged</span>. <span class="msg">CancelSignIn</span> on cancel.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">3</span><h3>Choose the group and what it may do</h3></div>
+    <div class="stage">
+      <div class="dialog" role="dialog" aria-label="Share Shop replies" data-os="mac">
+        <h4>Share “Shop replies”</h4>
+        <div class="body">
+          <div class="field"><span class="label">With</span>
+            <div class="optlist" role="radiogroup" aria-label="Group">
+              <label class="radio on is-focus"><span class="box"></span><span><b style="font-weight:var(--font-weight-medium)">Brindlewood team</b><br><span style="color:var(--color-text-secondary)">Team · 4 people: you, Tomás, Jun and Odile</span></span></label>
+              <label class="radio"><span class="box"></span><span><b style="font-weight:var(--font-weight-medium)">Home</b><br><span style="color:var(--color-text-secondary)">Family · 3 people</span></span></label>
+              <label class="radio"><span class="box"></span><span>New group…</span></label>
+            </div>
+          </div>
+          <div class="field"><span class="label">They can</span>
+            <div class="optlist" role="radiogroup" aria-label="Permission">
+              <label class="radio on"><span class="box"></span><span>Use the snippets</span></label>
+              <label class="radio"><span class="box"></span><span>Use, add and change snippets</span></label>
+            </div>
+          </div>
+          <p>All 19 snippets and the sub-folders of “Shop replies” go to everyone in Brindlewood team, now and as the group grows. Only you can rename, move, delete or stop sharing the folder.</p>
+        </div>
+        <div class="actions"><button class="btn" type="button">Cancel</button><button class="btn primary" type="button">Share [[Enter]]</button></div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>[[Up]] [[Down]] choose within a group of options, [[Tab]] moves on, [[Enter]] shares.</dd></div>
+      <div><dt>Screen</dt><dd>A folder is shared with a group, never with single addresses or by link. The sentence at the bottom always states the count and the group in words. “New group…” leads to step 4 and comes back here.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">Profiles</span>, <span class="msg">Members(profile)</span> to list groups; <span class="msg">SetFolderShare(folder, profile, permission)</span> with <code>view</code> or <code>edit</code>.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">4</span><h3>A new group and its people</h3></div>
+    <div class="stage">
+      <div class="dialog" role="dialog" aria-label="New group" data-os="mac">
+        <h4>New group</h4>
+        <div class="body">
+          <div class="grid2">
+            <div class="field"><label>Name</label><div class="input">Brindlewood team</div></div>
+            <div class="field"><span class="label">Kind</span><div class="seg" role="group" aria-label="Kind"><span>Family</span><span class="on">Team</span></div></div>
+          </div>
+          <div class="field"><label>Invite by email</label>
+            <div style="display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:var(--space-2)"><div class="input is-focus">odile@brindlewood.example<span class="caret"></span></div><div class="select" style="width:auto">Member<svg class="i" aria-hidden="true"><use href="#i-down"/></svg></div><button class="btn" type="button">Invite</button></div>
+            <p class="help">They get an email asking them to open Iamb. They accept inside Iamb.</p></div>
+          <ul class="members" aria-label="People">
+            <li><span class="avatar" aria-hidden="true">IM</span><span class="grow"><span>Ines Marchetti (you)</span><small>ines@brindlewood.example</small></span><span class="badge">Owner</span></li>
+            <li><span class="avatar" aria-hidden="true">T</span><span class="grow"><span>tomas@brindlewood.example</span><small>Invited just now</small></span><span class="badge warn">Waiting</span><button class="btn sm ghost" type="button">Withdraw</button></li>
+            <li><span class="avatar" aria-hidden="true">J</span><span class="grow"><span>jun@brindlewood.example</span><small>Invited just now</small></span><span class="badge warn">Waiting</span><button class="btn sm ghost" type="button">Withdraw</button></li>
+          </ul>
+        </div>
+        <div class="actions"><button class="btn" type="button">Cancel</button><button class="btn primary" type="button">Create group</button></div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>Type an address, [[Enter]] invites and clears the field for the next one. [[Mod+Enter]] creates the group.</dd></div>
+      <div><dt>Screen</dt><dd>Roles: Member, Admin (may invite and remove people), Owner. Family and Team work the same way; the kind only changes the wording. A bad address: “That does not look like an email address.”</dd></div>
+      <div><dt>Service</dt><dd><span class="msg todo">CreateProfile(kind, name)</span>, then <span class="msg">Invite(profile, email, role)</span> per person. Listing and withdrawing invitations that were sent needs <span class="msg todo">SentInvitations</span> and <span class="msg todo">WithdrawInvitation</span>.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">5</span><h3>Shared</h3></div>
+    <div class="stage">
+      <div class="win w-md" data-os="mac">
+        <div class="win-bar"><span class="title">Iamb: folder header</span></div>
+        <section class="win-body pane">
+          <div class="pane-head"><h4>Shop replies</h4><span class="badge ok"><svg class="i" aria-hidden="true"><use href="#i-people"/></svg>Shared with Brindlewood team</span><button class="btn" type="button">Manage sharing</button></div>
+          <div class="pad">
+            <div class="setrow"><div class="t"><b style="font-weight:var(--font-weight-medium)">Brindlewood team</b><span>4 people · can use the snippets</span></div><div class="select" style="width:auto">Use<svg class="i" aria-hidden="true"><use href="#i-down"/></svg></div></div>
+            <div class="actions" style="justify-content:flex-start"><button class="btn danger" type="button">Stop sharing</button></div>
+          </div>
+        </section>
+      </div>
+      <div class="toast" role="status"><span>Shared. Brindlewood team now has “Shop replies”.</span></div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>“Manage sharing” is the same [[Mod+Shift+S]].</dd></div>
+      <div><dt>Screen</dt><dd>The folder gets a people icon in the sidebar. Stop sharing asks first: “Stop sharing ‘Shop replies’? It is removed from the devices of the 3 other people. Your copy stays.” [Stop sharing] [Cancel]. While offline: “Will be shared when you are back online.”</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">SyncProgress</span> until pushed; <span class="msg">RemoveFolderShare</span> to stop, after which the other devices purge the folder (<span class="msg">PurgeFolder</span> on theirs).</dd></div>
+    </dl>
+  </figure>
+
+</div>
+
+<h2 class="section-title">The person who receives</h2>
+<div class="steps">
+
+  <figure class="step">
+    <div class="step-head"><span class="n">6</span><h3>The invitation, inside Iamb</h3></div>
+    <div class="stage">
+      <div class="win w-md" data-os="mac">
+        <div class="win-bar"><span class="title">Iamb</span></div>
+        <div class="win-body pad">
+          <div class="banner" role="status"><svg class="i" aria-hidden="true"><use href="#i-people"/></svg><span class="txt"><b>Ines Marchetti invited you to “Brindlewood team”.</b> You will get the folders shared with this group. Nothing of yours is shared.</span><div class="actions"><button class="btn" type="button">Decline</button><button class="btn primary is-focus" type="button">Join</button></div></div>
+        </div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>The banner is the first stop of [[Tab]] in the window; [[Enter]] joins.</dd></div>
+      <div><dt>Screen</dt><dd>The email only says “open Iamb”: there is no link to click and nothing to paste. The invitation appears after sign-in with the invited address and waits until answered.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">Invitations</span> after sign-in and on <span class="msg">AccountChanged</span>; <span class="msg">AcceptInvitation(id)</span>. Declining needs <span class="msg todo">DeclineInvitation(id)</span>.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">7</span><h3>The folder arrives</h3></div>
+    <div class="stage">
+      <div class="win w-md" data-os="mac">
+        <div class="win-bar"><span class="title">Iamb: folder</span></div>
+        <section class="win-body pane">
+          <div class="pane-head"><h4>Shop replies</h4><span class="badge"><svg class="i" aria-hidden="true"><use href="#i-people"/></svg>Shared by Ines · you can use</span></div>
+          <div>
+            <div class="pad" style="padding-bottom:0"><div class="banner warn" role="status"><svg class="i" aria-hidden="true"><use href="#i-eye"/></svg><span class="txt"><b>2 snippets wait for your review.</b> They press keys or read your clipboard, so Iamb asks you before it types them. The other 17 work now.</span><button class="btn is-focus" type="button">Review</button></div></div>
+            <div class="rows" role="listbox">
+              <div class="row"><div class="l1"><span class="nm">Wheel pickup steps</span><span class="badge warn"><svg class="i" aria-hidden="true"><use href="#i-eye"/></svg>Needs review</span><span class="abbr">;wpick</span></div><div class="l2">Several lines · by Ines</div></div>
+              <div class="row"><div class="l1"><span class="nm">Paste tracking link</span><span class="badge warn"><svg class="i" aria-hidden="true"><use href="#i-eye"/></svg>Needs review</span><span class="abbr">;wtrack</span></div><div class="l2">Reads the clipboard · by Ines</div></div>
+              <div class="row"><div class="l1"><span class="nm">Wheel retensioning</span><span class="abbr">;wten</span></div><div class="l2">New wheels settle in. Bring it back after 200 km and we retension it free of charge.</div></div>
+              <div class="row"><div class="l1"><span class="nm">Workshop address</span><span class="badge">Yours is used</span><span class="abbr">;addr</span></div><div class="l2">You have your own ;addr. On this computer yours expands, this one does not.</div></div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>[[Enter]] on the banner opens the first review; in the list, [[Enter]] on a “Needs review” row opens that one.</dd></div>
+      <div><dt>Screen</dt><dd>A toast announces the folder once: “‘Shop replies’ was shared with you: 19 snippets.” Single-line text snippets work at once. A read-only folder shows its snippets without Save; “Copy to my snippets” is offered instead.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">LibraryChanged</span> when the sync agent applies the folder; <span class="msg">ListPendingReviews</span>; <span class="msg">Health</span> for the abbreviation that lost to the user’s own. Listing folders of other profiles needs <span class="msg todo">ListFolders and ListSnippets for the whole effective library</span>.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step wide">
+    <div class="step-head"><span class="n">8</span><h3>Review before a snippet can press keys or read the clipboard</h3></div>
+    <div class="stage pair">
+      <div class="col">
+        <span class="cap">First time: the whole snippet</span>
+        <div class="dialog w" role="dialog" aria-label="Review Paste tracking link" data-os="mac">
+          <h4>Review “Paste tracking link”</h4>
+          <div class="body">
+            <div class="who"><span class="avatar" aria-hidden="true">IM</span><span>Written by <b>Ines Marchetti</b> in “Shop replies” · today 14:02</span></div>
+            <div class="field"><span class="label">Besides typing text, this snippet</span>
+              <ul class="does">
+                <li><span class="chip read"><svg class="i" aria-hidden="true"><use href="#i-clipboard"/></svg>Clipboard</span> types whatever you last copied</li>
+                <li><span class="chip act"><svg class="i" aria-hidden="true"><use href="#i-key"/></svg>Enter</span> presses Enter once at the end</li>
+              </ul></div>
+            <div class="field"><span class="label">What it types</span>
+              <div class="tpl" style="min-height:0">You can follow your parcel here: <span class="chip read"><svg class="i" aria-hidden="true"><use href="#i-clipboard"/></svg>Clipboard</span><span class="chip act"><svg class="i" aria-hidden="true"><use href="#i-key"/></svg>Enter</span></div></div>
+            <p>Approve only if you trust Ines with this. Once approved, typing <span class="abbr">;wtrack</span> does exactly what you see here, in whatever app you are in: in a chat, the Enter sends the message.</p>
+          </div>
+          <div class="actions"><span class="count grow">1 of 2</span><button class="btn is-focus" type="button">Not now [[Esc]]</button><button class="btn primary" type="button">Approve</button></div>
+        </div>
+      </div>
+      <div class="col">
+        <span class="cap">After a change: what is different</span>
+        <div class="dialog w" role="dialog" aria-label="Review the change to Wheel pickup steps" data-os="mac">
+          <h4>Review the change to “Wheel pickup steps”</h4>
+          <div class="body">
+            <div class="who"><span class="avatar" aria-hidden="true">T</span><span>Changed by <b>Tomás Arce</b> · today 16:40. You approved the earlier text on 12 March.</span></div>
+            <div class="field"><span class="label">What changed</span>
+              <div class="diff" role="group" aria-label="Changes">
+                <div>1. Bring your order number.</div>
+                <div class="del" aria-label="Removed: ">2. Ring the bell at the blue door.</div>
+                <div class="add" aria-label="Added: ">2. Ring the bell at the green door on Millrace Lane.</div>
+                <div>3. We fit the wheel while you wait.</div>
+              </div></div>
+            <p>Until you approve, <span class="abbr">;wpick</span> keeps typing the text you approved before.</p>
+          </div>
+          <div class="actions"><span class="count grow">2 of 2</span><button class="btn is-focus" type="button">Not now [[Esc]]</button><button class="btn primary" type="button">Approve</button></div>
+        </div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>Focus starts on “Not now”, so a stray [[Enter]] approves nothing. Approve is one [[Tab]] away, or [[Mod+Enter]]. After a decision the next review opens.</dd></div>
+      <div><dt>Screen</dt><dd>Held for review: snippets from other people that press keys, wait, read the clipboard or have more than one line (ADR-0022). The dialog names the author, lists in words what the snippet does besides typing, and shows the text with those parts as chips. Removed lines are struck through and added lines marked “Added”, not told apart by colour alone. Approval counts for this computer only, and is asked again after every change by someone else.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">ListPendingReviews</span> → snippet, revision, author; <span class="msg">ApproveSnippet(id, rev)</span>. Showing the difference and the author’s name needs <span class="msg todo">the approved body and the author’s display name</span>.</dd></div>
+    </dl>
+  </figure>
+
+</div>

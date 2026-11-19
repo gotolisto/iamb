@@ -765,6 +765,42 @@ fn characters_injected_by_other_programs_are_characters() {
     assert_eq!(rig.seen(), chars("a"));
 }
 
+/// The 2.8 review's finding 9: the half of a surrogate pair waits in an ordinary slot of the
+/// listener's memory; it is overwritten as soon as it is used or dropped, not only taken, and
+/// it and a waiting dead key are overwritten when the listener stops.
+#[test]
+fn the_half_of_a_surrogate_pair_does_not_stay_in_memory() {
+    let mut rig = Rig::us();
+    rig.packet(0xD83D);
+    assert_eq!(rig.pipeline.high_surrogate_slot(), 0xD83D, "it waits");
+    rig.packet(0xDE00);
+    assert_eq!(rig.seen(), chars("😀"));
+    assert_eq!(
+        rig.pipeline.high_surrogate_slot(),
+        0,
+        "used, then overwritten"
+    );
+    // Dropped by a click, by lost events, by a character that is not its second half.
+    rig.packet(0xD83D);
+    rig.click(WM_LBUTTONDOWN);
+    assert_eq!(rig.pipeline.high_surrogate_slot(), 0);
+    rig.packet(0xD83D);
+    rig.pipeline.lost();
+    assert_eq!(rig.pipeline.high_surrogate_slot(), 0);
+    rig.packet(0xD83D);
+    rig.packet(0x0061);
+    assert_eq!(rig.pipeline.high_surrogate_slot(), 0);
+
+    // The listener stops with a half and a dead key waiting.
+    let mut rig = Rig::german();
+    rig.tap(ACUTE);
+    assert!(rig.pipeline.dead_key_slot().is_some(), "the accent waits");
+    rig.packet(0xD83D);
+    rig.pipeline.forget_on_stop();
+    assert_eq!(rig.pipeline.high_surrogate_slot(), 0);
+    assert_eq!(rig.pipeline.dead_key_slot(), None);
+}
+
 #[test]
 fn a_character_injected_while_a_dead_key_waits_is_a_boundary() {
     let mut rig = Rig::german();

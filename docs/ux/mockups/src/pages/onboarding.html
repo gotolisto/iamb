@@ -1,0 +1,342 @@
+<section class="intro">
+  <h1>Flow 1: Onboarding</h1>
+  <p>A new user installs Iamb, grants what the system asks for, saves a first snippet and watches it expand, with no help. One window, one decision per step, every step finished with [[Enter]].</p>
+  <div class="facts">
+    <span class="fact">Budget <b>under 2 minutes</b> from install to first expansion</span>
+    <span class="fact">macOS <b>5 steps</b></span>
+    <span class="fact">Windows <b>4 steps</b> (no permissions)</span>
+  </div>
+  <p class="legend"><span><span class="typed">;em</span> what the user typed</span><span><span class="typed-in">text</span> what Iamb typed (apps show no highlight)</span><span><span class="msg">Message</span> service message, architecture §6</span></p>
+</section>
+
+<div class="steps">
+
+  <figure class="step">
+    <div class="step-head"><span class="n">1</span><h3>Welcome</h3></div>
+    <div class="stage">
+      <div class="win w-md" data-os="mac">
+        <div class="win-bar"><span class="title">Welcome to Iamb</span></div>
+        <div class="win-body ob">
+          <div class="progress" aria-label="Step 1"><i class="done"></i><i></i><i></i><i></i><i class="only-mac"></i><span class="only-mac">Step 1 of 5</span><span class="only-win">Step 1 of 4</span></div>
+          <div class="stack">
+            <h4>Type a few letters. Get the whole thing.</h4>
+            <p class="lead">Save the text you type again and again as a snippet. Type its abbreviation in any app and Iamb replaces it.</p>
+          </div>
+          <div class="hero-demo" role="img" aria-label="Example: typing ;em gives ines@brindlewood.example">
+            <span class="abbr">;em</span><svg class="i" aria-hidden="true"><use href="#i-right"/></svg><span>ines@brindlewood.example</span>
+          </div>
+          <ul class="points">
+            <li><svg class="i" aria-hidden="true"><use href="#i-shield"/></svg><div><b>What you type stays on this computer</b><span>Iamb holds your last few keys in memory to spot an abbreviation, then forgets them. It never saves or sends what you type.</span></div></li>
+            <li><svg class="i" aria-hidden="true"><use href="#i-lock"/></svg><div><b>It stays out of password fields</b><span>And out of any app you tell it to leave alone.</span></div></li>
+          </ul>
+          <div class="actions">
+            <a class="btn link grow" href="#" style="justify-content:flex-start">I have snippets to import</a>
+            <button class="btn primary lg is-focus" type="button">Get started [[Enter]]</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>[[Enter]] continues. [[Tab]] reaches the import link.</dd></div>
+      <div><dt>Screen</dt><dd>Opens by itself the first time Iamb starts. Later: tray or menu-bar menu, “Set up Iamb”. The import link goes to step 3 after the import (a library that already has snippets skips “first snippet”).</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">GetStatus</span> (is the service running?), <span class="msg">GetPermissions</span> (when both are <code>not_required</code> or <code>granted</code>, step 2 is skipped), <span class="msg">GetSettings</span>.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">2</span><h3>Permissions, nothing granted yet</h3><span class="badge os-note">macOS only</span></div>
+    <div class="stage">
+      <div class="win w-md" data-os="mac" data-os-fixed>
+        <div class="win-bar"><span class="title">Welcome to Iamb</span></div>
+        <div class="win-body ob">
+          <div class="progress" aria-label="Step 2 of 5"><i class="done"></i><i class="done"></i><i></i><i></i><i></i><span>Step 2 of 5</span></div>
+          <div class="stack">
+            <h4>Let Iamb see and type keys</h4>
+            <p class="lead">macOS asks before any app may do this. Turn on Iamb in two lists. This window updates by itself.</p>
+          </div>
+          <div class="stack">
+            <div class="perm">
+              <span class="ic"><svg class="i" aria-hidden="true"><use href="#i-eye"/></svg></span>
+              <div class="t"><b>Input Monitoring</b><span>Lets Iamb notice when you type an abbreviation.</span></div>
+              <div class="do"><span class="st">Not granted yet</span><button class="btn primary is-focus" type="button">Open settings <kbd>⏎</kbd></button></div>
+            </div>
+            <div class="perm">
+              <span class="ic"><svg class="i" aria-hidden="true"><use href="#i-key"/></svg></span>
+              <div class="t"><b>Accessibility</b><span>Lets Iamb type your snippet for you, and recognise password fields so it can stay out of them.</span></div>
+              <div class="do"><span class="st">Not granted yet</span><button class="btn" type="button">Open settings</button></div>
+            </div>
+          </div>
+          <p class="help" style="color:var(--color-text-secondary)">In System Settings, turn on the switch next to <b>Iamb</b>. macOS may ask for your password or fingerprint.</p>
+          <div class="actions">
+            <button class="btn ghost grow" type="button" style="justify-content:flex-start;flex:0 1 auto">Back</button>
+            <span class="grow"></span>
+            <button class="btn link" type="button">Skip for now</button>
+            <button class="btn primary lg" type="button" disabled>Continue</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd><kbd>⏎</kbd> opens the settings page of the first permission that is still missing. <kbd>⇥</kbd> moves between the two rows.</dd></div>
+      <div><dt>Screen</dt><dd>The window stays in front of System Settings where it can (it moves beside it), so the two rows remain visible while the user flips the switches.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">OpenPermissionSettings(input_monitoring)</span>. Then <span class="msg">GetPermissions</span> every second while this step is visible: the worker holds the grants, the UI never checks its own (ADR-0021).</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">2</span><h3>Permissions, both granted</h3><span class="badge os-note">macOS only</span></div>
+    <div class="stage">
+      <div class="win w-md" data-os="mac" data-os-fixed>
+        <div class="win-bar"><span class="title">Welcome to Iamb</span></div>
+        <div class="win-body ob">
+          <div class="progress" aria-label="Step 2 of 5"><i class="done"></i><i class="done"></i><i></i><i></i><i></i><span>Step 2 of 5</span></div>
+          <div class="stack">
+            <h4>Let Iamb see and type keys</h4>
+            <p class="lead">Both are on. You can change them at any time in System Settings.</p>
+          </div>
+          <div class="stack">
+            <div class="perm ok">
+              <span class="ic"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg></span>
+              <div class="t"><b>Input Monitoring</b><span>Lets Iamb notice when you type an abbreviation.</span></div>
+              <div class="do"><span class="st">Granted</span></div>
+            </div>
+            <div class="perm ok">
+              <span class="ic"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg></span>
+              <div class="t"><b>Accessibility</b><span>Lets Iamb type your snippet for you, and recognise password fields so it can stay out of them.</span></div>
+              <div class="do"><span class="st">Granted</span></div>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn ghost" type="button">Back</button>
+            <span class="grow"></span>
+            <button class="btn primary lg is-focus" type="button">Continue <kbd>⏎</kbd></button>
+          </div>
+        </div>
+      </div>
+      <p class="callout">Windows has no such step. Welcome leads straight to the first snippet, and the progress bar shows four steps.</p>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>Focus moves to Continue the moment the second permission arrives; a screen reader hears “Accessibility: granted. Both permissions are on.”</dd></div>
+      <div><dt>Screen</dt><dd>If <code>listener</code> is still false five seconds after both grants: “Iamb needs to restart its helper to use the new permissions.” with a Restart button (the supervisor restarts the worker; about two seconds).</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">GetPermissions</span> → both <code>granted</code>; <span class="msg">GetStatus</span> → <code>listener: true</code>.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">3</span><h3>First snippet</h3></div>
+    <div class="stage">
+      <div class="win w-md" data-os="mac">
+        <div class="win-bar"><span class="title">Welcome to Iamb</span></div>
+        <div class="win-body ob">
+          <div class="progress" aria-label="Step 3"><i class="done"></i><i class="done"></i><i class="done only-mac"></i><i></i><i></i><span class="only-mac">Step 3 of 5</span><span class="only-win">Step 2 of 4</span></div>
+          <div class="stack">
+            <h4>Make your first snippet</h4>
+            <p class="lead">Your email address is a good start. Change both sides to anything you like.</p>
+          </div>
+          <div class="pairrow">
+            <div class="field"><label>When I type</label><div class="input lg mono">;em</div></div>
+            <div class="arrow" aria-hidden="true"><svg class="i"><use href="#i-right"/></svg></div>
+            <div class="field"><label>Iamb types</label><div class="input lg is-focus">ines@brindlewood.example<span class="caret"></span></div></div>
+          </div>
+          <p style="color:var(--color-text-secondary)">Tip: begin abbreviations with a character you rarely type before a word, such as <span class="abbr">;</span>, so one never fires by accident.</p>
+          <div class="actions">
+            <button class="btn ghost" type="button">Back</button>
+            <span class="grow"></span>
+            <button class="btn primary lg" type="button">Save and try it [[Enter]]</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>Focus starts in “Iamb types” with the abbreviation already filled in. [[Enter]] saves. [[Shift+Tab]] goes back to the abbreviation.</dd></div>
+      <div><dt>Screen</dt><dd>Errors appear under the field: “An abbreviation cannot contain spaces.” · “Type the text Iamb should type for you.” · “<code>;em</code> is already used by another snippet. Pick a different abbreviation.”</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">ListFolders</span> (the “Snippets” folder), <span class="msg">PutSnippet</span> → <span class="msg">Saved</span>, or the error <code>conflict</code> / <code>invalid</code>. The snippet is plain text, trigger <code>delimiter</code>, case <code>exact</code>.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">4</span><h3>Try it: waiting</h3></div>
+    <div class="stage">
+      <div class="win w-md" data-os="mac">
+        <div class="win-bar"><span class="title">Welcome to Iamb</span></div>
+        <div class="win-body ob">
+          <div class="progress" aria-label="Step 4"><i class="done"></i><i class="done"></i><i class="done"></i><i class="done only-mac"></i><i></i><span class="only-mac">Step 4 of 5</span><span class="only-win">Step 3 of 4</span></div>
+          <div class="stack">
+            <h4>Try it here</h4>
+            <p class="lead">Type <span class="abbr">;em</span> and then a <b>space</b>.</p>
+          </div>
+          <div class="field">
+            <label class="sr">Test field</label>
+            <div class="input lg testfield is-focus"><span class="typed">;em</span><span class="caret"></span></div>
+            <p class="help">Iamb expands when you finish the word with a space or with punctuation such as <span class="abbr">.</span> <span class="abbr">,</span> <span class="abbr">?</span> <span class="abbr">!</span> Enter and Tab do not expand a snippet.</p>
+          </div>
+          <label class="switch"><span class="track"></span><span>Expand the moment I finish typing <span class="abbr">;em</span>, without a space</span></label>
+          <div class="actions">
+            <button class="btn ghost" type="button">Back</button>
+            <span class="grow"></span>
+            <button class="btn link" type="button">It does not work</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>Focus is in the test field. The switch is one [[Tab]] away and toggles with <kbd>Space</kbd>. There is no Continue button yet: the expansion itself moves the flow on.</dd></div>
+      <div><dt>Screen</dt><dd>The test field is the one place in Iamb’s own windows where typing expands. What is typed here is never stored or logged.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">SetTestField(window)</span> on entering the step. The switch saves the snippet again with trigger <code>immediate</code>: <span class="msg">PutSnippet</span>.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">4</span><h3>Try it: it worked</h3></div>
+    <div class="stage">
+      <div class="win w-md" data-os="mac">
+        <div class="win-bar"><span class="title">Welcome to Iamb</span></div>
+        <div class="win-body ob">
+          <div class="progress" aria-label="Step 4"><i class="done"></i><i class="done"></i><i class="done"></i><i class="done only-mac"></i><i></i><span class="only-mac">Step 4 of 5</span><span class="only-win">Step 3 of 4</span></div>
+          <div class="stack">
+            <h4>That is all there is to it</h4>
+            <p class="lead">It works the same way in your mail, your browser and everywhere else you type.</p>
+          </div>
+          <div class="field">
+            <label class="sr">Test field</label>
+            <div class="input lg testfield"><span class="typed-in">ines@brindlewood.example</span>&nbsp;<span class="caret"></span></div>
+          </div>
+          <div class="banner ok" role="status"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="txt">Iamb replaced <b>;em</b> with your snippet.</span></div>
+          <div class="actions">
+            <button class="btn ghost" type="button">Try again</button>
+            <span class="grow"></span>
+            <button class="btn primary lg is-focus" type="button">Continue [[Enter]]</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>Focus moves to Continue, so [[Enter]] goes on. “Try again” clears the field and returns focus to it.</dd></div>
+      <div><dt>Screen</dt><dd>The UI knows it worked because its own field now holds the snippet’s text. The status line is announced to screen readers.</dd></div>
+      <div><dt>Service</dt><dd>None from the UI. The service matched, deleted <code>;em</code> and the space, typed the text and the space, all inside the 50 ms budget.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">4</span><h3>Try it: Enter was pressed</h3></div>
+    <div class="stage">
+      <div class="win w-md" data-os="mac">
+        <div class="win-bar"><span class="title">Welcome to Iamb</span></div>
+        <div class="win-body ob">
+          <div class="stack">
+            <h4>Try it here</h4>
+            <p class="lead">Type <span class="abbr">;em</span> and then a <b>space</b>.</p>
+          </div>
+          <div class="field">
+            <label class="sr">Test field</label>
+            <div class="input lg testfield is-focus"><span class="typed">;em</span><br><span class="caret"></span></div>
+          </div>
+          <div class="banner warn" role="status"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg>
+            <span class="txt"><b>Enter does not expand a snippet.</b> Apps act on Enter at once (they send the message or move on) before Iamb could type. Finish with a space or punctuation, or let this snippet expand without one.</span>
+            <button class="btn" type="button">Expand without a space</button>
+          </div>
+          <div class="actions">
+            <button class="btn ghost" type="button">Back</button>
+            <span class="grow"></span>
+            <button class="btn link" type="button">It does not work</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>The same hint appears for [[Tab]] (the test field keeps Tab for itself once, then lets it move focus).</dd></div>
+      <div><dt>Screen</dt><dd>This is ADR-0026 taught at the moment it matters. The hint is shown by the UI from its own field (the abbreviation followed by Enter); nothing is asked of the service.</dd></div>
+      <div><dt>Service</dt><dd>“Expand without a space” → <span class="msg">PutSnippet</span> with trigger <code>immediate</code>; the field is cleared for another try.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">4</span><h3>Try it: nothing happens</h3></div>
+    <div class="stage">
+      <div class="win w-md" data-os="mac">
+        <div class="win-bar"><span class="title">Welcome to Iamb</span></div>
+        <div class="win-body ob">
+          <div class="stack">
+            <h4>Try it here</h4>
+            <p class="lead">Type <span class="abbr">;em</span> and then a <b>space</b>.</p>
+          </div>
+          <div class="field">
+            <label class="sr">Test field</label>
+            <div class="input lg testfield is-focus"><span class="typed">;em</span>&nbsp;<span class="caret"></span></div>
+          </div>
+          <div class="banner bad" role="alert"><svg class="i" aria-hidden="true"><use href="#i-warn"/></svg>
+            <span class="txt"><b>Iamb is not seeing the keyboard.</b> <span class="only-mac">macOS sometimes needs Iamb’s helper to restart after a permission changes.</span><span class="only-win">Its background service is not running.</span></span>
+            <button class="btn" type="button"><span class="only-mac">Restart the helper</span><span class="only-win">Start it again</span></button>
+          </div>
+          <div class="actions">
+            <button class="btn ghost" type="button">Back</button>
+            <span class="grow"></span>
+            <button class="btn link" type="button">Skip this step</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>The banner’s button takes focus when it appears.</dd></div>
+      <div><dt>Screen</dt><dd>Shown 1.5 s after the field holds the abbreviation and a space with no expansion, or at once from “It does not work”. One cause, one button. Other causes: “Iamb is paused.” [Resume] · “A permission was turned off.” [Fix] · “Your keyboard is composing text (an input method is on). Switch to a plain layout to try.” · anything else: [Open “Why didn’t it expand?”].</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">GetStatus</span> (<code>listener</code>, <code>paused</code>), <span class="msg">GetPermissions</span>, <span class="msg">RecentDiagnostics</span>. Restart goes to the supervisor (stop, start; ADR-0023), then <span class="msg">SetTestField(window)</span> again.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">5</span><h3>Done</h3></div>
+    <div class="stage">
+      <div class="win w-md" data-os="mac">
+        <div class="win-bar"><span class="title">Welcome to Iamb</span></div>
+        <div class="win-body ob">
+          <div class="progress" aria-label="Last step"><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done only-mac"></i><span class="only-mac">Step 5 of 5</span><span class="only-win">Step 4 of 4</span></div>
+          <div class="stack">
+            <h4>Iamb is running</h4>
+            <p class="lead"><span class="only-mac">It lives in the menu bar, at the top right of your screen.</span><span class="only-win">It lives in the notification area, at the bottom right of your screen.</span> Close this window whenever you like: it keeps working.</p>
+          </div>
+          <ul class="points">
+            <li><svg class="i" aria-hidden="true"><use href="#i-search"/></svg><div><b>Forgot an abbreviation? Press [[Ctrl+Shift+Space]]</b><span>Search your snippets from any app and insert one with [[Enter]].</span></div></li>
+            <li><svg class="i" aria-hidden="true"><use href="#i-pause"/></svg><div><b>Need it quiet for a while?</b><span>Pause Iamb from its <span class="only-mac">menu-bar</span><span class="only-win">tray</span> icon.</span></div></li>
+          </ul>
+          <label class="check on"><span class="box"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg></span><span>Start Iamb when I log in</span></label>
+          <div class="actions">
+            <button class="btn" type="button">Close</button>
+            <button class="btn primary lg is-focus" type="button">Open my library [[Enter]]</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>[[Enter]] opens the library with the new snippet selected. [[Esc]] closes the window.</dd></div>
+      <div><dt>Screen</dt><dd>The shortcut shown is the one that was registered. If the system refused it (another app owns it): “Choose a shortcut for search” with a recorder field in its place.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">SetTestField(none)</span>, <span class="msg">PutSetting(palette_hotkey)</span> if not set, <span class="msg">PutSetting(ui.onboarding_done)</span>. Start at login is set by the UI host through the system’s login-item API, not over IPC.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">+</span><h3>Later: permissions skipped or lost</h3><span class="badge os-note">macOS only</span></div>
+    <div class="stage pair">
+      <div class="col">
+        <span class="cap">Menu bar</span>
+        <div class="os-strip"><span class="sp"></span><span class="tray-icon open"><svg class="i" aria-hidden="true"><use href="#i-iamb"/></svg><span class="dot"></span></span><span>Thu 14:05</span></div>
+        <div class="menu" role="menu" aria-label="Iamb" style="justify-self:end">
+          <div class="head"><span class="dot warn"></span><div class="st"><b>Iamb cannot expand yet</b><small>2 permissions are missing</small></div></div>
+          <div class="mi on" role="menuitem"><span class="grow">Fix permissions…</span></div>
+          <hr>
+          <div class="mi" role="menuitem"><span class="grow">Open library</span></div>
+          <div class="mi" role="menuitem"><span class="grow">Quit Iamb</span></div>
+        </div>
+      </div>
+      <div class="col">
+        <span class="cap">Top of the library window</span>
+        <div class="banner warn" role="alert"><svg class="i" aria-hidden="true"><use href="#i-warn"/></svg><span class="txt"><b>Iamb cannot expand yet.</b> macOS has not given it Input Monitoring and Accessibility.</span><button class="btn" type="button">Fix permissions</button></div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>“Fix permissions” reopens step 2 on its own, with Continue replaced by Done.</dd></div>
+      <div><dt>Screen</dt><dd>The only time the menu-bar icon carries a dot. It also appears when a grant is taken away later (after a system update, for example).</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">GetPermissions</span> at start, when the menu opens, and every 30 s while something is missing.</dd></div>
+    </dl>
+  </figure>
+
+</div>

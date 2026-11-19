@@ -20,8 +20,10 @@
 //! | `base64url`, `base64url-utf16le` | The two above in the URL-safe alphabet |
 //!
 //! and in the per-character forms of [`spread`](super::spread): `stride-<s>` (its bytes at a
-//! constant distance: UTF-16, UTF-32, arrays of `char`, fixed-size records) and `per-line` (one
-//! character per line of one template, as a log that records every key would write it).
+//! constant distance: UTF-16, UTF-32, arrays of `char`, fixed-size records), `per-line` (one
+//! character per line of one template, as a log that records every key would write it) and
+//! `per-line-decimal` (the same with each character written as its decimal code, `113` for `q`:
+//! the follow-up review's N3).
 //!
 //! A hit is reported by canary number, the context it was typed in, the form, the location and
 //! the byte offset (for `per-line`, of the line with the first character); never by the canary
@@ -447,6 +449,7 @@ fn scan_file(
     let mut f = File::open(file)?;
     let keep = searches.keep();
     let mut lines = searches.spread.lines();
+    let mut numbers = searches.spread.numbers();
     let mut buf: Vec<u8> = Vec::with_capacity(CHUNK + keep);
     let mut base = 0_u64; // file offset of buf[0]
     let mut total = 0_u64;
@@ -458,6 +461,7 @@ fn scan_file(
         buf.extend_from_slice(&chunk[..n]);
         total += u64::try_from(n).unwrap_or(0);
         lines.feed(&chunk[..n], &mut |i, at| found(i, "per-line", at));
+        numbers.feed(&chunk[..n], &mut |i, at| found(i, "per-line-decimal", at));
         // Positions below `limit` have every byte a search could need, or the file ended.
         let limit = if eof {
             buf.len()
@@ -476,6 +480,7 @@ fn scan_file(
         });
         if eof {
             lines.finish(&mut |i, at| found(i, "per-line", at));
+            numbers.finish(&mut |i, at| found(i, "per-line-decimal", at));
             return Ok(total);
         }
         let drop = limit;
@@ -626,6 +631,18 @@ fn planted_shapes(text: &str) -> Vec<(String, Vec<u8>)> {
         }
     }
     out.push(("one-key-per-log-line".to_owned(), log.into_bytes()));
+    // The same, each key written as its decimal code (the follow-up review's N3).
+    let mut log = log_line(0, "worker ready");
+    for (k, c) in text.chars().enumerate() {
+        log.push_str(&log_line(
+            k * 37,
+            &format!("key {} seq {}", u32::from(c), k + 8),
+        ));
+        if k % 5 == 2 {
+            log.push_str(&log_line(k * 37 + 1, "ipc in get_status 55 bytes"));
+        }
+    }
+    out.push(("one-key-per-log-line-decimal".to_owned(), log.into_bytes()));
     out
 }
 
@@ -794,8 +811,8 @@ mod tests {
         assert!(result.passed(), "missed: {:?}", result.missed);
         assert_eq!(result.planted, all.len() * result.shapes);
         assert_eq!(
-            result.shapes, 29,
-            "14 plain forms, 12 Base64 alignments, 3 per character"
+            result.shapes, 30,
+            "14 plain forms, 12 Base64 alignments, 4 per character"
         );
         assert!(!control.exists(), "the planted files are removed again");
         let json = serde_json::to_string(&result).expect("json");
@@ -814,7 +831,10 @@ mod tests {
         for (shape, bytes) in planted_shapes(&c.text) {
             if !matches!(
                 shape.as_str(),
-                "records-96" | "char-debug" | "one-key-per-log-line"
+                "records-96"
+                    | "char-debug"
+                    | "one-key-per-log-line"
+                    | "one-key-per-log-line-decimal"
             ) {
                 continue;
             }
@@ -827,7 +847,7 @@ mod tests {
             std::fs::write(dir.path().join(&shape), bytes).expect("write");
             planted += 1;
         }
-        assert_eq!(planted, 3);
+        assert_eq!(planted, 4);
         let report = scan(
             std::slice::from_ref(&c),
             &[Location {
@@ -847,6 +867,7 @@ mod tests {
         assert_eq!(form("records-96"), ["stride-96"]);
         assert_eq!(form("char-debug"), ["stride-5"]);
         assert_eq!(form("one-key-per-log-line"), ["per-line"]);
+        assert_eq!(form("one-key-per-log-line-decimal"), ["per-line-decimal"]);
     }
 
     #[test]

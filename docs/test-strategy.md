@@ -20,6 +20,8 @@ interactive desktop on macOS), so CI uses generous thresholds and never reports 
 | Mutation sample | `cargo-mutants` on `iamb-core::matcher` | Config in `crates/iamb-core/.cargo/mutants.toml` | Manual at tasks 1.2 and 1.9; weekly afterwards | ≥ 80% mutants caught; every missed mutant reviewed |
 | IPC contract | `cargo test` with golden JSON | `crates/iamb-ipc/tests/contract/` (one golden file per message) | CI, every PR | Every message round-trips byte-for-byte; role and version rules tested |
 | Service vs. mock platform | `iamb-platform` mock + `iamb-testkit` | `crates/iamb-service/tests/` | CI, 3 OSes, every PR | Must pass |
+| UI host: bridge, message contract, crash isolation | `cargo test -p iamb-desktop` (a worker on the mock platform in the test process) | `apps/desktop/src-tauri/tests/` (§8) | CI job `desktop`, 3 OSes, every PR | Must pass |
+| UI host front end | `vitest` and `tsc` | `apps/desktop/src/**/*.test.ts(x)` | CI job `desktop`, 3 OSes, every PR | Must pass |
 | OS layer | `cargo test -- --ignored` on runners | `crates/iamb-platform-{windows,macos}/tests/` | CI `windows-latest`, `macos-latest` | Must pass where the runner allows (see §4) |
 | Compatibility matrix | `iamb-testkit::compat` + manual | [`compatibility-matrix.md`](compatibility-matrix.md) | Real machines, task 2.7 and every release candidate | ≥ 95% per OS |
 | Benchmarks | criterion + `LatencyRecorder` | `crates/iamb-bench/benches/` | CI, every PR (two runs); real machines for KPIs | Regression rule against the CI baseline, §3 |
@@ -62,7 +64,7 @@ hardware, power plugged in, no other user apps running). Every lab number is rec
 | 10,000 snippets load from SQLite < 100 ms (1.5) | Bench `store/load/10000`: open DB (warm OS cache), read all, build snapshot; 30 runs; p95 | CI; lab | Lab p95 < 100 ms; CI p95 < 200 ms |
 | Hook callback < 1 ms p99 (2.1, 2.3) | In-process timing around the callback body (debug-only `latency-probe` feature), 100,000 keys during the scripted run; p99 | Lab only (hooks need a real desktop) | p99 < 1 ms |
 | Service restart < 2 s (2.6) | Kill worker → supervisor restarts → IPC `Health` answers and a probe expansion succeeds; 20 kills during soak; max | Lab; CI nightly report | max < 2 s |
-| UI cold open < 400 ms (3.2) | Library window: process start (or create, when host warm) → first paint; 20 trials with the UI host warm; first open after login reported separately; p95 | Lab | p95 < 400 ms |
+| UI cold open < 400 ms (3.2) | Library window (created on demand, so every open is cold): the tray's "Open library" action → the window's first paint, which the front end reports; `iamb-desktop --measure-open 20` with the UI host warm; the first open after the host started reported separately; max and median (§8) | Lab; CI every PR (Linux under Xvfb gated at 800 ms, twice the lab target as §2.2 sets for CI; Windows and macOS report only) | Lab max < 400 ms |
 | Palette results < 30 ms at 10,000 snippets (3.6) | Bench `store/search/10000` (query → ranked IDs) plus UI render timing in the palette; 500 queries from a fixed list; p95 | CI (store part); lab (end to end) | Lab p95 < 30 ms; CI store part p95 < 30 ms |
 
 ## 3. Benchmark harness (`crates/iamb-bench`)
@@ -306,23 +308,27 @@ artifact `soak-<run id>`):
   debug form `['q', 'z', …]`, fixed-size records such as a 96-byte queue slot, fixed-width log
   lines), and one character per line of one template after removing digits (a log that records
   every key: the lines are the same apart from one column, and the canary stands in that column
-  in consecutive lines of that template, at most 16 other lines between two of them). Both need
+  in consecutive lines of that template, at most 16 other lines between two of them), and the
+  same with each character written as its decimal code (`key 113 seq 46`: every run of digits in
+  a line is read as a number and replaced by one marker, and the canary's codes stand at one
+  number's place in consecutive lines of one template; the follow-up review's N3). All three need
   all 16 characters in order, so ordinary output does not trigger them (a random letter matches
   a fixed start and stride with probability 26^-15; repeated log lines stop a chain at the first
   wrong letter); the unit tests feed them random text, random bytes and real logs; on the 2.8 review's own
   runs the 3-minute run gives 0 hits, while the 40-second run of its build that logs every key
-  gives a hit for each of its 10 canaries. Not found: characters written as numbers, records of varying length that are not
-  lines, compressed output, another order. Locations: the data root (library, WAL, logs, locks),
+  gives a hit for each of its 10 canaries. Not found: characters written as hexadecimal numbers
+  one per line, records of varying length that are not lines, compressed output, another
+  order. Locations: the data root (library, WAL, logs, locks),
   the temp directory the service processes used, the IPC tap, their standard error, the control
   directory, the samples file, core files and crash dumps of the service processes (below), and
   any `--scan` path. A file that cannot be read fails the rule (0 hits cannot be claimed for
   it). The rule `canary-scanner-control` requires that scanning the driver's own input finds
-  every canary and that every shape of every canary (29: each whole-string form inside other
+  every canary and that every shape of every canary (30: each whole-string form inside other
   text, each Base64 alignment, 96-byte records, the debug form of a `char` slice, one key per log
-  line in the service's log format), planted in files of its own next to the input and removed
+  line in the service's log format, as a character and as its decimal code), planted in files of its own next to the input and removed
   again, is found, so a scanner that stops finding a form cannot pass. Hits are reported by
-  canary number, context, form, location, file and byte offset (for `per-line`, of the line with
-  the first character); no report, summary or progress line contains a canary or the bytes
+  canary number, context, form, location, file and byte offset (for `per-line` and
+  `per-line-decimal`, of the line with the first character); no report, summary or progress line contains a canary or the bytes
   around it.
 - **Crash dumps.** The two service processes opt out of crash dumps first, as the service's
   `main` does (architecture §8, "Crash handling"): on Linux a core file of the worker holds no
@@ -457,3 +463,70 @@ own paint stamp).
 | 3.2, 3.5, 3.6 | UI cold open, form and palette timings |
 | 3.7 | Install-to-first-expansion sessions |
 | 4.2–4.4 | Server policy tests (`server/tests/`), sync convergence tests, two-device latency |
+
+## 8. UI host (task 3.2)
+
+### 8.1 Cold open of the library window
+
+**What is measured.** The library window is created on demand and destroyed when closed
+(architecture §10), so every open is cold. The clock starts when the tray's "Open library"
+action is handled, before the window is built, and stops at the window's first paint. The front
+end reads the paint time in a task queued from a `requestAnimationFrame` callback (so after the
+frame was presented) as `performance.timeOrigin + performance.now()` and reports it with the
+`report_first_paint` command, together with when the page's navigation and its script began
+(`apps/desktop/src/paint.ts`, `apps/desktop/src-tauri/src/timing.rs`). The result is the paint
+time minus the wall-clock time of the action; the monotonic time until the report arrived is
+printed beside it as an upper bound. Every open is also logged in `logs/desktop.log`.
+
+**How.** `iamb-desktop --measure-open RUNS [--budget-ms MS]` waits 3 s for start-up to settle
+(the pre-warmed form and palette load), then performs the tray action `RUNS` times, waiting for
+each first paint and destroying the window in between, prints one line per open and a summary,
+and exits with status 1 when an open was not painted or the slowest open exceeded the budget.
+The binary must carry the front end (`pnpm build`, then a build with
+`--features tauri/custom-protocol`); see `apps/desktop/README.md`. On Linux without a display:
+
+    xvfb-run -a iamb-desktop --data-dir "$(mktemp -d)" --measure-open 20 --budget-ms 400
+
+**Result here (2026-11-19).** Linux (Ubuntu 24.04.5, WebKitGTK 2.52.6, 4 vCPU Xeon 2.1 GHz
+container, Xvfb with software rendering), release build, 5 processes of 10 opens each: first
+open 59–101 ms, median of the later opens 59–81 ms, slowest of all 50 opens 139 ms; within the
+400 ms budget. A debug build with the front end embedded gave the same (first 74–139 ms,
+slowest 139 ms).
+
+Where the time goes, and why the library window shares a web process: without that, an open
+took 650–830 ms, of which about 600 ms passed before the page's navigation began. That is the
+web view's engine starting a content process for the new view; loading the page, running its
+script and painting took about 65 ms. On Linux the library window (and the form) are therefore
+created related to the pre-warmed palette's web view and share its running content process
+(`src/app/windows.rs`). Windows (WebView2) and macOS (`WKWebView`) start content processes
+their own way; their numbers come from the `desktop` CI job on their runners (report only) and,
+for the KPI, from the lab, and decide whether they need an equivalent.
+
+### 8.2 Idle memory of the UI host
+
+ADR-0017 leaves the UI host's budget to this task. Measured here (Linux, Xvfb, release build,
+idle with the hidden panels, 8 s after start): 246 MB proportional set size (PSS) over the UI
+host process and its two web view processes (network and one shared content process), 398 MB
+resident; with a content process per panel it was 290 MB PSS. Software rendering inflates both.
+Provisional budget: 300 MB PSS over all of the UI host's processes, idle, to be confirmed or
+reset with the Windows and macOS lab numbers (private working set, `phys_footprint`).
+
+### 8.3 Message contract, bridge and crash isolation
+
+- `tests/contract.rs`: the bridge's hello and requests against `iamb-ipc`'s golden files, and
+  each golden response and event the bridge reads mapped to what the front end is promised;
+  the `ui` role may call every request and hears every event. A protocol change breaks it.
+- `tests/front_end_contract.rs` and `src/ipc.test.ts`: the command and event names agree
+  between Rust and TypeScript, and the payloads Rust sends (written to
+  `src/contract.fixtures.json`, `IAMB_BLESS=1` to rewrite) pass the front end's guards.
+- `tests/bridge.rs`: the bridge against a real worker on the mock platform: status, pause,
+  snippets, forwarded events, reconnecting when the service restarts, and no form value in any
+  log.
+- `tests/crash_isolation.rs`: a UI host whose connection ends abruptly mid-request with a form
+  pending (every OS), and a UI host process killed with `SIGKILL` in the same state (Linux, the
+  OS endpoint): the form is abandoned after the service's 2 s acknowledgement timeout, plain
+  expansion continues, and the worker logs the connection and its end and nothing else (no
+  warning, no error, no crash report). One case is ignored until the service changes: a UI host
+  that dies after acknowledging a form leaves the form session open, and the engine drops every
+  typed match while one is open, so expansion stays off until the worker restarts
+  (`forms_and_expansion_recover_after_the_ui_host_died_with_a_form_open`).

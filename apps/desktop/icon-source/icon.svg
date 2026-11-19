@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Placeholder mark until the design system (task 3.1) supplies one: an iamb, one short
+       syllable then one long, as a breve and a macron. -->
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="#1f2937"/>
+  <path d="M232 420 Q312 560 392 420" fill="none" stroke="#f9fafb" stroke-width="64" stroke-linecap="round"/>
+  <rect x="488" y="452" width="320" height="64" rx="32" fill="#f9fafb"/>
+  <rect x="232" y="640" width="576" height="40" rx="20" fill="#60a5fa"/>
+</svg>

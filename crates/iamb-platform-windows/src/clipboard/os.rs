@@ -10,7 +10,10 @@ use std::marker::PhantomData;
 use std::ptr;
 
 use iamb_platform::{PlatformError, Result};
-use windows_sys::Win32::Foundation::{GetLastError, GlobalFree, HWND, SetLastError};
+use windows_sys::Win32::Foundation::{GetLastError, GlobalFree, HANDLE, HWND, SetLastError};
+use windows_sys::Win32::Graphics::Gdi::{
+    DeleteEnhMetaFile, GetEnhMetaFileBits, HENHMETAFILE, SetEnhMetaFileBits,
+};
 use windows_sys::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData,
     GetClipboardFormatNameW, GetClipboardSequenceNumber, OpenClipboard, RegisterClipboardFormatW,
@@ -22,7 +25,8 @@ use windows_sys::Win32::System::Memory::{
 use windows_sys::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, HWND_MESSAGE};
 
 use super::formats::{
-    CF_UNICODETEXT, OPEN_RETRY_DELAYS, PASTE_OPEN_RETRY_DELAYS, Treatment, retry, treatment,
+    CF_ENHMETAFILE, CF_UNICODETEXT, OPEN_RETRY_DELAYS, PASTE_OPEN_RETRY_DELAYS, Treatment, retry,
+    treatment,
 };
 
 /// The last error of the calling thread as a [`PlatformError::Os`].
@@ -209,6 +213,67 @@ impl Open {
         // SAFETY: the block was locked once above.
         unsafe { GlobalUnlock(handle) };
         Data::Bytes(bytes)
+    }
+
+    /// The records of the enhanced metafile on the clipboard (`CF_ENHMETAFILE`, made by the
+    /// system from a metafile picture if that is what the owner put there), if they are at
+    /// most `limit` bytes. The metafile itself stays the clipboard's.
+    pub(super) fn read_enhanced_metafile(&self, limit: usize) -> Data {
+        // SAFETY: the clipboard is open on this thread; any format number is accepted.
+        let handle: HANDLE = unsafe { GetClipboardData(CF_ENHMETAFILE) };
+        if handle.is_null() {
+            return Data::Missing;
+        }
+        let metafile: HENHMETAFILE = handle;
+        // SAFETY: the data of `CF_ENHMETAFILE` is an enhanced-metafile handle by the
+        // clipboard's rules, valid while the clipboard is open; a null buffer asks for the size.
+        let size = unsafe { GetEnhMetaFileBits(metafile, 0, ptr::null_mut()) };
+        let Ok(size) = usize::try_from(size) else {
+            return Data::Missing;
+        };
+        if size == 0 {
+            return Data::Missing;
+        }
+        if size > limit {
+            return Data::TooBig;
+        }
+        let mut bytes = vec![0_u8; size];
+        // SAFETY: as above; `bytes` is writable for `size` bytes, the length passed.
+        let written = unsafe {
+            GetEnhMetaFileBits(
+                metafile,
+                u32::try_from(size).unwrap_or(0),
+                bytes.as_mut_ptr(),
+            )
+        };
+        if usize::try_from(written).ok() == Some(size) {
+            Data::Bytes(bytes)
+        } else {
+            Data::Missing
+        }
+    }
+
+    /// Makes an enhanced metafile from `records` and puts it on the clipboard as
+    /// `CF_ENHMETAFILE` (after [`empty`](Self::empty)).
+    pub(super) fn put_enhanced_metafile(&self, records: &[u8]) -> Result<()> {
+        let len = u32::try_from(records.len())
+            .map_err(|_| PlatformError::os(0, "SetEnhMetaFileBits: too large"))?;
+        // SAFETY: `records` is readable for `len` bytes; the call copies them into a new
+        // metafile, which this function owns until the clipboard takes it.
+        let metafile = unsafe { SetEnhMetaFileBits(len, records.as_ptr()) };
+        if metafile.is_null() {
+            return Err(last_error("SetEnhMetaFileBits"));
+        }
+        // SAFETY: the clipboard is open on this thread and owned by its window; the system
+        // takes the metafile over when the call succeeds.
+        let set = unsafe { SetClipboardData(CF_ENHMETAFILE, metafile) };
+        if set.is_null() {
+            let error = last_error("SetClipboardData");
+            // SAFETY: the system did not take the metafile, so it is still ours; deleted once.
+            unsafe { DeleteEnhMetaFile(metafile) };
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Empties the clipboard and makes this opening's window its owner.

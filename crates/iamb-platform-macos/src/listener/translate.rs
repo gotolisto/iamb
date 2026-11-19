@@ -173,6 +173,15 @@ pub(crate) struct Translator {
     dead_state: u32,
 }
 
+impl Drop for Translator {
+    /// The listener stopped: the dead-key state, which says which accent waits, is
+    /// overwritten (architecture §8 rule 1; the 2.8 review's finding 9).
+    fn drop(&mut self) {
+        self.dead_state = 0;
+        std::hint::black_box(&mut self.dead_state);
+    }
+}
+
 impl Translator {
     /// A translator with no dead key pending.
     pub(crate) const fn new() -> Self {

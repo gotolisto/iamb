@@ -1,14 +1,19 @@
 //! The local endpoint: a named pipe (architecture §3.3, §6.1; ADR-0006).
 //!
-//! - The pipe is `\\.\pipe\<stem>-<user SID>`, the stem from [`EndpointName::pipe_stem`]. When
-//!   the data root is not the default one (`%APPDATA%\Iamb`), a suffix derived from
-//!   [`EndpointName::run_dir`] is added, so tests never meet the installed service
-//!   ([`pipe_name`]).
-//! - `bind` creates the pipe with `FILE_FLAG_FIRST_PIPE_INSTANCE` (a second server gets
-//!   [`EndpointInUse`](PlatformError::EndpointInUse) and must not start), with a security
-//!   descriptor whose DACL admits the current user's SID only (`D:P(A;;GA;;;<SID>)`), and with
-//!   `PIPE_REJECT_REMOTE_CLIENTS`. One instance always waits for the next client, so the name
-//!   stays held while the listener lives.
+//! - The pipe is `\\.\pipe\<stem>-<user SID>-<secret>`, the stem from
+//!   [`EndpointName::pipe_stem`] and the secret 128 random bits drawn for every bind and kept
+//!   in `<run>/<kind>.pipe`, where clients read it (`pipe_names` has the rules: the 2.8
+//!   review's finding 12, another local user taking the name first). The `run` directory is
+//!   restricted to the current user before the secret is written there
+//!   ([`restrict_to_current_user`](crate::restrict_to_current_user)).
+//! - `bind` first takes an exclusive lock on `<run>/<kind>.pipe.lock`, held for the
+//!   listener's life: a second server of the same data root gets
+//!   [`EndpointInUse`](PlatformError::EndpointInUse). It then creates the pipe with
+//!   `FILE_FLAG_FIRST_PIPE_INSTANCE`, with a security descriptor whose DACL admits the
+//!   current user's SID only (`D:P(A;;GA;;;<SID>)`), and with `PIPE_REJECT_REMOTE_CLIENTS`; a
+//!   name that exists already makes it draw another secret, a few times. One instance always
+//!   waits for the next client, so the name stays held while the listener lives. `close`
+//!   removes the name file and releases the lock.
 //! - `accept` identifies the client with `GetNamedPipeClientProcessId`, the user SID of that
 //!   process's token and its image path; `connect` identifies the server the same way with
 //!   `GetNamedPipeServerProcessId`, before anything is written. Both decide with
@@ -24,6 +29,7 @@
 //!   operation on the handle (and disconnects, on the server side).
 
 use std::ffi::c_void;
+use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -42,6 +48,9 @@ use windows_sys::Win32::Foundation::{
 };
 use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+};
+use windows_sys::Win32::Security::Cryptography::{
+    BCRYPT_USE_SYSTEM_PREFERRED_RNG, BCryptGenRandom,
 };
 use windows_sys::Win32::Security::WinTrust::{
     WINTRUST_ACTION_GENERIC_VERIFY_V2, WINTRUST_DATA, WINTRUST_FILE_INFO,
@@ -69,6 +78,9 @@ use windows_sys::Win32::System::Threading::{
 };
 
 use crate::Platform;
+use crate::pipe_names::{
+    BIND_ATTEMPTS, lock_file, name_file, parse_secret, pipe_name, secret_from,
+};
 
 /// The endpoint's state.
 #[derive(Debug, Default)]
@@ -94,33 +106,52 @@ fn wide(s: &str) -> Vec<u16> {
 // Names
 // ---------------------------------------------------------------------------------------------
 
-/// The `run` directory of the default data root, `%APPDATA%\Iamb\run`.
-fn default_run_dir() -> Option<PathBuf> {
-    std::env::var_os("APPDATA")
-        .filter(|v| !v.is_empty())
-        .map(|a| PathBuf::from(a).join("Iamb").join("run"))
-}
-
-/// FNV-1a over the case-folded path: stable across runs and builds.
-fn path_hash(path: &Path) -> u64 {
-    let text = path.to_string_lossy().to_lowercase();
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in text.trim_end_matches(['\\', '/']).bytes() {
-        h ^= u64::from(b);
-        h = h.wrapping_mul(0x0100_0000_01b3);
-    }
-    h
-}
-
-/// The pipe's full name for `name`, the user `sid`, and the default `run` directory.
-pub(crate) fn pipe_name(name: &EndpointName, sid: &str, default_run: Option<&Path>) -> String {
-    let base = format!(r"\\.\pipe\{}-{sid}", name.pipe_stem());
-    let is_default = default_run.is_some_and(|d| path_hash(d) == path_hash(name.run_dir()));
-    if is_default {
-        base
+/// A new secret for the pipe's name: 16 bytes from the system's preferred generator.
+fn new_secret() -> Result<String> {
+    let mut bytes = [0_u8; 16];
+    // SAFETY: a null algorithm handle with `BCRYPT_USE_SYSTEM_PREFERRED_RNG` is allowed; the
+    // buffer is writable for the length passed.
+    let status = unsafe {
+        BCryptGenRandom(
+            std::ptr::null_mut(),
+            bytes.as_mut_ptr(),
+            16,
+            BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+        )
+    };
+    if status == 0 {
+        Ok(secret_from(bytes))
     } else {
-        format!("{base}-{:016x}", path_hash(name.run_dir()))
+        Err(PlatformError::os(i64::from(status), "BCryptGenRandom"))
     }
+}
+
+fn io_error(e: &io::Error, context: &'static str) -> PlatformError {
+    PlatformError::os(e.raw_os_error().map_or(0, i64::from), context)
+}
+
+/// Writes `secret` to the name file, whole or not at all: a client reads either the old file
+/// or the new one.
+fn publish(name: &EndpointName, secret: &str) -> Result<()> {
+    let file = name_file(name);
+    let mut temporary = file.clone().into_os_string();
+    temporary.push(".new");
+    std::fs::write(&temporary, format!("{secret}\n"))
+        .map_err(|e| io_error(&e, "writing the pipe's name file"))?;
+    std::fs::rename(&temporary, &file).map_err(|e| io_error(&e, "renaming the pipe's name file"))
+}
+
+/// The pipe's full name as the name file gives it, for a client.
+fn published_name(name: &EndpointName, sid: &str) -> Result<String> {
+    let text = match std::fs::read_to_string(name_file(name)) {
+        Ok(text) => text,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            return Err(PlatformError::EndpointNotFound);
+        }
+        Err(e) => return Err(io_error(&e, "reading the pipe's name file")),
+    };
+    let secret = parse_secret(&text).ok_or(PlatformError::EndpointNotFound)?;
+    Ok(pipe_name(name.pipe_stem(), sid, secret))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -217,7 +248,8 @@ fn token_user(process: HANDLE) -> Result<String> {
     Ok(sid)
 }
 
-fn own_sid() -> Result<String> {
+/// The string SID of the user this process runs as.
+pub(crate) fn own_sid() -> Result<String> {
     // SAFETY: the pseudo handle of the current process is always valid and needs no closing.
     token_user(unsafe { GetCurrentProcess() })
 }
@@ -537,7 +569,58 @@ fn security_descriptor(sid: &str) -> Result<Local> {
     Ok(Local(sd))
 }
 
+/// Creates an instance of the pipe `name` (NUL-terminated) with the descriptor `sd`; with
+/// `first`, only as the first instance of that name, [`EndpointInUse`] when the name exists.
+///
+/// [`EndpointInUse`]: PlatformError::EndpointInUse
+fn instance(name: &[u16], sd: &Local, first: bool) -> Result<Handle> {
+    let attributes = SECURITY_ATTRIBUTES {
+        nLength: u32::try_from(size_of::<SECURITY_ATTRIBUTES>()).unwrap_or(0),
+        lpSecurityDescriptor: sd.0,
+        bInheritHandle: 0,
+    };
+    let open_mode = PIPE_ACCESS_DUPLEX
+        | FILE_FLAG_OVERLAPPED
+        | if first {
+            FILE_FLAG_FIRST_PIPE_INSTANCE
+        } else {
+            0
+        };
+    // SAFETY: `name` is NUL-terminated; `attributes` and the descriptor it points to are
+    // valid for the call.
+    let h = unsafe {
+        CreateNamedPipeW(
+            name.as_ptr(),
+            open_mode,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+            PIPE_UNLIMITED_INSTANCES,
+            BUFFER,
+            BUFFER,
+            0,
+            &raw const attributes,
+        )
+    };
+    match Handle::new(h) {
+        Some(h) => Ok(h),
+        None if first => {
+            let code = last_error();
+            // The name exists: another server created it first (ERROR_ACCESS_DENIED), or it
+            // is busy with all instances (ERROR_PIPE_BUSY).
+            if code == windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED
+                || code == ERROR_PIPE_BUSY
+            {
+                Err(PlatformError::EndpointInUse)
+            } else {
+                Err(PlatformError::os(i64::from(code), "CreateNamedPipeW"))
+            }
+        }
+        None => Err(os("CreateNamedPipeW")),
+    }
+}
+
 struct Listener {
+    /// The endpoint, for the name file.
+    endpoint: EndpointName,
     name: Vec<u16>,
     sd: Local,
     own_user: String,
@@ -546,52 +629,13 @@ struct Listener {
     pending: Mutex<Option<Handle>>,
     close_event: Handle,
     closed: AtomicBool,
+    /// The exclusive lock on `<run>/<kind>.pipe.lock`, released by `close`.
+    lock: Mutex<Option<File>>,
 }
 
 impl Listener {
     fn instance(&self, first: bool) -> Result<Handle> {
-        let attributes = SECURITY_ATTRIBUTES {
-            nLength: u32::try_from(size_of::<SECURITY_ATTRIBUTES>()).unwrap_or(0),
-            lpSecurityDescriptor: self.sd.0,
-            bInheritHandle: 0,
-        };
-        let open_mode = PIPE_ACCESS_DUPLEX
-            | FILE_FLAG_OVERLAPPED
-            | if first {
-                FILE_FLAG_FIRST_PIPE_INSTANCE
-            } else {
-                0
-            };
-        // SAFETY: `name` is NUL-terminated; `attributes` and the descriptor it points to are
-        // valid for the call.
-        let h = unsafe {
-            CreateNamedPipeW(
-                self.name.as_ptr(),
-                open_mode,
-                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-                PIPE_UNLIMITED_INSTANCES,
-                BUFFER,
-                BUFFER,
-                0,
-                &raw const attributes,
-            )
-        };
-        match Handle::new(h) {
-            Some(h) => Ok(h),
-            None if first => {
-                let code = last_error();
-                // The name exists: another server created it first (ERROR_ACCESS_DENIED), or it
-                // is busy with all instances (ERROR_PIPE_BUSY).
-                if code == windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED
-                    || code == ERROR_PIPE_BUSY
-                {
-                    Err(PlatformError::EndpointInUse)
-                } else {
-                    Err(PlatformError::os(i64::from(code), "CreateNamedPipeW"))
-                }
-            }
-            None => Err(os("CreateNamedPipeW")),
-        }
+        instance(&self.name, &self.sd, first)
     }
 }
 
@@ -682,6 +726,13 @@ impl LocalListener for Listener {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .take();
+            // The name is no longer served; the next server writes its own. Removed before the
+            // lock is released, so it never removes a newer server's file.
+            let _ = std::fs::remove_file(name_file(&self.endpoint));
+            self.lock
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
         }
         Ok(())
     }
@@ -693,26 +744,64 @@ impl Drop for Listener {
     }
 }
 
+/// Takes the exclusive lock on the endpoint's lock file, or `EndpointInUse` when another
+/// server holds it.
+fn take_lock(name: &EndpointName) -> Result<File> {
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(lock_file(name))
+        .map_err(|e| io_error(&e, "opening the pipe's lock file"))?;
+    match lock.try_lock() {
+        Ok(()) => Ok(lock),
+        Err(TryLockError::WouldBlock) => Err(PlatformError::EndpointInUse),
+        Err(TryLockError::Error(e)) => Err(io_error(&e, "locking the pipe's lock file")),
+    }
+}
+
+/// `bind`, with the secrets drawn from `secrets` (the system's generator; a test's list).
+pub(crate) fn bind_with(
+    name: &EndpointName,
+    policy: PeerPolicy,
+    mut secrets: impl FnMut() -> Result<String>,
+) -> Result<Box<dyn LocalListener>> {
+    let own_user = own_sid()?;
+    std::fs::create_dir_all(name.run_dir())
+        .map_err(|e| io_error(&e, "creating the run directory"))?;
+    crate::restrict_to_current_user(name.run_dir())
+        .map_err(|e| io_error(&e, "restricting the run directory to the user"))?;
+    let lock = take_lock(name)?;
+    let sd = security_descriptor(&own_user)?;
+    for _ in 0..BIND_ATTEMPTS {
+        let secret = secrets()?;
+        let full = wide(&pipe_name(name.pipe_stem(), &own_user, &secret));
+        let first = match instance(&full, &sd, true) {
+            Ok(first) => first,
+            // Someone holds this very name: draw another.
+            Err(PlatformError::EndpointInUse) => continue,
+            Err(e) => return Err(e),
+        };
+        publish(name, &secret)?;
+        return Ok(Box::new(Listener {
+            endpoint: name.clone(),
+            name: full,
+            sd,
+            own_user,
+            policy,
+            pending: Mutex::new(Some(first)),
+            close_event: event()?,
+            closed: AtomicBool::new(false),
+            lock: Mutex::new(Some(lock)),
+        }));
+    }
+    Err(PlatformError::EndpointInUse)
+}
+
 impl LocalEndpoint for Platform {
     fn bind(&self, name: &EndpointName, policy: PeerPolicy) -> Result<Box<dyn LocalListener>> {
         let State {} = &self.endpoint;
-        let own_user = own_sid()?;
-        let full = pipe_name(name, &own_user, default_run_dir().as_deref());
-        let listener = Listener {
-            name: wide(&full),
-            sd: security_descriptor(&own_user)?,
-            own_user,
-            policy,
-            pending: Mutex::new(None),
-            close_event: event()?,
-            closed: AtomicBool::new(false),
-        };
-        let first = listener.instance(true)?;
-        *listener
-            .pending
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(first);
-        Ok(Box::new(listener))
+        bind_with(name, policy, new_secret)
     }
 
     fn connect(
@@ -722,7 +811,7 @@ impl LocalEndpoint for Platform {
         timeout: Duration,
     ) -> Result<Box<dyn LocalStream>> {
         let own_user = own_sid()?;
-        let full = wide(&pipe_name(name, &own_user, default_run_dir().as_deref()));
+        let full = wide(&published_name(name, &own_user)?);
         let deadline = Instant::now() + timeout;
         let handle = loop {
             // SAFETY: `full` is NUL-terminated; null security attributes and template are
@@ -788,35 +877,101 @@ mod tests {
         }
     }
 
+    fn temp_name(tag: &str) -> EndpointName {
+        let dir = std::env::temp_dir().join(format!("iamb-pipe-unit-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        EndpointName::new(EndpointKind::Service, dir.join("run"))
+    }
+
+    /// Finding 12: a name somebody else created first does not keep the server from serving;
+    /// it draws another secret, and clients find that one through the name file.
     #[test]
-    fn pipe_names_follow_the_architecture() {
-        let default = Path::new(r"C:\Users\Ada\AppData\Roaming\Iamb\run");
-        let name = EndpointName::new(EndpointKind::Service, default);
+    fn a_taken_name_makes_bind_draw_another_secret() {
+        let n = temp_name("taken");
+        let sid = own_sid().expect("own SID");
+        let taken = "1".repeat(32);
+        let free = "2".repeat(32);
+        // The squatter: the first instance of the name the first secret gives.
+        let sd = security_descriptor(&sid).expect("descriptor");
+        let squatter = instance(&wide(&pipe_name(n.pipe_stem(), &sid, &taken)), &sd, true)
+            .expect("the squatter creates the name");
+        let mut secrets = vec![free.clone(), taken.clone()];
+        let listener = bind_with(&n, PeerPolicy::SameUser, || {
+            Ok(secrets.pop().expect("a secret"))
+        })
+        .expect("binds under another name");
         assert_eq!(
-            pipe_name(&name, "S-1-5-21-1", Some(default)),
-            r"\\.\pipe\iamb-service-S-1-5-21-1"
-        );
-        // Case and a trailing separator do not make it another root.
-        let same = EndpointName::new(
-            EndpointKind::Service,
-            r"c:\users\ada\appdata\roaming\iamb\run\",
+            std::fs::read_to_string(name_file(&n)).expect("name file"),
+            format!("{free}\n")
         );
         assert_eq!(
-            pipe_name(&same, "S-1-5-21-1", Some(default)),
-            r"\\.\pipe\iamb-service-S-1-5-21-1"
+            published_name(&n, &sid).expect("published"),
+            pipe_name(n.pipe_stem(), &sid, &free)
         );
-        let test = EndpointName::new(EndpointKind::Sync, r"C:\Temp\x\run");
-        let n = pipe_name(&test, "S-1-5-21-1", Some(default));
-        assert!(n.starts_with(r"\\.\pipe\iamb-sync-S-1-5-21-1-"), "{n}");
-        assert_eq!(n.len(), r"\\.\pipe\iamb-sync-S-1-5-21-1-".len() + 16);
-        assert_ne!(
-            n,
-            pipe_name(
-                &EndpointName::new(EndpointKind::Sync, r"C:\Temp\y\run"),
-                "S-1-5-21-1",
-                Some(default)
-            )
-        );
+        // A client reaches the server, not the squatter.
+        let accepted = {
+            let listener: Arc<dyn LocalListener> = Arc::from(listener);
+            let server = Arc::clone(&listener);
+            let t = std::thread::spawn(move || server.accept().map(|s| s.peer().pid));
+            let client = Platform::new()
+                .connect(&n, PeerPolicy::SameUser, Duration::from_secs(5))
+                .expect("connects");
+            assert_eq!(client.peer().pid, std::process::id());
+            let pid = t.join().expect("thread").expect("accepted");
+            listener.close().expect("closes");
+            pid
+        };
+        assert_eq!(accepted, std::process::id());
+        // Closed: the name file is gone, so a client finds nothing.
+        assert!(!name_file(&n).exists());
+        assert!(matches!(
+            Platform::new().connect(&n, PeerPolicy::SameUser, Duration::from_secs(1)),
+            Err(PlatformError::EndpointNotFound)
+        ));
+        drop(squatter);
+        let _ = std::fs::remove_dir_all(n.run_dir().parent().expect("root"));
+    }
+
+    #[test]
+    fn a_name_that_stays_taken_is_reported_after_a_few_secrets() {
+        let n = temp_name("always");
+        let sid = own_sid().expect("own SID");
+        let sd = security_descriptor(&sid).expect("descriptor");
+        let taken = "3".repeat(32);
+        let _squatter = instance(&wide(&pipe_name(n.pipe_stem(), &sid, &taken)), &sd, true)
+            .expect("the squatter creates the name");
+        let mut drawn = 0;
+        let result = bind_with(&n, PeerPolicy::SameUser, || {
+            drawn += 1;
+            Ok(taken.clone())
+        });
+        assert!(matches!(result, Err(PlatformError::EndpointInUse)));
+        assert_eq!(drawn, BIND_ATTEMPTS);
+        assert!(!name_file(&n).exists(), "nothing published");
+        let _ = std::fs::remove_dir_all(n.run_dir().parent().expect("root"));
+    }
+
+    #[test]
+    fn the_run_directory_is_the_users_alone_and_secrets_are_random() {
+        let n = temp_name("private");
+        let sid = own_sid().expect("own SID");
+        let first = Platform::new()
+            .bind(&n, PeerPolicy::SameUser)
+            .expect("binds");
+        let sddl = crate::files::dacl_sddl(n.run_dir()).expect("readable");
+        assert!(crate::files::is_users_only(&sddl, &sid), "{sddl}");
+        let one = std::fs::read_to_string(name_file(&n)).expect("name file");
+        assert!(parse_secret(&one).is_some(), "{one:?}");
+        first.close().expect("closes");
+        drop(first);
+        let second = Platform::new()
+            .bind(&n, PeerPolicy::SameUser)
+            .expect("binds again");
+        let two = std::fs::read_to_string(name_file(&n)).expect("name file");
+        assert_ne!(one, two, "every bind draws a new secret");
+        second.close().expect("closes");
+        assert_ne!(new_secret().expect("random"), new_secret().expect("random"));
+        let _ = std::fs::remove_dir_all(n.run_dir().parent().expect("root"));
     }
 
     #[test]

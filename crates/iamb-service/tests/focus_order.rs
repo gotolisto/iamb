@@ -227,6 +227,52 @@ fn keys_for_a_window_the_watcher_never_reported_bring_a_diagnostic_and_a_new_loo
     h.settle();
 }
 
+/// Close-out review C3: the service's own look at the focus (after keys went to a window the
+/// watcher did not report) must take the application and the window from one moment. Here the
+/// excluded chat window takes the focus between the read of the application and the read of
+/// the window: with two separate reads the change paired the notes application's name with
+/// the chat window, the exclusion did not apply there, and `brb ` expanded in the chat.
+#[test]
+fn the_services_own_focus_read_pairs_the_application_with_its_window() {
+    let h = Harness::start(LIBRARY);
+    let mut c = h.client(Role::Ui);
+    match c.call(RequestBody::PutExclusion {
+        app_id: "org.example.chat".to_owned(),
+        display_name: "Chat".to_owned(),
+        excluded: true,
+    }) {
+        Ok(ResponseBody::Exclusions { exclusions }) => assert_eq!(exclusions.len(), 1),
+        other => panic!("unexpected {other:?}"),
+    }
+    h.worker().sync();
+    let notes = h.os.open_window(MockWindow::new("org.example.notes", 300));
+    let chat = h.os.open_window(MockWindow::new("org.example.chat", 301));
+    h.os.hold_focus_reports(true);
+    h.os.focus(notes).expect("window is open");
+    h.os.focus_after_next_app_read(chat);
+    // Three keys for a window the watcher has not reported: the service looks for itself.
+    h.os.type_text("xyz");
+    h.settle();
+    h.worker().sync();
+    assert!(
+        diagnostic_codes(&mut c).contains(&"keys_for_unreported_window".to_owned()),
+        "the service looked at the focus"
+    );
+    assert_eq!(
+        h.os.focus_token().map(FocusToken::window),
+        Ok(chat.window()),
+        "the chat window took the focus during that look"
+    );
+    h.os.type_text("brb ");
+    h.settle();
+    h.worker().sync();
+    assert_eq!(h.text(chat), "brb ", "nothing expands in the excluded app");
+    assert!(nothing_injected(&h), "{:?}", h.os.injected());
+    assert!(diagnostic_codes(&mut c).contains(&"suspended_excluded_app".to_owned()));
+    h.os.hold_focus_reports(false);
+    h.settle();
+}
+
 /// Follow-up review N5 and finding 5 on macOS: a listener whose stamp names another process
 /// than the inspector (a key window that belongs to a helper process, a field that holds
 /// something else than expected). Its keys are dropped while that may be a late report; once

@@ -1,0 +1,135 @@
+<section class="intro">
+  <h1>Flow 5: Search</h1>
+  <p>For the snippet whose abbreviation will not come to mind. One shortcut from any app opens a palette; a few letters find the snippet by abbreviation, label, text or tag; Enter types it where the cursor was.</p>
+  <div class="facts">
+    <span class="fact">Palette visible <b>under 100 ms</b> after the shortcut</span>
+    <span class="fact">Results <b>within 50 ms</b> of each key, 10,000 snippets</span>
+    <span class="fact">Shortest path <b>shortcut, 2 to 3 letters, [[Enter]]</b></span>
+  </div>
+  <p class="legend"><span><mark>ret</mark> matched characters</span><span><span class="typed-in">text</span> what Iamb typed (apps show no highlight)</span><span><span class="msg">Message</span> service message, architecture §6</span><span><span class="msg todo">Message</span> not in the service yet</span></p>
+</section>
+
+<div class="steps">
+
+  <figure class="step">
+    <div class="step-head"><span class="n">1</span><h3>The shortcut opens the palette</h3></div>
+    <div class="stage">
+      <div class="over">
+        <div class="win host mid" data-os="mac" style="margin-bottom:var(--space-6)">
+          <div class="win-bar"><span class="title">Mail: Re: Wrong hub in the box</span></div>
+          <div class="win-body doc" style="min-height:330px"><div class="hdr">To: <b>tomas@customer.example</b></div><p>Hi Tomás, sorry about that. <span class="caret"></span></p></div>
+        </div>
+        <div class="panel pal" role="dialog" aria-label="Search snippets" data-os="mac">
+          <div class="q"><svg class="i" aria-hidden="true"><use href="#i-search"/></svg><span class="txt"><span class="caret"></span><span class="ph">Search snippets</span></span></div>
+          <div class="res" role="listbox" aria-label="Recently used">
+            <div class="ovl grp">Recently used</div>
+            <div class="r on" role="option" aria-selected="true"><span class="nm">Thanks for your order</span><span class="abbr">;rty</span><span class="sub">Thank you for your order. We build every wheel by hand, so it ships within…</span></div>
+            <div class="r" role="option"><span class="nm">Workshop address</span><span class="abbr">;addr</span><span class="sub">Brindlewood Cycles, 12 Millrace Lane, Unit 4 (blue door behind the bakery)</span></div>
+            <div class="r" role="option"><span class="nm"><svg class="i" aria-label="Asks for values"><use href="#i-field"/></svg>Late delivery</span><span class="abbr">;rlate</span><span class="sub">Hi ‹First name›, thank you for your patience. Your order ‹Order number› left…</span></div>
+          </div>
+          <div class="ft"><span>[[Up]][[Down]] move</span><span>[[Enter]] insert</span><span>[[Mod+E]] edit</span><span class="sp"></span><span>[[Esc]] close</span></div>
+        </div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>[[Ctrl+Shift+Space]] (changeable in Settings → Shortcuts). Pressing it again closes the palette. The text field has the focus; the user just types.</dd></div>
+      <div><dt>Screen</dt><dd>Same place and same instant appearance as the fill-in form. Before anything is typed the list shows the snippets used most recently on this computer. Until the service can say which those are, it shows the hint “Type to search by abbreviation, label, text or tag.”</dd></div>
+      <div><dt>Service</dt><dd>The shortcut reaches the service, which captures the focus token: <span class="msg">PaletteRequested(focus)</span> → the UI host shows the pre-warmed panel. Recently used needs <span class="msg todo">usage in the snippet list</span>.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">2</span><h3>A few letters</h3></div>
+    <div class="stage">
+      <div class="panel pal" role="dialog" aria-label="Search snippets" data-os="mac">
+        <div class="q"><svg class="i" aria-hidden="true"><use href="#i-search"/></svg><span class="txt">ret<span class="caret"></span></span><span class="count">4 of 76</span></div>
+        <div class="res" role="listbox">
+          <div class="r on" role="option" aria-selected="true"><span class="nm"><mark>Ret</mark>urn label</span><span class="abbr">;r<mark>ret</mark></span><span class="sub">Replies › Returns · You can <mark>ret</mark>urn any part within 30 days. I have attached a prepaid label…</span></div>
+          <div class="r" role="option"><span class="nm"><svg class="i" aria-label="Asks for values"><use href="#i-field"/></svg><mark>Ret</mark>urn refused</span><span class="abbr">;rno</span><span class="sub">Replies › Returns · I am sorry, we cannot take back parts that have been fitted…</span></div>
+          <div class="r" role="option"><span class="nm">Wheel <mark>ret</mark>ensioning</span><span class="abbr">;wten</span><span class="sub">Shop replies · New wheels settle in. Bring it back after 200 km and we…</span></div>
+          <div class="r" role="option"><span class="nm">Out of stock</span><span class="abbr">;roos</span><span class="sub">Replies · <span class="tag" style="--tag:var(--color-tag-orange)"><mark>ret</mark>urns</span> That part is on back order. I can refund it or…</span></div>
+        </div>
+        <div class="pv" aria-label="Preview of Return label">You can return any part within 30 days. I have attached a prepaid label; the refund follows within three working days of the parcel reaching us.</div>
+        <div class="ft"><span>[[Up]][[Down]] move</span><span>[[Enter]] insert</span><span>[[Mod+E]] edit</span><span class="sp"></span><span>[[Esc]] close</span></div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>Typing searches; the first result is always selected. [[Up]] [[Down]] move (they wrap), <kbd>Page Up</kbd> <kbd>Page Down</kbd> jump, [[Mod+1]] to [[Mod+9]] insert that row directly. [[Mod+E]] opens the snippet in the library instead.</dd></div>
+      <div><dt>Screen</dt><dd>Each row: label, abbreviation, folder and first line. Matches are marked by weight and background, not by colour alone. The strip under the list previews the selected snippet as it would be typed now (dates filled in, blanks shown as names). The query is never stored: the palette opens empty every time.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">Search(text, limit: 50)</span> on every change; a late answer to an older query is dropped. Hits are ids and scores; rows are drawn from the snippet list the UI host already holds. The preview is <span class="msg">RenderPreview(source)</span> of the selected snippet.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">3</span><h3>Enter types it where the cursor was</h3></div>
+    <div class="stage">
+      <div class="win host mid" data-os="mac">
+        <div class="win-bar"><span class="title">Mail: Re: Wrong hub in the box</span></div>
+        <div class="win-body doc"><div class="hdr">To: <b>tomas@customer.example</b></div><p>Hi Tomás, sorry about that. <span class="typed-in">You can return any part within 30 days. I have attached a prepaid label; the refund follows within three working days of the parcel reaching us.</span><span class="caret"></span></p></div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>[[Enter]]. Nothing is deleted, because no abbreviation was typed. A snippet with blanks opens its fill-in form in the same spot (flow 4).</dd></div>
+      <div><dt>Screen</dt><dd>The palette disappears with no animation and the app has the focus again before the text arrives. Search works while Iamb is paused: pause stops typed abbreviations, not a deliberate pick.</dd></div>
+      <div><dt>Service</dt><dd>The UI host hides the panel, returns focus to the token’s window, confirms it, then <span class="msg">ExpandSnippet(id, focus)</span>. The engine waits for the verdict <code>normal</code> and types. With blanks: <span class="msg">FormRequested</span> follows.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">4</span><h3>Nothing matches</h3></div>
+    <div class="stage">
+      <div class="panel pal" role="dialog" aria-label="Search snippets" data-os="mac">
+        <div class="q"><svg class="i" aria-hidden="true"><use href="#i-search"/></svg><span class="txt">warranty<span class="caret"></span></span><span class="count">0 of 76</span></div>
+        <div class="none" role="status">No snippet matches “warranty”.</div>
+        <div class="res" role="listbox">
+          <div class="r on" role="option" aria-selected="true"><span class="nm"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>New snippet labelled “warranty”</span><span class="badge">opens the library</span></div>
+        </div>
+        <div class="ft"><span>[[Enter]] create</span><span class="sp"></span><span>[[Esc]] close</span></div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>[[Enter]] opens the library with a new draft whose label is the query. [[Esc]] returns to the app.</dd></div>
+      <div><dt>Screen</dt><dd>The one place a search query is used for anything else, and only after the user chose to: it becomes the draft’s label, in the window’s memory.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">Search</span> → no hits. Creating the draft sends nothing until the user saves it (flow 2).</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">5</span><h3>Rows that are not plain inserts</h3></div>
+    <div class="stage">
+      <div class="panel pal" role="dialog" aria-label="Search snippets" data-os="mac">
+        <div class="q"><svg class="i" aria-hidden="true"><use href="#i-search"/></svg><span class="txt">wheel<span class="caret"></span></span><span class="count">3 of 76</span></div>
+        <div class="res" role="listbox">
+          <div class="r on" role="option" aria-selected="true"><span class="nm"><svg class="i" aria-label="Asks for values"><use href="#i-field"/></svg><mark>Wheel</mark> build quote</span><span class="abbr">;wq</span><span class="sub">Shop replies · Asks for 3 values</span></div>
+          <div class="r" role="option"><span class="nm"><mark>Wheel</mark> pickup steps</span><span class="badge warn"><svg class="i" aria-hidden="true"><use href="#i-eye"/></svg>Needs your review</span><span class="sub">Shop replies · Changed by Tomás. Enter opens the review; it cannot be inserted yet.</span></div>
+          <div class="r" role="option"><span class="nm"><mark>Wheel</mark> size chart</span><span class="badge bad"><svg class="i" aria-hidden="true"><use href="#i-warn"/></svg>Broken</span><span class="sub">Replies · Has a template error. Enter opens it in the library.</span></div>
+        </div>
+        <div class="ft"><span>[[Up]][[Down]] move</span><span>[[Enter]] fill in and insert</span><span>[[Mod+E]] edit</span><span class="sp"></span><span>[[Esc]] close</span></div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>The footer says what [[Enter]] will do for the selected row: insert, fill in and insert, review, or open.</dd></div>
+      <div><dt>Screen</dt><dd>Snippets that are switched off appear with “Off” and can still be inserted from here (switching off only stops the abbreviation). Opened from inside Iamb’s own window, the palette is a quick way to jump to a snippet: [[Enter]] selects it in the library.</dd></div>
+      <div><dt>Service</dt><dd>Badges come from <span class="msg">ListPendingReviews</span> and <span class="msg">Health</span>, refreshed on <span class="msg">LibraryChanged</span>.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">6</span><h3>When the pick cannot be typed</h3></div>
+    <div class="stage">
+      <div class="over">
+        <div class="win host mid" data-os="mac">
+          <div class="win-bar"><span class="title">Browser: Sign in</span></div>
+          <div class="win-body doc"><div class="field"><label>Password</label><div class="input lg is-focus"><span class="pwd">•••••</span><span class="caret"></span></div></div></div>
+        </div>
+        <div class="toast notice" role="alert"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg><div><b>“Return label” was not inserted</b><span>The cursor is in a password field. Iamb does not type there.</span></div></div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>None. The notice takes no focus and leaves after 6 seconds.</dd></div>
+      <div><dt>Screen</dt><dd>Because the user asked for something and did not get it, Iamb says so once, in a corner of the screen. Other reasons, same notice: “You excluded this app.” · “Iamb cannot see into this window, so it stays out.” · “You moved to another app before the text could be typed.” · “Your keyboard is composing text.” · “Iamb was still typing the previous snippet.” · “This snippet has an error.” [Open it]</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">DiagnosticAdded</span> for the picked snippet: <code>refused_secure_field</code>, <code>refused_excluded_app</code>, <code>refused_unknown_focus</code>, <code>request_cancelled</code>, <code>refused_composing</code>, <code>injection_busy</code>, or a template code <code>E_…</code>.</dd></div>
+    </dl>
+  </figure>
+
+</div>

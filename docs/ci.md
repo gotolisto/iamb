@@ -2,7 +2,14 @@
 
 CI is defined in `.github/workflows/ci.yml` and runs on every pull request, on pushes to `main`
 and on manual dispatch. The toolchain version comes from `rust-toolchain.toml`; warnings are
-errors (`RUSTFLAGS=-D warnings`). The pipeline should finish in under ten minutes.
+errors (`RUSTFLAGS=-D warnings`). The pipeline should finish in under ten minutes; the
+`desktop` legs, which build Tauri, take about 3 to 5 minutes with a warm cache and up to about
+12 minutes cold (Windows is the slowest).
+
+The UI host (`iamb-desktop`, `apps/desktop`) is a workspace member but has a job of its own:
+`lint` and `test` pass `--exclude iamb-desktop` to their workspace-wide commands, because the
+crate needs the system web view's development files on Linux and a front-end build, and its
+Tauri dependencies would slow every leg.
 
 ## Jobs
 
@@ -14,9 +21,12 @@ errors (`RUSTFLAGS=-D warnings`). The pipeline should finish in under ten minute
   workspace with `--locked`. Between the two, each leg builds the service on its own in
   release (`cargo build -p iamb-service --release`, check 4 of ADR-0008: no feature that
   another workspace member, such as `iamb-testkit` with `probe`, turns on in a shared
-  dependency is unified into it) and runs clippy on that build alone; the Linux leg also
-  fails when the binary imports a name-resolution function (`getaddrinfo`, `gethostbyname`,
-  `getnameinfo`, read with `objdump -T`). The Windows and macOS legs then run clippy with `-D warnings` for
+  dependency is unified into it) and runs clippy on that build alone. The next step reads the
+  binary's imports with the toolchain's `llvm-nm` / `llvm-objdump` on every OS, prints the
+  libraries it links, and fails on a name-resolution or HTTP function or library
+  (`getaddrinfo`, `GetAddrInfo*`, `DnsQuery`, WinHTTP, WinINet, CFNetwork, Network.framework).
+  `ws2_32.dll` alone is not an error on Windows: the standard library may link it without the
+  service calling it. The Windows and macOS legs then run clippy with `-D warnings` for
   the whole workspace, so code that exists only on one OS is linted, with its tests, on that
   OS; the step runs even when a test failed. The Linux leg skips it because `lint` already
   does it.
@@ -26,9 +36,27 @@ errors (`RUSTFLAGS=-D warnings`). The pipeline should finish in under ten minute
   for both targets; each `test` leg runs `cargo test -p iamb-testkit --features probe --test
   probe_browser`, and the Windows and macOS legs also the OS crate's `--features probe --test
   probe` (Windows with `IAMB_REQUIRE_DESKTOP`).
+  On macOS the focus test (`cargo test -p iamb-platform-macos --test focus`) fails, rather
+  than skips, when its key-stamp check cannot run for a reason other than a missing
+  Accessibility or Input Monitoring grant or secure keyboard entry left on; on a machine that
+  has the grants (the lab, a runner set up with them), `IAMB_REQUIRE_KEY_STAMP=1` makes those
+  skips failures too (the close-out review's C5). The hosted runner has no grants and does not
+  set it.
+- `desktop` (Linux, Windows, macOS, not fail-fast): the UI host. The front end in
+  `apps/desktop` (`pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm test` with vitest,
+  `pnpm build`), then `cargo build`, `cargo clippy -- -D warnings` and `cargo test` for
+  `-p iamb-desktop --all-targets --features tauri/custom-protocol` (the feature embeds the built
+  front end, as a release build does; using it for every step builds the crate once). The Linux
+  leg first installs `libwebkit2gtk-4.1-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`,
+  `libxdo-dev` and `xvfb`. Last, the cold-open measurement of the library window
+  (`iamb-desktop --measure-open 10`, `docs/test-strategy.md` §8.1): on Linux under Xvfb it fails
+  the job when an open takes more than 800 ms (twice the lab target of 400 ms, the CI rule of test strategy §2.2; one open on a shared runner was seen at 413 ms while the others took 41-66 ms); on Windows and macOS it only prints the numbers
+  (the step may fail without failing the job). The tests include the crash-isolation tests,
+  which run a worker on the mock platform in the test process (and, on Linux, kill a UI host
+  child process).
 - `coverage` (Linux): `cargo llvm-cov` on `iamb-core`; fails below 85% line coverage.
-- `ci-ok`: succeeds only if `lint`, `coverage` and every `test` leg succeeded. This is the single
-  check to require in branch protection.
+- `ci-ok`: succeeds only if `lint`, `coverage`, every `test` leg and every `desktop` leg
+  succeeded. This is the single check to require in branch protection.
 
 `.github/workflows/bench.yml` runs the four benchmarks in quick mode and uploads the results. On
 pushes to `main` and manual runs it runs them once, report only. On a pull request it runs them
@@ -50,6 +78,9 @@ a merge.
 
 ## Running the checks locally
 
+On Linux the workspace-wide commands below include `iamb-desktop`, which needs the packages the
+`desktop` job installs (see `apps/desktop/README.md`); add `--exclude iamb-desktop` to skip it.
+
     cargo fmt --all -- --check
     cargo clippy --workspace --all-targets --locked -- -D warnings
     cargo build --workspace --all-targets --locked
@@ -58,6 +89,13 @@ a merge.
     cargo xtask banned-terms
     python3 spec/template/reference.py
     cargo llvm-cov -p iamb-core --locked --summary-only --fail-under-lines 85
+
+The `desktop` job's steps:
+
+    (cd apps/desktop && pnpm install --frozen-lockfile && pnpm typecheck && pnpm test && pnpm build)
+    cargo clippy -p iamb-desktop --all-targets --locked --features tauri/custom-protocol -- -D warnings
+    cargo test -p iamb-desktop --locked --features tauri/custom-protocol
+    xvfb-run -a target/debug/iamb-desktop --data-dir "$(mktemp -d)" --measure-open 10 --budget-ms 800
 
 `cargo xtask` is an alias (see `.cargo/config.toml`) for the `xtask` workspace crate.
 
@@ -109,6 +147,15 @@ Architecture §2 and ADR-0008 name four checks; CI runs all of them.
    `iamb-testkit` is not one of the six: the probe's browser page needs a local TCP socket.
 4. The release binary built with `-p iamb-service` alone: the step "Build the service alone
    (release)" of `test`, on every OS.
+
+The lint of check 3 can be switched off where it is used, and it does not see a function
+declared by hand (the follow-up review's N6). `no_network.rs` therefore also searches every
+source file of the six crates and fails on an `allow` or `expect` attribute (also inside
+`cfg_attr`) that names `clippy::disallowed_types`, `clippy::disallowed_methods`, `clippy::style`
+or `clippy::all`, on an `extern` block that declares a socket, connection or name-resolution
+function (or names one with `link_name`), and on a `#[link]` attribute or `link!` macro that
+names a networking library (`ws2_32`, `dnsapi`, `winhttp`, `wininet`, `CFNetwork`, `Network`,
+…). The import check of the built binary runs on all three systems (above).
 
 ## Banned terms
 

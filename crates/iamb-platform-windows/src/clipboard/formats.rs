@@ -3,14 +3,23 @@
 //!
 //! # What a snapshot copies
 //!
-//! Only data held in global memory can be copied byte for byte and put back. The formats whose
-//! data is a handle to a system object (bitmaps, palettes, metafiles, the owner-display
-//! formats, the private and GDI-object ranges) cannot, and are left out; the snapshot is then
-//! incomplete. Some formats are not left out but ignored, without making the snapshot
-//! incomplete, because the system makes them again from another format when the snapshot is
-//! restored: ANSI and OEM text when Unicode text is there, the bitmap and the palette when a
-//! device-independent bitmap is there. Iamb's own history markers are ignored too: a restore
-//! always sets them again (the trait's contract: a restore makes no history entry).
+//! Data held in global memory is copied byte for byte and put back. Of the formats whose data
+//! is a handle to a system object, the enhanced metafile is copied too, as its records
+//! (`GetEnhMetaFileBits`), and made again from them on restore (`SetEnhMetaFileBits`): office
+//! programs put a picture of the selection next to its text in an ordinary copy, and leaving
+//! it out made every such snapshot incomplete, so no paste could be made while it was there
+//! (the 2.8 follow-up review's N4). The other handle formats (the owner-display formats, the
+//! private and GDI-object ranges, a bitmap or a palette without a device-independent bitmap,
+//! a metafile picture without an enhanced metafile) cannot be copied and are left out; the
+//! snapshot is then incomplete. Some formats are not left out but ignored, without making the
+//! snapshot incomplete, because the system makes them again from another format when the
+//! snapshot is restored: ANSI and OEM text when Unicode text is there, the bitmap and the
+//! palette when a device-independent bitmap is there, the metafile picture when an enhanced
+//! metafile is there. The system offers the device-independent bitmap whenever a bitmap is on
+//! the clipboard, and the enhanced metafile whenever a metafile picture is (it makes each from
+//! the other on request), so a copied picture is saved whole. Iamb's own history markers are
+//! ignored too: a restore always sets them again (the trait's contract: a restore makes no
+//! history entry).
 //!
 //! Registered formats (numbers from `0xC000`) hold global memory by the clipboard's rules (the
 //! system frees them with `GlobalFree`), so they are copied: that is how the application
@@ -79,6 +88,8 @@ pub(crate) const SNAPSHOT_TIME_LIMIT: Duration = Duration::from_millis(500);
 pub(crate) enum Treatment {
     /// Copy its bytes.
     Copy,
+    /// The enhanced metafile: copy its records, and make it again from them on restore.
+    Metafile,
     /// Not needed: the system makes it again, or a restore sets it anyway.
     Ignore,
     /// Cannot be copied: the snapshot is incomplete.
@@ -94,6 +105,8 @@ pub(crate) fn treatment(format: u32, present: &[u32], name: Option<&str>) -> Tre
     match format {
         CF_TEXT | CF_OEMTEXT if has(CF_UNICODETEXT) => Treatment::Ignore,
         CF_BITMAP | CF_PALETTE if has(CF_DIB) || has(CF_DIBV5) => Treatment::Ignore,
+        CF_METAFILEPICT if has(CF_ENHMETAFILE) => Treatment::Ignore,
+        CF_ENHMETAFILE => Treatment::Metafile,
         CF_TEXT | CF_SYLK | CF_DIF | CF_TIFF | CF_OEMTEXT | CF_DIB | CF_PENDATA | CF_RIFF
         | CF_WAVE | CF_UNICODETEXT | CF_HDROP | CF_LOCALE | CF_DIBV5 | CF_DSPTEXT => {
             Treatment::Copy
@@ -106,8 +119,8 @@ pub(crate) fn treatment(format: u32, present: &[u32], name: Option<&str>) -> Tre
         },
         // Handles to system objects, and the private and GDI-object ranges, whose data the
         // owner frees itself.
-        CF_BITMAP | CF_METAFILEPICT | CF_PALETTE | CF_ENHMETAFILE | CF_OWNERDISPLAY
-        | CF_DSPBITMAP | CF_DSPMETAFILEPICT | CF_DSPENHMETAFILE => Treatment::Skip,
+        CF_BITMAP | CF_METAFILEPICT | CF_PALETTE | CF_OWNERDISPLAY | CF_DSPBITMAP
+        | CF_DSPMETAFILEPICT | CF_DSPENHMETAFILE => Treatment::Skip,
         CF_PRIVATEFIRST..=CF_PRIVATELAST | CF_GDIOBJFIRST..=CF_GDIOBJLAST => Treatment::Skip,
         // Standard numbers this code does not know: their data could be anything.
         _ => Treatment::Skip,
@@ -270,7 +283,6 @@ mod tests {
             CF_BITMAP,
             CF_METAFILEPICT,
             CF_PALETTE,
-            CF_ENHMETAFILE,
             CF_OWNERDISPLAY,
             CF_DSPBITMAP,
             CF_DSPMETAFILEPICT,
@@ -310,6 +322,49 @@ mod tests {
         for (name, _) in HISTORY_MARKERS {
             assert_eq!(treatment(0xC200, &[0xC200], Some(name)), Treatment::Ignore);
         }
+    }
+
+    /// The follow-up review's N4: what an office program's copy of a cell or a paragraph
+    /// leaves on the clipboard, a picture of it next to its text, is saved whole: the
+    /// enhanced metafile as its records, the metafile picture and the bitmap made again by
+    /// the system from the enhanced metafile and the device-independent bitmap.
+    #[test]
+    fn a_copy_with_a_picture_of_the_selection_is_saved_whole() {
+        let office = [
+            0xC0F0,
+            CF_ENHMETAFILE,
+            CF_METAFILEPICT,
+            CF_BITMAP,
+            CF_UNICODETEXT,
+            CF_TEXT,
+            CF_OEMTEXT,
+            CF_LOCALE,
+            CF_DIB,
+            CF_DIBV5,
+        ];
+        let treatments: Vec<Treatment> = office
+            .iter()
+            .map(|&f| treatment(f, &office, (f == 0xC0F0).then_some("Rich Text Format")))
+            .collect();
+        assert!(
+            !treatments.contains(&Treatment::Skip),
+            "nothing is left out: {treatments:?}"
+        );
+        assert_eq!(
+            treatment(CF_ENHMETAFILE, &office, None),
+            Treatment::Metafile
+        );
+        assert_eq!(treatment(CF_METAFILEPICT, &office, None), Treatment::Ignore);
+        // A metafile picture the system offers no enhanced metafile for stays a handle.
+        assert_eq!(
+            treatment(CF_METAFILEPICT, &[CF_METAFILEPICT], None),
+            Treatment::Skip
+        );
+        // The enhanced metafile alone is copied as well.
+        assert_eq!(
+            treatment(CF_ENHMETAFILE, &[CF_ENHMETAFILE], None),
+            Treatment::Metafile
+        );
     }
 
     #[test]

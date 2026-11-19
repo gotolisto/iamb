@@ -6,7 +6,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use iamb_platform::{
-    AppIdentity, FieldSecurity, FocusInspector, FocusSink, FocusToken, PlatformError,
+    AppIdentity, FieldSecurity, FocusChange, FocusInspector, FocusSink, FocusToken, PlatformError,
     RESTORE_FOCUS_TIMEOUT, Result, UnknownReason,
 };
 
@@ -119,6 +119,16 @@ impl FocusInspector for Platform {
     fn focus_token(&self) -> Result<FocusToken> {
         match system::front() {
             Some((_, token)) if token.window() != 0 => Ok(token),
+            _ => Err(PlatformError::NoFocus),
+        }
+    }
+
+    /// One reading: the frontmost application and the front window of that same process, as
+    /// the watcher builds its reports (the close-out review's C3). Like `focus_token`, an
+    /// application without an ordinary window has no focus to name.
+    fn focus_now(&self) -> Result<FocusChange> {
+        match system::front() {
+            Some((app, token)) if token.window() != 0 => Ok(FocusChange { app, token }),
             _ => Err(PlatformError::NoFocus),
         }
     }

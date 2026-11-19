@@ -1,0 +1,195 @@
+<section class="intro">
+  <h1>Flow 3: Expand</h1>
+  <p>The flow with almost no interface. The user types an abbreviation in any app and the text is there. Iamb shows nothing, asks nothing and steals no focus. When it holds back, it says why in one place, and only when asked.</p>
+  <div class="facts">
+    <span class="fact">Budget <b>under 50 ms</b> from the last key, for 95% of plain-text expansions</span>
+    <span class="fact">UI involved <b>not at all</b>: the service expands with no window open</span>
+  </div>
+  <p class="legend"><span><span class="typed">;addr</span> what the user typed</span><span><span class="typed-in">text</span> what Iamb typed (apps show no highlight)</span><span><span class="msg">Message</span> service message, architecture §6</span></p>
+</section>
+
+<div class="steps">
+
+  <figure class="step wide">
+    <div class="step-head"><span class="n">1</span><h3>Type the abbreviation, finish the word</h3></div>
+    <div class="stage pair">
+      <div class="col">
+        <span class="cap">You type ;addr</span>
+        <div class="win host w-md" data-os="mac">
+          <div class="win-bar"><span class="title">Mail: Re: Pickup on Saturday</span></div>
+          <div class="win-body doc">
+            <div class="hdr">To: <b>jun@customer.example</b></div>
+            <p>Hi Jun,</p>
+            <p>Saturday works. You will find us at <span class="typed">;addr</span><span class="caret"></span></p>
+          </div>
+        </div>
+      </div>
+      <div class="col">
+        <span class="cap">Then a space</span>
+        <div class="win host w-md" data-os="mac">
+          <div class="win-bar"><span class="title">Mail: Re: Pickup on Saturday</span></div>
+          <div class="win-body doc">
+            <div class="hdr">To: <b>jun@customer.example</b></div>
+            <p>Hi Jun,</p>
+            <p>Saturday works. You will find us at <span class="typed-in">Brindlewood Cycles, 12 Millrace Lane, Unit 4 (blue door behind the bakery)</span> <span class="caret"></span></p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>The abbreviation, then a space or one of <kbd>.</kbd> <kbd>,</kbd> <kbd>;</kbd> <kbd>:</kbd> <kbd>!</kbd> <kbd>?</kbd> <kbd>)</kbd> <kbd>]</kbd> <kbd>}</kbd> <kbd>"</kbd> <kbd>'</kbd>. The space or punctuation mark is typed again after the text. [[Mod+Z]] in the app undoes what the app lets it undo; Iamb adds no undo of its own.</dd></div>
+      <div><dt>Screen</dt><dd>Nothing from Iamb: no popup, no sound, no change of the tray icon. The app keeps the focus the whole time.</dd></div>
+      <div><dt>Service</dt><dd>All inside <code>iamb-service</code>: listener → engine (match in the 66-character buffer) → injector (<code>DeleteBack</code>, <code>TypeText</code>). No message to or from the UI; usage is counted on this computer when the injection finishes.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">2</span><h3>What a snippet’s options change</h3></div>
+    <div class="stage top">
+      <div class="variants">
+        <div class="variant"><span class="ovl">Immediately: no space needed</span><div>Sent on <span class="typed">;;d</span></div><svg class="i" aria-hidden="true"><use href="#i-right"/></svg><div>Sent on <span class="typed-in">18 March 2026</span><span class="caret"></span></div></div>
+        <div class="variant"><span class="ovl">Capitals follow yours</span><div><span class="typed">;Ty</span> + space</div><svg class="i" aria-hidden="true"><use href="#i-right"/></svg><div><span class="typed-in">Thank you for your order.</span> <span class="caret"></span></div></div>
+        <div class="variant"><span class="ovl">Cursor position inside the text</span><div><span class="typed">;ref</span> + space</div><svg class="i" aria-hidden="true"><use href="#i-right"/></svg><div><span class="typed-in">(your reference: <span class="caret"></span>)</span></div></div>
+        <div class="variant"><span class="ovl">Only at the start of a word</span><div>p<span class="typed">;ty</span> + space</div><svg class="i" aria-hidden="true"><use href="#i-right"/></svg><div>p;ty <span class="caret"></span> <span class="badge">not expanded</span></div></div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>An immediate snippet fires on its last character. With a cursor position, the space or punctuation is not typed again and the caret lands inside the text.</dd></div>
+      <div><dt>Screen</dt><dd>Still nothing from Iamb. If a snippet’s template has an error, nothing is typed and the abbreviation stays: Iamb never types half a snippet.</dd></div>
+      <div><dt>Service</dt><dd>Engine only: trigger and case modes (architecture §4.4), <code>MoveCaretBack</code> for the cursor.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">3</span><h3>Enter and Tab do not expand</h3></div>
+    <div class="stage">
+      <div class="win host w-sm" data-os="mac">
+        <div class="win-bar"><span class="title">Chat: Workshop</span></div>
+        <div class="win-body doc chat" style="min-height:230px">
+          <div class="bubble them">Did the order from Jun go out?</div>
+          <div class="bubble"><span class="typed">;rty</span></div>
+          <div class="compose"><span class="caret"></span>Message Workshop</div>
+        </div>
+      </div>
+      <p class="callout">The chat app sent the message on Enter before anything could be typed. Iamb therefore leaves Enter and Tab alone (ADR-0026): the abbreviation went out as typed.</p>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>At the end of a line or of a form field: type a space or punctuation first, or give the snippet the “Immediately” trigger.</dd></div>
+      <div><dt>Screen</dt><dd>Taught in onboarding, repeated in the editor’s Options and at the foot of “Why didn’t it expand?”. Settings → Typing can add Enter and Tab, with a warning about forms, chats and dialogs.</dd></div>
+      <div><dt>Service</dt><dd>Enter and Tab end the word and clear the buffer. No diagnostic is recorded today; one would let the log say so (listed under “Needed from the service”).</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step">
+    <div class="step-head"><span class="n">4</span><h3>Where Iamb stays out</h3></div>
+    <div class="stage">
+      <div class="win host w-sm" data-os="mac">
+        <div class="win-bar"><span class="title">Browser: Sign in</span></div>
+        <div class="win-body doc" style="min-height:0">
+          <div class="field"><label>Email</label><div class="input lg">ines@brindlewood.example</div></div>
+          <div class="field"><label>Password</label><div class="input lg is-focus"><span class="pwd">•••••••••</span><span class="caret"></span></div></div>
+        </div>
+      </div>
+      <p class="callout">In a password field Iamb stores no key and expands nothing, even if the password ends in an abbreviation. The same holds in apps you excluded, while an input method is composing, in Iamb’s own windows, and while Iamb is paused.</p>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>Nothing to do. Typing goes to the app untouched.</dd></div>
+      <div><dt>Screen</dt><dd>Silent. The tray icon does not change with the focus: it would flicker all day and say nothing new.</dd></div>
+      <div><dt>Service</dt><dd>The focus thread reports <code>secure</code>, <code>excluded</code>, <code>own_window</code> or <code>unknown</code>; the engine is suspended and drops keys unstored. One diagnostic names the app and the reason, never the text.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step wide">
+    <div class="step-head"><span class="n">5</span><h3>The menu: status, pause, and the way in</h3></div>
+    <div class="stage pair">
+      <div class="col">
+        <span class="cap">macOS: menu bar</span>
+        <div class="os-strip"><span class="sp"></span><span class="tray-icon open"><svg class="i" aria-hidden="true"><use href="#i-iamb"/></svg></span><span>Thu 14:05</span></div>
+        <div class="menu" role="menu" aria-label="Iamb" style="justify-self:end">
+          <div class="head"><span class="dot"></span><div class="st"><b>Iamb is on</b><small>76 snippets</small></div></div>
+          <hr>
+          <div class="mi on" role="menuitem"><span class="grow">Search snippets…</span><kbd>⌃⇧Space</kbd></div>
+          <div class="mi" role="menuitem"><span class="grow">New snippet…</span></div>
+          <div class="mi" role="menuitem"><span class="grow">Open library</span></div>
+          <hr>
+          <div class="mi" role="menuitemcheckbox" aria-checked="false"><span class="grow">Pause Iamb</span></div>
+          <div class="mi" role="menuitem"><span class="grow">Never expand in Mail</span></div>
+          <hr>
+          <div class="mi" role="menuitem"><span class="grow">Why didn’t it expand?</span></div>
+          <div class="mi" role="menuitem"><span class="grow">Settings…</span><kbd>⌘,</kbd></div>
+          <hr>
+          <div class="mi" role="menuitem"><span class="grow">Quit Iamb</span></div>
+        </div>
+      </div>
+      <div class="col">
+        <span class="cap">Windows: notification area</span>
+        <div class="menu" role="menu" aria-label="Iamb" style="justify-self:end;border-radius:8px">
+          <div class="head"><span class="dot off"></span><div class="st"><b>Iamb is paused</b><small>Typed abbreviations do not expand. Search still works.</small></div></div>
+          <hr>
+          <div class="mi" role="menuitem"><span class="grow">Search snippets…</span><kbd>Ctrl+Shift+Space</kbd></div>
+          <div class="mi" role="menuitem"><span class="grow">New snippet…</span></div>
+          <div class="mi" role="menuitem"><span class="grow">Open library</span></div>
+          <hr>
+          <div class="mi on" role="menuitemcheckbox" aria-checked="true"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg><span class="grow">Pause Iamb</span></div>
+          <div class="mi" role="menuitem"><span class="grow">Never expand in Mail</span></div>
+          <hr>
+          <div class="mi" role="menuitem"><span class="grow">Why didn’t it expand?</span></div>
+          <div class="mi" role="menuitem"><span class="grow">Settings…</span><kbd>Ctrl+,</kbd></div>
+          <hr>
+          <div class="mi" role="menuitem"><span class="grow">Exit Iamb</span></div>
+        </div>
+        <div class="os-strip taskbar"><span class="sp"></span><svg class="i" aria-hidden="true"><use href="#i-down"/></svg><span class="tray-icon open paused"><svg class="i" aria-hidden="true"><use href="#i-iamb"/></svg></span><span>14:05</span></div>
+      </div>
+      <div class="col" style="grid-column:1/-1">
+        <span class="cap">The icon has three states</span>
+        <div class="tray-states">
+          <div class="tray-state"><span class="tray-icon"><svg class="i" aria-hidden="true"><use href="#i-iamb"/></svg></span>On</div>
+          <div class="tray-state"><span class="tray-icon paused"><svg class="i" aria-hidden="true"><use href="#i-iamb"/></svg></span>Paused</div>
+          <div class="tray-state"><span class="tray-icon"><svg class="i" aria-hidden="true"><use href="#i-iamb"/></svg><span class="dot"></span></span>Needs you</div>
+        </div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>macOS: the menu is a standard menu-bar menu (reachable with the system’s menu-bar shortcut). Windows: left and right click both open it; <kbd>Win+B</kbd>, arrows and <kbd>Enter</kbd> reach it from the keyboard.</dd></div>
+      <div><dt>Screen</dt><dd>The first line always says in words what the icon shows. “Never expand in Mail” names the app that was in front when the menu opened and becomes “Expand in Mail again” once excluded. “Needs you” appears for a missing permission, a service that is not running or an update that needs a restart.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">GetStatus</span> when the menu opens, <span class="msg">StatusChanged</span> for the icon, <span class="msg">SetPaused(paused)</span>, <span class="msg">PutExclusion(app_id, display_name, excluded)</span>. The app in front comes from the UI host’s own focus inspector.</dd></div>
+    </dl>
+  </figure>
+
+  <figure class="step wide">
+    <div class="step-head"><span class="n">6</span><h3>“Why didn’t it expand?”</h3></div>
+    <div class="stage">
+      <div class="win w-xl" data-os="mac">
+        <div class="win-bar"><span class="title">Iamb</span></div>
+        <div class="win-body lib two">
+          <!--#include sidebar sel=log -->
+          <section class="pane" aria-label="Why didn’t it expand?">
+            <div class="pane-head"><h4>Why didn’t it expand?</h4><span class="count">Kept in memory only. Iamb never records what you typed.</span></div>
+            <div>
+              <div class="pad" style="padding-bottom:var(--space-2)">
+                <div class="field"><label>Test an abbreviation</label>
+                  <div class="input lg mono">;rty<span class="caret"></span></div>
+                  <p class="warnmsg" role="status"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg><span><b>Not yet.</b> “Thanks for your order” waits for a space or punctuation after <b>;rty</b>. Enter and Tab do not count.</span></p>
+                </div>
+              </div>
+              <div class="log" role="list">
+                <div class="le" role="listitem"><time>14:12</time><div class="what"><b>“Out of office” has an error</b><span>It includes the snippet ;sig2, which does not exist. Nothing was typed. · Notes</span></div><button class="btn sm" type="button">Open snippet</button></div>
+                <div class="le" role="listitem"><time>14:09</time><div class="what"><b>“Workshop address” was stopped halfway</b><span>You switched windows or pressed a key that moves the cursor while Iamb was typing. What was already typed stayed where it was. · Terminal</span></div><span></span></div>
+                <div class="le" role="listitem"><time>14:05</time><div class="what"><b>Not expanding in a password field</b><span>Iamb stores no keys there. · Browser</span></div><span></span></div>
+                <div class="le" role="listitem"><time>13:58</time><div class="what"><b>Not expanding in Keys</b><span>You excluded this app.</span></div><button class="btn sm" type="button">Manage apps</button></div>
+                <div class="le" role="listitem"><time>13:31</time><div class="what"><b>Not expanding in Disk Tools</b><span>Iamb cannot see into this window<span class="only-win"> because it runs as administrator</span>, so it stays out.</span></div><span></span></div>
+                <div class="le" role="listitem"><time>13:02</time><div class="what"><b>“Late delivery” could not show its form</b><span>Iamb’s window process was restarting. Type the abbreviation again.</span></div><span></span></div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+    <dl class="notes">
+      <div><dt>Keys</dt><dd>Focus starts in the test field. [[Tab]] moves into the list, [[Up]] [[Down]] between entries, [[Enter]] runs an entry’s button.</dd></div>
+      <div><dt>Screen</dt><dd>Newest first, at most 200, gone when Iamb restarts. An entry names a snippet only when one matched or was asked for; while Iamb is held back it names only the app and the reason. The test field answers “would this expand?” without typing anywhere; its text is never stored.</dd></div>
+      <div><dt>Service</dt><dd><span class="msg">RecentDiagnostics</span> on opening, <span class="msg">DiagnosticAdded</span> while open, <span class="msg">DryRun(typed)</span> for the test field. Codes shown here: <code>E_SNIPPET_NOT_FOUND</code>, <code>injection_cancelled</code>, <code>suspended_secure_field</code>, <code>suspended_excluded_app</code>, <code>suspended_unknown_focus</code>, <code>form_no_ui_host</code>.</dd></div>
+    </dl>
+  </figure>
+
+</div>

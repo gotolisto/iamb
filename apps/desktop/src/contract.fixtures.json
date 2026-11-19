@@ -1,0 +1,82 @@
+{
+  "error": {
+    "code": "not_permitted",
+    "message": "not for this role"
+  },
+  "events": [
+    {
+      "revision": 4,
+      "type": "library_changed"
+    },
+    {
+      "type": "palette_requested"
+    },
+    {
+      "fields": [
+        {
+          "default": "M",
+          "kind": "choice",
+          "name": "Size",
+          "options": [
+            "S",
+            "M"
+          ]
+        }
+      ],
+      "session": 2,
+      "snippet": "01010101-0101-0101-0101-010101010101",
+      "type": "form_requested"
+    },
+    {
+      "code": "injection_cancelled",
+      "snippet": "01010101-0101-0101-0101-010101010101",
+      "type": "diagnostic_added"
+    },
+    {
+      "type": "settings_changed"
+    }
+  ],
+  "snippet": {
+    "abbreviation": "brb",
+    "body": "be right back",
+    "enabled": true,
+    "folderId": "02020202-0202-0202-0202-020202020202",
+    "id": "01010101-0101-0101-0101-010101010101",
+    "kind": "plain",
+    "label": "Back soon",
+    "rev": 0,
+    "trigger": "delimiter"
+  },
+  "snippets": [
+    {
+      "abbreviation": "brb",
+      "enabled": true,
+      "folderId": "02020202-0202-0202-0202-020202020202",
+      "id": "01010101-0101-0101-0101-010101010101",
+      "kind": "plain",
+      "label": "Back soon"
+    }
+  ],
+  "statuses": [
+    {
+      "connection": "connecting",
+      "service": null
+    },
+    {
+      "connection": "disconnected",
+      "service": null
+    },
+    {
+      "connection": "connected",
+      "service": {
+        "listener": true,
+        "memoryLocked": true,
+        "paused": false,
+        "revision": 3,
+        "snippets": 12,
+        "suspended": true,
+        "version": "0.0.0"
+      }
+    }
+  ]
+}
