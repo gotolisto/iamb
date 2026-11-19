@@ -20,7 +20,9 @@
 
 mod common;
 
+#[cfg(target_os = "linux")]
 use std::io::{BufRead, BufReader};
+#[cfg(target_os = "linux")]
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -37,6 +39,7 @@ use iamb_platform::PeerPolicy;
 
 /// Set in the child process of `killing_the_ui_process_leaves_expansion_running`: the data
 /// root of the parent's worker.
+#[cfg(target_os = "linux")]
 const CHILD_ENV: &str = "IAMB_DESKTOP_TEST_CHILD_DATA";
 
 /// The worker's log lines that mention client `n`'s connection.

@@ -18,9 +18,9 @@ use std::path::Path;
 
 use windows_sys::Win32::Foundation::{ERROR_SUCCESS, LocalFree};
 use windows_sys::Win32::Security::Authorization::{
-    ConvertSecurityDescriptorToStringSecurityDescriptorW,
-    ConvertStringSecurityDescriptorToSecurityDescriptorW, GetNamedSecurityInfoW, SDDL_REVISION_1,
-    SE_FILE_OBJECT, SetNamedSecurityInfoW,
+    ConvertSecurityDescriptorToStringSecurityDescriptorW, ConvertSidToStringSidW,
+    ConvertStringSecurityDescriptorToSecurityDescriptorW, ConvertStringSidToSidW,
+    GetNamedSecurityInfoW, SDDL_REVISION_1, SE_FILE_OBJECT, SetNamedSecurityInfoW,
 };
 use windows_sys::Win32::Security::{
     ACL, DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, PROTECTED_DACL_SECURITY_INFORMATION,
@@ -61,12 +61,54 @@ fn wanted(sid: &str) -> String {
 
 /// True when `sddl`, the DACL of a directory as the system writes it, is the one [`wanted`]
 /// for `sid`: protected (`P`, with `AI` when the system marked it auto-inherited), with that
-/// one entry.
+/// one entry. The system writes some well-known accounts as a two-letter alias instead of the
+/// SID (the built-in Administrator, which CI runners use, is `LA`), so the entry's trustee is
+/// resolved before it is compared.
 pub(crate) fn is_users_only(sddl: &str, sid: &str) -> bool {
-    let entry = format!("(A;OICI;FA;;;{sid})");
+    is_users_only_by(sddl, |trustee| {
+        trustee == sid || trustee_sid(trustee).is_some_and(|t| t == sid)
+    })
+}
+
+/// [`is_users_only`] with the comparison of the entry's trustee given.
+fn is_users_only_by(sddl: &str, is_user: impl Fn(&str) -> bool) -> bool {
     sddl.strip_prefix("D:P")
         .map(|rest| rest.strip_prefix("AI").unwrap_or(rest))
-        .is_some_and(|rest| rest == entry)
+        .and_then(|rest| rest.strip_prefix("(A;OICI;FA;;;"))
+        .and_then(|rest| rest.strip_suffix(')'))
+        .is_some_and(|trustee| !trustee.contains(['(', ')', ';']) && is_user(trustee))
+}
+
+/// The SID string an SDDL trustee names: an SDDL alias such as `LA` resolved through the
+/// system, a SID string as it is.
+fn trustee_sid(trustee: &str) -> Option<String> {
+    if trustee.starts_with("S-") {
+        return Some(trustee.to_owned());
+    }
+    let wide: Vec<u16> = trustee.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut sid = std::ptr::null_mut();
+    // SAFETY: `wide` is NUL-terminated; `sid` receives a SID allocated with `LocalAlloc`,
+    // freed by `_sid` below.
+    if unsafe { ConvertStringSidToSidW(wide.as_ptr(), &raw mut sid) } == 0 {
+        return None;
+    }
+    let _sid = LocalMemory(sid);
+    let mut text: *mut u16 = std::ptr::null_mut();
+    // SAFETY: `sid` is the valid SID made above; `text` receives a NUL-terminated string
+    // allocated with `LocalAlloc`, freed by `_text` below.
+    if unsafe { ConvertSidToStringSidW(sid, &raw mut text) } == 0 {
+        return None;
+    }
+    let _text = LocalMemory(text.cast::<c_void>());
+    let mut len = 0;
+    // SAFETY: the string is NUL-terminated; this reads up to the terminator.
+    while unsafe { *text.add(len) } != 0 {
+        len += 1;
+    }
+    // SAFETY: `text` points to `len` valid UTF-16 units.
+    Some(String::from_utf16_lossy(unsafe {
+        std::slice::from_raw_parts(text, len)
+    }))
 }
 
 /// The DACL of `path` as SDDL (`D:…`).
@@ -196,6 +238,22 @@ mod tests {
             sid
         ));
         assert!(!is_users_only("D:PAI(A;OICI;FA;;;S-1-5-21-9)", sid));
+    }
+
+    /// The system writes the built-in Administrator, the account CI runners use, as `LA`.
+    #[test]
+    fn an_alias_the_system_writes_for_the_users_sid_is_recognised() {
+        let is_admin = |t: &str| t == "LA";
+        assert!(is_users_only_by("D:PAI(A;OICI;FA;;;LA)", is_admin));
+        assert!(!is_users_only_by("D:PAI(A;OICI;FA;;;BA)", is_admin));
+        assert!(!is_users_only_by(
+            "D:PAI(A;OICI;FA;;;LA)(A;OICI;FA;;;SY)",
+            is_admin
+        ));
+        // `LA` resolves to a SID of the local accounts domain ending in 500.
+        let la = trustee_sid("LA").expect("the system resolves LA");
+        assert!(la.starts_with("S-1-5-21-") && la.ends_with("-500"), "{la}");
+        assert_eq!(trustee_sid("S-1-5-18").as_deref(), Some("S-1-5-18"));
     }
 
     #[test]
