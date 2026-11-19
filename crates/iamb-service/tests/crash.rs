@@ -5,8 +5,6 @@
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
 
 use iamb_service::crash::EXIT_PANIC;
 use tempfile::TempDir;
@@ -104,6 +102,9 @@ fn a_panic_writes_a_metadata_only_report_and_exits_with_a_status() {
 #[cfg(target_os = "linux")]
 #[test]
 fn the_worker_keeps_its_memory_out_of_core_files() {
+    use std::thread;
+    use std::time::{Duration, Instant};
+
     let dir = TempDir::new().expect("temp dir");
     let mut child = worker(dir.path(), None)
         .stdout(Stdio::null())
