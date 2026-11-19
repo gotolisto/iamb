@@ -30,3 +30,4 @@ See the [architecture document](../architecture.md) for how they fit together.
 | [ADR-0023](0023-updates.md) | The UI host applies updates; the supervisor stops and restarts the worker around them |
 | [ADR-0024](0024-engine-protocol-after-phase-1.md) | Engine protocol details settled by the Phase 1 review |
 | [ADR-0025](0025-per-app-injection-settings.md) | One settings format for per-app injection overrides |
+| [ADR-0026](0026-enter-and-tab-not-default-delimiters.md) | Enter and Tab are not default delimiters |

@@ -9,7 +9,9 @@
 //! | [`report`] | The Markdown results table and the pass rate |
 //! | [`typist`] | Typing and copying through the operating system, without Iamb's marker |
 //! | [`run`] | The interactive walk: automatic and manual cells |
-//! | [`setup`] | Imports the fixture library into a data directory |
+//! | [`setup`] | Imports the fixture library (and, for the latency run, its 1,000 snippets) into a data directory |
+//! | [`probe`] | The probe window of the end-to-end latency measurement (`iamb-probe`) |
+//! | [`latency`] | `iamb-compat latency`: drives the probe and writes the `e2e-plain-p95` result |
 //! | [`cli`] | The `iamb-compat` command line |
 //!
 //! Everything here is test tooling: it is never shipped and never part of the service.
@@ -22,6 +24,8 @@
 
 pub mod apps;
 pub mod cli;
+pub mod latency;
+pub mod probe;
 pub mod report;
 pub mod results;
 pub mod run;

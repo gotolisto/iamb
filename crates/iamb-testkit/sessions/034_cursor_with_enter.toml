@@ -1,4 +1,7 @@
-description = "Enter as delimiter with a cursor: Enter is not pressed again"
+description = "Enter added as a delimiter, with a cursor: Enter is not pressed again"
+
+[settings]
+delimiters = " .\n"
 
 [[snippet]]
 abbr = "p"

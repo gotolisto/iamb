@@ -37,6 +37,13 @@
 //! element is kept as a reference to compare with the next one. Its attributes are never
 //! read here.
 //!
+//! # The count of notifications
+//!
+//! Every focus notification the observer receives and every activation the main thread hears
+//! of adds one to [`focus_notes`], before the tracker decides whether it is a report. The
+//! injector compares the count between its steps (`injector::run`): a notification that
+//! arrives while it types means the focus moved, whatever the tracker would make of it.
+//!
 //! # Lifetimes
 //!
 //! The observer callback and the wake source receive a pointer: the callback to the thread's
@@ -47,7 +54,7 @@ use std::ffi::c_void;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr::{self, NonNull};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{SyncSender, sync_channel};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
 use std::thread::{self, JoinHandle};
@@ -138,12 +145,26 @@ impl Shared {
     }
 }
 
+/// How many focus notifications and activations this process has heard of; see the module
+/// docs.
+static FOCUS_NOTES: AtomicU64 = AtomicU64::new(0);
+
+/// The count of focus notifications and activations so far. One atomic read.
+pub(crate) fn focus_notes() -> u64 {
+    FOCUS_NOTES.load(Ordering::Acquire)
+}
+
+fn noted() {
+    FOCUS_NOTES.fetch_add(1, Ordering::AcqRel);
+}
+
 /// Every watcher of this process. One list, because the activation observer is one.
 static WATCHERS: Mutex<Vec<Weak<Shared>>> = Mutex::new(Vec::new());
 static OBSERVING: AtomicBool = AtomicBool::new(false);
 
 /// Tells every living watcher that an application was activated. Runs on the main thread.
 fn notify_watchers() {
+    noted();
     let mut watchers = lock(&WATCHERS);
     watchers.retain(|watcher| watcher.strong_count() > 0);
     for watcher in watchers.iter().filter_map(Weak::upgrade) {
@@ -234,6 +255,7 @@ unsafe extern "C-unwind" fn focus_notified(
         // SAFETY: the system passes two valid objects that live at least as long as the
         // callback; the element is retained before it is kept.
         let (element, name) = unsafe { (element.as_ref(), name.as_ref()) };
+        noted();
         let Ok(mut inbox) = inbox.try_borrow_mut() else {
             return;
         };
@@ -554,6 +576,12 @@ pub(crate) fn start(sink: Box<dyn FocusSink>) -> Result<Watching> {
 }
 
 impl Watching {
+    /// False once the thread has left its run loop, by `stop` or by itself (its run loop had
+    /// no source left, or the thread ended).
+    pub(crate) fn is_running(&self) -> bool {
+        !*lock(&self.shared.exited) && self.thread.as_ref().is_some_and(|t| !t.is_finished())
+    }
+
     /// Ends the thread; the sink is dropped.
     ///
     /// # Errors

@@ -209,6 +209,20 @@ pub trait FocusInspector: Send + Sync {
     ///
     /// [`Os`](crate::PlatformError::Os) when the OS refuses.
     fn unwatch(&self) -> Result<()>;
+
+    /// True while the watcher [`watch`](Self::watch) started is still running: false before
+    /// `watch`, after `unwatch`, and once the watcher's thread has ended by itself (its message
+    /// loop or run loop failed, it panicked). A watcher that stopped reports nothing more, so
+    /// the last verdict would stay in force whatever has the focus; the service asks this
+    /// with its heartbeat, as it runs the listener's self-test, and treats `false` while it
+    /// means to watch as an unknown focus (the 2.8 review, finding 15). Cheap: it reads a
+    /// flag and asks the OS nothing.
+    ///
+    /// The default answers `true`: it is for a test double that wraps another inspector and
+    /// cannot tell. The Windows, macOS and mock inspectors answer for their watcher.
+    fn is_watching(&self) -> bool {
+        true
+    }
 }
 
 /// The engine's focus verdict (`Event::SecureState`) for the focused field.

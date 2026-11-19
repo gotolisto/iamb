@@ -1,4 +1,7 @@
-description = "Enter counts as the delimiter newline before it clears; it is pressed again"
+description = "With Enter added to the delimiters, Enter counts as the delimiter newline before it clears; it is pressed again"
+
+[settings]
+delimiters = " .\n"
 
 [[snippet]]
 abbr = "brb"

@@ -89,6 +89,21 @@ pub(super) fn foreground() -> Option<Front> {
     front_of(unsafe { GetForegroundWindow() })
 }
 
+/// Where keys go now, for the injector's focus guard: the window in front, its process, and
+/// the control with the keyboard focus in that window's thread (0 when the system names
+/// none: a window that draws its own fields, a browser engine). `None` when no window is in
+/// front, as while the foreground passes from one window to another.
+///
+/// Three reads of what the system keeps about windows and input; none sends the window a
+/// message or waits for its thread, so a hung application cannot hold the caller.
+pub(crate) fn keyboard_focus() -> Option<(u64, u32, u64)> {
+    // SAFETY: the call takes no arguments.
+    let window = unsafe { GetForegroundWindow() };
+    let (_, pid) = owner(window)?;
+    let control = focused_control(window).map_or(0, number);
+    Some((number(window), pid, control))
+}
+
 /// The window an event names, as the window in front. Used when the system names no
 /// foreground window at the moment a foreground event is handled.
 pub(super) fn window_of_event(window: u64) -> Option<Front> {

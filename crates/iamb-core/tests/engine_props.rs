@@ -174,7 +174,7 @@ struct Model {
     held_app: Owner,
     paused: bool,
     composing: bool,
-    /// Typed characters (including Enter and Tab as delimiters) since the last event that
+    /// Typed characters (including Enter and Tab, when they are delimiters) since the last event that
     /// certainly cleared the buffer: an upper bound of what the buffer holds.
     typed: usize,
     /// `typed` when each form session was opened.

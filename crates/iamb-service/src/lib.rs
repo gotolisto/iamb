@@ -16,8 +16,12 @@
 //! - No async runtime (ADR-0009).
 //! - Typed characters, form values, clipboard text and IPC bodies never reach the log
 //!   ([`log`], §8).
+//! - Each process opts out of the operating system's crash dumps first thing in `main`, and a
+//!   panic writes a heap-free local report and exits instead of aborting ([`crash`], §8
+//!   rule 9).
 
 pub mod clock;
+pub mod crash;
 pub mod library;
 pub mod log;
 pub mod paths;

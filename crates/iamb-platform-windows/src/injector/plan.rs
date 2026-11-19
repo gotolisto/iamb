@@ -279,6 +279,26 @@ pub(crate) fn release_held(held: &[u16]) -> Vec<KeyEvent> {
     out
 }
 
+/// True when a batch may move the focus by itself, so that the injector's focus guard must
+/// stop comparing after it (`iamb_platform::FocusGuard`): a press of any virtual key but
+/// Backspace, Delete, Left and the modifiers (Tab, Enter, Escape, Space, the other arrows,
+/// Home, End, the page keys), or a tab, line feed or carriage return typed as a character.
+/// The releases of held modifiers and the masking tap that lead a batch do not count.
+pub(crate) fn may_move_focus(events: &[KeyEvent]) -> bool {
+    events.iter().any(|event| {
+        !event.up
+            && match event.key {
+                Key::Vk(vk) => {
+                    !matches!(
+                        vk,
+                        VK_BACK | VK_LEFT | VK_DELETE | VK_SHIFT | VK_CONTROL | VK_UNASSIGNED
+                    ) && !MODIFIERS.contains(&vk)
+                }
+                Key::Unicode(unit) => matches!(unit, 0x09 | 0x0A | 0x0D),
+            }
+    })
+}
+
 /// One thing the injector does before the final batch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Op<'a> {
@@ -484,6 +504,36 @@ mod tests {
         assert!(pressed.is_empty(), "keys left down");
         out.push_str(&String::from_utf16(&units).expect("whole characters"));
         out
+    }
+
+    #[test]
+    fn batches_that_may_move_the_focus() {
+        let mut staying = typed("be right back", LineBreak::Enter);
+        push_taps(&mut staying, VK_BACK, 3);
+        push_taps(&mut staying, VK_LEFT, 2);
+        push_key(&mut staying, VK_DELETE, true, 1);
+        // What leads a batch while the user holds Alt and Shift.
+        let mut led = release_held(&[VK_LMENU, VK_LSHIFT]);
+        led.extend(staying.iter().copied());
+        for batch in [&staying, &led] {
+            assert!(!may_move_focus(batch), "{batch:?}");
+        }
+        let moving = [
+            typed("two\nlines", LineBreak::Enter),
+            typed("two\nlines", LineBreak::ShiftEnter),
+            typed("name\tpass", LineBreak::Enter),
+            typed("a\rb", LineBreak::Enter),
+        ];
+        for batch in &moving {
+            assert!(may_move_focus(batch), "{batch:?}");
+        }
+        for vk in [
+            VK_TAB, VK_RETURN, VK_ESCAPE, VK_SPACE, VK_DOWN, VK_UP, VK_RIGHT, VK_HOME,
+        ] {
+            let mut batch = typed("x", LineBreak::Enter);
+            push_taps(&mut batch, vk, 1);
+            assert!(may_move_focus(&batch), "{vk:#x}");
+        }
     }
 
     fn typed(text: &str, line_break: LineBreak) -> Vec<KeyEvent> {

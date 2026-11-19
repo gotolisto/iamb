@@ -1,8 +1,10 @@
 //! macOS implementations of the Iamb platform traits (architecture §5, ADR-0005, ADR-0021).
 //!
 //! On macOS this crate exposes [`Platform`], which implements every trait of
-//! `iamb-platform`, and [`run_with_main_loop`], which the worker's `main` calls so that its
-//! main thread runs the application event loop the listener and the hotkeys need. On every
+//! `iamb-platform`, [`run_with_main_loop`], which the worker's `main` calls so that its
+//! main thread runs the application event loop the listener and the hotkeys need, and
+//! [`harden_process`], which each service process calls first so that a crash writes no core
+//! file (architecture §8 rule 9). On every
 //! other system the crate is empty, so the workspace builds everywhere and
 //! `cargo clippy --target aarch64-apple-darwin` can check it from Linux (`docs/ci.md`).
 //!
@@ -25,9 +27,15 @@
 //!
 //! Until its task lands, a module answers [`Unsupported`](iamb_platform::PlatformError).
 //!
+//! With the `probe` feature (off by default, enabled only by `iamb-testkit`'s `probe` feature
+//! for the `iamb-probe` test app, never by a shipped binary) the crate also has the public
+//! module `probe`: the window with one `NSTextView` of the end-to-end latency measurement
+//! (`docs/test-strategy.md` §6).
+//!
 //! One module implements no trait: `main_loop` ([`run_with_main_loop`]) gives the worker's
 //! main thread to the application event loop, because the listener's keyboard-layout reads
-//! and the hotkeys must happen there (`listener`, `hotkeys`).
+//! and the hotkeys must happen there (`listener`, `hotkeys`). Another, `hardening`
+//! ([`harden_process`]), sets the core-file limit of the process to 0.
 //!
 //! # Bindings
 //!
@@ -55,8 +63,10 @@
 //! - This is one of the two crates where `unsafe` is allowed. Keep each `unsafe` block as
 //!   small as the call it wraps, with a `// SAFETY:` comment that says why the call is sound
 //!   (the lint `clippy::undocumented_unsafe_blocks` is an error here). Nothing outside the
-//!   traits is public, with one agreed exception: [`run_with_main_loop`], because what the
-//!   main thread runs is decided by the process's `main`, which no trait method can reach.
+//!   traits is public, with two agreed exceptions: [`run_with_main_loop`], because what the
+//!   main thread runs is decided by the process's `main`, which no trait method can reach,
+//!   and [`harden_process`], because it must run before the platform exists (and the
+//!   test-only `probe` module behind its feature).
 //! - No networking framework and no `std::net`: this crate is linked into the service
 //!   (architecture §2).
 //! - The grants (Accessibility, Input Monitoring) belong to the process that creates the
@@ -74,6 +84,8 @@ mod endpoint;
 // code is gated inside. Off macOS nothing but the tests uses them.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod focus;
+#[cfg(target_os = "macos")]
+mod hardening;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod hotkeys;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -88,7 +100,11 @@ mod main_loop;
 mod memory;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod permissions;
+#[cfg(all(target_os = "macos", feature = "probe"))]
+pub mod probe;
 
+#[cfg(target_os = "macos")]
+pub use hardening::harden_process;
 #[cfg(target_os = "macos")]
 pub use main_loop::run_with_main_loop;
 

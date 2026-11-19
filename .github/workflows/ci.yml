@@ -40,6 +40,15 @@ jobs:
         run: cargo clippy -p iamb-platform-windows -p iamb-ipc --target x86_64-pc-windows-msvc --all-targets --locked -- -D warnings
       - name: Clippy (macOS code, cross-target)
         run: cargo clippy -p iamb-platform-macos -p iamb-ipc --target aarch64-apple-darwin --all-targets --locked -- -D warnings
+      # The probe window of the latency measurement (docs/test-strategy.md §6) is behind the
+      # `probe` feature, off by default, so the steps above do not see it.
+      - name: Clippy (probe window)
+        run: |
+          cargo clippy -p iamb-testkit --features probe --all-targets --locked -- -D warnings
+          cargo clippy -p iamb-platform-windows --features probe --target x86_64-pc-windows-msvc --all-targets --locked -- -D warnings
+          cargo clippy -p iamb-platform-macos --features probe --target aarch64-apple-darwin --all-targets --locked -- -D warnings
+          cargo clippy -p iamb-testkit --no-default-features --features probe --lib --bins --target x86_64-pc-windows-msvc --locked -- -D warnings
+          cargo clippy -p iamb-testkit --no-default-features --features probe --lib --bins --target aarch64-apple-darwin --locked -- -D warnings
       - name: Banned terms
         run: cargo xtask banned-terms
       - name: Template spec examples
@@ -60,6 +69,22 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build
         run: cargo build --workspace --all-targets --locked
+      # ADR-0008, check 4: the service as it ships, built on its own. In the workspace build
+      # above, features that other members turn on in shared dependencies (test-only crates
+      # such as iamb-testkit with `probe`) are unified into the service's dependencies; here
+      # they are not, and clippy's network lint (check 3, `crates/*/clippy.toml`) runs on
+      # exactly that code. On Linux the binary must import no name-resolution function.
+      - name: Build the service alone (release)
+        shell: bash
+        run: |
+          cargo build -p iamb-service --release --locked
+          cargo clippy -p iamb-service --release --locked -- -D warnings
+          if [ "$RUNNER_OS" = Linux ]; then
+            if objdump -T target/release/iamb-service | grep -E 'getaddrinfo|gethostbyname|getnameinfo'; then
+              echo "the service binary imports a name-resolution function (ADR-0008)" >&2
+              exit 1
+            fi
+          fi
       - name: Test
         if: runner.os != 'Windows'
         run: cargo test --workspace --locked
@@ -70,6 +95,17 @@ jobs:
         env:
           IAMB_REQUIRE_DESKTOP: "1"
         run: cargo test --workspace --locked
+      # The probe (feature `probe`): its browser page end to end on every OS, and its native
+      # window on Windows (desktop required) and macOS (skipped without a window in front).
+      - name: Test (probe)
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          cargo test -p iamb-testkit --features probe --locked --test probe_browser
+          case "$RUNNER_OS" in
+            Windows) IAMB_REQUIRE_DESKTOP=1 cargo test -p iamb-platform-windows --features probe --locked --test probe ;;
+            macOS) cargo test -p iamb-platform-macos --features probe --locked --test probe ;;
+          esac
       # Lints the code that only exists on this OS (iamb-platform-windows, iamb-platform-macos
       # and any `cfg` branch elsewhere), tests included. Linux is linted by the `lint` job.
       # Runs even when a test failed, so one failing test does not hide lint errors.

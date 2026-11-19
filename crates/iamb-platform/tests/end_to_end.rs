@@ -15,6 +15,7 @@ use iamb_core::engine::{
     Action, Engine, EngineSettings, Environment, Event, ExpansionId, InjectionState, Reason,
     SecureState, Snapshot, SuspendReason,
 };
+use iamb_core::matcher::Delimiters;
 use iamb_core::model::{Abbreviation, Id, Snippet, SyncMeta, Timestamp, Trigger};
 use iamb_core::template::KeyName;
 use iamb_platform::mock::{Injected, InjectionPoint, MockKey, MockPlatform, MockWindow};
@@ -188,6 +189,10 @@ struct Worker {
 
 impl Worker {
     fn start(os: &MockPlatform, snippets: Vec<Snippet>) -> Self {
+        Self::start_with(os, snippets, EngineSettings::default())
+    }
+
+    fn start_with(os: &MockPlatform, snippets: Vec<Snippet>, settings: EngineSettings) -> Self {
         let (tx, rx) = sync_channel::<Msg>(256);
         let (to_injector, injector_rx) = channel::<InjectionRequest>();
         let handoff = Arc::new(TypedHandoff::new());
@@ -213,7 +218,7 @@ impl Worker {
 
         let engine_thread = EngineThread {
             os: os.clone(),
-            engine: Engine::new(Snapshot::build(snippets, EngineSettings::default())),
+            engine: Engine::new(Snapshot::build(snippets, settings)),
             handoff: Arc::clone(&handoff),
             to_injector,
             in_flight: 0,
@@ -403,8 +408,27 @@ fn an_immediate_snippet_fires_on_its_last_character() {
 }
 
 #[test]
-fn enter_as_the_delimiter_is_pressed_again_as_a_key() {
+fn enter_does_not_trigger_by_default() {
+    // ADR-0026: the application acts on Enter before an expansion could arrive.
     let (os, editor, worker) = setup();
+    os.type_text("brb\n");
+    worker.settle();
+    assert_eq!(text(&os, editor), "brb\n");
+    assert!(os.injected().is_empty(), "{:?}", os.injected());
+    worker.stop();
+}
+
+#[test]
+fn enter_added_as_a_delimiter_is_pressed_again_as_a_key() {
+    let os = MockPlatform::new();
+    let editor = os.open_window(MockWindow::new("org.example.editor", 100));
+    os.focus(editor).expect("window is open");
+    let settings = EngineSettings {
+        delimiters: Delimiters::new(" .\n".chars()),
+        ..EngineSettings::default()
+    };
+    let worker = Worker::start_with(&os, library(), settings);
+    worker.sync();
     os.type_text("brb\n");
     worker.settle();
     assert_eq!(text(&os, editor), "be right back\n");

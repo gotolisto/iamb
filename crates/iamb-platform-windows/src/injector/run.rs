@@ -7,14 +7,26 @@
 //!
 //! 1. A hand-off already cancelled for this expansion: [`Cancelled`](InjectionOutcome::Cancelled),
 //!    nothing sent.
-//! 2. The start marker, in a call of its own. Refused: [`Failed`](InjectionOutcome::Failed),
-//!    nothing else is sent.
+//! 2. Where the keys go ([`Desk::focus`]), then the start marker, in a call of its own.
+//!    Refused: [`Failed`](InjectionOutcome::Failed), nothing else is sent.
 //! 3. [`TypedHandoff::wait_sealed`]; an error is `Cancelled`, and no end marker follows (the
 //!    listener reports nothing more for this expansion).
 //! 4. The [`Plan`] of the compensated steps: every batch before the last, the pauses and the
 //!    pastes, each batch led by the releases of modifier keys the user still holds.
 //! 5. The final batch in one call: its keys, the characters typed after the trigger (copied in
 //!    under the hand-off's lock, nothing else done there), the end marker.
+//!
+//! Before every batch and every paste the [`FocusGuard`] compares where the keys go with where
+//! they went at the start marker; when the window, its process or its focused control changed,
+//! the injector stops with `Cancelled(FocusMoved)` and posts no end marker (2.8 review, finding
+//! 1). For most expansions that is one comparison, between the sealing of the hand-off and the
+//! single batch: three reads of what the system keeps, none of which waits for the target.
+//! A batch that may move the focus itself (a Tab or an Enter of the snippet) ends the
+//! comparisons for that expansion, because the move it causes cannot be told from another.
+//!
+//! A paste whose snapshot came back incomplete wrote nothing (`clipboard::paste`): plain text
+//! is then typed with keys instead, and other content stops the expansion with
+//! `Cancelled(ClipboardNotRestorable)` (finding 14).
 //!
 //! When the system refuses output after the start marker went out, the injector stops at once
 //! and posts no end marker, as the [`Injector`](iamb_platform::Injector) contract says: an end
@@ -24,17 +36,24 @@
 use std::time::Duration;
 
 use iamb_platform::{
-    ClipboardContent, HandoffStatus, InjectionOutcome, InjectionRequest, Marker, PlatformError,
-    TypedHandoff, compensate,
+    CancelReason, ClipboardContent, FocusGuard, HandoffStatus, InjectionOutcome, InjectionRequest,
+    Marker, PlatformError, TypedHandoff, compensate,
 };
 
-use super::plan::{KeyEvent, Op, Plan, release_held};
+use super::plan::{KeyEvent, Op, Plan, may_move_focus, push_text, release_held};
 use super::strategy::Strategy;
+use crate::clipboard::paste::SNAPSHOT_INCOMPLETE;
 
 /// What the protocol needs from the system.
 pub(crate) trait Desk {
     /// Key events being collected for one `SendInput` call.
     type Batch;
+
+    /// Where keys go, as the [`FocusGuard`] compares it.
+    type Focus: PartialEq;
+
+    /// Where keys go now. Must not wait for any application.
+    fn focus(&mut self) -> Self::Focus;
 
     /// An empty batch with room for `capacity` events, so that filling it does not move the
     /// events already in it (they may be retyped characters).
@@ -58,6 +77,8 @@ pub(crate) trait Desk {
     fn sleep(&mut self, ms: u32);
 
     /// Pastes `content`: snapshot, transient write, paste shortcut, wait, restore.
+    /// [`SNAPSHOT_INCOMPLETE`] when the snapshot could not save everything; nothing was
+    /// written then.
     fn paste(
         &mut self,
         content: &ClipboardContent,
@@ -68,7 +89,7 @@ pub(crate) trait Desk {
 /// Why the output stopped early.
 enum Stop {
     Failed(PlatformError),
-    Cancelled(iamb_platform::CancelReason),
+    Cancelled(CancelReason),
 }
 
 /// Runs one expansion. See the module docs.
@@ -86,6 +107,7 @@ pub(crate) fn inject<D: Desk>(
         return InjectionOutcome::Cancelled(reason);
     }
 
+    let mut guard = FocusGuard::new(desk.focus());
     if let Err(error) = send_markers(desk, Marker::InjectionStart(expansion)) {
         return InjectionOutcome::Failed(error);
     }
@@ -96,7 +118,7 @@ pub(crate) fn inject<D: Desk>(
 
     let compensated = compensate(&request.steps, k);
     let plan = Plan::new(&compensated, strategy);
-    match output(desk, request, typed, &plan, strategy) {
+    match output(desk, request, typed, &plan, strategy, &mut guard) {
         Ok(()) => InjectionOutcome::Finished { retyped: k },
         // No end marker after a failure: the service answers with `InjectionCancelled`.
         Err(Stop::Failed(error)) => InjectionOutcome::Failed(error),
@@ -119,23 +141,76 @@ fn send_keys<D: Desk>(desk: &mut D, events: &[KeyEvent]) -> Result<(), PlatformE
     desk.send(batch)
 }
 
+/// Asks the guard; `Cancelled(FocusMoved)` when the keys would go elsewhere now.
+fn check<D: Desk>(desk: &mut D, guard: &mut FocusGuard<D::Focus>) -> Result<(), Stop> {
+    guard.check(|| desk.focus()).map_err(Stop::Cancelled)
+}
+
+/// Sends a batch that is not the final one, and tells the guard when it may move the focus.
+fn send_batch<D: Desk>(
+    desk: &mut D,
+    events: &[KeyEvent],
+    guard: &mut FocusGuard<D::Focus>,
+) -> Result<(), Stop> {
+    send_keys(desk, events).map_err(Stop::Failed)?;
+    if may_move_focus(events) {
+        guard.own_move();
+    }
+    Ok(())
+}
+
+/// A paste, or, when the clipboard could not be saved whole, its plain text as keys.
+fn paste_or_keys<D: Desk>(
+    desk: &mut D,
+    content: &ClipboardContent,
+    strategy: &Strategy,
+    guard: &mut FocusGuard<D::Focus>,
+) -> Result<(), Stop> {
+    match desk.paste(content, strategy) {
+        Ok(()) => Ok(()),
+        Err(error) if error == SNAPSHOT_INCOMPLETE => match content {
+            ClipboardContent {
+                text: Some(text),
+                html: None,
+                files,
+            } if files.is_empty() => {
+                let mut events = Vec::new();
+                push_text(&mut events, text, strategy.line_break);
+                send_batch(desk, &events, guard)
+            }
+            _ => Err(Stop::Cancelled(CancelReason::ClipboardNotRestorable)),
+        },
+        Err(error) => Err(Stop::Failed(error)),
+    }
+}
+
 fn output<D: Desk>(
     desk: &mut D,
     request: &InjectionRequest,
     typed: &TypedHandoff,
     plan: &Plan<'_>,
     strategy: &Strategy,
+    guard: &mut FocusGuard<D::Focus>,
 ) -> Result<(), Stop> {
     for op in &plan.ops {
         match op {
-            Op::Keys(events) => send_keys(desk, events).map_err(Stop::Failed)?,
+            Op::Keys(events) => {
+                check(desk, guard)?;
+                send_batch(desk, events, guard)?;
+            }
             Op::Sleep(ms) => desk.sleep(*ms),
-            Op::Paste(content) => desk.paste(content, strategy).map_err(Stop::Failed)?,
+            Op::Paste(content) => {
+                check(desk, guard)?;
+                paste_or_keys(desk, content, strategy, guard)?;
+            }
         }
     }
 
     // The final batch: keys, retyped characters, end marker, in one call.
     let has_output = !plan.last.is_empty() || plan.retype > 0;
+    if has_output {
+        check(desk, guard)?;
+    }
     let release = if has_output {
         release_held(&desk.held_modifiers())
     } else {
@@ -200,6 +275,15 @@ mod tests {
         held: Vec<u16>,
         /// Clear the hand-off after it sealed, before the final batch (worker shutdown).
         clear_after_seal: bool,
+        /// Where keys go; `move_focus` changes it.
+        focus: u64,
+        /// After the send with this index (0 is the start marker), or the first sleep when
+        /// `None`, the focus is here.
+        move_focus: Option<(Option<usize>, u64)>,
+        /// How often the focus was read.
+        focus_reads: usize,
+        /// The paste's snapshot comes back incomplete.
+        paste_incomplete: bool,
     }
 
     impl<'h> Recorder<'h> {
@@ -214,6 +298,10 @@ mod tests {
                 fail_paste: None,
                 held: Vec::new(),
                 clear_after_seal: false,
+                focus: 1,
+                move_focus: None,
+                focus_reads: 0,
+                paste_incomplete: false,
             }
         }
     }
@@ -252,6 +340,12 @@ mod tests {
 
     impl Desk for Recorder<'_> {
         type Batch = Vec<KeyEvent>;
+        type Focus = u64;
+
+        fn focus(&mut self) -> u64 {
+            self.focus_reads += 1;
+            self.focus
+        }
 
         fn batch(&mut self, capacity: usize) -> Self::Batch {
             Vec::with_capacity(capacity)
@@ -278,6 +372,11 @@ mod tests {
                 return Err(PlatformError::InjectionRefused);
             }
             self.did.push(Did::Sent(shown));
+            if let Some((Some(after), to)) = self.move_focus
+                && after == index
+            {
+                self.focus = to;
+            }
             for event in &batch {
                 match event.marker {
                     Marker::InjectionStart(expansion) if self.hook_alive => {
@@ -306,6 +405,9 @@ mod tests {
 
         fn sleep(&mut self, ms: u32) {
             self.did.push(Did::Slept(ms));
+            if let Some((None, to)) = self.move_focus.take() {
+                self.focus = to;
+            }
         }
 
         fn paste(
@@ -316,6 +418,10 @@ mod tests {
             if let Some(error) = self.fail_paste.clone() {
                 self.did.push(Did::PasteFailed);
                 return Err(error);
+            }
+            if self.paste_incomplete {
+                self.did.push(Did::PasteFailed);
+                return Err(SNAPSHOT_INCOMPLETE);
             }
             self.did.push(Did::Pasted(content.clone()));
             Ok(())
@@ -595,6 +701,125 @@ mod tests {
         );
         // Cancelled after the start marker: no end marker, the service answers instead.
         assert_eq!(desk.did, [sent("[S]")]);
+    }
+
+    /// Review 2.8, finding 1: the trigger key moved the focus while the start marker
+    /// travelled.
+    #[test]
+    fn a_focus_moved_after_the_start_marker_gets_nothing() {
+        let typed = TypedHandoff::new();
+        typed.arm(E);
+        let mut desk = Recorder::new(&typed);
+        desk.move_focus = Some((Some(0), 2));
+        assert_eq!(
+            run(&mut desk, &brb()),
+            InjectionOutcome::Cancelled(CancelReason::FocusMoved)
+        );
+        // No deletion, no text, no end marker: the service answers with `InjectionCancelled`.
+        assert_eq!(desk.did, [sent("[S]")]);
+    }
+
+    #[test]
+    fn a_focus_moved_during_a_wait_gets_nothing_after_it() {
+        let typed = TypedHandoff::new();
+        typed.arm(E);
+        let mut desk = Recorder::new(&typed);
+        desk.move_focus = Some((None, 2));
+        let req = request(vec![
+            InjectionStep::DeleteBack(2),
+            InjectionStep::TypeText("a".to_owned()),
+            InjectionStep::Wait(40),
+            InjectionStep::TypeText("b".to_owned()),
+            InjectionStep::Wait(40),
+            InjectionStep::Paste(ClipboardContent::rich("c", "<b>c</b>")),
+        ]);
+        assert_eq!(
+            run(&mut desk, &req),
+            InjectionOutcome::Cancelled(CancelReason::FocusMoved)
+        );
+        assert_eq!(desk.did, [sent("[S]"), sent("⌫⌫a"), Did::Slept(40)]);
+    }
+
+    #[test]
+    fn one_batch_costs_two_focus_reads() {
+        let typed = TypedHandoff::new();
+        typed.arm(E);
+        let mut desk = Recorder::new(&typed);
+        assert_eq!(
+            run(&mut desk, &brb()),
+            InjectionOutcome::Finished { retyped: 0 }
+        );
+        // At the start marker, and before the one batch.
+        assert_eq!(desk.focus_reads, 2);
+    }
+
+    #[test]
+    fn the_snippets_own_tab_ends_the_focus_check() {
+        let typed = TypedHandoff::new();
+        typed.arm(E);
+        let mut desk = Recorder::new(&typed);
+        // The Tab of the first batch moves to the next field, as it should.
+        desk.move_focus = Some((Some(1), 2));
+        let req = request(vec![
+            InjectionStep::TypeText("ann".to_owned()),
+            InjectionStep::PressKey {
+                key: KeyName::Tab,
+                shift: false,
+                times: 1,
+            },
+            InjectionStep::Wait(10),
+            InjectionStep::TypeText("next".to_owned()),
+        ]);
+        assert_eq!(
+            run(&mut desk, &req),
+            InjectionOutcome::Finished { retyped: 0 }
+        );
+        assert_eq!(desk.did.last(), Some(&sent("next[E]")));
+    }
+
+    /// Review 2.8, finding 14: the clipboard could not be saved whole, so it is not replaced.
+    #[test]
+    fn text_is_typed_when_the_clipboard_cannot_be_saved_whole() {
+        let typed = TypedHandoff::new();
+        typed.arm(E);
+        let mut desk = Recorder::new(&typed);
+        desk.paste_incomplete = true;
+        let long = "L".repeat(250);
+        let req = request(vec![
+            InjectionStep::DeleteBack(1),
+            InjectionStep::TypeText(long.clone()),
+        ]);
+        assert_eq!(
+            run(&mut desk, &req),
+            InjectionOutcome::Finished { retyped: 0 }
+        );
+        assert_eq!(
+            desk.did,
+            [
+                sent("[S]"),
+                sent("⌫"),
+                Did::PasteFailed,
+                sent(&long),
+                sent("[E]"),
+            ]
+        );
+    }
+
+    #[test]
+    fn rich_content_is_not_pasted_when_the_clipboard_cannot_be_saved_whole() {
+        let typed = TypedHandoff::new();
+        typed.arm(E);
+        let mut desk = Recorder::new(&typed);
+        desk.paste_incomplete = true;
+        let req = request(vec![
+            InjectionStep::Paste(ClipboardContent::rich("x", "<b>x</b>")),
+            InjectionStep::TypeText("after".to_owned()),
+        ]);
+        assert_eq!(
+            run(&mut desk, &req),
+            InjectionOutcome::Cancelled(CancelReason::ClipboardNotRestorable)
+        );
+        assert_eq!(desk.did, [sent("[S]"), Did::PasteFailed]);
     }
 
     #[test]

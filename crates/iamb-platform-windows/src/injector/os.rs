@@ -138,6 +138,11 @@ pub(super) struct SystemDesk;
 
 impl Desk for SystemDesk {
     type Batch = Inputs;
+    type Focus = Option<(u64, u32, u64)>;
+
+    fn focus(&mut self) -> Self::Focus {
+        crate::focus::keyboard_focus()
+    }
 
     fn batch(&mut self, capacity: usize) -> Inputs {
         Inputs(Vec::with_capacity(capacity))
@@ -188,6 +193,10 @@ impl PasteHost for SystemPaste {
 
     fn snapshot(&mut self) -> Result<ClipboardSnapshot> {
         snapshot_now()
+    }
+
+    fn is_complete(&self, saved: &ClipboardSnapshot) -> bool {
+        saved.is_complete()
     }
 
     fn write_transient(&mut self, content: &ClipboardContent) -> Result<u32> {

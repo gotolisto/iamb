@@ -4,6 +4,7 @@
 //! ```text
 //!   snapshot ──▶ write (transient) ──▶ paste shortcut ──▶ wait ──▶ restore
 //!      │ fails        │ fails               │ fails                  │ fails
+//!      │ incomplete   │                     │                        │
 //!      ▼              ▼                     ▼                        ▼
 //!   untouched      restore              restore                  retried, then
 //!   (error)        (error)              (error)                  "not restored" (error)
@@ -11,6 +12,11 @@
 //!
 //! - Nothing is written before the snapshot has succeeded, so a failed snapshot leaves the
 //!   clipboard as it was.
+//! - Nothing is written either when the snapshot is incomplete (a format that is a handle,
+//!   too large, not delivered by its owner, or past the time limit: `formats`): the restore
+//!   could not put that part back, and §8 rule 8 says the previous content comes back. The
+//!   error is [`SNAPSHOT_INCOMPLETE`]; the injector then types plain text with keys instead,
+//!   and stops an expansion whose content cannot be typed (2.8 review, finding 14).
 //! - From the moment the write may have emptied the clipboard, every path ends with a restore,
 //!   which is tried [`RESTORE_ATTEMPTS`] times.
 //! - The application reads a paste when it handles the shortcut, some time after the keys
@@ -24,6 +30,12 @@
 
 use iamb_platform::{ClipboardContent, PlatformError};
 
+/// The error of a paste that did not start because the snapshot could not save everything on
+/// the clipboard. Nothing was written.
+pub(crate) const SNAPSHOT_INCOMPLETE: PlatformError = PlatformError::Invalid {
+    context: "the clipboard holds content that cannot be saved and put back after a paste",
+};
+
 /// How often a restore is tried before the paste reports that the clipboard was not put back.
 pub(crate) const RESTORE_ATTEMPTS: usize = 3;
 /// The pause between restore attempts, in milliseconds (on top of the clipboard's own retry).
@@ -36,6 +48,8 @@ pub(crate) trait PasteHost {
 
     /// Saves the clipboard.
     fn snapshot(&mut self) -> Result<Self::Saved, PlatformError>;
+    /// Whether `saved` holds everything that was on the clipboard.
+    fn is_complete(&self, saved: &Self::Saved) -> bool;
     /// Writes the content with the history markers; returns the clipboard's sequence number
     /// after the write.
     fn write_transient(&mut self, content: &ClipboardContent) -> Result<u32, PlatformError>;
@@ -52,7 +66,7 @@ pub(crate) trait PasteHost {
 /// What became of the user's clipboard.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Restoration {
-    /// Never changed (the snapshot failed, so nothing was written).
+    /// Never changed (the snapshot failed or was incomplete, so nothing was written).
     Untouched,
     /// Put back.
     Restored,
@@ -97,6 +111,12 @@ pub(crate) fn paste<H: PasteHost>(
             };
         }
     };
+    if !host.is_complete(&saved) {
+        return PasteReport {
+            result: Err(SNAPSHOT_INCOMPLETE),
+            clipboard: Restoration::Untouched,
+        };
+    }
     let written = match host.write_transient(content) {
         Ok(sequence) => sequence,
         Err(error) => {
@@ -143,11 +163,14 @@ mod tests {
     use super::*;
 
     /// A clipboard in memory with scripted failures.
+    #[allow(clippy::struct_excessive_bools)] // One switch per scripted failure.
     struct Fake {
         clipboard: String,
         sequence: u32,
         log: Vec<String>,
         fail_snapshot: bool,
+        /// The snapshot left something out.
+        incomplete: bool,
         /// The write empties the clipboard, then fails.
         fail_write: bool,
         fail_paste: bool,
@@ -166,6 +189,7 @@ mod tests {
                 sequence: 1,
                 log: Vec::new(),
                 fail_snapshot: false,
+                incomplete: false,
                 fail_write: false,
                 fail_paste: false,
                 failing_restores: 0,
@@ -189,6 +213,10 @@ mod tests {
                 return Err(PlatformError::os(5, "OpenClipboard"));
             }
             Ok(self.clipboard.clone())
+        }
+
+        fn is_complete(&self, _saved: &String) -> bool {
+            !self.incomplete
         }
 
         fn write_transient(&mut self, content: &ClipboardContent) -> Result<u32, PlatformError> {
@@ -268,6 +296,24 @@ mod tests {
         assert_eq!(fake.log, ["snapshot"]);
         assert_eq!(fake.clipboard, "mine");
         assert!(fake.pasted.is_none());
+    }
+
+    #[test]
+    fn an_incomplete_snapshot_writes_nothing_and_says_so() {
+        let mut fake = Fake::new("a bitmap and its text");
+        fake.incomplete = true;
+        let report = paste(&mut fake, &content(), 150);
+        assert_eq!(
+            report,
+            PasteReport {
+                result: Err(SNAPSHOT_INCOMPLETE),
+                clipboard: Restoration::Untouched,
+            }
+        );
+        assert_eq!(fake.log, ["snapshot"]);
+        assert_eq!(fake.clipboard, "a bitmap and its text");
+        assert!(fake.pasted.is_none());
+        assert_eq!(report.into_result(), Err(SNAPSHOT_INCOMPLETE));
     }
 
     #[test]

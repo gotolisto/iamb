@@ -39,6 +39,11 @@
 //! The sink is called with that lock held. It may do anything but call the mock's keyboard or
 //! [`inject`](crate::Injector::inject) again; the usual sink pushes to a channel.
 //!
+//! A real key names the window it went to, as the Windows listener does
+//! ([`EventSink::deliver_to`] with a [`KeyTarget`]). Focus changes reach the watcher at once,
+//! unless [`hold_focus_reports`](MockPlatform::hold_focus_reports) holds them back, as a real
+//! watcher hears of a change some time after the keys typed right after it.
+//!
 //! # Keys during an injection
 //!
 //! [`interleave`](MockPlatform::interleave) scripts real keys that arrive at a chosen point of
@@ -48,6 +53,12 @@
 //! [`set_atomic_batches`](MockPlatform::set_atomic_batches) the mock behaves like an OS that
 //! delivers a synthetic batch without interleaving: keys scripted inside the output arrive
 //! after the end marker instead.
+//!
+//! [`script_at`](MockPlatform::script_at) scripts a focus change at such a point (the
+//! application moved the focus on the trigger key, a window took it). The injector notes the
+//! focused window and its field right before the start marker and stops with
+//! [`FocusMoved`](crate::CancelReason::FocusMoved) before the first step that would go
+//! elsewhere ([`FocusGuard`]).
 //!
 //! # What it does not model
 //!
@@ -81,10 +92,10 @@ use crate::focus::{
 use crate::handoff::{CancelReason, HandoffStatus, START_MARKER_TIMEOUT, TypedHandoff};
 use crate::hotkeys::{Chord, HotkeyId, Hotkeys};
 use crate::inject::{
-    InjectionOutcome, InjectionRequest, InjectionStep, Injector, TextMethod, compensate,
+    FocusGuard, InjectionOutcome, InjectionRequest, InjectionStep, Injector, TextMethod, compensate,
 };
 use crate::injection_settings::{InjectionSettings, SettingsDialect};
-use crate::listener::{EventSink, KeyListener, ListenerEvent, SeqSource};
+use crate::listener::{EventSink, KeyListener, KeyTarget, ListenerEvent, SeqSource};
 use crate::login_item::{LoginItem, LoginItemStatus};
 use crate::marker::Marker;
 use crate::memory::{MemoryLock, MemoryRegion};
@@ -306,6 +317,7 @@ struct Desk {
     login_item: LoginItemStatus,
     locked: Vec<MemoryRegion>,
     interleave: Vec<(InjectionPoint, Vec<MockKey>)>,
+    scripted: Vec<(InjectionPoint, Scripted)>,
     atomic_batches: bool,
     marker_timeout: Duration,
     injected: Vec<Injected>,
@@ -339,6 +351,7 @@ impl Desk {
             login_item: LoginItemStatus::Disabled,
             locked: Vec::new(),
             interleave: Vec::new(),
+            scripted: Vec::new(),
             atomic_batches: false,
             marker_timeout: START_MARKER_TIMEOUT,
             injected: Vec::new(),
@@ -392,10 +405,16 @@ impl Desk {
     }
 }
 
+/// Something a test scripted for a point of an injection ([`MockPlatform::script_at`]).
+type Scripted = Box<dyn FnOnce(&MockPlatform) + Send>;
+
 struct Os {
     stream: Mutex<Stream>,
     desk: Mutex<Desk>,
     focus_sink: Mutex<Option<Box<dyn FocusSink>>>,
+    /// While focus reports are held back ([`MockPlatform::hold_focus_reports`]): the changes
+    /// not reported yet, oldest first.
+    held_focus: Mutex<Option<Vec<FocusChange>>>,
     seq: SeqSource,
     endpoints: Arc<endpoint::Registry>,
 }
@@ -434,6 +453,7 @@ impl MockPlatform {
                 stream: Mutex::default(),
                 desk: Mutex::new(Desk::new()),
                 focus_sink: Mutex::new(None),
+                held_focus: Mutex::new(None),
                 seq: SeqSource::new(),
                 endpoints: Arc::default(),
             }),
@@ -535,10 +555,34 @@ impl MockPlatform {
     }
 
     fn report_focus(&self, change: Option<FocusChange>) {
-        if let Some(change) = change
-            && let Some(sink) = lock(&self.os.focus_sink).as_mut()
-        {
+        let Some(change) = change else { return };
+        if let Some(held) = lock(&self.os.held_focus).as_mut() {
+            held.push(change);
+            return;
+        }
+        if let Some(sink) = lock(&self.os.focus_sink).as_mut() {
             sink.focus_changed(change);
+        }
+    }
+
+    /// With `true`, focus changes are not reported to the focus watcher until
+    /// `hold_focus_reports(false)`, which reports the held ones in order: a stand-in for the
+    /// time a real focus event takes to reach the watcher (an out-of-context window event on
+    /// Windows, a notification through two run loops on macOS). Keys typed meanwhile go to the
+    /// newly focused window and tell the listener so ([`KeyTarget`]).
+    pub fn hold_focus_reports(&self, hold: bool) {
+        let waiting = {
+            let mut queue = lock(&self.os.held_focus);
+            if hold {
+                queue.get_or_insert_with(Vec::new);
+                return;
+            }
+            queue.take().unwrap_or_default()
+        };
+        if let Some(sink) = lock(&self.os.focus_sink).as_mut() {
+            for change in waiting {
+                sink.focus_changed(change);
+            }
         }
     }
 
@@ -591,16 +635,37 @@ impl MockPlatform {
     /// Delivers one event to the listener, stamped with the next sequence number, if the
     /// listener runs and its hook is alive.
     fn report(&self, stream: &mut Stream, event: impl FnOnce(u64) -> ListenerEvent) {
+        self.report_to(stream, None, event);
+    }
+
+    /// As [`report`](Self::report), with the window the key went to when there is one.
+    fn report_to(
+        &self,
+        stream: &mut Stream,
+        target: Option<KeyTarget>,
+        event: impl FnOnce(u64) -> ListenerEvent,
+    ) {
         if !stream.hook_dead
             && let Some(sink) = stream.sink.as_mut()
         {
-            sink.deliver(event(self.os.seq.next()));
+            let event = event(self.os.seq.next());
+            match target {
+                Some(target) => sink.deliver_to(event, target),
+                None => sink.deliver(event),
+            }
         }
     }
 
+    /// A real key goes to the focused window, and the listener is told which one, as the
+    /// Windows listener is (`KeyTarget`).
     fn real_key(&self, stream: &mut Stream, key: MockKey) {
-        self.desk().apply_key(key);
-        self.report(stream, |seq| key.event(seq));
+        let target = {
+            let mut desk = self.desk();
+            desk.apply_key(key);
+            desk.focus_change()
+                .map(|change| KeyTarget::window(change.token))
+        };
+        self.report_to(stream, target, |seq| key.event(seq));
     }
 
     /// Presses the keys of a scripted stream, in order.
@@ -687,6 +752,15 @@ impl MockPlatform {
         self.desk()
             .interleave
             .push((point, keys.into_iter().collect()));
+    }
+
+    /// Scripts something else that happens at `point` of the next injection: a focus change
+    /// (`|os| os.focus(other)`), a move to another field (`set_security`), as an application
+    /// reacting to the trigger key or a window taking the focus would. It runs after the keys
+    /// scripted for the same point, also with atomic batches: the focus can change while a
+    /// batch is under way. Several calls for the same point run in order; each runs once.
+    pub fn script_at(&self, point: InjectionPoint, action: impl FnOnce(&Self) + Send + 'static) {
+        self.desk().scripted.push((point, Box::new(action)));
     }
 
     /// With `true`, the mock delivers the output of an injection as one batch that real keys
@@ -847,6 +921,25 @@ impl MockPlatform {
         } else {
             self.play(keys);
         }
+        let actions: Vec<Scripted> = {
+            let mut desk = self.desk();
+            let (now, later) = std::mem::take(&mut desk.scripted)
+                .into_iter()
+                .partition(|(p, _)| *p == point);
+            desk.scripted = later;
+            now.into_iter().map(|(_, action)| action).collect()
+        };
+        for action in actions {
+            action(self);
+        }
+    }
+
+    /// Where the injector's keys go, for its [`FocusGuard`]: the focused window and what its
+    /// field is (a move to another field of the window is a change of its security here).
+    fn keys_go_to(&self) -> Option<(u64, FieldSecurity)> {
+        let desk = self.desk();
+        let id = desk.focused?;
+        desk.windows.get(&id).map(|w| (id, w.spec.security))
     }
 
     /// Posts a marked no-op event. The listener does what a real one does with it: decodes the
@@ -938,28 +1031,43 @@ impl MockPlatform {
     }
 
     /// Steps 4 and 5 of the injector protocol, after the hand-off sealed with `k` characters.
+    ///
+    /// The mock sends step by step, so the guard is asked before every step and before the
+    /// retyped characters.
     fn send_output(
         &self,
         request: &InjectionRequest,
         typed: &TypedHandoff,
         k: usize,
+        guard: &mut FocusGuard<Option<(u64, FieldSecurity)>>,
         after_batch: &mut Vec<MockKey>,
     ) -> std::result::Result<(), InjectionOutcome> {
         let failed = InjectionOutcome::Failed;
+        let check = |guard: &mut FocusGuard<_>| {
+            guard
+                .check(|| self.keys_go_to())
+                .map_err(InjectionOutcome::Cancelled)
+        };
         let plan = compensate(&request.steps, k);
         let own_delete = request.steps.len() - plan.rest.len();
         if own_delete == 1 {
             self.interleaved(InjectionPoint::BeforeStep(0), after_batch);
         }
         if plan.delete_first > 0 {
+            check(guard)?;
             self.send_step(request, &InjectionStep::DeleteBack(plan.delete_first))
                 .map_err(failed)?;
         }
         for (i, step) in plan.rest.iter().enumerate() {
             self.interleaved(InjectionPoint::BeforeStep(i + own_delete), after_batch);
+            check(guard)?;
             self.send_step(request, step).map_err(failed)?;
+            if step.may_move_focus() {
+                guard.own_move();
+            }
         }
         if plan.retype > 0 {
+            check(guard)?;
             // The mock's input batch: filled inside the closure, sent outside it, zeroed.
             let mut batch = typed
                 .read(request.expansion, <[char]>::to_vec)
@@ -1068,6 +1176,7 @@ impl Injector for MockPlatform {
 
         let mut after_batch = Vec::new();
         self.interleaved(InjectionPoint::BeforeStartMarker, &mut after_batch);
+        let mut guard = FocusGuard::new(self.keys_go_to());
         self.post_marker(Marker::InjectionStart(expansion));
         self.log(Injected::StartMarker(expansion));
         self.interleaved(InjectionPoint::AfterStartMarker, &mut after_batch);
@@ -1077,7 +1186,7 @@ impl Injector for MockPlatform {
             Ok(k) => k,
             Err(reason) => return self.stopped(expansion, InjectionOutcome::Cancelled(reason)),
         };
-        if let Err(outcome) = self.send_output(request, typed, k, &mut after_batch) {
+        if let Err(outcome) = self.send_output(request, typed, k, &mut guard, &mut after_batch) {
             return self.stopped(expansion, outcome);
         }
 
@@ -1150,6 +1259,10 @@ impl FocusInspector for MockPlatform {
     fn unwatch(&self) -> Result<()> {
         *lock(&self.os.focus_sink) = None;
         Ok(())
+    }
+
+    fn is_watching(&self) -> bool {
+        lock(&self.os.focus_sink).is_some()
     }
 }
 

@@ -11,6 +11,19 @@ publish.workspace = true
 [lib]
 path = "src/lib.rs"
 
+[features]
+# `probe`: the probe window of the end-to-end latency measurement (docs/test-strategy.md §6),
+# the public module `probe` (an `NSTextView` window). Test tooling for `iamb-probe` in
+# iamb-testkit: off by default and never enabled by a shipped binary (the service is built on
+# its own, without it). It only turns on more AppKit classes of the bindings already listed.
+probe = [
+    "objc2-app-kit/NSGraphics",
+    "objc2-app-kit/NSText",
+    "objc2-app-kit/NSTextView",
+    "objc2-app-kit/NSView",
+    "objc2-app-kit/NSWindow",
+]
+
 # `run_with_main_loop` must be called on the process's main thread, which the standard test
 # harness keeps for itself; this test brings its own `main`.
 [[test]]
@@ -24,6 +37,14 @@ harness = false
 name = "focus"
 path = "tests/focus.rs"
 harness = false
+
+# Opens the probe window and types into it; needs the main thread and an interactive session
+# (skipped with a `SKIPPED` line without one).
+[[test]]
+name = "probe"
+path = "tests/probe.rs"
+harness = false
+required-features = ["probe"]
 
 # These tables repeat [workspace.lints] from the root Cargo.toml, because a crate cannot
 # inherit the workspace lints and override one of them. The only differences: `unsafe_code`

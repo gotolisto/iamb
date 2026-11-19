@@ -31,22 +31,26 @@
 //!   anything but a confirmed normal field keeps the engine suspended.
 //! - **Usage** is recorded by the store thread when the expansion's end marker arrives (or its
 //!   injector reports `Finished`, whichever is first), never for a cancelled one.
-//! - **Memory lock** (§4.1, §8 rule 1): the engine's keystroke buffer and the hand-off's storage
-//!   are locked at start ([`lock_typed_text`]).
+//! - **Memory lock** (§4.1, §8 rule 1): the engine's keystroke buffer, the hand-off's storage
+//!   and the key queue's character slots are locked at start ([`lock_typed_text`]).
+//! - **Keys in flight** (§8 rule 1): the listener's sink puts each event in the [`keys`] queue,
+//!   which overwrites a character as soon as the engine thread takes it; the engine channel
+//!   carries only a notice.
+//! - **Where a key went** (§4.1): a key the listener names another window for than the last
+//!   focus change the engine heard of is not handed to the engine ([`engine`]).
 
 mod engine;
 mod handlers;
 mod injection;
 mod ipc;
+mod keys;
 mod store;
 mod threads;
 
 use std::collections::VecDeque;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{
-    Receiver, RecvTimeoutError, Sender, SyncSender, TrySendError, channel, sync_channel,
-};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, SyncSender, channel, sync_channel};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -58,8 +62,8 @@ use iamb_core::sensitive::Sensitive;
 use iamb_core::template::FormValues;
 use iamb_ipc::{EventBody, InjectionStatus, ServiceStatus, WireDiagnostic};
 use iamb_platform::{
-    DEFAULT_EVENT_CAPACITY, EventSink, FocusChange, FocusToken, InjectionOutcome, InjectionRequest,
-    ListenerEvent, LocalEndpoint, LocalListener, MemoryRegion, OverflowSink, PeerPolicy, Platform,
+    DEFAULT_EVENT_CAPACITY, EventSink, FocusChange, FocusSink, FocusToken, InjectionOutcome,
+    InjectionRequest, LocalEndpoint, LocalListener, MemoryRegion, PeerPolicy, Platform,
     PlatformError, TypedHandoff,
 };
 use iamb_store::{Store, StoreError};
@@ -160,7 +164,7 @@ pub enum StartError {
 impl fmt::Display for StartError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Store(e) => write!(f, "cannot open the store: {e}"),
+            Self::Store(e) => write!(f, "cannot open the store: {}", store::Logged(e)),
             Self::Endpoint(e) => write!(f, "cannot serve the service endpoint: {e}"),
             Self::Thread(e) => write!(f, "cannot start a thread: {e}"),
         }
@@ -247,8 +251,9 @@ pub(crate) enum Explicit {
 /// What the engine thread is told. One bounded queue carries keys and everything else, so
 /// the engine sees them in one order.
 pub(crate) enum EngineMsg {
-    /// From the listener's sink.
-    Key(ListenerEvent),
+    /// From the listener's sink: one listener event waits in the [`keys::KeyQueue`]. The
+    /// notice carries nothing, so no typed character stays behind in this channel.
+    Key,
     /// From the focus thread, before it inspects the field.
     FocusChanged(FocusChange),
     /// From the focus thread: the verdict for the change before it.
@@ -376,6 +381,8 @@ pub(crate) struct Shared {
     pub test_field: Mutex<Option<FocusToken>>,
     pub wakes: WakeCounters,
     pub listener_ok: AtomicBool,
+    /// The focus watcher was started: the engine thread keeps it running.
+    pub watching: AtomicBool,
     pub memory_locked: AtomicBool,
     pub exit: ExitSignal,
     pub clock: Arc<dyn Fn() -> LocalDateTime + Send + Sync>,
@@ -431,17 +438,19 @@ pub fn engine_buffer_region(engine: &Engine) -> MemoryRegion {
     MemoryRegion::from_raw(addr, len)
 }
 
-/// Locks the two places typed characters may live: the engine's keystroke buffer and the
-/// typed-characters hand-off (§8 rule 1). Returns true when both are locked. A refusal is
-/// logged and the worker keeps running.
+/// Locks the three places typed characters may live: the key queue, the engine's keystroke
+/// buffer and the typed-characters hand-off (§8 rule 1). Returns true when all are locked. A
+/// refusal is logged and the worker keeps running.
 fn lock_typed_text(
     platform: &dyn Platform,
+    keys: &keys::KeyQueue,
     engine: &Engine,
     handoff: &TypedHandoff,
     logger: &Logger,
 ) -> bool {
     let mut ok = true;
     for (what, region) in [
+        ("key queue", keys.region()),
         ("keystroke buffer", engine_buffer_region(engine)),
         ("typed-characters hand-off", handoff.region()),
     ] {
@@ -453,17 +462,17 @@ fn lock_typed_text(
     ok
 }
 
-/// Builds the listener's sink over the engine queue: never blocks; a full queue is announced
-/// with `Overflow` (ADR-0010).
-fn listener_sink(tx: SyncSender<EngineMsg>) -> Box<dyn EventSink> {
-    Box::new(OverflowSink::new(move |event| {
-        tx.try_send(EngineMsg::Key(event)).map_err(|e| match e {
-            TrySendError::Full(EngineMsg::Key(event))
-            | TrySendError::Disconnected(EngineMsg::Key(event)) => event,
-            // Only keys are sent here.
-            _ => ListenerEvent::Overflow,
-        })
-    }))
+/// Builds the listener's sink over the key queue and the engine channel: never blocks; a full
+/// queue is announced with `Overflow` (ADR-0010).
+fn listener_sink(keys: &Arc<keys::KeyQueue>, tx: SyncSender<EngineMsg>) -> Box<dyn EventSink> {
+    Box::new(keys::KeySink::new(Arc::clone(keys), tx))
+}
+
+/// The focus watcher's sink: every change goes to the focus thread.
+fn focus_sink(tx: Sender<FocusMsg>) -> Box<dyn FocusSink> {
+    Box::new(move |change: FocusChange| {
+        let _ = tx.send(FocusMsg::Change(change));
+    })
 }
 
 /// A running worker. See the [module docs](self).
@@ -471,6 +480,7 @@ pub struct Worker {
     shared: Arc<Shared>,
     endpoint: Arc<dyn LocalListener>,
     handoff: Arc<TypedHandoff>,
+    keys: Arc<keys::KeyQueue>,
     threads: Vec<(&'static str, JoinHandle<()>)>,
     watchdog_stop: Sender<()>,
     store_stop: Sender<store::StoreMsg>,
@@ -528,8 +538,20 @@ impl Worker {
 
         let mut store_db =
             Store::open_with_timeout(dirs.root(), store_lock_wait).map_err(StartError::Store)?;
-        let (profile, first_view) =
+        let (profile, first_view, migrated) =
             store::initial_view(&mut store_db).map_err(StartError::Store)?;
+        if migrated.rewritten > 0 {
+            logger.info(format_args!(
+                "{} app exclusions rewritten in the form the focus inspector reports",
+                migrated.rewritten
+            ));
+        }
+        if migrated.unusable > 0 {
+            logger.warn(format_args!(
+                "{} app exclusions name no application of this system and never apply",
+                migrated.unusable
+            ));
+        }
         let listener = endpoint
             .bind(&dirs.service_endpoint(), policy)
             .map_err(StartError::Endpoint)?;
@@ -560,15 +582,17 @@ impl Worker {
             test_field: Mutex::new(None),
             wakes: WakeCounters::default(),
             listener_ok: AtomicBool::new(false),
+            watching: AtomicBool::new(false),
             memory_locked: AtomicBool::new(false),
             exit: ExitSignal::default(),
             clock,
         });
 
         let handoff = Arc::new(TypedHandoff::new());
+        let keys = Arc::new(keys::KeyQueue::new());
         let engine_core = Engine::new(snapshot);
         shared.memory_locked.store(
-            lock_typed_text(platform.as_ref(), &engine_core, &handoff, &logger),
+            lock_typed_text(platform.as_ref(), &keys, &engine_core, &handoff, &logger),
             Ordering::Relaxed,
         );
 
@@ -584,6 +608,7 @@ impl Worker {
                 Arc::clone(&shared),
                 engine_core,
                 Arc::clone(&handoff),
+                Arc::clone(&keys),
                 injector_tx,
                 heartbeat,
                 heartbeat_interval,
@@ -605,24 +630,23 @@ impl Worker {
         }
 
         // The listener and the focus watcher feed the threads above.
-        match platform.start(listener_sink(engine_tx.clone())) {
+        match platform.start(listener_sink(&keys, engine_tx.clone())) {
             Ok(()) => shared.listener_ok.store(true, Ordering::Relaxed),
             Err(e) => logger.warn(format_args!("the key listener did not start: {e}")),
         }
-        let watch_tx = focus_tx;
-        if let Err(e) = platform.watch(Box::new(move |change: FocusChange| {
-            let _ = watch_tx.send(FocusMsg::Change(change));
-        })) {
-            logger.warn(format_args!("the focus watcher did not start: {e}"));
+        match platform.watch(focus_sink(focus_tx)) {
+            Ok(()) => shared.watching.store(true, Ordering::Relaxed),
+            Err(e) => logger.warn(format_args!("the focus watcher did not start: {e}")),
         }
         register_palette_hotkey(&shared);
 
         {
             let shared = Arc::clone(&shared);
             let tx = engine_tx;
+            let keys = Arc::clone(&keys);
             spawn("watchdog", &mut threads, move || {
                 threads::watchdog(&shared, &watchdog_rx, self_test_interval, &move || {
-                    listener_sink(tx.clone())
+                    listener_sink(&keys, tx.clone())
                 });
             })?;
         }
@@ -643,6 +667,7 @@ impl Worker {
             shared,
             endpoint: listener,
             handoff,
+            keys,
             threads,
             watchdog_stop,
             store_stop: store_tx,
@@ -686,6 +711,12 @@ impl Worker {
         &self.handoff
     }
 
+    /// The address range of the key queue's character slots (to check it is locked).
+    #[must_use]
+    pub fn key_queue_region(&self) -> MemoryRegion {
+        self.keys.region()
+    }
+
     /// Asks the worker to end with `reason` (what [`wait_exit`](Self::wait_exit) returns).
     pub fn request_exit(&self, reason: ExitReason) {
         self.shared.exit.request(reason);
@@ -715,11 +746,14 @@ impl Worker {
         self.shared.to_engine(EngineMsg::Hang);
     }
 
-    /// Stops every thread, releases the endpoint and the store lock, and zeroes the hand-off.
+    /// Stops every thread, releases the endpoint and the store lock, and zeroes the hand-off and
+    /// the key queue.
     pub fn stop(self) {
         let logger = Arc::clone(&self.shared.logger);
         let platform = &self.shared.platform;
         let _ = platform.stop();
+        // The engine thread must not start the watcher again (it keeps a stopped one running).
+        self.shared.watching.store(false, Ordering::Relaxed);
         let _ = platform.unwatch();
         let _ = platform.unregister(PALETTE_HOTKEY);
         let _ = self.endpoint.close();
@@ -733,7 +767,10 @@ impl Worker {
                 logger.error(format_args!("the {name} thread panicked"));
             }
         }
+        // In case the engine thread restarted the watcher just before it read the flag above.
+        let _ = platform.unwatch();
         self.handoff.clear();
+        self.keys.clear();
         logger.info(format_args!("worker stopped"));
     }
 }

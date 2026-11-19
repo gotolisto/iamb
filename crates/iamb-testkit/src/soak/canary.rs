@@ -2,18 +2,34 @@
 //!
 //! A canary is `qz` + 14 random lower-case letters from the OS generator, never an
 //! abbreviation of the fixture library. After the run every file under each scanned location is
-//! searched for every canary in these forms:
+//! searched for every canary in these whole-string forms:
 //!
 //! | Form | Bytes searched |
 //! | --- | --- |
 //! | `utf8` | The canary's UTF-8 bytes |
-//! | `utf16le` | Its UTF-16LE bytes |
+//! | `utf16le`, `utf16be` | Its UTF-16 bytes in either byte order |
+//! | `utf32le`, `utf32be` | Its UTF-32 bytes in either byte order (how the service holds a `char`) |
+//! | `upper` | Its UTF-8 bytes in upper case |
+//! | `reversed` | Its UTF-8 bytes in reverse order |
+//! | `hex`, `hex-upper` | Two hex digits per byte |
+//! | `json-escape`, `json-escape-upper` | `\u0071\u007a…` |
+//! | `percent`, `percent-upper` | `%71%7a…` |
+//! | `decimal-bytes` | `113, 122, …` (the debug form of a byte slice) |
 //! | `base64` | Its UTF-8 bytes in standard Base64, at each of the three alignments a surrounding stream can give (only the characters that do not depend on neighbouring bytes) |
 //! | `base64-utf16le` | The same for its UTF-16LE bytes |
 //! | `base64url`, `base64url-utf16le` | The two above in the URL-safe alphabet |
 //!
+//! and in the per-character forms of [`spread`](super::spread): `stride-<s>` (its bytes at a
+//! constant distance: UTF-16, UTF-32, arrays of `char`, fixed-size records) and `per-line` (one
+//! character per line of one template, as a log that records every key would write it).
+//!
 //! A hit is reported by canary number, the context it was typed in, the form, the location and
-//! the byte offset; never by the canary itself or the bytes around it.
+//! the byte offset (for `per-line`, of the line with the first character); never by the canary
+//! itself or the bytes around it.
+//!
+//! [`self_test`] plants every form of every canary in files of its own and requires a hit in
+//! each, so that a scanner that has stopped finding a form cannot pass (the soak's rule
+//! `canary-scanner-control`).
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -21,6 +37,8 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+
+use super::spread::Spread;
 
 /// The prefix of every canary.
 pub const PREFIX: &str = "qz";
@@ -171,6 +189,55 @@ fn utf16le(text: &str) -> Vec<u8> {
     text.encode_utf16().flat_map(u16::to_le_bytes).collect()
 }
 
+fn utf16be(text: &str) -> Vec<u8> {
+    text.encode_utf16().flat_map(u16::to_be_bytes).collect()
+}
+
+fn utf32le(text: &str) -> Vec<u8> {
+    text.chars()
+        .flat_map(|c| u32::from(c).to_le_bytes())
+        .collect()
+}
+
+fn utf32be(text: &str) -> Vec<u8> {
+    text.chars()
+        .flat_map(|c| u32::from(c).to_be_bytes())
+        .collect()
+}
+
+/// Each UTF-8 byte of `text` written with `each`.
+fn per_byte(text: &str, each: impl Fn(u8) -> String) -> Vec<u8> {
+    text.bytes().map(each).collect::<String>().into_bytes()
+}
+
+/// The whole-string forms other than Base64 (module docs), in the order of the table.
+fn plain_forms(text: &str) -> Vec<(&'static str, Vec<u8>)> {
+    let decimal = text
+        .bytes()
+        .map(|b| b.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    vec![
+        ("utf8", text.as_bytes().to_vec()),
+        ("utf16le", utf16le(text)),
+        ("utf16be", utf16be(text)),
+        ("utf32le", utf32le(text)),
+        ("utf32be", utf32be(text)),
+        ("upper", text.to_uppercase().into_bytes()),
+        ("reversed", text.bytes().rev().collect()),
+        ("hex", per_byte(text, |b| format!("{b:02x}"))),
+        ("hex-upper", per_byte(text, |b| format!("{b:02X}"))),
+        ("json-escape", per_byte(text, |b| format!("\\u{b:04x}"))),
+        (
+            "json-escape-upper",
+            per_byte(text, |b| format!("\\u{b:04X}")),
+        ),
+        ("percent", per_byte(text, |b| format!("%{b:02x}"))),
+        ("percent-upper", per_byte(text, |b| format!("%{b:02X}"))),
+        ("decimal-bytes", decimal.into_bytes()),
+    ]
+}
+
 /// One searched byte pattern.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pattern {
@@ -184,20 +251,21 @@ pub struct Pattern {
 
 /// Every pattern of every canary.
 pub fn patterns(canaries: &[Canary]) -> Vec<Pattern> {
-    let mut out = Vec::new();
+    let mut out: Vec<Pattern> = Vec::new();
     for (i, c) in canaries.iter().enumerate() {
         let utf8 = c.text.as_bytes().to_vec();
         let utf16 = utf16le(&c.text);
-        out.push(Pattern {
-            canary: i,
-            form: "utf8",
-            bytes: utf8.clone(),
-        });
-        out.push(Pattern {
-            canary: i,
-            form: "utf16le",
-            bytes: utf16.clone(),
-        });
+        for (form, bytes) in plain_forms(&c.text) {
+            // A form that gives the same bytes as an earlier one (`hex` and `hex-upper` when no
+            // byte has a letter digit) is searched once.
+            if !out.iter().any(|p| p.canary == i && p.bytes == bytes) {
+                out.push(Pattern {
+                    canary: i,
+                    form,
+                    bytes,
+                });
+            }
+        }
         for (form, source, alphabet) in [
             ("base64", &utf8, STANDARD),
             ("base64-utf16le", &utf16, STANDARD),
@@ -343,33 +411,71 @@ fn files_under(path: &Path, out: &mut Vec<PathBuf>) {
 
 const CHUNK: usize = 4 << 20;
 
-/// Scans one file, streaming it in chunks that overlap by the longest pattern.
+/// The searches of one scan: the whole-string patterns and the per-character detectors.
+struct Searches<'a> {
+    patterns: &'a [Pattern],
+    matcher: Matcher<'a>,
+    spread: Spread,
+}
+
+impl<'a> Searches<'a> {
+    fn new(canaries: &[Canary], patterns: &'a [Pattern]) -> Self {
+        let texts: Vec<&[u8]> = canaries.iter().map(|c| c.text.as_bytes()).collect();
+        Self {
+            patterns,
+            matcher: Matcher::new(patterns),
+            spread: Spread::new(&texts),
+        }
+    }
+
+    /// Bytes a chunk must keep for the next: the longest pattern or strided span, less one.
+    fn keep(&self) -> usize {
+        self.matcher
+            .longest
+            .max(self.spread.span())
+            .saturating_sub(1)
+    }
+}
+
+/// Scans one file, streaming it in chunks that overlap by the longest search;
+/// calls `found(canary index, form, offset)`.
 fn scan_file(
     file: &Path,
-    matcher: &Matcher<'_>,
-    found: &mut dyn FnMut(usize, u64),
+    searches: &Searches<'_>,
+    found: &mut dyn FnMut(usize, &str, u64),
 ) -> io::Result<u64> {
     let mut f = File::open(file)?;
-    let keep = matcher.longest.saturating_sub(1);
+    let keep = searches.keep();
+    let mut lines = searches.spread.lines();
     let mut buf: Vec<u8> = Vec::with_capacity(CHUNK + keep);
     let mut base = 0_u64; // file offset of buf[0]
     let mut total = 0_u64;
     let mut chunk = vec![0_u8; CHUNK];
+    let offset = |base: u64, pos: usize| base + u64::try_from(pos).unwrap_or(0);
     loop {
         let n = f.read(&mut chunk)?;
         let eof = n == 0;
         buf.extend_from_slice(&chunk[..n]);
         total += u64::try_from(n).unwrap_or(0);
-        // Positions below `limit` have every byte a pattern could need, or the file ended.
+        lines.feed(&chunk[..n], &mut |i, at| found(i, "per-line", at));
+        // Positions below `limit` have every byte a search could need, or the file ended.
         let limit = if eof {
             buf.len()
         } else {
             buf.len().saturating_sub(keep)
         };
-        matcher.find(&buf, limit, |i, pos| {
-            found(i, base + u64::try_from(pos).unwrap_or(0));
+        searches.matcher.find(&buf, limit, |i, pos| {
+            found(
+                searches.patterns[i].canary,
+                searches.patterns[i].form,
+                offset(base, pos),
+            );
+        });
+        searches.spread.strided(&buf, limit, &mut |i, pos, stride| {
+            found(i, &format!("stride-{stride}"), offset(base, pos));
         });
         if eof {
+            lines.finish(&mut |i, at| found(i, "per-line", at));
             return Ok(total);
         }
         let drop = limit;
@@ -381,7 +487,7 @@ fn scan_file(
 /// Scans `locations` for `canaries`, skipping the files in `skip` (the driver's own input).
 pub fn scan(canaries: &[Canary], locations: &[Location], skip: &[PathBuf]) -> ScanReport {
     let patterns = patterns(canaries);
-    let matcher = Matcher::new(&patterns);
+    let searches = Searches::new(canaries, &patterns);
     let mut report = ScanReport {
         canaries: canaries.len(),
         patterns: patterns.len(),
@@ -418,16 +524,14 @@ pub fn scan(canaries: &[Canary], locations: &[Location], skip: &[PathBuf]) -> Sc
                     },
                     |r| r.display().to_string(),
                 );
-            let mut seen: Vec<(usize, &'static str)> = Vec::new();
             let mut hits: Vec<Hit> = Vec::new();
-            let result = scan_file(&file, &matcher, &mut |i, offset| {
-                let p = &patterns[i];
-                if !seen.contains(&(p.canary, p.form)) {
-                    seen.push((p.canary, p.form));
+            let result = scan_file(&file, &searches, &mut |i, form, offset| {
+                let number = canaries[i].number;
+                if !hits.iter().any(|h| h.canary == number && h.form == form) {
                     hits.push(Hit {
-                        canary: canaries[p.canary].number,
-                        context: canaries[p.canary].context,
-                        form: p.form.to_owned(),
+                        canary: number,
+                        context: canaries[i].context,
+                        form: form.to_owned(),
                         location: location.label.clone(),
                         file: relative.clone(),
                         offset,
@@ -450,6 +554,121 @@ pub fn scan(canaries: &[Canary], locations: &[Location], skip: &[PathBuf]) -> Sc
         report.locations.push(summary);
     }
     report
+}
+
+/// What [`self_test`] found.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelfTest {
+    /// Shapes planted per canary.
+    pub shapes: usize,
+    /// Files planted.
+    pub planted: usize,
+    /// Planted files without a hit for their canary: `<canary number> <shape>`.
+    pub missed: Vec<String>,
+}
+
+impl SelfTest {
+    /// Whether every planted shape was found.
+    pub fn passed(&self) -> bool {
+        self.planted > 0 && self.missed.is_empty()
+    }
+}
+
+/// A log line in the service's format (`log.rs`), with `message`.
+fn log_line(n: usize, message: &str) -> String {
+    format!(
+        "2026-11-18T22:35:{:02}.{:03}Z INFO worker[4103]: {message}\n",
+        n / 1000 % 60,
+        n % 1000
+    )
+}
+
+/// The shapes [`self_test`] plants for `text`: every whole-string form and Base64 alignment
+/// inside other text, and the per-character forms.
+fn planted_shapes(text: &str) -> Vec<(String, Vec<u8>)> {
+    let mut out: Vec<(String, Vec<u8>)> = Vec::new();
+    let surround = |bytes: &[u8]| {
+        let mut v = b"before ".to_vec();
+        v.extend_from_slice(bytes);
+        v.extend_from_slice(b" after");
+        v
+    };
+    for (form, bytes) in plain_forms(text) {
+        out.push((form.to_owned(), surround(&bytes)));
+    }
+    let utf16 = utf16le(text);
+    for (form, source, alphabet) in [
+        ("base64", text.as_bytes(), STANDARD),
+        ("base64-utf16le", utf16.as_slice(), STANDARD),
+        ("base64url", text.as_bytes(), URL_SAFE),
+        ("base64url-utf16le", utf16.as_slice(), URL_SAFE),
+    ] {
+        for lead in 0..3 {
+            let mut raw = vec![b'#'; lead];
+            raw.extend_from_slice(source);
+            out.push((format!("{form}-at-{lead}"), base64(&raw, alphabet)));
+        }
+    }
+    // One character per fixed-size record (finding 3's queue slot) and in its debug form.
+    let mut records = vec![0_u8; 96 * (text.len() + 2)];
+    for (k, b) in text.bytes().enumerate() {
+        records[96 * (k + 1) + 44] = b;
+    }
+    out.push(("records-96".to_owned(), records));
+    let chars: Vec<char> = text.chars().collect();
+    out.push(("char-debug".to_owned(), format!("{chars:?}").into_bytes()));
+    // One key per log line, with other lines in between, as `log.rs` writes them.
+    let mut log = log_line(0, "worker ready");
+    for (k, c) in text.chars().enumerate() {
+        log.push_str(&log_line(k * 37, &format!("key {c:?} seq {}", k + 8)));
+        if k % 5 == 2 {
+            log.push_str(&log_line(k * 37 + 1, "ipc in get_status 55 bytes"));
+        }
+    }
+    out.push(("one-key-per-log-line".to_owned(), log.into_bytes()));
+    out
+}
+
+/// Plants every shape of every canary in a file of its own under `dir` (created, and removed
+/// again afterwards), scans `dir`, and lists the files without a hit for their canary.
+pub fn self_test(canaries: &[Canary], dir: &Path) -> Result<SelfTest, String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    let mut expected: Vec<(String, usize)> = Vec::new();
+    let mut shapes = 0;
+    for c in canaries {
+        let planted = planted_shapes(&c.text);
+        shapes = planted.len();
+        for (shape, bytes) in planted {
+            let name = format!("{}-{shape}.bin", c.number);
+            std::fs::write(dir.join(&name), bytes)
+                .map_err(|e| format!("cannot write {}: {e}", dir.display()))?;
+            expected.push((name, c.number));
+        }
+    }
+    let report = scan(
+        canaries,
+        &[Location {
+            label: "scanner-control".to_owned(),
+            path: dir.to_path_buf(),
+        }],
+        &[],
+    );
+    let _ = std::fs::remove_dir_all(dir);
+    let missed = expected
+        .iter()
+        .filter(|(name, number)| {
+            !report
+                .hits
+                .iter()
+                .any(|h| &h.file == name && h.canary == *number)
+        })
+        .map(|(name, _)| name.trim_end_matches(".bin").replacen('-', " ", 1))
+        .collect();
+    Ok(SelfTest {
+        shapes,
+        planted: expected.len(),
+        missed,
+    })
 }
 
 #[cfg(test)]
@@ -564,6 +783,93 @@ mod tests {
             u64::try_from(CHUNK - 5).expect("fits")
         );
         assert_eq!(report.locations[0].files, 2, "the input file is skipped");
+    }
+
+    #[test]
+    fn every_planted_shape_is_found() {
+        let all = generate(1, |_| false).expect("canaries");
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let control = dir.path().join("control");
+        let result = self_test(&all, &control).expect("self test");
+        assert!(result.passed(), "missed: {:?}", result.missed);
+        assert_eq!(result.planted, all.len() * result.shapes);
+        assert_eq!(
+            result.shapes, 29,
+            "14 plain forms, 12 Base64 alignments, 3 per character"
+        );
+        assert!(!control.exists(), "the planted files are removed again");
+        let json = serde_json::to_string(&result).expect("json");
+        assert!(all.iter().all(|c| !json.contains(&c.text)));
+    }
+
+    /// The per-character shapes hold no whole-string form, so only the detectors of
+    /// `spread` find them: a scanner without them (the one the 2.8 review measured) misses
+    /// every one of these files.
+    #[test]
+    fn per_character_shapes_are_found_only_by_the_per_character_detectors() {
+        let c = canary("qzkqjetdphptplmw");
+        let whole = patterns(std::slice::from_ref(&c));
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let mut planted = 0;
+        for (shape, bytes) in planted_shapes(&c.text) {
+            if !matches!(
+                shape.as_str(),
+                "records-96" | "char-debug" | "one-key-per-log-line"
+            ) {
+                continue;
+            }
+            assert!(
+                whole
+                    .iter()
+                    .all(|p| !bytes.windows(p.bytes.len()).any(|w| w == p.bytes)),
+                "{shape} holds a whole-string form"
+            );
+            std::fs::write(dir.path().join(&shape), bytes).expect("write");
+            planted += 1;
+        }
+        assert_eq!(planted, 3);
+        let report = scan(
+            std::slice::from_ref(&c),
+            &[Location {
+                label: "x".to_owned(),
+                path: dir.path().to_path_buf(),
+            }],
+            &[],
+        );
+        let form = |file: &str| -> Vec<&str> {
+            report
+                .hits
+                .iter()
+                .filter(|h| h.file == file)
+                .map(|h| h.form.as_str())
+                .collect()
+        };
+        assert_eq!(form("records-96"), ["stride-96"]);
+        assert_eq!(form("char-debug"), ["stride-5"]);
+        assert_eq!(form("one-key-per-log-line"), ["per-line"]);
+    }
+
+    #[test]
+    fn a_strided_canary_across_a_chunk_boundary_is_found() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let c = canary("qzzyxwvutsrqponm");
+        let mut big = vec![b'.'; CHUNK + 4096];
+        let start = CHUNK - 2000;
+        for (k, b) in c.text.bytes().enumerate() {
+            big[start + k * 300] = b;
+        }
+        std::fs::write(dir.path().join("big.bin"), &big).expect("write");
+        let report = scan(
+            std::slice::from_ref(&c),
+            &[Location {
+                label: "x".to_owned(),
+                path: dir.path().to_path_buf(),
+            }],
+            &[],
+        );
+        assert_eq!(report.hits.len(), 1, "{:?}", report.hits);
+        assert_eq!(report.hits[0].form, "stride-300");
+        assert_eq!(report.hits[0].offset, u64::try_from(start).expect("fits"));
     }
 
     #[test]

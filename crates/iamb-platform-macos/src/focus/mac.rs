@@ -151,6 +151,13 @@ impl FocusInspector for Platform {
         })
     }
 
+    fn is_watching(&self) -> bool {
+        self.focus
+            .watching()
+            .as_ref()
+            .is_some_and(Watching::is_running)
+    }
+
     fn unwatch(&self) -> Result<()> {
         let Some(watching) = self.focus.watching().take() else {
             return Ok(());

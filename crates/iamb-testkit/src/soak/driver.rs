@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use iamb_core::model::{Id, Timestamp};
 use iamb_ipc::{Client, RequestBody, ResponseBody, Role, ServiceStatus};
@@ -36,7 +36,7 @@ use iamb_service::paths::DataDirs;
 use iamb_store::Store;
 use serde::Serialize;
 
-use super::canary::{self, Canary, Context, Location, ScanReport};
+use super::canary::{self, Canary, Context, Location, ScanReport, SelfTest};
 use super::control::{self, Command as Ctl, ControlClient, Window};
 use super::fixture::{self, Library, Shape, Token};
 use super::host::HostDirs;
@@ -180,8 +180,13 @@ pub struct Report {
     pub started_unix_ms: u64,
     /// The OS family and architecture.
     pub os: String,
-    /// `GITHUB_SHA` when set.
+    /// The commit tested: `GITHUB_SHA`, else `git rev-parse HEAD` ([`git_sha`]).
     pub git_sha: Option<String>,
+    /// Where `git_sha` came from, or why it is null.
+    pub git_sha_source: String,
+    /// Core files and crash dumps of the service processes found after the run (scanned with
+    /// the other locations).
+    pub crash_dumps: CrashDumps,
     /// The options that shape the run.
     pub options: ReportOptions,
     /// Measured length.
@@ -943,6 +948,7 @@ pub fn run(opts: &Options) -> Result<Report, String> {
         ));
     }
     let started_unix_ms = unix_ms();
+    let started = SystemTime::now();
     let library = Library::generate(opts.seed, opts.library)?;
     seed_library(&paths.data, &library)?;
     let canaries = canary::generate(opts.canary_rounds, |t| library.would_match(t))?;
@@ -1169,6 +1175,20 @@ pub fn run(opts: &Options) -> Result<Report, String> {
             path: p.clone(),
         });
     }
+    // Core files and crash dumps the service processes left (finding 20 of the 2.8 review).
+    let mut pids = vec![r.supervisor.id(), r.worker_pid];
+    pids.extend(r.recoveries.iter().flat_map(|x| [x.old_pid, x.new_pid]));
+    let dumps = crash_dumps(
+        &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        started,
+        &pids,
+    );
+    for file in &dumps.files {
+        locations.push(Location {
+            label: "crash-dump".to_owned(),
+            path: file.clone(),
+        });
+    }
     let scan = canary::scan(
         &r.canaries,
         &locations,
@@ -1193,6 +1213,19 @@ pub fn run(opts: &Options) -> Result<Report, String> {
                 .any(|h| h.canary == c.number && h.form == "utf8")
         })
         .count();
+    // And every form it searches, planted in files of its own next to the input.
+    let self_test = canary::self_test(
+        &r.canaries,
+        &r.paths
+            .input
+            .parent()
+            .unwrap_or(&r.paths.out)
+            .join("scanner-control"),
+    )
+    .unwrap_or_else(|e| SelfTest {
+        missed: vec![e],
+        ..SelfTest::default()
+    });
     write_json(&r.paths.out.join("canary-scan.json"), &scan)?;
 
     let net_check = opts.net_check.as_deref().map(netcheck::run);
@@ -1210,7 +1243,13 @@ pub fn run(opts: &Options) -> Result<Report, String> {
         expansions_failed: r.failed,
     };
     let mut results = rules::evaluate(&evidence);
-    results.extend(canary_rules(&r.canaries, &r.typed, &scan, found_in_input));
+    results.extend(canary_rules(
+        &r.canaries,
+        &r.typed,
+        &scan,
+        found_in_input,
+        &self_test,
+    ));
     if let Some(check) = &net_check {
         results.push(RuleResult {
             rule: "no-networking-crate".to_owned(),
@@ -1229,6 +1268,20 @@ pub fn run(opts: &Options) -> Result<Report, String> {
             limit: "none of the deny list".to_owned(),
         });
     }
+    results.push(RuleResult {
+        rule: "no-crash-dumps".to_owned(),
+        verdict: if dumps.files.is_empty() {
+            Verdict::Pass
+        } else {
+            Verdict::Fail
+        },
+        value: format!(
+            "{} found ({})",
+            dumps.files.len(),
+            dumps.searched.join("; ")
+        ),
+        limit: "0".to_owned(),
+    });
     results.push(RuleResult {
         rule: "run-completed".to_owned(),
         verdict: if aborted.is_none() {
@@ -1287,11 +1340,20 @@ pub fn run(opts: &Options) -> Result<Report, String> {
     } else {
         r.keys as f64 / r.typing.as_secs_f64()
     };
+    let sha = git_sha(
+        std::env::var("GITHUB_SHA").ok().filter(|v| !v.is_empty()),
+        &[
+            std::env::current_dir().ok(),
+            opts.exe.parent().map(Path::to_path_buf),
+        ],
+    );
     let report = Report {
         schema: REPORT_SCHEMA,
         started_unix_ms,
         os: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
-        git_sha: std::env::var("GITHUB_SHA").ok(),
+        git_sha: sha.0,
+        git_sha_source: sha.1,
+        crash_dumps: dumps,
         options: ReportOptions {
             duration_s: opts.duration.as_secs(),
             seed: opts.seed,
@@ -1332,11 +1394,139 @@ pub fn run(opts: &Options) -> Result<Report, String> {
     Ok(report)
 }
 
+/// The commit being tested: `github_sha` when set, else `git rev-parse HEAD` in the first of
+/// `dirs` that is inside a git checkout. The second value says which, or why there is none.
+pub fn git_sha(github_sha: Option<String>, dirs: &[Option<PathBuf>]) -> (Option<String>, String) {
+    if let Some(sha) = github_sha {
+        return (Some(sha), "GITHUB_SHA".to_owned());
+    }
+    let mut why = Vec::new();
+    for dir in dirs.iter().flatten() {
+        match Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["rev-parse", "--verify", "HEAD"])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+        {
+            Ok(out) if out.status.success() => {
+                let sha = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+                if sha.len() >= 40 && sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    return (
+                        Some(sha),
+                        format!("git rev-parse HEAD in {}", dir.display()),
+                    );
+                }
+                why.push(format!("{}: no commit id", dir.display()));
+            }
+            Ok(_) => why.push(format!("{}: not in a git checkout", dir.display())),
+            Err(e) => why.push(format!("git cannot run ({:?})", e.kind())),
+        }
+    }
+    if why.is_empty() {
+        why.push("no directory to look in".to_owned());
+    }
+    (None, format!("GITHUB_SHA is not set; {}", why.join("; ")))
+}
+
+/// Core files and crash dumps found after a run.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct CrashDumps {
+    /// Their paths.
+    pub files: Vec<PathBuf>,
+    /// Where the search looked, and what it could not look at.
+    pub searched: Vec<String>,
+}
+
+/// Files in `dir` whose name is `prefix` or starts with `prefix.` (`core`, `core.4103`),
+/// changed at or after `since`.
+pub fn core_files_in(dir: &Path, prefix: &str, since: SystemTime) -> Vec<PathBuf> {
+    let since = since.checked_sub(Duration::from_secs(2)).unwrap_or(since);
+    let mut out: Vec<PathBuf> = fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            (name == prefix || name.starts_with(&format!("{prefix}.")))
+                && e.metadata()
+                    .is_ok_and(|m| m.is_file() && m.modified().is_ok_and(|t| t >= since))
+        })
+        .map(|e| e.path())
+        .collect();
+    out.sort();
+    out
+}
+
+/// Where a crashed service process of this run can have left its memory: core files in the
+/// processes' working directory `cwd` (and, on Linux, where `core_pattern` names a directory),
+/// `/cores/core.<pid>` on macOS, and `%LOCALAPPDATA%\CrashDumps` on Windows. Only files
+/// changed since `since` count.
+pub fn crash_dumps(cwd: &Path, since: SystemTime, pids: &[u32]) -> CrashDumps {
+    let mut out = CrashDumps::default();
+    out.files.extend(core_files_in(cwd, "core", since));
+    out.searched
+        .push("core files in the working directory".to_owned());
+    if cfg!(target_os = "linux") {
+        match fs::read_to_string("/proc/sys/kernel/core_pattern") {
+            Ok(pattern) if pattern.trim_start().starts_with('|') => out.searched.push(
+                "core_pattern hands cores to a program: its store is not searched".to_owned(),
+            ),
+            Ok(pattern) => {
+                let pattern = Path::new(pattern.trim());
+                let name = pattern
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let prefix = name.split('%').next().unwrap_or("").trim_end_matches('.');
+                if let Some(dir) = pattern.parent().filter(|d| !d.as_os_str().is_empty())
+                    && !prefix.is_empty()
+                {
+                    let dir = cwd.join(dir);
+                    for f in core_files_in(&dir, prefix, since) {
+                        if !out.files.contains(&f) {
+                            out.files.push(f);
+                        }
+                    }
+                    out.searched
+                        .push(format!("core_pattern directory {}", dir.display()));
+                }
+            }
+            Err(e) => out
+                .searched
+                .push(format!("core_pattern unreadable ({:?})", e.kind())),
+        }
+    }
+    if cfg!(target_os = "macos") {
+        for pid in pids {
+            out.files.extend(core_files_in(
+                Path::new("/cores"),
+                &format!("core.{pid}"),
+                since,
+            ));
+        }
+        out.searched.push("/cores".to_owned());
+    }
+    if cfg!(windows) {
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            let dir = Path::new(&local).join("CrashDumps");
+            out.files
+                .extend(core_files_in(&dir, "iamb-soak.exe", since));
+            out.searched.push(dir.display().to_string());
+        } else {
+            out.searched.push("LOCALAPPDATA is not set".to_owned());
+        }
+    }
+    out
+}
+
 fn canary_rules(
     canaries: &[Canary],
     typed: &[CanaryTyped],
     scan: &ScanReport,
     found_in_input: usize,
+    self_test: &SelfTest,
 ) -> Vec<RuleResult> {
     let mut out = Vec::new();
     let mut files: Vec<String> = scan
@@ -1390,16 +1580,27 @@ fn canary_rules(
     });
     out.push(RuleResult {
         rule: "canary-scanner-control".to_owned(),
-        verdict: if found_in_input == canaries.len() {
+        verdict: if found_in_input == canaries.len() && self_test.passed() {
             Verdict::Pass
         } else {
             Verdict::Fail
         },
-        value: format!(
-            "{found_in_input} of {} found in the driver's input",
-            canaries.len()
-        ),
-        limit: "all".to_owned(),
+        value: if self_test.missed.is_empty() {
+            format!(
+                "{found_in_input} of {} found in the driver's input; {} of {} planted shapes found ({} per canary)",
+                canaries.len(),
+                self_test.planted,
+                self_test.planted,
+                self_test.shapes
+            )
+        } else {
+            format!(
+                "{found_in_input} of {} found in the driver's input; missed planted: {}",
+                canaries.len(),
+                self_test.missed.join(", ")
+            )
+        },
+        limit: "all, and every planted shape".to_owned(),
     });
     out
 }
@@ -1544,5 +1745,71 @@ mod tests {
             ]
         );
         assert!(canary_times(Duration::from_mins(10), 0).is_empty());
+    }
+
+    #[test]
+    fn core_files_of_the_run_are_found_and_scanned() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let before = SystemTime::now() - Duration::from_hours(1);
+        let canary = canary::generate(1, |_| false).expect("canaries");
+        // A core file holding one canary the way the engine queue does: one character per
+        // 96-byte slot (finding 3 of the 2.8 review).
+        let mut core = vec![0_u8; 96 * 20];
+        for (k, b) in canary[0].text.bytes().enumerate() {
+            core[96 * (k + 1) + 44] = b;
+        }
+        fs::write(dir.path().join("core"), &core).expect("write");
+        fs::write(dir.path().join("core.4103"), b"").expect("write");
+        fs::write(dir.path().join("coredump.txt"), b"").expect("write");
+        fs::write(dir.path().join("score"), b"").expect("write");
+        let found = core_files_in(dir.path(), "core", before);
+        let names: Vec<String> = found
+            .iter()
+            .map(|p| p.file_name().expect("name").to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["core", "core.4103"]);
+        // Files from before the run do not count.
+        let later = SystemTime::now() + Duration::from_hours(1);
+        assert!(core_files_in(dir.path(), "core", later).is_empty());
+
+        let dumps = crash_dumps(dir.path(), before, &[4103]);
+        assert!(dumps.files.contains(&dir.path().join("core")));
+        assert!(!dumps.searched.is_empty());
+        let locations: Vec<Location> = dumps
+            .files
+            .iter()
+            .map(|f| Location {
+                label: "crash-dump".to_owned(),
+                path: f.clone(),
+            })
+            .collect();
+        let scan = canary::scan(&canary, &locations, &[]);
+        assert_eq!(scan.hits.len(), 1, "{:?}", scan.hits);
+        assert_eq!(scan.hits[0].form, "stride-96");
+        assert_eq!(scan.hits[0].location, "crash-dump");
+    }
+
+    #[test]
+    fn git_sha_says_where_it_came_from_or_why_not() {
+        let (sha, source) = git_sha(Some("abc".to_owned()), &[]);
+        assert_eq!(sha.as_deref(), Some("abc"));
+        assert_eq!(source, "GITHUB_SHA");
+        let outside = tempfile::TempDir::new().expect("temp dir");
+        let (sha, source) = git_sha(None, &[Some(outside.path().to_path_buf())]);
+        assert_eq!(sha, None);
+        assert!(source.starts_with("GITHUB_SHA is not set; "), "{source}");
+        assert!(
+            source.contains("not in a git checkout") || source.contains("git cannot run"),
+            "{source}"
+        );
+        let (_, source) = git_sha(None, &[]);
+        assert!(source.contains("no directory"), "{source}");
+        // This crate's own directory is inside the repository (when git is installed).
+        let here = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let (sha, source) = git_sha(None, &[Some(outside.path().to_path_buf()), Some(here)]);
+        if !source.contains("git cannot run") && sha.is_some() {
+            assert_eq!(sha.as_deref().map(str::len), Some(40));
+            assert!(source.starts_with("git rev-parse HEAD in "), "{source}");
+        }
     }
 }

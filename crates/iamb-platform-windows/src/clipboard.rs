@@ -23,8 +23,12 @@
 //! - `restore`: the snapshot's formats, always with the three markers: putting the user's
 //!   content back must not add it to the history a second time. An empty snapshot empties
 //!   the clipboard.
-//! - Another program can hold the clipboard: opening is retried for about a tenth of a second,
-//!   then [`Os`](iamb_platform::PlatformError::Os) names `OpenClipboard`.
+//! - Another program can hold the clipboard: opening is retried, then
+//!   [`Os`](iamb_platform::PlatformError::Os) names `OpenClipboard`. `read_text` (on the
+//!   engine thread) retries for about a tenth of a second; `snapshot`, `write` and `restore`,
+//!   the steps of a paste on the injector thread, for about half a second, because right after
+//!   a copy and right after the paste shortcut other programs open the clipboard too
+//!   (`formats::PASTE_OPEN_RETRY_DELAYS` says who, and the totals).
 //!
 //! # Privacy
 //!
@@ -85,7 +89,7 @@ mod windows {
 
     /// Everything on the clipboard that can be copied.
     pub(crate) fn snapshot_now() -> Result<ClipboardSnapshot> {
-        let open = os::open()?;
+        let open = os::open(os::Patience::Paste)?;
         let present = open.formats()?;
         let started = Instant::now();
         let mut total = 0usize;
@@ -134,7 +138,7 @@ mod windows {
             Some(_) => Some(os::register(html::FORMAT_NAME)?),
             None => None,
         };
-        let open = os::open()?;
+        let open = os::open(os::Patience::Paste)?;
         open.empty()?;
         if transient {
             put_markers(&open)?;
@@ -174,7 +178,7 @@ mod windows {
                 ClipboardFormat::Name(name) => os::register(name)?,
             });
         }
-        let open = os::open()?;
+        let open = os::open(os::Patience::Paste)?;
         open.empty()?;
         if snapshot.is_empty() {
             return Ok(());
@@ -198,7 +202,7 @@ mod windows {
     impl ClipboardAccess for Platform {
         fn read_text(&self) -> Result<Option<Sensitive<String>>> {
             let State {} = &self.clipboard;
-            let open = os::open()?;
+            let open = os::open(os::Patience::Brief)?;
             match open.read(MemoryFormat::UNICODE_TEXT, MAX_FLAVOUR_BYTES) {
                 Data::Bytes(bytes) => {
                     let text = text_from_unicode(&bytes);

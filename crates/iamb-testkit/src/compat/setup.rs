@@ -3,7 +3,7 @@
 use std::path::Path;
 
 #[cfg(feature = "store")]
-pub use with_store::{Imported, import_fixtures};
+pub use with_store::{Imported, import_fixtures, import_latency_fixtures};
 
 #[cfg(feature = "store")]
 mod with_store {
@@ -47,6 +47,17 @@ mod with_store {
     ///
     /// The service must not be running on `data_dir`: it holds the store's lock.
     pub fn import_fixtures(data_dir: &Path) -> Result<Imported, String> {
+        import_json(data_dir, FIXTURE_JSON, "compat-fixture.json")
+    }
+
+    /// Imports the 1,000 snippets of the latency run ([`crate::compat::latency::library`]) as
+    /// [`import_fixtures`] imports the matrix's five.
+    pub fn import_latency_fixtures(data_dir: &Path) -> Result<Imported, String> {
+        let json = crate::compat::latency::library_json()?;
+        import_json(data_dir, &json, "latency-fixture.json")
+    }
+
+    fn import_json(data_dir: &Path, json: &str, name: &str) -> Result<Imported, String> {
         fs::create_dir_all(data_dir)
             .map_err(|e| format!("cannot create {}: {e}", data_dir.display()))?;
         let mut store = Store::open_with_timeout(data_dir, Duration::from_secs(3)).map_err(|e| {
@@ -78,9 +89,8 @@ mod with_store {
                 .map_err(|e| e.to_string())?;
             id
         };
-        let file = data_dir.join("compat-fixture.json");
-        fs::write(&file, FIXTURE_JSON)
-            .map_err(|e| format!("cannot write {}: {e}", file.display()))?;
+        let file = data_dir.join(name);
+        fs::write(&file, json).map_err(|e| format!("cannot write {}: {e}", file.display()))?;
         let result = transfer::import(
             &mut store,
             profile,

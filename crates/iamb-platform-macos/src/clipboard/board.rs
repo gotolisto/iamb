@@ -10,7 +10,8 @@ use iamb_platform::core_types::Sensitive;
 use iamb_platform::{ClipboardContent, ClipboardSnapshot, Result};
 
 use super::layout::{
-    RawItem, SNAPSHOT_LIMIT, WriteItem, content_items, items, restore_items, snapshot_from,
+    RawItem, Reach, SNAPSHOT_LIMIT, WriteItem, content_items, content_reach, items, restore_items,
+    restore_reach, snapshot_from,
 };
 use super::ledger::{Decision, Ledger};
 
@@ -22,8 +23,9 @@ pub(crate) trait Board {
     fn items(&self) -> Result<Vec<RawItem>>;
     /// The plain text of the first item that has some.
     fn plain_text(&self) -> Result<Option<String>>;
-    /// Clears the pasteboard and writes `items` (none: the pasteboard stays empty).
-    fn replace(&self, items: &[WriteItem<'_>]) -> Result<()>;
+    /// Clears the pasteboard and writes `items` (none: the pasteboard stays empty), offered to
+    /// the devices `reach` says.
+    fn replace(&self, items: &[WriteItem<'_>], reach: Reach) -> Result<()>;
 }
 
 /// How a restore ended.
@@ -66,7 +68,7 @@ impl Rules {
     ) -> Result<()> {
         let mut ledger = self.ledger();
         let before = board.change_count();
-        let result = board.replace(&content_items(content, transient));
+        let result = board.replace(&content_items(content, transient), content_reach(transient));
         let after = board.change_count();
         // Even a failed write may have cleared the pasteboard: then the restore is still due.
         if result.is_ok() || after != before {
@@ -87,7 +89,7 @@ impl Rules {
             return Ok(Restored::LeftAlone);
         }
         let saved = items(snapshot);
-        board.replace(&restore_items(&saved))?;
+        board.replace(&restore_items(&saved), restore_reach(&saved))?;
         Ok(Restored::Restored)
     }
 }
@@ -116,6 +118,8 @@ pub(crate) mod testing {
         pub(crate) fail_next_write: Cell<bool>,
         /// `items` fails.
         pub(crate) unreadable: Cell<bool>,
+        /// The reach of the last `replace`.
+        pub(crate) reach: Cell<Option<Reach>>,
     }
 
     impl FakeBoard {
@@ -161,9 +165,10 @@ pub(crate) mod testing {
             }))
         }
 
-        fn replace(&self, items: &[WriteItem<'_>]) -> Result<()> {
+        fn replace(&self, items: &[WriteItem<'_>], reach: Reach) -> Result<()> {
             // clearContents: a new owner, a new count.
             self.count.set(self.count.get() + 1);
+            self.reach.set(Some(reach));
             self.items.borrow_mut().clear();
             if self.fail_next_write.replace(false) {
                 return Err(PlatformError::os(0, "NSPasteboard.writeObjects"));
@@ -186,7 +191,7 @@ pub(crate) mod testing {
 mod tests {
     use iamb_platform::PlatformError;
 
-    use super::super::layout::{CONCEALED_TYPE, HTML_TYPE, PLAIN_TEXT_TYPE, TRANSIENT_TYPE};
+    use super::super::layout::{CONCEALED_TYPE, HTML_TYPE, PLAIN_TEXT_TYPE, Reach, TRANSIENT_TYPE};
     use super::testing::{FakeBoard, Item};
     use super::*;
 
@@ -275,6 +280,45 @@ mod tests {
             .expect("write");
         rules.restore(&board, &empty).expect("restore");
         assert!(board.contents().is_empty());
+    }
+
+    /// Review 2.8, finding 7: what Iamb pastes is never offered to the user's other devices,
+    /// nor is content it puts back that its owner marked.
+    #[test]
+    fn transient_writes_and_restores_of_marked_content_stay_on_this_device() {
+        let board = FakeBoard::default();
+        let rules = Rules::default();
+        rules
+            .write(&board, &ClipboardContent::text("form values"), true)
+            .expect("write");
+        assert_eq!(board.reach.get(), Some(Reach::ThisDevice));
+        rules
+            .write(&board, &ClipboardContent::text("copied by the user"), false)
+            .expect("write");
+        assert_eq!(board.reach.get(), Some(Reach::AnyDevice));
+
+        // A password manager's copy: marked concealed, or transient, or both.
+        for marker in [CONCEALED_TYPE, TRANSIENT_TYPE] {
+            board.copy(vec![item(&[(PLAIN_TEXT_TYPE, b"hunter22"), (marker, b"")])]);
+            let saved = snapshot(&board).expect("snapshot");
+            rules
+                .write(&board, &ClipboardContent::text("pasted"), true)
+                .expect("write");
+            assert_eq!(
+                rules.restore(&board, &saved).expect("restore"),
+                Restored::Restored
+            );
+            assert_eq!(board.reach.get(), Some(Reach::ThisDevice), "{marker}");
+        }
+
+        // Ordinary content goes back as it was.
+        board.copy(users_content());
+        let saved = snapshot(&board).expect("snapshot");
+        rules
+            .write(&board, &ClipboardContent::text("pasted"), true)
+            .expect("write");
+        rules.restore(&board, &saved).expect("restore");
+        assert_eq!(board.reach.get(), Some(Reach::AnyDevice));
     }
 
     #[test]

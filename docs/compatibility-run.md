@@ -107,8 +107,9 @@ first. How a password field is detected, and what is not, is in the module docs 
    tell that a console is asking for a password, so today this expands; record what happened.
    Then exclude the terminal and repeat; nothing may expand, and the diagnostics show "excluded
    app". An exclusion is a row of the table `app_exclusion`, written like the setting under
-   "Per-app overrides" below, while the service is stopped. Its `app_id` must be the name exactly
-   as the diagnostics show it, which on Windows is the executable's file name in lower case:
+   "Per-app overrides" below, while the service is stopped. Its `app_id` is the name as the
+   diagnostics show it, which on Windows is the executable's file name in lower case; the service
+   rewrites another spelling (another case, a full path) into that form when it starts:
 
    ```sh
    sqlite> INSERT INTO app_exclusion (app_id, display_name, created_at)
@@ -200,7 +201,77 @@ says what to do first. How a secure field is detected, and what is not, is in th
    "secure field", some app left secure keyboard entry on. `ioreg -l -w 0 | grep SecureInput`
    names its process id; quit that app and note which one it was.
 
-## Notes for the cells
+## End-to-end latency (the probe window)
+
+This measures the 50 ms KPI (last key to expanded text, `docs/test-strategy.md` §6) and writes
+its result file. Do it on each OS after the matrix, with the same service and data folder. It
+takes about half an hour for the 1,000 trials and needs no answers; do not touch the keyboard or
+the mouse while it runs.
+
+1. Build the probe (a test app with one text control; it is never shipped):
+
+   ```sh
+   cargo build --release -p iamb-testkit --features probe --bin iamb-probe
+   ```
+
+2. Stop the service, add the 1,000 latency snippets (`;laaa` to `;lbml`) to the data folder,
+   and start the service again as in the steps above:
+
+   ```bat
+   target\release\iamb-compat.exe setup --data-dir C:\iamb-compat --latency
+   ```
+
+   (macOS: `target/release/iamb-compat setup --data-dir ~/iamb-compat --latency`.)
+3. Check the probe itself: `target\release\iamb-probe.exe --self-test` (macOS:
+   `target/release/iamb-probe --self-test`) opens the probe window, types into it and prints
+   `self-test: pass` with a time. On macOS the window must be allowed to come to the front.
+4. Name the machine and run a short trial first, then the full run:
+
+   ```bat
+   set IAMB_BENCH_RUNNER=lab-win11-01
+   target\release\iamb-compat.exe latency --trials 20
+   target\release\iamb-compat.exe latency
+   ```
+
+   (macOS: `IAMB_BENCH_RUNNER=lab-macos-01 target/release/iamb-compat latency`.) The harness
+   starts the probe window, which takes the front, and types each abbreviation as ordinary
+   keys, the way it types in the matrix (on macOS the terminal needs Accessibility, as above).
+   Each failure is printed with its trial id (`t0042-s0417`); `no-key` means the probe did not
+   get the keys (another window took the front).
+5. The result: the harness prints the p95 of the run and of each length class, `KPI
+   e2e-plain-p95: met` or `not met`, and the paths of the files it wrote under
+   `target/bench-results/` (`--out DIR` to put them elsewhere): `<run id>.jsonl`, the samples
+   and `<run id>.trials.jsonl`. None of them holds snippet text. Copy the numbers into
+   `docs/results/2.7-<os>.md` with the machine, OS build and commit, and keep the files.
+6. Browser rows (optional, not the KPI): `iamb-compat latency --target browser --open --trials
+   100` opens the probe's page (served on `127.0.0.1` only) in the default browser; open the
+   printed address in another browser instead to measure that one. Click into the field once
+   and keep the tab in front; the run starts when the page has connected.
+
+## What the secure-field and input-method checks cannot see
+
+These are known limits, not failures of a cell: the platform layers treat what they cannot
+recognise as an ordinary field. The full table is "Detection limits" in `docs/architecture.md` §8;
+record what you see for each one you meet, and check that excluding the app stops it.
+
+- **Password prompts in terminals.** Not detected on Windows; on macOS only while the terminal
+  has Secure Keyboard Entry on. An abbreviation typed at such a prompt expands (step 5 of each OS section above).
+- **Applications that describe no field** (games, remote-desktop and virtual-machine windows,
+  Java applications without the accessibility bridge): a password field there is an ordinary
+  field on Windows; on macOS too, unless the app switches secure keyboard entry on.
+- **A field that changes kind without a focus change** (a "show password" switch): the change is
+  seen at the next focus change (Windows) or when secure keyboard entry changes (macOS).
+- **Input methods.** Windows: one that runs on an ordinary layout (Vietnamese Telex, Indic
+  transliteration) is not recognised, and a switch the listener does not notice is seen one key
+  late. macOS: the first key after switching the input source is read with the previous layout,
+  and the press-and-hold accent menu is not seen. Both fail closed otherwise (nothing expands
+  while an input method is, or may be, composing).
+
+The remedy in every case is the exclusion list or the pause. An exclusion's `app_id` names the
+application as the diagnostics show it (above). The service stores and compares it in that form
+(on Windows without regard to case or a directory, on macOS without regard to case) and refuses
+an id that no application of the system can have.
+
 
 - **T4 and the date.** The harness asks for today's local date once and accepts the next day too,
   for a run that crosses midnight. The caret is checked by the `^` it types after the expansion.
@@ -218,8 +289,8 @@ says what to do first. How a secure field is detected, and what is not, is in th
   harness asks whether to include the field's text; it can contain other text you have on screen,
   so the answer is no unless you checked.
 - **Undo.** After each T1 cell it asks what one Ctrl+Z or Cmd+Z did. This is noted, not gating.
-- **Latency.** The 50 ms KPI is not measured here (see section 7 of the matrix). The report shows
-  `n/a`.
+- **Latency.** The 50 ms KPI is not measured by the matrix run (see section 7 of the matrix);
+  the report shows `n/a`. The probe window measures it: see "End-to-end latency" above.
 
 ## When a cell fails
 

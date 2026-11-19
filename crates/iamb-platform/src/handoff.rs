@@ -92,7 +92,9 @@ pub const HANDOFF_CAPACITY: usize = 64;
 /// hook is gone, and the self-test (§3.2) will deal with that.
 pub const START_MARKER_TIMEOUT: Duration = Duration::from_millis(100);
 
-/// Why an expansion is not sent (the service then delivers `InjectionCancelled`).
+/// Why an expansion is not sent, or not sent to the end (the service then delivers
+/// `InjectionCancelled`). The first seven come from the hand-off; the last two from the
+/// injector itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CancelReason {
     /// A boundary key (Enter, an arrow, a click, …) was among the keys typed after the trigger:
@@ -112,6 +114,16 @@ pub enum CancelReason {
     StartMarkerTimeout,
     /// The hand-off is not armed for this expansion: the flight already ended.
     NotArmed,
+    /// The focus moved to another window, application or field after the injector's start
+    /// marker: the next step would have gone there ([`FocusGuard`](crate::FocusGuard), §4.6).
+    /// The steps sent before the move stay where they went; the rest, the retyped characters
+    /// and the end marker are not sent.
+    FocusMoved,
+    /// A paste would have replaced clipboard content that cannot be saved whole, so it could
+    /// not have been put back (§8 rule 8), and the content cannot be typed instead (it has
+    /// HTML or files). Nothing was written to the clipboard; the steps before the paste stay
+    /// where they went.
+    ClipboardNotRestorable,
 }
 
 /// What the hand-off is doing. Carries no typed text.

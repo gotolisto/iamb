@@ -136,14 +136,15 @@ fn secure_fields_excluded_apps_and_own_windows_suspend() {
     h.worker().sync();
 
     // An exclusion added over IPC applies to the focused app at once.
-    assert_eq!(
+    assert!(matches!(
         c.call(RequestBody::PutExclusion {
             app_id: "org.example.editor".to_owned(),
             display_name: "Editor".to_owned(),
             excluded: true,
         }),
-        Ok(ResponseBody::Done {})
-    );
+        Ok(ResponseBody::Exclusions { exclusions })
+            if exclusions.len() == 1 && exclusions[0].app_id == "org.example.editor"
+    ));
     h.worker().sync();
     h.os.type_text("omw ");
     h.settle();
@@ -520,11 +521,14 @@ fn at_most_eight_clients_are_served() {
 }
 
 #[test]
-fn the_keystroke_buffer_and_the_handoff_are_locked() {
+fn the_key_queue_the_keystroke_buffer_and_the_handoff_are_locked() {
     let h = Harness::start(LIBRARY);
     let locked = h.os.locked_regions();
-    assert_eq!(locked.len(), 2);
+    assert_eq!(locked.len(), 3);
     assert!(locked.contains(&h.worker().handoff().region()));
+    let queue = h.worker().key_queue_region();
+    assert_eq!(queue.len(), 256 * size_of::<char>());
+    assert!(locked.contains(&queue));
     let engine = iamb_core::engine::Engine::new(iamb_core::engine::Snapshot::empty());
     let region = engine_buffer_region(&engine);
     assert!(!region.is_empty());

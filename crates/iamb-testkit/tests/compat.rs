@@ -15,10 +15,11 @@ use iamb_platform::mock::MockPlatform;
 use iamb_platform::{ClipboardAccess, ClipboardContent};
 use iamb_store::Store;
 use iamb_testkit::compat::apps::{Os, all_apps, apps_for};
+use iamb_testkit::compat::latency;
 use iamb_testkit::compat::report::{compute, render_markdown};
 use iamb_testkit::compat::results::{Mode, Record, ResultSet};
 use iamb_testkit::compat::run::{Harness, ModeChoice, Options, ScriptedUi, Summary, Ui, run};
-use iamb_testkit::compat::setup::import_fixtures;
+use iamb_testkit::compat::setup::{import_fixtures, import_latency_fixtures};
 use iamb_testkit::compat::types::{
     CARET_PROBE, FIXED_DATE, FIXTURE_JSON, SnippetType, render_expected_txt, types,
 };
@@ -73,6 +74,31 @@ fn each_snippet_expands_to_its_expected_text_with_the_fixed_date() {
         );
         assert_eq!(outcome.text, want.text, "{} text", t.id);
         assert_eq!(outcome.caret, want.caret, "{} caret", t.id);
+    }
+}
+
+#[test]
+fn the_latency_snippets_import_and_expand_to_their_bodies() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = import_latency_fixtures(dir.path()).unwrap();
+    assert_eq!((first.imported, first.skipped), (1000, 0));
+    // Next to the matrix's five, without a clash.
+    assert_eq!(import_fixtures(dir.path()).unwrap().imported, 5);
+    let store = Store::open_with_timeout(dir.path(), std::time::Duration::from_secs(3)).unwrap();
+    let profile = personal_profile(&store).unwrap().unwrap();
+    let snapshot = snapshot_from_store(&store, profile).unwrap();
+    let env = DryEnv {
+        now: LocalDateTime::new(2026, 3, 18, 14, 5, 9).unwrap(),
+        clipboard: None,
+    };
+    for s in latency::library() {
+        let outcome = expand(&snapshot, &s.abbreviation, &env, &FormValues::new());
+        assert_eq!(outcome.expansions, 1, "snippet {} expands once", s.index);
+        assert_eq!(outcome.text, s.body, "snippet {}", s.index);
+        // The last key is the trigger: one key short expands nothing.
+        let short = &s.abbreviation[..s.abbreviation.len() - 1];
+        let none = expand(&snapshot, short, &env, &FormValues::new());
+        assert_eq!(none.expansions, 0, "snippet {} minus its last key", s.index);
     }
 }
 
@@ -580,12 +606,27 @@ fn help_works_for_every_subcommand() {
     let top = compat(&["--help"]);
     assert!(top.status.success());
     let text = String::from_utf8(top.stdout).unwrap();
-    for sub in ["setup", "run", "report", "exception", "expected"] {
+    for sub in ["setup", "run", "report", "exception", "expected", "latency"] {
         assert!(text.contains(sub), "top-level help lists {sub}");
         let out = compat(&[sub, "--help"]);
         assert!(out.status.success(), "{sub} --help");
         let help = String::from_utf8(out.stdout).unwrap();
         assert!(help.contains("Usage: iamb-compat"), "{sub}: {help}");
+    }
+    let latency_help = String::from_utf8(compat(&["latency", "--help"]).stdout).unwrap();
+    for flag in [
+        "--target", "--probe", "--trials", "--out", "--settle", "--open",
+    ] {
+        assert!(latency_help.contains(flag), "latency --help names {flag}");
+    }
+    if !cfg!(any(windows, target_os = "macos")) {
+        let out = compat(&["latency", "--trials", "1"]);
+        assert!(!out.status.success());
+        assert!(
+            String::from_utf8(out.stderr)
+                .unwrap()
+                .contains("Windows or macOS")
+        );
     }
     let run_help = String::from_utf8(compat(&["run", "--help"]).stdout).unwrap();
     for flag in ["--os", "--app", "--results", "--again", "--mode"] {

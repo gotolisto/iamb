@@ -11,6 +11,19 @@ publish.workspace = true
 [lib]
 path = "src/lib.rs"
 
+[features]
+# `probe`: the probe window of the end-to-end latency measurement (docs/test-strategy.md §6),
+# the public module `probe`. Test tooling for `iamb-probe` in iamb-testkit: off by default and
+# never enabled by a shipped binary (the service is built on its own, without it).
+probe = []
+
+# Opens the probe window and types into it; needs an interactive desktop (IAMB_REQUIRE_DESKTOP
+# turns its skip into a failure).
+[[test]]
+name = "probe"
+path = "tests/probe.rs"
+required-features = ["probe"]
+
 # These tables repeat [workspace.lints] from the root Cargo.toml, because a crate cannot
 # inherit the workspace lints and override one of them. The only differences: `unsafe_code`
 # is allowed (this crate and iamb-platform-macos are the two places where it may be,
@@ -44,6 +57,8 @@ iamb-platform = { path = "../iamb-platform" }
 #   UI_Input_Ime                   listener (composition state)
 #   UI_Accessibility               focus (window-event hook, UI Automation identifiers)
 #   System_Com                     focus (UI Automation is reached through COM)
+#   System_Diagnostics_Debug,
+#   System_ErrorReporting          hardening (error mode, error-reporting flags)
 #   System_LibraryLoader           listener (module handle for the hooks)
 #   System_Threading               focus, endpoint (process handles, image path, tokens)
 #   System_DataExchange            clipboard
@@ -67,6 +82,8 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_System_DataExchange",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_ErrorReporting",
     "Win32_System_IO",
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",

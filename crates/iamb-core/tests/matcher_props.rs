@@ -16,9 +16,7 @@ use proptest::test_runner::{Config, TestRunner};
 const CASES: u32 = 2_000;
 
 /// The default delimiters, written out independently of `Delimiters::DEFAULT_CHARS`.
-const DELIMS: &[char] = &[
-    ' ', '\n', '\t', '.', ',', ';', ':', '!', '?', ')', ']', '}', '"', '\'',
-];
+const DELIMS: &[char] = &[' ', '.', ',', ';', ':', '!', '?', ')', ']', '}', '"', '\''];
 
 /// Small alphabet: mixed case, delimiters, length-changing folds (`İ`), `ß`/`ẞ`, the three
 /// sigmas and a lone combining dot.

@@ -11,7 +11,7 @@ use iamb_core::datetime::LocalDateTime;
 use iamb_core::model::{Abbreviation, Id, Snippet, SyncMeta, Timestamp, Trigger};
 use iamb_ipc::{Client, EventBody, ResponseBody, Role};
 use iamb_platform::mock::{MockPlatform, MockWindow};
-use iamb_platform::{FocusToken, LocalEndpoint, PeerPolicy};
+use iamb_platform::{FocusToken, LocalEndpoint, PeerPolicy, Platform};
 use iamb_service::library::{build_view, ensure_personal_profile};
 use iamb_service::log::Logger;
 use iamb_service::paths::DataDirs;
@@ -84,12 +84,36 @@ impl Harness {
     pub fn start_with(entries: &[Entry], tweak: impl FnOnce(&mut WorkerConfig)) -> Self {
         let dir = TempDir::new().expect("temp dir");
         seed(dir.path(), entries);
+        Self::start_in(dir, tweak)
+    }
+
+    /// As [`start_with`](Self::start_with), over a data root the test prepared.
+    pub fn start_in(dir: TempDir, tweak: impl FnOnce(&mut WorkerConfig)) -> Self {
+        Self::launch(dir, |os| Arc::new(os.clone()), tweak)
+    }
+
+    /// As [`start_with`](Self::start_with), with the worker on a platform `wrap` builds around
+    /// the mock (a test double that changes one behaviour). The endpoint stays the mock's.
+    pub fn start_wrapped(
+        entries: &[Entry],
+        wrap: impl FnOnce(&MockPlatform) -> Arc<dyn Platform>,
+        tweak: impl FnOnce(&mut WorkerConfig),
+    ) -> Self {
+        let dir = TempDir::new().expect("temp dir");
+        seed(dir.path(), entries);
+        Self::launch(dir, wrap, tweak)
+    }
+
+    fn launch(
+        dir: TempDir,
+        wrap: impl FnOnce(&MockPlatform) -> Arc<dyn Platform>,
+        tweak: impl FnOnce(&mut WorkerConfig),
+    ) -> Self {
         let os = MockPlatform::new();
         let editor = os.open_window(MockWindow::new("org.example.editor", 100));
         os.focus(editor).expect("window is open");
         let dirs = DataDirs::new(dir.path());
-        let mut config =
-            WorkerConfig::new(dirs.clone(), Arc::new(os.clone()), Arc::new(os.clone()));
+        let mut config = WorkerConfig::new(dirs.clone(), wrap(&os), Arc::new(os.clone()));
         config.policy = PeerPolicy::SameUser;
         config.clock = Arc::new(fixed_clock);
         config.logger = Arc::new(Logger::open(&dirs.logs(), "worker"));

@@ -13,6 +13,10 @@
 //! (`iamb_platform_macos::run_with_main_loop`), which the listener's keyboard-layout reads and
 //! the hotkeys need, and runs on a thread beside it. The supervisor and the mock worker do not
 //! need the loop.
+//!
+//! Before anything else, both processes opt out of the operating system's crash dumps, and
+//! their panic hook writes a heap-free crash report and exits with `EXIT_PANIC` instead of
+//! aborting (`iamb_service::crash`, architecture §8 rule 9).
 
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
@@ -21,6 +25,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::thread;
 
+use iamb_service::crash::{self, Hardening};
 use iamb_service::log::Logger;
 use iamb_service::paths::DataDirs;
 use iamb_service::platform::{self, PlatformChoice};
@@ -87,6 +92,8 @@ fn complain(message: &str) -> u8 {
 }
 
 fn main() -> ExitCode {
+    // First, before any other thread exists: no OS crash dump of this process's memory.
+    let hardening = crash::harden_process();
     let args = match parse(std::env::args_os().skip(1)) {
         Ok(Some(args)) => args,
         Ok(None) => return ExitCode::SUCCESS,
@@ -100,36 +107,33 @@ fn main() -> ExitCode {
         .platform
         .unwrap_or_else(PlatformChoice::default_for_build);
     if args.supervise {
-        return supervise(dirs, choice);
+        return supervise(dirs, choice, &hardening);
     }
     let supervised = args.heartbeat_stdout;
     #[cfg(target_os = "macos")]
     if choice == PlatformChoice::Native {
         let code = iamb_platform_macos::run_with_main_loop(move || {
-            i32::from(work(&dirs, choice, supervised))
+            i32::from(work(&dirs, choice, supervised, &hardening))
         });
         return ExitCode::from(u8::try_from(code).unwrap_or(1));
     }
-    ExitCode::from(work(&dirs, choice, supervised))
+    ExitCode::from(work(&dirs, choice, supervised, &hardening))
 }
 
-/// Panics are logged by location only: a panic message could quote data.
-fn log_panics(log: &Arc<Logger>) {
-    let log = Arc::clone(log);
-    std::panic::set_hook(Box::new(move |info| {
-        let at = info
-            .location()
-            .map_or_else(String::new, |l| format!(" at {}:{}", l.file(), l.line()));
-        log.error(format_args!(
-            "panic in thread {}{at}",
-            thread::current().name().unwrap_or("?")
-        ));
-    }));
+/// The panic hook (by location only: a panic message could quote data) and the log line that
+/// says which crash-dump opt-outs took effect.
+fn crash_handling(log: &Arc<Logger>, dirs: &DataDirs, process: &'static str, h: &Hardening) {
+    crash::install_panic_hook(log, &dirs.logs(), process);
+    if h.complete() {
+        log.info(format_args!("{}", h.summary()));
+    } else {
+        log.warn(format_args!("{}", h.summary()));
+    }
 }
 
-fn supervise(dirs: DataDirs, choice: PlatformChoice) -> ExitCode {
+fn supervise(dirs: DataDirs, choice: PlatformChoice, hardening: &Hardening) -> ExitCode {
     let log = Arc::new(Logger::open(&dirs.logs(), "supervisor"));
-    log_panics(&log);
+    crash_handling(&log, &dirs, "supervisor", hardening);
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,
         Err(e) => return fail(&format!("cannot find this executable: {e}")),
@@ -154,12 +158,14 @@ fn supervise(dirs: DataDirs, choice: PlatformChoice) -> ExitCode {
 }
 
 /// Test faults, read only by debug builds (`IAMB_TEST_FAULT`): `exit-at-start` exits with
-/// status 1 at once; `hang-once` stops the engine thread shortly after the first start in a
+/// status 1 at once; `panic-at-start` panics on a named thread with a message that must not
+/// reach any file; `hang-once` stops the engine thread shortly after the first start in a
 /// data root (a marker file in `run/` keeps later starts healthy).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Fault {
     None,
     ExitAtStart,
+    PanicAtStart,
     HangOnce,
 }
 
@@ -169,6 +175,7 @@ fn fault(dirs: &DataDirs) -> Fault {
     }
     match std::env::var("IAMB_TEST_FAULT").as_deref() {
         Ok("exit-at-start") => Fault::ExitAtStart,
+        Ok("panic-at-start") => Fault::PanicAtStart,
         Ok("hang-once") => {
             let marker = dirs.run().join("test-fault-done");
             if marker.exists() || std::fs::write(&marker, b"").is_err() {
@@ -182,14 +189,25 @@ fn fault(dirs: &DataDirs) -> Fault {
 }
 
 /// The worker; returns its exit status.
-fn work(dirs: &DataDirs, choice: PlatformChoice, supervised: bool) -> u8 {
+fn work(dirs: &DataDirs, choice: PlatformChoice, supervised: bool, hardening: &Hardening) -> u8 {
     let log = Arc::new(Logger::open(&dirs.logs(), "worker"));
-    log_panics(&log);
+    crash_handling(&log, dirs, "worker", hardening);
     let _ = iamb_service::paths::create_private_dir(&dirs.run());
     let fault = fault(dirs);
-    if fault == Fault::ExitAtStart {
-        log.warn(format_args!("test fault: exiting at start"));
-        return 1;
+    match fault {
+        Fault::ExitAtStart => {
+            log.warn(format_args!("test fault: exiting at start"));
+            return 1;
+        }
+        Fault::PanicAtStart => {
+            log.warn(format_args!("test fault: panicking at start"));
+            let _ = thread::Builder::new()
+                .name("iamb-test-fault".to_owned())
+                .spawn(|| panic!("test fault zqxpaniccanary"))
+                .map(thread::JoinHandle::join);
+            return 1;
+        }
+        Fault::None | Fault::HangOnce => {}
     }
     let platform = match platform::select(choice) {
         Ok(p) => p,

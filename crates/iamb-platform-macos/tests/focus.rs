@@ -18,7 +18,7 @@
 //! | a focused `NSSecureTextField` is `Secure`, and the plain field after it is as before | the test window in front | skipped |
 //! | an answer comes within the service's timeout | a focused window | skipped |
 //! | `watch`: first report, `AlreadyRunning`, a field change, `unwatch` | Accessibility for the process that runs the tests | checked to be refused with `PermissionDenied(Accessibility)` |
-//! | `restore_focus` on the focused window and on a process that does not exist | a focused window | the first half is skipped |
+//! | `restore_focus` on a process that does not exist; with the test window brought back to the front first (and that checked), `restore_focus` on it takes the fast path | a focused window | the second half is skipped |
 //!
 //! A skipped check writes `SKIPPED` and its reason to standard error; a failed one writes
 //! `FAILED` and the process exits with a failure. Nothing is typed, and no field's content is
@@ -275,6 +275,22 @@ mod mac {
                         Field::Plain => &ui.plain,
                         Field::Secret => &ui.secret,
                     };
+                    ui.window.makeFirstResponder(Some(responder))
+                })
+            })
+        })
+        .unwrap_or(false)
+    }
+
+    /// Brings the test window to the front again and gives the plain field the focus.
+    fn bring_window_back() -> bool {
+        on_main(|mtm| {
+            UI.with(|ui| {
+                ui.borrow().as_ref().is_some_and(|ui| {
+                    ui.window.makeKeyAndOrderFront(None);
+                    #[allow(deprecated)]
+                    NSApplication::sharedApplication(mtm).activateIgnoringOtherApps(true);
+                    let responder: &NSResponder = &ui.plain;
                     ui.window.makeFirstResponder(Some(responder))
                 })
             })
@@ -556,6 +572,9 @@ mod mac {
             again == Err(PlatformError::AlreadyRunning),
             || format!("{again:?}"),
         );
+        run.check("the watcher's thread runs", platform.is_watching(), || {
+            "is_watching is false while watching".to_owned()
+        });
 
         if let Some(token) = window {
             // Let the reports of the start (the settling looks) pass.
@@ -585,6 +604,11 @@ mod mac {
         run.check("unwatch stops the watcher", stopped == Ok(()), || {
             format!("{stopped:?}")
         });
+        run.check(
+            "is_watching after unwatch is false",
+            !platform.is_watching(),
+            || "is_watching is true after unwatch".to_owned(),
+        );
         while changes.try_recv().is_ok() {}
         if window.is_some() {
             let _ = focus_field(Field::Plain);
@@ -599,7 +623,21 @@ mod mac {
         });
     }
 
-    fn the_focus_is_given_back(run: &mut Run, platform: &Platform, target: Option<FocusToken>) {
+    /// `restore_focus` on the window that has the focus takes the fast path: it sees the
+    /// window in front and returns without activating anything. The slow path (activate,
+    /// then wait for the window) is covered by the unit tests of `focus::restore`, which
+    /// script when the window comes back.
+    ///
+    /// The step first makes sure the window really is in front. On a CI runner it once was
+    /// not (an earlier step or another program had left something else in front), the fast
+    /// path missed, the activation took 500 ms, and the check failed for a reason it does not
+    /// test. What was in front is said as a note.
+    fn the_focus_is_given_back(
+        run: &mut Run,
+        platform: &Platform,
+        window: Option<FocusToken>,
+        target: Option<FocusToken>,
+    ) {
         let nowhere = FocusToken::from_raw(u32::MAX - 1, 1);
         let lost = platform.restore_focus(&nowhere);
         run.check(
@@ -607,12 +645,48 @@ mod mac {
             lost == Err(PlatformError::FocusLost),
             || format!("{lost:?}"),
         );
-        let Some(token) = target else {
+        let Some(target) = target else {
             Run::skipped(
                 "restore_focus on the focused window",
                 "no window has the focus",
             );
             return;
+        };
+        let in_front = platform.focus_token().ok();
+        if in_front != Some(target) {
+            say(&format!(
+                "note: before restore_focus, {in_front:?} was in front, not {target:?} \
+                 (frontmost application: {:?})",
+                platform.focused_app().map(|app| app.pid)
+            ));
+        }
+        let token = if window.is_some() {
+            let what = "the test window is in front again before restore_focus";
+            let back = bring_window_back()
+                && wait_for(FRONT_TIMEOUT, || {
+                    platform.focus_token().ok().filter(|t| *t == target)
+                })
+                .is_some();
+            run.check(what, back, || {
+                format!(
+                    "{:?} is in front, the test window is {target:?}",
+                    platform.focus_token()
+                )
+            });
+            if !back {
+                return;
+            }
+            target
+        } else {
+            // Without the test window: whatever window has the focus now.
+            let Ok(token) = platform.focus_token() else {
+                Run::skipped(
+                    "restore_focus on the focused window",
+                    "no window has the focus",
+                );
+                return;
+            };
+            token
         };
         let started = Instant::now();
         let restored = platform.restore_focus(&token);
@@ -691,7 +765,7 @@ mod mac {
         }
 
         the_watcher_reports(&mut run, &platform, window, accessibility);
-        the_focus_is_given_back(&mut run, &platform, target);
+        the_focus_is_given_back(&mut run, &platform, window, target);
         close_window();
         if run.failed { 1 } else { PASSED }
     }

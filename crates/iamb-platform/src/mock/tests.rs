@@ -406,8 +406,10 @@ fn the_watcher_hears_window_and_field_changes() {
 
     let seen: Arc<Mutex<Vec<FocusChange>>> = Arc::default();
     let log = Arc::clone(&seen);
+    assert!(!os.is_watching());
     os.watch(Box::new(move |change: FocusChange| lock(&log).push(change)))
         .expect("watches");
+    assert!(os.is_watching());
     assert_eq!(
         os.watch(Box::new(|_: FocusChange| {})),
         Err(PlatformError::AlreadyRunning)
@@ -417,6 +419,7 @@ fn the_watcher_hears_window_and_field_changes() {
     os.set_security(b, FieldSecurity::Secure); // moved to the password field of b
     os.set_security(a, FieldSecurity::Secure); // a is not focused: nothing to report
     os.unwatch().expect("stops");
+    assert!(!os.is_watching());
     os.unwatch().expect("twice is fine");
     os.focus(a).expect("open");
 
@@ -976,6 +979,146 @@ fn keys_between_the_markers_land_where_the_caret_is() {
     assert_eq!(os.text(window).as_deref(), Some("bbe right back2 !"));
 }
 
+/// Review 2.8, finding 1: the trigger key moved the focus to a password field while the start
+/// marker travelled. Nothing of the expansion may reach it.
+#[test]
+fn a_focus_change_after_the_start_marker_stops_the_expansion_before_its_first_step() {
+    let os = MockPlatform::new();
+    let form = editor(&os);
+    let password = os.open_window(MockWindow::new("org.example.editor", 100).secure());
+    os.set_text(password, "hunter22");
+    let handoff = Arc::new(TypedHandoff::new());
+    let seen = listening_with(&os, &handoff);
+    os.type_text("brb\t");
+    take(&seen);
+
+    handoff.arm(id(1));
+    os.script_at(InjectionPoint::AfterStartMarker, move |os| {
+        os.focus(password).expect("open");
+    });
+    let request = InjectionRequest::new(
+        id(1),
+        vec![InjectionStep::DeleteBack(4), text_step("be right back\t")],
+    );
+    assert_eq!(
+        os.inject(&request, &handoff),
+        InjectionOutcome::Cancelled(CancelReason::FocusMoved)
+    );
+    assert_eq!(os.text(password).as_deref(), Some("hunter22"), "untouched");
+    assert_eq!(os.text(form).as_deref(), Some("brb\t"));
+    assert_eq!(
+        os.injected(),
+        [
+            Injected::StartMarker(id(1)),
+            Injected::Cancelled(id(1), CancelReason::FocusMoved),
+        ]
+    );
+    // No end marker: the service answers with `InjectionCancelled`.
+    let events = take(&seen);
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0], ListenerEvent::InjectionStarted { .. }));
+}
+
+#[test]
+fn a_focus_change_during_a_wait_stops_the_steps_after_it() {
+    let os = MockPlatform::new();
+    let chat = editor(&os);
+    let other = os.open_window(MockWindow::new("org.example.bank", 300));
+    let handoff = Arc::new(TypedHandoff::new());
+    let seen = listening_with(&os, &handoff);
+    os.type_text("sig ");
+    take(&seen);
+
+    handoff.arm(id(1));
+    os.script_at(InjectionPoint::BeforeStep(3), move |os| {
+        os.focus(other).expect("open");
+    });
+    let request = InjectionRequest::new(
+        id(1),
+        vec![
+            InjectionStep::DeleteBack(4),
+            text_step("Regards,"),
+            InjectionStep::Wait(500),
+            text_step(" Ann"),
+        ],
+    );
+    assert_eq!(
+        os.inject(&request, &handoff),
+        InjectionOutcome::Cancelled(CancelReason::FocusMoved)
+    );
+    assert_eq!(os.text(chat).as_deref(), Some("Regards,"));
+    assert_eq!(
+        os.text(other).as_deref(),
+        Some(""),
+        "nothing went to the other window"
+    );
+    assert_eq!(
+        os.injected().last(),
+        Some(&Injected::Cancelled(id(1), CancelReason::FocusMoved))
+    );
+}
+
+#[test]
+fn a_move_to_another_field_of_the_window_stops_the_expansion_too() {
+    let os = MockPlatform::new();
+    let window = editor(&os);
+    let handoff = Arc::new(TypedHandoff::new());
+    let seen = listening_with(&os, &handoff);
+    os.type_text("brb ");
+    take(&seen);
+
+    handoff.arm(id(1));
+    os.script_at(InjectionPoint::BeforeStep(1), move |os| {
+        os.set_security(window, FieldSecurity::Secure);
+    });
+    let request = InjectionRequest::new(
+        id(1),
+        vec![InjectionStep::DeleteBack(4), text_step("be right back ")],
+    );
+    assert_eq!(
+        os.inject(&request, &handoff),
+        InjectionOutcome::Cancelled(CancelReason::FocusMoved)
+    );
+    assert_eq!(os.text(window).as_deref(), Some(""));
+}
+
+#[test]
+fn the_expansions_own_tab_ends_the_focus_check() {
+    let os = MockPlatform::new();
+    let form = editor(&os);
+    let other = os.open_window(MockWindow::new("org.example.editor", 100));
+    let handoff = Arc::new(TypedHandoff::new());
+    let seen = listening_with(&os, &handoff);
+    os.type_text("me ");
+    take(&seen);
+
+    // The snippet's own Tab moves to the next field; the guard cannot tell that move from
+    // another, so it stops checking after it.
+    handoff.arm(id(1));
+    os.script_at(InjectionPoint::BeforeStep(3), move |os| {
+        os.focus(other).expect("open");
+    });
+    let request = InjectionRequest::new(
+        id(1),
+        vec![
+            InjectionStep::DeleteBack(3),
+            text_step("ann"),
+            InjectionStep::PressKey {
+                key: KeyName::Tab,
+                shift: false,
+                times: 1,
+            },
+            text_step("secret-free"),
+        ],
+    );
+    assert_eq!(
+        os.inject(&request, &handoff),
+        InjectionOutcome::Finished { retyped: 0 }
+    );
+    assert_eq!(os.text(form).as_deref(), Some("ann\t"));
+    assert_eq!(os.text(other).as_deref(), Some("secret-free"));
+}
+
 #[test]
 fn atomic_batches_push_interleaved_keys_behind_the_end_marker() {
     let os = MockPlatform::new();
@@ -1480,4 +1623,88 @@ fn an_injector_without_settings_accepts_only_the_empty_string() {
     assert_eq!(Plain.configure(""), Ok(()));
     assert_eq!(Plain.configure("{}"), Err(PlatformError::Unsupported));
     assert_eq!(Plain.configure(" "), Err(PlatformError::Unsupported));
+}
+
+/// Events with the window each went to.
+type Targeted = Arc<Mutex<Vec<(ListenerEvent, Option<KeyTarget>)>>>;
+
+/// A sink that records each event with the window it went to.
+struct Targets(Targeted);
+
+impl EventSink for Targets {
+    fn deliver(&mut self, event: ListenerEvent) {
+        lock(&self.0).push((event, None));
+    }
+
+    fn deliver_to(&mut self, event: ListenerEvent, target: KeyTarget) {
+        lock(&self.0).push((event, Some(target)));
+    }
+}
+
+#[test]
+fn real_keys_name_the_window_they_went_to() {
+    let os = MockPlatform::new();
+    let editor = editor(&os);
+    let bank = os.open_window(MockWindow::new("org.example.bank", 200).secure());
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    os.start(Box::new(Targets(Arc::clone(&seen))))
+        .expect("listener starts");
+    os.type_text("a");
+    os.focus(bank).expect("open");
+    os.click();
+    os.press(KeyName::Backspace);
+    os.set_composing(true);
+    os.lose_events();
+    let seen = std::mem::take(&mut *lock(&seen));
+    let targets: Vec<Option<KeyTarget>> = seen.iter().map(|(_, t)| *t).collect();
+    assert_eq!(
+        targets,
+        [
+            Some(KeyTarget::window(editor)),
+            Some(KeyTarget::window(bank)),
+            Some(KeyTarget::window(bank)),
+            // Not keys: no target.
+            None,
+            None,
+        ]
+    );
+    // With nothing focused a key goes nowhere and names no window.
+    os.close_window(bank);
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    os.stop().expect("stops");
+    os.start(Box::new(Targets(Arc::clone(&seen))))
+        .expect("listener starts");
+    os.type_text("b");
+    let seen = std::mem::take(&mut *lock(&seen));
+    assert!(matches!(
+        seen.as_slice(),
+        [(ListenerEvent::Char { .. }, None)]
+    ));
+}
+
+#[test]
+fn held_focus_reports_arrive_in_order_when_released() {
+    let os = MockPlatform::new();
+    let editor = editor(&os);
+    let bank = os.open_window(MockWindow::new("org.example.bank", 200));
+    let reports = Arc::new(Mutex::new(Vec::new()));
+    let log = Arc::clone(&reports);
+    os.watch(Box::new(move |change: FocusChange| {
+        lock(&log).push(change.token);
+    }))
+    .expect("watching");
+    assert_eq!(*lock(&reports), [editor], "the current focus, at once");
+
+    os.hold_focus_reports(true);
+    os.hold_focus_reports(true); // holding twice keeps what is held
+    os.focus(bank).expect("open");
+    os.set_security(bank, FieldSecurity::Secure);
+    os.focus(editor).expect("open");
+    assert_eq!(*lock(&reports), [editor], "nothing reported while held");
+    assert_eq!(os.focus_token(), Ok(editor), "the focus itself moved");
+
+    os.hold_focus_reports(false);
+    assert_eq!(*lock(&reports), [editor, bank, bank, editor]);
+    os.focus(bank).expect("open");
+    assert_eq!(lock(&reports).len(), 5, "reported at once again");
 }

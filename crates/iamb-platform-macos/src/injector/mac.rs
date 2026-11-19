@@ -18,7 +18,7 @@ use objc2_core_graphics::{
 
 use super::chunk::TextChunk;
 use super::plan::{KeyPress, keycode};
-use super::run::{self, Output};
+use super::run::{self, Output, SecureInputReads};
 use super::strategy::{Mods, StrategyTable};
 use crate::Platform;
 use crate::clipboard::paste::paste_with_restore;
@@ -101,10 +101,27 @@ fn set_string(event: &CGEvent, units: &[u16]) -> Result<()> {
     Ok(())
 }
 
+/// How long a look at the focus waits for the main thread to say whether secure keyboard
+/// entry is on. An idle main thread answers in microseconds.
+const SECURE_INPUT_LIMIT: Duration = Duration::from_millis(20);
+
+/// Where keys go, as the injector's focus guard compares it (`run`): the frontmost
+/// application's process, whether secure keyboard entry is on (a native password field and
+/// the browsers' password inputs switch it on when they take the focus), and the count of
+/// focus notifications the focus watcher has received (a move to another field or window
+/// inside the application). None of the three asks the application anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct KeysGoTo {
+    app: Option<i32>,
+    secure_input: Option<bool>,
+    notes: u64,
+}
+
 /// The event source of one injection, and the platform for its pastes.
 struct Events<'p> {
     source: CFRetained<CGEventSource>,
     platform: &'p Platform,
+    secure_input: SecureInputReads,
 }
 
 impl<'p> Events<'p> {
@@ -114,7 +131,11 @@ impl<'p> Events<'p> {
         let source = CGEventSource::new(CGEventSourceStateID::Private)
             .ok_or(PlatformError::os(0, "CGEventSourceCreate"))?;
         CGEventSource::set_user_data(Some(&source), Marker::Output.encode_i64());
-        Ok(Self { source, platform })
+        Ok(Self {
+            source,
+            platform,
+            secure_input: SecureInputReads::default(),
+        })
     }
 
     /// A key event from this source with `flags` and `marker`.
@@ -165,6 +186,18 @@ impl<'p> Events<'p> {
 const PASTE_STRING: [u16; 1] = [0x76];
 
 impl Output for Events<'_> {
+    type Focus = KeysGoTo;
+
+    fn focus(&mut self) -> KeysGoTo {
+        KeysGoTo {
+            app: crate::focus::frontmost_pid(),
+            secure_input: self
+                .secure_input
+                .read(|| crate::focus::secure_input(SECURE_INPUT_LIMIT)),
+            notes: crate::focus::focus_notes(),
+        }
+    }
+
     fn marker(&mut self, marker: Marker) -> Result<()> {
         let event = self.key_event(keycode::F20, false, flags(Mods::NONE), marker)?;
         Self::post(&[event]);

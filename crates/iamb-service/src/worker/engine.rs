@@ -13,13 +13,48 @@
 //! drops its parked submit, and a request whose window never gets the focus is dropped after
 //! [`PARK_TIMEOUT`] with the diagnostic `request_focus_timeout`. A request without a token runs
 //! against whatever has the focus.
+//!
+//! # Keys that went to another window (the 2.8 review's finding 5)
+//!
+//! A key reaches this thread straight from the hook; a focus change reaches it later, through
+//! the OS watcher and the focus thread. Until the `FocusChanged` is here, the engine still has
+//! the verdict of the window before, so a key typed into a newly focused password field would
+//! be stored and matched as if typed in the previous field. Where the listener says where a
+//! key went ([`KeyTarget`]), a key whose window is not the one of the last `FocusChanged`
+//! delivered here is not handed to the engine at all (nor to the hand-off, which is disturbed
+//! instead, so an expansion waiting for its start marker is cancelled). Nothing is stored for
+//! it, and the engine's buffer still describes the text before the caret of the window it
+//! belongs to; the `FocusChanged` that follows clears it as usual. A key without a target (the
+//! macOS listener, an event that is not a key) is handled as before. A move to another field
+//! of the same window is not seen this way: the target names a window, not a field.
+//!
+//! # A focus watcher that stopped (the 2.8 review's finding 15)
+//!
+//! A watcher that ended by itself reports nothing more, so the last verdict would stay in force
+//! wherever the focus goes. With every heartbeat this thread asks the platform whether its
+//! watcher still runs ([`FocusInspector::is_watching`](iamb_platform::FocusInspector)), once
+//! the worker started one. When it does not, the engine is told `SecureState(Unknown)` (it is
+//! suspended, and a verdict that still arrives for the old focus is taken as unknown) and the
+//! watcher is started again; its first report, the focus as it is, brings the next verdict.
+//! While starting fails, it is tried again at the next heartbeat.
+//!
+//! # Why an injection stopped
+//!
+//! Every outcome but `Finished` becomes `InjectionCancelled`, whose diagnostic is
+//! `injection_cancelled`. Two reasons of the injector get a code of their own instead, because
+//! the user can act on them: `injection_focus_moved` (the focus changed after the start marker,
+//! the injector stopped there) and `injection_clipboard_not_restorable` (the clipboard held
+//! content its snapshot could not save whole, and the expansion needed a paste). Like every
+//! diagnostic they name the snippet and the app, nothing typed.
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
 use iamb_core::datetime::LocalDateTime;
+use iamb_core::engine::SecureState;
 use iamb_core::engine::{
     Action, Engine, Environment, Event, ExpansionId, FormSessionId, InjectionState,
 };
@@ -28,9 +63,11 @@ use iamb_core::sensitive::Sensitive;
 use iamb_core::template::{FieldSpec, FormValues};
 use iamb_ipc::{EventBody, FocusRef, InjectionStatus, Secret, WireDiagnostic, WireField};
 use iamb_platform::{
-    FocusChange, FocusToken, InjectionRequest, ListenerEvent, Routed, TypedHandoff, split_actions,
+    CancelReason, FocusChange, FocusToken, InjectionOutcome, InjectionRequest, KeyTarget,
+    ListenerEvent, Routed, TypedHandoff, split_actions,
 };
 
+use super::keys::KeyQueue;
 use super::store::StoreMsg;
 use super::{EngineMsg, EngineStatus, Explicit, PALETTE_HOTKEY, Shared, WakeCounters};
 
@@ -80,6 +117,7 @@ pub(crate) struct EngineThread {
     shared: Arc<Shared>,
     engine: Engine,
     handoff: Arc<TypedHandoff>,
+    keys: Arc<KeyQueue>,
     injector_tx: Sender<InjectionRequest>,
     heartbeat: Box<dyn FnMut() + Send>,
     heartbeat_every: Duration,
@@ -96,6 +134,10 @@ pub(crate) struct EngineThread {
     ack_deadline: Option<(FormSessionId, Instant)>,
     values_touched: Option<Instant>,
     paused: bool,
+    /// The code the next `injection_cancelled` diagnostic is given instead (module docs).
+    cancel_code: Option<&'static str>,
+    /// The focus watcher stopped by itself and is not running again yet (module docs).
+    watcher_down: bool,
 }
 
 impl EngineThread {
@@ -103,6 +145,7 @@ impl EngineThread {
         shared: Arc<Shared>,
         engine: Engine,
         handoff: Arc<TypedHandoff>,
+        keys: Arc<KeyQueue>,
         injector_tx: Sender<InjectionRequest>,
         heartbeat: Box<dyn FnMut() + Send>,
         heartbeat_every: Duration,
@@ -111,6 +154,7 @@ impl EngineThread {
             shared,
             engine,
             handoff,
+            keys,
             injector_tx,
             heartbeat,
             heartbeat_every,
@@ -124,6 +168,8 @@ impl EngineThread {
             ack_deadline: None,
             values_touched: None,
             paused: false,
+            cancel_code: None,
+            watcher_down: false,
         }
     }
 
@@ -135,6 +181,7 @@ impl EngineThread {
                 (self.heartbeat)();
                 WakeCounters::bump(&self.shared.wakes.heartbeats);
                 self.next_heartbeat = now + self.heartbeat_every;
+                self.check_watcher();
             }
             self.expire(now);
             let wake = self.next_deadline();
@@ -150,6 +197,7 @@ impl EngineThread {
             }
         }
         self.handoff.clear();
+        self.keys.clear();
     }
 
     fn next_deadline(&self) -> Instant {
@@ -191,9 +239,22 @@ impl EngineThread {
 
     fn on_message(&mut self, msg: EngineMsg) {
         match msg {
-            EngineMsg::Key(event) => self.on_key(event),
+            EngineMsg::Key => {
+                if let Some((event, target)) = self.keys.pop() {
+                    self.on_key(event, target);
+                }
+            }
             EngineMsg::FocusChanged(change) => self.on_focus(change),
-            EngineMsg::Verdict(state) => {
+            EngineMsg::Verdict(mut state) => {
+                if self.watcher_down {
+                    // A verdict for a focus the stopped watcher last saw (an exclusion change
+                    // judges it again): the focus may be anywhere by now.
+                    state = SecureState::Unknown;
+                }
+                // As it is wired, this never finds a capture: each verdict follows its own
+                // `FocusChanged`, which disturbed already, and the engine is suspended between
+                // the two, so nothing can be armed. It stays so the hand-off's writer duty
+                // (disturb before every event that clears the buffer) does not rest on that.
                 self.handoff.disturb();
                 self.handle(Event::SecureState(state));
             }
@@ -201,7 +262,17 @@ impl EngineThread {
                 self.handoff.finish(expansion);
                 if outcome.needs_cancel_event() {
                     self.usage.remove(&expansion);
+                    self.cancel_code = match outcome {
+                        InjectionOutcome::Cancelled(CancelReason::FocusMoved) => {
+                            Some("injection_focus_moved")
+                        }
+                        InjectionOutcome::Cancelled(CancelReason::ClipboardNotRestorable) => {
+                            Some("injection_clipboard_not_restorable")
+                        }
+                        _ => None,
+                    };
                     self.handle(Event::InjectionCancelled { expansion });
+                    self.cancel_code = None;
                 } else {
                     self.record_usage(expansion);
                 }
@@ -283,7 +354,15 @@ impl EngineThread {
         }
     }
 
-    fn on_key(&mut self, event: ListenerEvent) {
+    fn on_key(&mut self, event: ListenerEvent, target: Option<KeyTarget>) {
+        if let (Some(target), Some(focus)) = (target, &self.focus)
+            && !target.is(&focus.token)
+        {
+            // The key went to a window the focus thread has not reported yet: neither the
+            // engine nor the hand-off may see it (module docs).
+            self.handoff.disturb();
+            return;
+        }
         // The hand-off sees every listener event, before the engine does.
         self.handoff.observe(&event);
         if let ListenerEvent::InjectionFinished { expansion, .. } = &event {
@@ -303,6 +382,36 @@ impl EngineThread {
                 }
             }
             Routed::Hotkey(_) => {}
+        }
+    }
+
+    /// With the heartbeat: is the focus watcher the worker started still running? See the
+    /// module docs.
+    fn check_watcher(&mut self) {
+        let platform = Arc::clone(&self.shared.platform);
+        if !self.shared.watching.load(Ordering::Relaxed) || platform.is_watching() {
+            return;
+        }
+        if !self.watcher_down {
+            self.watcher_down = true;
+            self.shared.logger.warn(format_args!(
+                "the focus watcher stopped; the focus counts as unknown until it runs again"
+            ));
+            self.handoff.disturb();
+            self.handle(Event::SecureState(SecureState::Unknown));
+        }
+        let _ = platform.unwatch();
+        match platform.watch(super::focus_sink(self.shared.focus_tx.clone())) {
+            Ok(()) => {
+                self.watcher_down = false;
+                self.shared
+                    .logger
+                    .info(format_args!("the focus watcher runs again"));
+            }
+            Err(e) => self
+                .shared
+                .logger
+                .warn(format_args!("cannot start the focus watcher again: {e}")),
         }
     }
 
@@ -387,7 +496,15 @@ impl EngineThread {
         let (batches, other) = split_actions(actions);
         for action in other {
             match action {
-                Action::Diagnostic(d) => self.shared.diagnostic(WireDiagnostic::from(&d)),
+                Action::Diagnostic(d) => {
+                    let mut wire = WireDiagnostic::from(&d);
+                    if let Some(code) = self.cancel_code
+                        && wire.code == "injection_cancelled"
+                    {
+                        code.clone_into(&mut wire.code);
+                    }
+                    self.shared.diagnostic(wire);
+                }
                 Action::ShowForm {
                     session,
                     snippet,

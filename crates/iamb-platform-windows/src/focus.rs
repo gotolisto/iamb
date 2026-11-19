@@ -146,6 +146,8 @@ mod watch;
 mod os_tests;
 
 #[cfg(windows)]
+pub(crate) use os::keyboard_focus;
+#[cfg(windows)]
 pub(crate) use windows::State;
 
 #[cfg(windows)]
@@ -304,6 +306,19 @@ mod windows {
             Ok(())
         }
 
+        fn is_watching(&self) -> bool {
+            // `watch` and `unwatch` hold the lock only while a thread starts or stops; a
+            // watcher being started or stopped is not counted as running.
+            match self.focus.watcher.try_lock() {
+                Ok(watcher) => watcher.as_ref().is_some_and(watch::Running::is_running),
+                Err(TryLockError::Poisoned(poisoned)) => poisoned
+                    .into_inner()
+                    .as_ref()
+                    .is_some_and(watch::Running::is_running),
+                Err(TryLockError::WouldBlock) => false,
+            }
+        }
+
         fn unwatch(&self) -> Result<()> {
             let mut watcher = self.focus.watcher();
             let Some(running) = watcher.take() else {
@@ -351,8 +366,10 @@ mod windows {
         #[test]
         fn not_watching_is_not_an_error() {
             let platform = Platform::new();
+            assert!(!platform.is_watching());
             assert_eq!(platform.unwatch(), Ok(()));
             assert_eq!(platform.unwatch(), Ok(()));
+            assert!(!platform.is_watching());
             assert_eq!(
                 format!("{:?}", platform.focus),
                 "State { watching: false, inspector: Inspector { workers: 0, .. }, .. }"

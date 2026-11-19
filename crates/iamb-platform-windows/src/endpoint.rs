@@ -332,9 +332,21 @@ enum Done {
     TimedOut,
 }
 
-/// Waits for the operation on `ov` (started on `handle`) up to `timeout`; on a timeout it is
-/// cancelled and waited for, so `ov` and its buffer are free when this returns.
-fn finish(handle: HANDLE, ov: &OVERLAPPED, started: bool, timeout: Option<Duration>) -> Done {
+/// Waits for the operation on `ov` (started on `handle`, signalling `event` when it completes)
+/// up to `timeout`; on a timeout it is cancelled and waited for, so `ov` and its buffer are
+/// free when this returns.
+///
+/// `ov` is a raw pointer, not a reference: until the operation completes the system writes
+/// the structure's status fields, and a shared reference would promise that the memory does
+/// not change (the 2.8 review, finding 20). The event is passed on its own for the same
+/// reason, so that nothing reads the structure while the system may write it.
+fn finish(
+    handle: HANDLE,
+    ov: *const OVERLAPPED,
+    event: HANDLE,
+    started: bool,
+    timeout: Option<Duration>,
+) -> Done {
     if !started {
         let code = last_error();
         if code != ERROR_IO_PENDING {
@@ -343,8 +355,8 @@ fn finish(handle: HANDLE, ov: &OVERLAPPED, started: bool, timeout: Option<Durati
         let ms = timeout.map_or(INFINITE, |t| {
             u32::try_from(t.as_millis()).unwrap_or(INFINITE - 1).max(1)
         });
-        // SAFETY: `ov.hEvent` is a valid event that the system signals on completion.
-        let waited = unsafe { WaitForSingleObject(ov.hEvent, ms) };
+        // SAFETY: `event` is the valid event of `ov`, which the system signals on completion.
+        let waited = unsafe { WaitForSingleObject(event, ms) };
         if waited == WAIT_TIMEOUT {
             // SAFETY: cancels only this operation; `ov` stays valid until the wait below.
             unsafe { CancelIoEx(handle, ov) };
@@ -401,7 +413,7 @@ impl Pipe {
                 &raw mut ov,
             )
         } != 0;
-        match finish(self.handle.0, &ov, started, timeout) {
+        match finish(self.handle.0, &raw const ov, ev.0, started, timeout) {
             Done::Bytes(n) => Ok(usize::try_from(n).unwrap_or(0)),
             Done::TimedOut => Err(io::ErrorKind::TimedOut.into()),
             Done::Failed(
@@ -436,7 +448,7 @@ impl Pipe {
                 &raw mut ov,
             )
         } != 0;
-        match finish(self.handle.0, &ov, started, None) {
+        match finish(self.handle.0, &raw const ov, ev.0, started, None) {
             Done::Bytes(n) => Ok(usize::try_from(n).unwrap_or(0)),
             Done::TimedOut | Done::Failed(_) => Err(io::ErrorKind::BrokenPipe.into()),
         }

@@ -53,6 +53,11 @@
 //!
 //! # Limits
 //!
+//! - **The focus between batches** (`run`). The guard compares the foreground window, its
+//!   process and the control the system names as focused. A window that draws its own fields
+//!   (a browser engine) has one control for all of them, so a move between its fields after
+//!   the start marker is not seen; the service's cancel before the start marker is the only
+//!   guard there. Inside one batch nothing is compared: the system delivers it whole.
 //! - **A dead key pressed between the trigger and the start marker.** It produces no
 //!   character, so the hand-off does not count it, and the application holds it pending: the
 //!   first Backspace of the deletion is spent cancelling it, and one character of the

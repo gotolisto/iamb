@@ -88,6 +88,22 @@ impl InjectionStep {
             }
         })
     }
+
+    /// True when sending this step may move the focus by itself, so that a
+    /// [`FocusGuard`] must stop comparing after it: a key press other than Backspace, Delete
+    /// and Left (Tab, Enter, Escape, Space on a button, an arrow in a list), and text with a
+    /// line break or a tab in it. Deleting, moving the caret back, waiting and the paste
+    /// shortcut do not move it.
+    #[must_use]
+    pub fn may_move_focus(&self) -> bool {
+        match self {
+            Self::DeleteBack(_) | Self::MoveCaretBack(_) | Self::Wait(_) | Self::Paste(_) => false,
+            Self::TypeText(text) => text.contains(['\n', '\r', '\t']),
+            Self::PressKey { key, .. } => {
+                !matches!(key, KeyName::Backspace | KeyName::Delete | KeyName::Left)
+            }
+        }
+    }
 }
 
 impl fmt::Debug for InjectionStep {
@@ -250,6 +266,85 @@ pub fn compensate(steps: &[InjectionStep], typed_after: usize) -> Compensated<'_
     }
 }
 
+/// Stops an injection whose keys would land somewhere else than at its start marker (§4.6,
+/// the 2.8 review's finding 1).
+///
+/// The service cancels an expansion when it hears of a focus change before the start marker
+/// has come back (the hand-off). Once the marker is back, the injector is on its own: the
+/// trigger key (a Tab, an Enter) may have moved the focus while the marker travelled, and a
+/// `Wait` or a paste keeps the injection open for as long as they last. So each injector
+/// notes where the keys go right before its start marker (`F`: window, process and, where the
+/// OS can say it cheaply, the field) and asks the guard before each batch or step it sends.
+///
+/// # What `F` may cost
+///
+/// Reading `F` must never wait for the target application (a hung one would hold the
+/// injection) and must take microseconds, not milliseconds: it is read once per batch, which
+/// for most expansions means twice. The OS crates document what theirs holds.
+///
+/// # The injector's own moves
+///
+/// A step can move the focus itself: `{key tab}` in a form snippet, a line break that submits
+/// a single-line field. The application handles it some time after it was sent, so from
+/// then on a change the guard sees cannot be told from the injector's own. After output for
+/// which [`InjectionStep::may_move_focus`] (or its OS-level equivalent) holds, the injector
+/// calls [`own_move`](Self::own_move) and the guard stops checking for the rest of that
+/// expansion.
+///
+/// ```
+/// use iamb_platform::{CancelReason, FocusGuard};
+///
+/// let mut guard = FocusGuard::new(("editor", 7));
+/// assert_eq!(guard.check(|| ("editor", 7)), Ok(()));
+/// assert_eq!(guard.check(|| ("editor", 8)), Err(CancelReason::FocusMoved));
+///
+/// let mut guard = FocusGuard::new(("form", 1));
+/// guard.own_move();
+/// assert_eq!(guard.check(|| ("form", 2)), Ok(()));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FocusGuard<F> {
+    at_start: F,
+    watching: bool,
+}
+
+impl<F: PartialEq> FocusGuard<F> {
+    /// A guard for the focus `at_start`, read right before the start marker. "No focus" is a
+    /// value like any other: a guard that started without one stops at the first focus.
+    pub const fn new(at_start: F) -> Self {
+        Self {
+            at_start,
+            watching: true,
+        }
+    }
+
+    /// Before a batch or a step: reads the focus with `now` and answers
+    /// [`FocusMoved`](CancelReason::FocusMoved) when it differs from the one at the start
+    /// marker. After [`own_move`](Self::own_move) it reads nothing and answers `Ok`.
+    ///
+    /// # Errors
+    ///
+    /// [`CancelReason::FocusMoved`], with which the injector stops.
+    pub fn check(&mut self, now: impl FnOnce() -> F) -> Result<(), CancelReason> {
+        if !self.watching || now() == self.at_start {
+            Ok(())
+        } else {
+            Err(CancelReason::FocusMoved)
+        }
+    }
+
+    /// The output just sent may move the focus by itself; see the type's docs.
+    pub const fn own_move(&mut self) {
+        self.watching = false;
+    }
+
+    /// False once [`own_move`](Self::own_move) was called.
+    #[must_use]
+    pub const fn is_watching(&self) -> bool {
+        self.watching
+    }
+}
+
 /// How an injection ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InjectionOutcome {
@@ -259,7 +354,11 @@ pub enum InjectionOutcome {
         /// How many characters typed after the trigger were typed again.
         retyped: usize,
     },
-    /// The expansion was not sent: nothing but, at most, the start marker reached the OS.
+    /// The expansion was not sent, or not to the end: no end marker was posted. For the
+    /// reasons of the hand-off nothing but, at most, the start marker reached the OS; for
+    /// [`FocusMoved`](CancelReason::FocusMoved) and
+    /// [`ClipboardNotRestorable`](CancelReason::ClipboardNotRestorable) the steps before the
+    /// stop did.
     Cancelled(CancelReason),
     /// The OS refused part of the output. Some of it may have reached the application; no end
     /// marker was posted.
@@ -282,8 +381,8 @@ impl InjectionOutcome {
 ///
 /// 1. If `typed` is already cancelled for this expansion, return
 ///    [`Cancelled`](InjectionOutcome::Cancelled) without sending anything.
-/// 2. Post the start marker: a no-op event marked
-///    [`Marker::InjectionStart`](crate::Marker::InjectionStart).
+/// 2. Note where the keys go ([`FocusGuard::new`]), then post the start marker: a no-op event
+///    marked [`Marker::InjectionStart`](crate::Marker::InjectionStart).
 /// 3. [`typed.wait_sealed`](TypedHandoff::wait_sealed) with
 ///    [`START_MARKER_TIMEOUT`](crate::START_MARKER_TIMEOUT). An error is a
 ///    [`Cancelled`](InjectionOutcome::Cancelled) outcome; no end marker follows.
@@ -293,8 +392,16 @@ impl InjectionOutcome {
 ///    and the end marker ([`Marker::InjectionEnd`](crate::Marker::InjectionEnd)). Every output
 ///    event carries [`Marker::Output`](crate::Marker::Output). Where the OS can deliver a
 ///    batch without interleaving, everything up to a `Wait` or a `Paste` goes in one batch.
+///    Before each batch (and, where every event is posted on its own, before each step) ask
+///    the [`FocusGuard`]; when the focus has moved since the start marker, stop there with
+///    [`Cancelled`](InjectionOutcome::Cancelled)`(`[`FocusMoved`](CancelReason::FocusMoved)`)`
+///    and post no end marker.
 /// 5. Return [`Finished`](InjectionOutcome::Finished). If the OS refuses part of the output,
 ///    stop, post no end marker and return [`Failed`](InjectionOutcome::Failed).
+///
+/// A paste never replaces clipboard content its snapshot could not save whole (§8 rule 8):
+/// plain text is then typed with keys instead, and other content stops the expansion with
+/// [`ClipboardNotRestorable`](CancelReason::ClipboardNotRestorable).
 ///
 /// An expansion with no steps still gets both markers. The call blocks for the duration of
 /// the injection, including `Wait` steps, so it runs on the worker's injector thread; one
@@ -542,6 +649,81 @@ mod tests {
         let plan = compensate(&[], 0);
         assert_eq!((plan.delete_first, plan.retype), (0, 0));
         assert!(plan.rest.is_empty());
+    }
+
+    #[test]
+    fn the_guard_stops_at_a_moved_focus_and_reads_nothing_after_an_own_move() {
+        let mut guard = FocusGuard::new(Some((100_u32, 7_u64)));
+        assert!(guard.is_watching());
+        assert_eq!(guard.check(|| Some((100, 7))), Ok(()));
+        // Another field of the same window, another window, no focus at all.
+        for moved in [Some((100, 8)), Some((200, 7)), None] {
+            assert_eq!(guard.check(|| moved), Err(CancelReason::FocusMoved));
+        }
+        // A guard that started without a focus stops when one appears.
+        let mut guard = FocusGuard::new(None::<u32>);
+        assert_eq!(guard.check(|| None), Ok(()));
+        assert_eq!(guard.check(|| Some(1)), Err(CancelReason::FocusMoved));
+        // After the injector's own Tab nothing is compared, and nothing is read.
+        let mut guard = FocusGuard::new(1);
+        guard.own_move();
+        assert!(!guard.is_watching());
+        assert_eq!(
+            guard.check(|| unreachable!("no read after an own move")),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn steps_that_may_move_the_focus() {
+        let moving = [
+            InjectionStep::PressKey {
+                key: KeyName::Tab,
+                shift: false,
+                times: 1,
+            },
+            InjectionStep::PressKey {
+                key: KeyName::Enter,
+                shift: true,
+                times: 1,
+            },
+            InjectionStep::PressKey {
+                key: KeyName::Down,
+                shift: false,
+                times: 2,
+            },
+            InjectionStep::TypeText("line\nnext".to_owned()),
+            InjectionStep::TypeText("a\rb".to_owned()),
+            InjectionStep::TypeText("name\tpass".to_owned()),
+        ];
+        for step in &moving {
+            assert!(step.may_move_focus(), "{step:?}");
+        }
+        let staying = [
+            InjectionStep::DeleteBack(3),
+            InjectionStep::MoveCaretBack(2),
+            InjectionStep::Wait(10),
+            InjectionStep::TypeText("be right back".to_owned()),
+            InjectionStep::Paste(ClipboardContent::text("a\nb")),
+            InjectionStep::PressKey {
+                key: KeyName::Backspace,
+                shift: false,
+                times: 1,
+            },
+            InjectionStep::PressKey {
+                key: KeyName::Left,
+                shift: true,
+                times: 1,
+            },
+            InjectionStep::PressKey {
+                key: KeyName::Delete,
+                shift: false,
+                times: 1,
+            },
+        ];
+        for step in &staying {
+            assert!(!step.may_move_focus(), "{step:?}");
+        }
     }
 
     #[test]
