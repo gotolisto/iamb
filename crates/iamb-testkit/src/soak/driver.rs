@@ -29,7 +29,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use iamb_core::model::{Id, Timestamp};
-use iamb_ipc::{Client, RequestBody, ResponseBody, Role, ServiceStatus};
+use iamb_ipc::{Client, PanelKind, RequestBody, ResponseBody, Role, ServiceStatus};
 use iamb_platform::{LocalEndpoint, PeerPolicy};
 use iamb_service::library::{build_view, ensure_personal_profile};
 use iamb_service::paths::DataDirs;
@@ -604,11 +604,14 @@ impl Run<'_> {
         let id = self.library.snippets[index].id;
         let before = status(&mut self.client)?.revision;
         let mut snippet = match self.client.call(RequestBody::GetSnippet { id }) {
-            Ok(ResponseBody::Snippet { snippet }) => snippet,
+            Ok(ResponseBody::Snippet { snippet, .. }) => snippet,
             other => return Err(format!("get_snippet: {other:?}")),
         };
         snippet.body.clone_from(&body);
-        match self.client.call(RequestBody::PutSnippet { snippet }) {
+        match self.client.call(RequestBody::PutSnippet {
+            snippet,
+            tags: None,
+        }) {
             Ok(ResponseBody::Saved { .. }) => {}
             other => return Err(format!("put_snippet: {other:?}")),
         }
@@ -758,6 +761,17 @@ impl Run<'_> {
         }
     }
 
+    /// Says that the palette has the keyboard, or no longer has it.
+    fn panel_focus(&mut self, shown: bool) -> Result<(), String> {
+        match self.client.call(RequestBody::PanelFocus {
+            panel: PanelKind::Palette,
+            shown,
+        }) {
+            Ok(ResponseBody::Done {}) => Ok(()),
+            other => Err(format!("panel_focus: {other:?}")),
+        }
+    }
+
     fn suspended(&mut self) -> Result<bool, String> {
         Ok(status(&mut self.client)?.suspended)
     }
@@ -834,6 +848,14 @@ impl Run<'_> {
                     Ok(ResponseBody::Status { .. }) => {}
                     other => return Err(format!("set_paused: {other:?}")),
                 }
+                record.suspension_as_expected &= !self.suspended()?;
+            }
+            Context::Panel => {
+                self.panel_focus(true)?;
+                record.suspension_as_expected = self.suspended()?;
+                self.type_burst(&literal)?;
+                record.typed_as_expected = self.control.text(Window::Editor)? == literal;
+                self.panel_focus(false)?;
                 record.suspension_as_expected &= !self.suspended()?;
             }
         }

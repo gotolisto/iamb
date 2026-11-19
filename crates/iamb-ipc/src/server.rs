@@ -118,7 +118,8 @@ impl std::fmt::Debug for ServerConnection {
 
 /// A request read from a client: valid, or answered already.
 enum Incoming {
-    Request(Request, usize),
+    /// Boxed: a request can be large (a whole snippet), the other variant is empty.
+    Request(Box<Request>, usize),
     Answered,
 }
 
@@ -315,7 +316,7 @@ impl ServerConnection {
         };
         let size = payload.len();
         match Wire::decode(&payload) {
-            Ok(Wire::Request(request)) => Ok(Some(Incoming::Request(request, size))),
+            Ok(Wire::Request(request)) => Ok(Some(Incoming::Request(Box::new(request), size))),
             Ok(other) => {
                 self.record_in(other.name(), size);
                 self.writer.write(

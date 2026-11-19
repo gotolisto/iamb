@@ -81,7 +81,7 @@ impl Remote {
         match self.call(RequestBody::ListSnippets {
             query: SnippetQuery::default(),
         })? {
-            ResponseBody::Snippets { snippets } => Ok(snippets),
+            ResponseBody::Snippets { snippets, .. } => Ok(snippets),
             _ => Err(unexpected()),
         }
     }

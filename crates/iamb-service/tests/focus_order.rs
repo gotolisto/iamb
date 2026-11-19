@@ -319,7 +319,7 @@ mod wrapped {
         InjectionOutcome, InjectionRequest, Injector, KeyListener, KeyTarget, ListenerEvent,
         LocalEndpoint, LocalListener, LocalStream, LoginItem, LoginItemStatus, MemoryLock,
         MemoryRegion, PeerPolicy, PermissionKind, PermissionStatus, Permissions, PlatformError,
-        Result, TypedHandoff,
+        Result, SessionEvents, SessionSink, TypedHandoff,
     };
 
     pub struct Wrapped {
@@ -494,6 +494,15 @@ mod wrapped {
             self.os.connect(name, policy, timeout)
         }
     }
+
+    impl SessionEvents for Wrapped {
+        fn watch_session(&self, sink: Box<dyn SessionSink>) -> Result<()> {
+            self.os.watch_session(sink)
+        }
+        fn unwatch_session(&self) -> Result<()> {
+            self.os.unwatch_session()
+        }
+    }
 }
 
 /// A harness whose worker runs on [`wrapped::Wrapped`], with a fast heartbeat.
@@ -666,4 +675,52 @@ fn a_stopped_focus_watcher_suspends_until_it_runs_again() {
     h.os.type_text("omw ");
     h.settle();
     assert_eq!(h.text(h.editor), "be right back brb omw on my way ");
+}
+
+/// The 2.8 review's finding 16 with key stamps (macOS): a key typed into one of Iamb's
+/// non-activating panels names Iamb's own process, not the frontmost application the focus
+/// thread reported. While the UI host says a panel has the keyboard such keys are dropped
+/// before the stamp is compared: no `keys_for_unreported_window`, no read of the focus, and
+/// once the panel gives the keyboard back, keys for the reported window expand at once.
+#[test]
+fn keys_typed_into_a_panel_are_not_keys_for_an_unreported_window() {
+    let (h, wrapper) = wrapped_harness();
+    let mut c = h.client(Role::Ui);
+    c.call(RequestBody::PanelFocus {
+        panel: iamb_ipc::PanelKind::Palette,
+        shown: true,
+    })
+    .expect("shown");
+    *wrapper
+        .restamp
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) =
+        Some(iamb_platform::KeyTarget::process(4_000_000));
+    h.os.type_text("brb omw ;sig");
+    std::thread::sleep(iamb_service::worker::RESYNC_AFTER + Duration::from_millis(50));
+    h.os.type_text("x");
+    h.settle();
+    h.worker().sync();
+    assert!(nothing_injected(&h), "{:?}", h.os.injected());
+    let codes = diagnostic_codes(&mut c);
+    assert!(
+        !codes.contains(&"keys_for_unreported_window".to_owned()),
+        "{codes:?}"
+    );
+    *wrapper
+        .restamp
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) = None;
+    c.call(RequestBody::PanelFocus {
+        panel: iamb_ipc::PanelKind::Palette,
+        shown: false,
+    })
+    .expect("hidden");
+    h.os.type_text(" brb ");
+    h.settle();
+    assert!(
+        h.text(h.editor).ends_with(" be right back "),
+        "{:?}",
+        h.text(h.editor)
+    );
 }

@@ -63,16 +63,21 @@ pub enum Context {
     ExcludedApp,
     /// An ordinary field while global pause is on.
     Paused,
+    /// An ordinary field while the UI host says one of Iamb's panels has the keyboard
+    /// (`PanelFocus`; the 2.8 review's finding 16): on macOS what is typed into the palette or
+    /// a form reaches the listener as typed into the application behind it.
+    Panel,
 }
 
 impl Context {
     /// Every context, in the order a round types them.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Ordinary,
         Self::BeforeExpansion,
         Self::SecureField,
         Self::ExcludedApp,
         Self::Paused,
+        Self::Panel,
     ];
 
     /// The name in reports.
@@ -83,6 +88,7 @@ impl Context {
             Self::SecureField => "secure-field",
             Self::ExcludedApp => "excluded-app",
             Self::Paused => "paused",
+            Self::Panel => "panel",
         }
     }
 }
@@ -704,7 +710,7 @@ mod tests {
     #[test]
     fn canaries_have_the_shape_of_the_strategy() {
         let all = generate(2, |t| t.ends_with('a')).expect("canaries");
-        assert_eq!(all.len(), 10);
+        assert_eq!(all.len(), 2 * Context::ALL.len());
         for (i, c) in all.iter().enumerate() {
             assert_eq!(c.number, i + 1);
             assert_eq!(c.text.len(), 16);
@@ -716,7 +722,7 @@ mod tests {
         let mut texts: Vec<&str> = all.iter().map(|c| c.text.as_str()).collect();
         texts.sort_unstable();
         texts.dedup();
-        assert_eq!(texts.len(), 10);
+        assert_eq!(texts.len(), 2 * Context::ALL.len());
     }
 
     #[test]

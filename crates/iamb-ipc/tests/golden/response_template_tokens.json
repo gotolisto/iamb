@@ -2,11 +2,27 @@
   "id": 14,
   "kind": "response",
   "result": {
+    "error": {
+      "code": "E_UNKNOWN_ATTR",
+      "end": 20,
+      "start": 10
+    },
     "tokens": [
       {
         "end": 3,
         "kind": "text",
         "start": 0
+      },
+      {
+        "attributes": [
+          {
+            "name": "name",
+            "value": "Name"
+          }
+        ],
+        "end": 20,
+        "kind": "field",
+        "start": 3
       }
     ],
     "type": "template_tokens"

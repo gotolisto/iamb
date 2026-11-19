@@ -95,11 +95,12 @@ fn another_protocol_version_is_refused_with_a_clear_error() {
     let os = MockPlatform::new();
     server(&os);
     let mut stream = raw(&os);
-    // A client of the previous version (it would misread the answer to `PutExclusion`).
-    match hello(&mut stream, 1, "ui") {
+    // A client of the previous version (it would misread a diagnostic, which always carries
+    // its time since protocol 3, and a preview).
+    match hello(&mut stream, 2, "ui") {
         Wire::Refused { error } => {
             assert_eq!(error.code, ErrorCode::UnsupportedProtocol);
-            assert!(error.message.contains("protocol 2"), "{}", error.message);
+            assert!(error.message.contains("protocol 3"), "{}", error.message);
         }
         other => panic!("expected a refusal, got {}", other.name()),
     }

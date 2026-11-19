@@ -81,6 +81,16 @@ pub struct ClipboardFlavour {
     pub data: Sensitive<Vec<u8>>,
 }
 
+impl Drop for ClipboardFlavour {
+    /// Overwrites the saved bytes before they are freed: a snapshot holds what the user had
+    /// copied (the 2.8 privacy review's finding 13).
+    fn drop(&mut self) {
+        let data = self.data.expose_mut();
+        data.fill(0);
+        std::hint::black_box(data);
+    }
+}
+
 impl fmt::Debug for ClipboardFlavour {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ClipboardFlavour")

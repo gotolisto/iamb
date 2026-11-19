@@ -1751,3 +1751,33 @@ fn held_focus_reports_arrive_in_order_when_released() {
     os.focus(bank).expect("open");
     assert_eq!(lock(&reports).len(), 5, "reported at once again");
 }
+
+#[test]
+fn session_events_reach_the_session_watcher_once_installed() {
+    use crate::session::{SessionEvent, SessionEvents};
+
+    let os = MockPlatform::new();
+    assert!(
+        !os.session_event(SessionEvent::Locked),
+        "nothing watches yet"
+    );
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let log = Arc::clone(&seen);
+    os.watch_session(Box::new(move |e: SessionEvent| {
+        log.lock().expect("not poisoned").push(e);
+    }))
+    .expect("watches");
+    assert!(os.watching_session());
+    assert!(matches!(
+        os.watch_session(Box::new(|_: SessionEvent| {})),
+        Err(PlatformError::AlreadyRunning)
+    ));
+    assert!(os.session_event(SessionEvent::Locked));
+    assert!(os.session_event(SessionEvent::SigningOut));
+    os.unwatch_session().expect("stops");
+    assert!(!os.session_event(SessionEvent::Sleeping));
+    assert_eq!(
+        *seen.lock().expect("not poisoned"),
+        [SessionEvent::Locked, SessionEvent::SigningOut]
+    );
+}

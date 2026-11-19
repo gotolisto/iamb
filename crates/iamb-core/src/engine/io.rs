@@ -435,6 +435,10 @@ pub enum Reason {
     /// `FocusChanged` naming another application; or a request that belongs to another
     /// application than the focused one (then `app` names the focused one).
     RequestCancelled,
+    /// An abbreviation that expands after a delimiter was followed by Enter or Tab, which are
+    /// not delimiters unless the user added them (ADR-0026): nothing expanded. Names the
+    /// snippet, as a match does.
+    NotADelimiter,
 }
 
 impl Reason {
@@ -466,6 +470,7 @@ impl Reason {
                 SuspendReason::Composing => "refused_composing",
             },
             Self::RequestCancelled => "request_cancelled",
+            Self::NotADelimiter => "not_a_delimiter",
         }
     }
 }

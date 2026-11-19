@@ -2,10 +2,51 @@
   "id": 15,
   "kind": "response",
   "result": {
-    "error": {
-      "code": "E_UNKNOWN_TOKEN",
-      "position": 3
+    "cursor": {
+      "offset": 7,
+      "part": 0
     },
+    "fields": [
+      {
+        "default": "M",
+        "kind": "choice",
+        "name": "Size",
+        "options": [
+          "S",
+          "M"
+        ]
+      }
+    ],
+    "parts": [
+      {
+        "blanks": [
+          {
+            "end": 7,
+            "field": "Name",
+            "sample": true,
+            "start": 3
+          }
+        ],
+        "clipboard": [
+          [
+            9,
+            18
+          ]
+        ],
+        "part": "text",
+        "text": "Hi Name, Clipboard"
+      },
+      {
+        "key": "tab",
+        "part": "key",
+        "shift": false,
+        "times": 1
+      },
+      {
+        "ms": 500,
+        "part": "wait"
+      }
+    ],
     "type": "preview"
   }
 }

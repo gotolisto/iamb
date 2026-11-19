@@ -33,7 +33,8 @@ use crate::messages::{EventBody, RequestBody, ResponseBody};
 /// | --- | --- |
 /// | 1 | The first protocol. |
 /// | 2 | `PutExclusion` answers `Exclusions` (the rows written or removed) instead of `Done` (the 2.8 privacy review's finding 6; its follow-up's N7). |
-pub const PROTOCOL_VERSION: u32 = 2;
+/// | 3 | `WireDiagnostic.at` is required (every diagnostic carries its time). `Preview` carries `parts`, `cursor` and `fields` instead of `text`. `TemplateErrorInfo.position` is `start` (with `end` and `snippet` beside it), and template positions are UTF-16 offsets. Additions in the same step, which alone would not raise it: `ListTags`, `DeleteTag`, `ListSnippetSummaries`, `CheckAbbreviation`, `PanelFocus`; tags in `PutSnippet`, `Snippet` and `Snippets`; `SnippetQuery.tag`; the matched field and ranges of a `SearchHit`; the token attributes of `TemplateTokens`; the changed rows of `LibraryChanged`. |
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Who a client is (architecture §6.2). Fixed by the `hello` for the life of the connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -37,11 +37,12 @@ pub use error::IpcError;
 pub use frame::{FrameError, MAX_FRAME_LEN, read_frame, write_frame};
 pub use log::{Direction, MessageLog, MessageRecord, NoLog};
 pub use messages::{
-    AttachmentRef, ConflictPolicy, EventBody, ExcludedEntry, FocusRef, GrantState, HealthReport,
-    InjectionStatus, PendingReview, PermissionName, RemoteRow, RequestBody, ResponseBody,
-    SearchHit, ServiceStatus, ShadowedEntry, SnippetQuery, SyncStatus, TemplateErrorInfo,
-    TemplateToken, TransferFormat, WireAction, WireDiagnostic, WireExclusion, WireField,
-    WireOutboxEntry, WireValues, key_named,
+    AttachmentRef, ChangedRows, ConflictPolicy, EventBody, ExcludedEntry, FocusRef, GrantState,
+    HealthReport, InjectionStatus, PanelKind, PendingReview, PermissionName, PreviewBlank,
+    PreviewCursor, PreviewPart, RemoteRow, RequestBody, ResponseBody, SUMMARY_LINE_CHARS,
+    SearchField, SearchHit, ServiceStatus, ShadowedEntry, SnippetQuery, SnippetSummary, SyncStatus,
+    TAG_COLORS, TagEntry, TemplateAttribute, TemplateErrorInfo, TemplateToken, TransferFormat,
+    WireAction, WireDiagnostic, WireExclusion, WireField, WireOutboxEntry, WireValues, key_named,
 };
 pub use protocol::{
     DecodeError, ErrorBody, ErrorCode, Group, Hello, PROTOCOL_VERSION, Request, Response, Role,
@@ -50,6 +51,10 @@ pub use protocol::{
 pub use roles::{CLIENT_BINARIES, RoleRefusal, check_role, role_of_binary};
 pub use secret::Secret;
 pub use server::{ConnectionWriter, HELLO_TIMEOUT, ServerConnection};
+
+/// How long one `PanelFocus { shown: true }` holds without being sent again
+/// ([`RequestBody::PanelFocus`]).
+pub const PANEL_FOCUS_LEASE: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The build version, sent in `hello` and `welcome`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

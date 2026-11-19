@@ -11,6 +11,13 @@
 //! or entered (form values, a dry run's typed text, a palette query, clipboard text, a preview's
 //! values) are [`Secret`]s.
 //!
+//! # Positions in text
+//!
+//! Every position in a template, a preview or a search hit is a UTF-16 code unit offset, the
+//! unit of JavaScript string indices, so the editor and the palette slice with them directly.
+//! (The verbatim ranges of [`WireAction::TypeText`], which only the command-line tool reads,
+//! stay byte offsets.)
+//!
 //! # Names across the layers (§6.2)
 //!
 //! The engine action `ShowForm` becomes [`EventBody::FormRequested`]; the requests
@@ -66,12 +73,101 @@ impl From<FocusRef> for FocusToken {
     }
 }
 
-/// Which snippets [`RequestBody::ListSnippets`] returns.
+/// Which snippets [`RequestBody::ListSnippets`] and [`RequestBody::ListSnippetSummaries`]
+/// return.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnippetQuery {
     /// Only snippets in this folder (not its subfolders); all folders when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub folder: Option<Id>,
+    /// Only snippets that carry this tag, in any folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<Id>,
+}
+
+/// The eight colours a tag may have (`docs/ux/design-system.md`, token `tag`): the stored
+/// `Tag.color` is one of these names, so a tag looks right in both themes.
+pub const TAG_COLORS: [&str; 8] = [
+    "red", "orange", "yellow", "green", "teal", "blue", "purple", "grey",
+];
+
+/// A tag with the number of live snippets that carry it ([`ResponseBody::Tags`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TagEntry {
+    /// The tag.
+    pub tag: Tag,
+    /// How many snippets carry it.
+    pub snippets: u64,
+}
+
+/// One snippet without its body, for a long list ([`ResponseBody::SnippetSummaries`]).
+/// Library content, not typed text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnippetSummary {
+    /// The snippet.
+    pub id: Id,
+    /// Its folder.
+    pub folder: Id,
+    /// What the user types.
+    pub abbreviation: String,
+    /// The label.
+    pub label: String,
+    /// The first line of the body, at most [`SUMMARY_LINE_CHARS`] characters.
+    pub first_line: String,
+    /// `plain` or `rich`.
+    pub kind: String,
+    /// `immediate` or `delimiter`.
+    pub trigger: String,
+    /// Whether it expands.
+    pub enabled: bool,
+    /// Its tags.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<Id>,
+    /// Why it does not expand although enabled: `duplicate` or a template error code
+    /// (`E_…`), as in [`HealthReport`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub broken: Option<String>,
+    /// When it last changed.
+    pub updated_at: Timestamp,
+}
+
+/// The most characters of a body a [`SnippetSummary`] carries.
+pub const SUMMARY_LINE_CHARS: usize = 120;
+
+/// Rows a library change touched ([`EventBody::LibraryChanged`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChangedRows {
+    /// Snippets written, deleted or restored.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub snippets: Vec<Id>,
+    /// Folders written or deleted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folders: Vec<Id>,
+    /// Tags written or deleted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<Id>,
+}
+
+/// One of Iamb's two panels that can hold the keyboard while another application stays the
+/// active one (macOS non-activating panels, §4.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PanelKind {
+    /// The fill-in form.
+    Form,
+    /// The search palette.
+    Palette,
+}
+
+impl PanelKind {
+    /// The panel's name on the wire, for logs.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Form => "form",
+            Self::Palette => "palette",
+        }
+    }
 }
 
 /// The file format of an import or export.
@@ -95,6 +191,20 @@ pub enum ConflictPolicy {
     Fail,
 }
 
+/// Which field of a snippet a search hit matched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchField {
+    /// The abbreviation.
+    Abbreviation,
+    /// The label.
+    Label,
+    /// The body (the template source).
+    Body,
+    /// The name of a tag it carries.
+    Tag,
+}
+
 /// One search result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SearchHit {
@@ -102,6 +212,13 @@ pub struct SearchHit {
     pub snippet: Id,
     /// Higher is better.
     pub score: u32,
+    /// The field that matched, which decided the score.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<SearchField>,
+    /// The matched ranges `[start, end)` in that field, in UTF-16 code units (for a tag, in
+    /// the tag's name).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ranges: Vec<[usize; 2]>,
 }
 
 /// An immediate abbreviation that hides a longer one.
@@ -222,7 +339,7 @@ impl From<&FieldSpec> for WireField {
 pub struct WireDiagnostic {
     /// The reason code: an engine reason (`injection_cancelled`, `E_…`, …) or a service code
     /// (`form_no_ui_host`, `form_not_acknowledged`, `request_focus_timeout`,
-    /// `keys_for_unreported_window`, …).
+    /// `keys_for_unreported_window`, `panel_focus_expired`, …).
     pub code: String,
     /// The snippet, when a match or request named one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -233,32 +350,33 @@ pub struct WireDiagnostic {
     /// The application, for suspensions and refused requests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub app: Option<String>,
-    /// When it was recorded (UTC milliseconds), when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub at: Option<Timestamp>,
-}
-
-impl From<&Diagnostic> for WireDiagnostic {
-    fn from(d: &Diagnostic) -> Self {
-        Self {
-            code: d.reason.code().to_owned(),
-            snippet: d.snippet,
-            expansion: d.expansion.map(iamb_core::engine::ExpansionId::raw),
-            app: d.app.as_ref().map(|a| a.0.clone()),
-            at: None,
-        }
-    }
+    /// When it was recorded (UTC milliseconds). Every entry carries it (since protocol 3): the
+    /// service stamps each one as it records it, and a dry run's diagnostics with the time of
+    /// the dry run.
+    pub at: Timestamp,
 }
 
 impl WireDiagnostic {
-    /// A diagnostic with only a code.
-    pub fn code(code: impl Into<String>) -> Self {
+    /// A diagnostic with only a code, recorded at `at`.
+    pub fn code(code: impl Into<String>, at: Timestamp) -> Self {
         Self {
             code: code.into(),
             snippet: None,
             expansion: None,
             app: None,
-            at: None,
+            at,
+        }
+    }
+
+    /// The engine's diagnostic `d`, recorded at `at`.
+    #[must_use]
+    pub fn from_engine(d: &Diagnostic, at: Timestamp) -> Self {
+        Self {
+            code: d.reason.code().to_owned(),
+            snippet: d.snippet,
+            expansion: d.expansion.map(iamb_core::engine::ExpansionId::raw),
+            app: d.app.as_ref().map(|a| a.0.clone()),
+            at,
         }
     }
 }
@@ -353,8 +471,10 @@ impl fmt::Debug for WireAction {
     }
 }
 
-impl From<&Action> for WireAction {
-    fn from(action: &Action) -> Self {
+impl WireAction {
+    /// The engine's `action`; a diagnostic among them is stamped with `at`.
+    #[must_use]
+    pub fn from_engine(action: &Action, at: Timestamp) -> Self {
         match action {
             Action::DeleteBack(n) => Self::DeleteBack { n: *n },
             Action::TypeText { text, verbatim } => Self::TypeText {
@@ -397,7 +517,7 @@ impl From<&Action> for WireAction {
                 chars_saved: *chars_saved,
             },
             Action::Diagnostic(d) => Self::Diagnostic {
-                diagnostic: WireDiagnostic::from(d),
+                diagnostic: WireDiagnostic::from_engine(d, at),
             },
         }
     }
@@ -450,25 +570,116 @@ impl From<PermissionName> for iamb_platform::PermissionKind {
     }
 }
 
-/// One token of a parsed template, for the editor's chips (task 3.4 fixes the kinds).
+/// One attribute of a macro token, as written (quotes removed, escapes resolved).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TemplateToken {
-    /// `text`, or the token's name (`date`, `field`, `cursor`, …).
-    pub kind: String,
-    /// Byte offset of the start in the source.
-    pub start: usize,
-    /// Byte offset after the end.
-    pub end: usize,
+pub struct TemplateAttribute {
+    /// The attribute's name (`fmt`, `name`, …).
+    pub name: String,
+    /// Its value.
+    pub value: String,
 }
 
-/// A template error: its code and byte position.
+/// One token of a template, for the editor's chips: literal text, or one macro with its
+/// attributes. Library content.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TemplateToken {
+    /// `text`, or the macro's name: `date`, `time`, `clipboard`, `cursor`, `snippet`, `field`,
+    /// `key`, `wait`, `if`, `else`, `endif`, `lbrace`.
+    pub kind: String,
+    /// UTF-16 offset of the start in the source.
+    pub start: usize,
+    /// UTF-16 offset after the end (a macro's `}` included).
+    pub end: usize,
+    /// A macro's attributes, in source order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attributes: Vec<TemplateAttribute>,
+}
+
+/// A template error: its code and where it is.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TemplateErrorInfo {
     /// The error code (`E_…`).
     pub code: String,
-    /// Byte offset in the source, when known.
+    /// UTF-16 offset in the source where the mistake starts; absent for errors that only
+    /// rendering finds (`E_DATE_RANGE`, `E_WAIT_TOTAL`, …), and for an error inside an
+    /// included snippet (then [`snippet`](Self::snippet) names it).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub position: Option<usize>,
+    pub start: Option<usize>,
+    /// UTF-16 offset after the mistake: the end of the macro it is in, when it is in one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end: Option<usize>,
+    /// The abbreviation of the included snippet whose body holds the mistake.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<String>,
+}
+
+/// A range of preview text that a fill-in field produced.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreviewBlank {
+    /// UTF-16 offset of the start in the part's text.
+    pub start: usize,
+    /// UTF-16 offset after the end.
+    pub end: usize,
+    /// The field's name.
+    pub field: String,
+    /// True when no value was given and the preview shows a sample (the field's name): the
+    /// editor draws it as a grey name tag.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sample: bool,
+}
+
+/// One part of a preview, in output order.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "part", rename_all = "snake_case")]
+pub enum PreviewPart {
+    /// Text that would be typed.
+    Text {
+        /// The text (it can contain the values given).
+        text: String,
+        /// Ranges a text or area field produced.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        blanks: Vec<PreviewBlank>,
+        /// Ranges `[start, end)` (UTF-16) that came from the clipboard; the preview shows the
+        /// sample `Clipboard`, never the real clipboard.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        clipboard: Vec<[usize; 2]>,
+    },
+    /// A key press, drawn as a key badge.
+    Key {
+        /// The key's template name (`enter`, `tab`, …).
+        key: String,
+        /// Hold Shift.
+        shift: bool,
+        /// How many presses.
+        times: u8,
+    },
+    /// A wait, drawn as "· 0.5 s ·".
+    Wait {
+        /// Milliseconds.
+        ms: u32,
+    },
+}
+
+impl fmt::Debug for PreviewPart {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Text { text, blanks, .. } => {
+                write!(f, "Text(len {}, blanks {})", text.len(), blanks.len())
+            }
+            Self::Key { key, shift, times } => write!(f, "Key({key}, shift {shift}, x{times})"),
+            Self::Wait { ms } => write!(f, "Wait({ms})"),
+        }
+    }
+}
+
+/// Where the cursor of a preview is: in part `part` (a text part), at UTF-16 offset `offset`.
+/// `part` is the number of parts when no text surrounds the cursor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreviewCursor {
+    /// The part.
+    pub part: usize,
+    /// The offset in its text.
+    pub offset: usize,
 }
 
 /// An app exclusion on the wire.
@@ -569,9 +780,15 @@ pub enum RequestBody {
         id: Id,
     },
     /// Inserts or updates a snippet. → [`ResponseBody::Saved`]
+    ///
+    /// The id of a deleted snippet restores it (Undo), with its usage and its tags.
     PutSnippet {
         /// The row.
         snippet: Snippet,
+        /// The snippet's tags, all of them: tags it carries and that are not listed are
+        /// detached, in the same write. Absent: its tags stay as they are.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tags: Option<Vec<Id>>,
     },
     /// Soft-deletes a snippet. → [`ResponseBody::Done`]
     DeleteSnippet {
@@ -588,10 +805,43 @@ pub enum RequestBody {
         /// The folder.
         id: Id,
     },
-    /// Inserts or updates a tag. → [`ResponseBody::Saved`]
+    /// Inserts or updates (renames, recolours) a tag. → [`ResponseBody::Saved`]
+    ///
+    /// The colour must be one of [`TAG_COLORS`]; the name must not be empty or be the name of
+    /// another tag of the profile, compared without regard to case (`conflict`).
     PutTag {
         /// The row.
         tag: Tag,
+    },
+    /// The personal profile's tags, each with its count, by name. → [`ResponseBody::Tags`]
+    ListTags {},
+    /// Soft-deletes a tag and detaches it from every snippet. → [`ResponseBody::Done`]
+    DeleteTag {
+        /// The tag.
+        id: Id,
+    },
+    /// One page of snippet summaries (no bodies), in the library's order. →
+    /// [`ResponseBody::SnippetSummaries`]
+    ListSnippetSummaries {
+        /// Which.
+        #[serde(default)]
+        query: SnippetQuery,
+        /// How many matching snippets to skip.
+        #[serde(default)]
+        offset: u32,
+        /// At most this many (at most 1000).
+        limit: u32,
+    },
+    /// What saving a snippet with this abbreviation would run into, without saving anything
+    /// (the editor's warnings, §4.4). → [`ResponseBody::AbbreviationCheck`]
+    CheckAbbreviation {
+        /// The abbreviation.
+        abbreviation: String,
+        /// The trigger it would have: `immediate` or `delimiter`.
+        trigger: String,
+        /// The snippet being edited, left out of the comparison.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        snippet: Option<Id>,
     },
     /// The palette search, over the snapshot. → [`ResponseBody::SearchResults`]
     Search {
@@ -698,6 +948,25 @@ pub enum RequestBody {
     },
     /// Shows the most recently submitted form again. → [`ResponseBody::Done`]
     ReopenLastForm {},
+    /// One of Iamb's panels has the keyboard (`shown: true`) or no longer has it (§4.5; the
+    /// 2.8 review's finding 16). While a panel has it, keys typed are typed into Iamb's own
+    /// window: never buffered, matched, expanded or handed off, whatever the focused
+    /// application. The service answers once the engine has taken it in, so the UI host sends
+    /// `shown: true` and waits for the answer before the panel takes the keyboard, and sends
+    /// `shown: false` once it has given the keyboard back (before `FormSubmit` or
+    /// `ExpandSnippet`).
+    ///
+    /// `shown: true` holds for [`PANEL_FOCUS_LEASE`](crate::PANEL_FOCUS_LEASE): the UI host
+    /// sends it again while the panel stays open (every 10 seconds is enough). A lease that
+    /// runs out, and the UI host disconnecting, end it as `shown: false` would, with the
+    /// diagnostic `panel_focus_expired` for the first. `FormSubmit` and `FormCancel` end a form
+    /// panel; `ExpandSnippet` and `ReopenLastForm` end a palette panel. → [`ResponseBody::Done`]
+    PanelFocus {
+        /// Which panel.
+        panel: PanelKind,
+        /// Whether it has the keyboard.
+        shown: bool,
+    },
 
     // ---- Templates --------------------------------------------------------------------------
     /// Parses a template for the editor. → [`ResponseBody::TemplateTokens`]
@@ -796,7 +1065,7 @@ pub enum RequestBody {
 
 impl RequestBody {
     /// Every request name, in declaration order (the golden tests cover each).
-    pub const NAMES: [&'static str; 40] = [
+    pub const NAMES: [&'static str; 45] = [
         "list_folders",
         "list_snippets",
         "get_snippet",
@@ -805,6 +1074,10 @@ impl RequestBody {
         "put_folder",
         "delete_folder",
         "put_tag",
+        "list_tags",
+        "delete_tag",
+        "list_snippet_summaries",
+        "check_abbreviation",
         "search",
         "import",
         "export",
@@ -822,6 +1095,7 @@ impl RequestBody {
         "form_submit",
         "form_cancel",
         "reopen_last_form",
+        "panel_focus",
         "parse_template",
         "render_preview",
         "recent_diagnostics",
@@ -851,6 +1125,10 @@ impl RequestBody {
             Self::PutFolder { .. } => "put_folder",
             Self::DeleteFolder { .. } => "delete_folder",
             Self::PutTag { .. } => "put_tag",
+            Self::ListTags {} => "list_tags",
+            Self::DeleteTag { .. } => "delete_tag",
+            Self::ListSnippetSummaries { .. } => "list_snippet_summaries",
+            Self::CheckAbbreviation { .. } => "check_abbreviation",
             Self::Search { .. } => "search",
             Self::Import { .. } => "import",
             Self::Export { .. } => "export",
@@ -868,6 +1146,7 @@ impl RequestBody {
             Self::FormSubmit { .. } => "form_submit",
             Self::FormCancel { .. } => "form_cancel",
             Self::ReopenLastForm {} => "reopen_last_form",
+            Self::PanelFocus { .. } => "panel_focus",
             Self::ParseTemplate { .. } => "parse_template",
             Self::RenderPreview { .. } => "render_preview",
             Self::RecentDiagnostics {} => "recent_diagnostics",
@@ -898,6 +1177,10 @@ impl RequestBody {
             | Self::PutFolder { .. }
             | Self::DeleteFolder { .. }
             | Self::PutTag { .. }
+            | Self::ListTags {}
+            | Self::DeleteTag { .. }
+            | Self::ListSnippetSummaries { .. }
+            | Self::CheckAbbreviation { .. }
             | Self::Search { .. }
             | Self::Import { .. }
             | Self::Export { .. }
@@ -914,7 +1197,8 @@ impl RequestBody {
             Self::FormAck { .. }
             | Self::FormSubmit { .. }
             | Self::FormCancel { .. }
-            | Self::ReopenLastForm {} => Group::Forms,
+            | Self::ReopenLastForm {}
+            | Self::PanelFocus { .. } => Group::Forms,
             Self::ParseTemplate { .. } | Self::RenderPreview { .. } => Group::Templates,
             Self::RecentDiagnostics {} => Group::Diagnostics,
             Self::GetSettings {}
@@ -960,11 +1244,17 @@ pub enum ResponseBody {
     Snippets {
         /// The snippets.
         snippets: Vec<Snippet>,
+        /// The tags of each snippet that has any.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        tags: BTreeMap<Id, Vec<Id>>,
     },
     /// One snippet.
     Snippet {
         /// The snippet.
         snippet: Snippet,
+        /// Its tags.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tags: Vec<Id>,
     },
     /// A row was written.
     Saved {
@@ -1031,12 +1321,20 @@ pub enum ResponseBody {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<TemplateErrorInfo>,
     },
-    /// A rendered preview.
+    /// A rendered preview: what an expansion would type (text, key presses, waits), where
+    /// the cursor would be and which fields the form would ask for. Empty, with the error,
+    /// when the template has one. Since protocol 3 (before: the text only).
     Preview {
-        /// The rendered text (it can contain the values given).
+        /// The parts, in output order.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        parts: Vec<PreviewPart>,
+        /// Where the cursor would be.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        text: Option<Secret<String>>,
-        /// The error, if rendering failed.
+        cursor: Option<PreviewCursor>,
+        /// The fill-in fields, in form order.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        fields: Vec<WireField>,
+        /// The error, if the template has one.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<TemplateErrorInfo>,
     },
@@ -1070,11 +1368,43 @@ pub enum ResponseBody {
         /// The attachments.
         attachments: Vec<AttachmentRef>,
     },
+    /// The tags, by name.
+    Tags {
+        /// The tags.
+        tags: Vec<TagEntry>,
+    },
+    /// One page of snippet summaries.
+    SnippetSummaries {
+        /// The library revision the page was read from ([`EventBody::LibraryChanged`]).
+        revision: u64,
+        /// How many snippets match the query in all.
+        total: u64,
+        /// This page.
+        summaries: Vec<SnippetSummary>,
+        /// The offset of the next page; absent on the last.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        next: Option<u32>,
+    },
+    /// What saving an abbreviation would run into.
+    AbbreviationCheck {
+        /// The snippet that has this abbreviation already (compared case-folded, §4.4):
+        /// saving would be refused with `conflict`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        conflict: Option<Id>,
+        /// Snippets it would hide: it expands immediately and their abbreviations start with
+        /// it.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        hides: Vec<Id>,
+        /// Snippets that would hide it: they expand immediately and it starts with their
+        /// abbreviation.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        hidden_by: Vec<Id>,
+    },
 }
 
 impl ResponseBody {
     /// Every response name, in declaration order.
-    pub const NAMES: [&'static str; 21] = [
+    pub const NAMES: [&'static str; 24] = [
         "done",
         "folders",
         "snippets",
@@ -1096,6 +1426,9 @@ impl ResponseBody {
         "outbox",
         "acked",
         "missing_attachments",
+        "tags",
+        "snippet_summaries",
+        "abbreviation_check",
     ];
 
     /// The response's name on the wire (its `type`), for logs.
@@ -1123,6 +1456,9 @@ impl ResponseBody {
             Self::Outbox { .. } => "outbox",
             Self::Acked { .. } => "acked",
             Self::MissingAttachments { .. } => "missing_attachments",
+            Self::Tags { .. } => "tags",
+            Self::SnippetSummaries { .. } => "snippet_summaries",
+            Self::AbbreviationCheck { .. } => "abbreviation_check",
         }
     }
 }
@@ -1146,6 +1482,10 @@ pub enum EventBody {
     LibraryChanged {
         /// The new library revision, counted from 1 at worker start.
         revision: u64,
+        /// The rows the change touched; absent when it may have touched any (an import, a
+        /// change from sync), so the client reloads.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        changed: Option<ChangedRows>,
     },
     /// Pause or another part of the status changed (Engine control).
     StatusChanged {
@@ -1261,15 +1601,28 @@ mod tests {
     fn actions_and_diagnostics_convert() {
         let d =
             Diagnostic::new(Reason::InjectionCancelled).with_expansion(ExpansionId::from_raw(4));
-        let w = WireDiagnostic::from(&d);
+        let w = WireDiagnostic::from_engine(&d, Timestamp(5));
         assert_eq!(w.code, "injection_cancelled");
         assert_eq!(w.expansion, Some(4));
+        assert_eq!(w.at, Timestamp(5));
         assert_eq!(
-            WireAction::from(&Action::PressKey {
-                key: KeyName::Enter,
-                shift: false,
-                times: 1
-            }),
+            WireAction::from_engine(&Action::Diagnostic(d), Timestamp(6)),
+            WireAction::Diagnostic {
+                diagnostic: WireDiagnostic {
+                    at: Timestamp(6),
+                    ..w
+                }
+            }
+        );
+        assert_eq!(
+            WireAction::from_engine(
+                &Action::PressKey {
+                    key: KeyName::Enter,
+                    shift: false,
+                    times: 1
+                },
+                Timestamp(0)
+            ),
             WireAction::PressKey {
                 key: "enter".to_owned(),
                 shift: false,

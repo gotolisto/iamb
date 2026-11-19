@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use iamb_core::model::Id;
-use iamb_ipc::EventBody;
+use iamb_ipc::{ChangedRows, EventBody};
 use iamb_store::{Store, StoreError};
 
 use super::injection::InjectionSettings;
@@ -72,13 +72,31 @@ pub(crate) struct StoreCtx {
     /// The injector's per-app settings, applied from the `injection_overrides` setting.
     pub injection: InjectionSettings,
     library_changed: bool,
+    /// The rows the change touched, while every change so far named its rows.
+    changed: Option<ChangedRows>,
     settings_changed: bool,
 }
 
 impl StoreCtx {
-    /// Library content changed: rebuild the snapshot and send `LibraryChanged`.
+    /// Library content changed, perhaps anywhere: rebuild the snapshot and send
+    /// `LibraryChanged` without rows (the client reloads).
     pub(crate) fn library_changed(&mut self) {
         self.library_changed = true;
+        self.changed = None;
+    }
+
+    /// Library content changed in these rows only: rebuild the snapshot and send
+    /// `LibraryChanged` naming them.
+    pub(crate) fn rows_changed(&mut self, rows: ChangedRows) {
+        if !self.library_changed {
+            self.library_changed = true;
+            self.changed = Some(ChangedRows::default());
+        }
+        if let Some(all) = &mut self.changed {
+            all.snippets.extend(rows.snippets);
+            all.folders.extend(rows.folders);
+            all.tags.extend(rows.tags);
+        }
     }
 
     /// Settings or exclusions changed: rebuild the snapshot and send `SettingsChanged`.
@@ -159,6 +177,7 @@ pub(crate) fn run(
         profile,
         injection,
         library_changed: false,
+        changed: None,
         settings_changed: false,
     };
     loop {
@@ -199,6 +218,7 @@ fn publish(shared: &Shared, ctx: &mut StoreCtx) {
     }
     ctx.library_changed = false;
     ctx.settings_changed = false;
+    let changed = ctx.changed.take();
     let revision = shared.view.get().revision + 1;
     match build_view(&ctx.store, ctx.profile, revision) {
         Ok(view) => {
@@ -211,7 +231,7 @@ fn publish(shared: &Shared, ctx: &mut StoreCtx) {
             if library {
                 shared
                     .clients
-                    .broadcast(&EventBody::LibraryChanged { revision });
+                    .broadcast(&EventBody::LibraryChanged { revision, changed });
             }
             if settings {
                 shared.clients.broadcast(&EventBody::SettingsChanged {});

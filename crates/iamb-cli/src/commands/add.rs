@@ -102,7 +102,10 @@ fn add_remote(mut r: Remote, args: AddArgs, body: String, path: &[String]) -> Re
         body,
         &defaults,
     );
-    match r.call(RequestBody::PutSnippet { snippet })? {
+    match r.call(RequestBody::PutSnippet {
+        snippet,
+        tags: None,
+    })? {
         ResponseBody::Saved { .. } => {}
         _ => return Err(unexpected()),
     }

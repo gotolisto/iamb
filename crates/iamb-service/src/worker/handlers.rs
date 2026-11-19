@@ -4,29 +4,47 @@
 //! without touching the store thread; writes go to the store thread; engine control goes to
 //! the engine thread. The role check has already happened in `iamb-ipc`.
 //!
-//! Not implemented in this build (answered with `not_implemented`): the Templates group (the
-//! editor arrives with task 3.4) and the Sync group (the sync agent arrives with task 4.4).
+//! Templates are answered from the snapshot too ([`crate::templates`]). Not implemented in this
+//! build (answered with `not_implemented`): the Sync group (the sync agent arrives with task
+//! 4.4).
 
+use std::collections::{BTreeSet, HashMap};
+use std::sync::mpsc::channel;
 use std::sync::{Arc, PoisonError};
+use std::time::Duration;
 
 use iamb_core::datetime::LocalDateTime;
 use iamb_core::engine::{Environment, ExclusionReason, FormSessionId, dry_run};
-use iamb_core::model::{Folder, Snippet, Tag, fold_abbreviation};
+use iamb_core::model::{
+    Abbreviation, Folder, Id, Snippet, SnippetKind, SnippetTag, SyncMeta, Tag, Trigger,
+    fold_abbreviation, fold_char,
+};
 use iamb_core::sensitive::Sensitive;
-use iamb_core::template::FormValues;
+use iamb_core::template::{FormValues, overwrite};
 use iamb_ipc::{
-    ConflictPolicy, ErrorBody, ErrorCode, ExcludedEntry, GrantState, HealthReport, RequestBody,
-    ResponseBody, Role, SearchHit, ShadowedEntry, TransferFormat, WireAction, WireDiagnostic,
+    ChangedRows, ConflictPolicy, ErrorBody, ErrorCode, ExcludedEntry, GrantState, HealthReport,
+    RequestBody, ResponseBody, Role, SUMMARY_LINE_CHARS, SearchField, SearchHit, ShadowedEntry,
+    SnippetQuery, SnippetSummary, TAG_COLORS, TagEntry, TransferFormat, WireAction, WireDiagnostic,
     WireExclusion, WireValues,
 };
-use iamb_platform::INJECTION_SETTINGS_KEY;
+use iamb_platform::{Chord, INJECTION_SETTINGS_KEY};
 use iamb_store::transfer::{self, Format, OnConflict, TransferError};
-use iamb_store::{AppExclusion, StoreError};
+use iamb_store::{AppExclusion, ListOptions, StoreError};
 
 use super::store::{StoreCtx, new_id};
-use super::{EngineMsg, Explicit, FocusMsg, Shared};
+use super::{EngineMsg, Explicit, FocusMsg, PALETTE_HOTKEY, Shared};
 use crate::clock;
 use crate::library::{AppIdRule, View, engine_settings};
+use crate::templates;
+
+/// The most summaries one `ListSnippetSummaries` returns.
+const MAX_SUMMARIES: u32 = 1000;
+
+/// The longest tag name, in characters.
+const MAX_TAG_NAME: usize = 64;
+
+/// How long a reader waits for the engine thread to take in a `PanelFocus`.
+const PANEL_FOCUS_WAIT: Duration = Duration::from_secs(2);
 
 type Answer = Result<ResponseBody, ErrorBody>;
 
@@ -92,19 +110,26 @@ pub(crate) fn handle(shared: &Arc<Shared>, _role: Role, body: RequestBody) -> An
             profile: view.profile,
             folders: view.folders.as_ref().clone(),
         }),
-        RequestBody::ListSnippets { query } => Ok(ResponseBody::Snippets {
-            snippets: view
-                .snippets()
-                .filter(|s| query.folder.is_none_or(|f| s.folder_id == f))
-                .cloned()
-                .collect(),
-        }),
+        RequestBody::ListSnippets { query } => {
+            let snippets: Vec<Snippet> = matching(&view, &query).cloned().collect();
+            let tags = snippets
+                .iter()
+                .filter_map(|s| {
+                    let tags = view.tags_of(s.meta.id);
+                    (!tags.is_empty()).then(|| (s.meta.id, tags.to_vec()))
+                })
+                .collect();
+            Ok(ResponseBody::Snippets { snippets, tags })
+        }
         RequestBody::GetSnippet { id } => view
             .snippets()
             .find(|s| s.meta.id == id)
-            .map(|s| ResponseBody::Snippet { snippet: s.clone() })
+            .map(|s| ResponseBody::Snippet {
+                snippet: s.clone(),
+                tags: view.tags_of(id).to_vec(),
+            })
             .ok_or_else(|| err(ErrorCode::NotFound, format!("snippet {id} not found"))),
-        RequestBody::PutSnippet { snippet } => put_snippet(shared, &view, snippet),
+        RequestBody::PutSnippet { snippet, tags } => put_snippet(shared, &view, snippet, tags),
         RequestBody::DeleteSnippet { id } => {
             if !view.snippet_ids.contains(&id) {
                 return Err(err(ErrorCode::NotFound, format!("snippet {id} not found")));
@@ -113,7 +138,10 @@ pub(crate) fn handle(shared: &Arc<Shared>, _role: Role, body: RequestBody) -> An
                 ctx.store
                     .delete_snippet(id, clock::timestamp())
                     .map_err(|e| store_error(&e))?;
-                ctx.library_changed();
+                ctx.rows_changed(ChangedRows {
+                    snippets: vec![id],
+                    ..ChangedRows::default()
+                });
                 Ok(())
             })
             .and_then(|()| done())
@@ -133,6 +161,20 @@ pub(crate) fn handle(shared: &Arc<Shared>, _role: Role, body: RequestBody) -> An
             .and_then(|()| done())
         }
         RequestBody::PutTag { tag } => put_tag(shared, &view, tag),
+        RequestBody::ListTags {} => Ok(ResponseBody::Tags {
+            tags: list_tags(&view),
+        }),
+        RequestBody::DeleteTag { id } => delete_tag(shared, &view, id),
+        RequestBody::ListSnippetSummaries {
+            query,
+            offset,
+            limit,
+        } => summaries(&view, &query, offset, limit),
+        RequestBody::CheckAbbreviation {
+            abbreviation,
+            trigger,
+            snippet,
+        } => check_abbreviation(&view, &abbreviation, &trigger, snippet),
         RequestBody::Search { text, limit } => Ok(ResponseBody::SearchResults {
             hits: search(
                 &view,
@@ -262,7 +304,13 @@ pub(crate) fn handle(shared: &Arc<Shared>, _role: Role, body: RequestBody) -> An
             engine(shared, EngineMsg::FormAck(FormSessionId::from_raw(session)))
         }
         RequestBody::FormSubmit { session, values } => {
-            let values: FormValues = values.into_inner().into_iter().collect();
+            let mut wire = values.into_inner();
+            let values: FormValues = wire.iter().collect();
+            // The copy that came over the wire is overwritten, not only dropped (§4.5).
+            for value in wire.values_mut() {
+                overwrite(value);
+            }
+            drop(wire);
             engine(
                 shared,
                 EngineMsg::Request {
@@ -286,9 +334,36 @@ pub(crate) fn handle(shared: &Arc<Shared>, _role: Role, body: RequestBody) -> An
             },
         ),
 
+        RequestBody::PanelFocus { panel, shown } => {
+            let (reply, answered) = channel();
+            if !shared.to_engine(EngineMsg::PanelFocus {
+                panel,
+                shown,
+                reply,
+            }) {
+                return Err(unavailable());
+            }
+            // Answered once the engine took it in, so the UI host can show the panel then.
+            answered
+                .recv_timeout(PANEL_FOCUS_WAIT)
+                .map_err(|_| unavailable())
+                .and_then(|()| done())
+        }
+
         // ---- Templates ----------------------------------------------------------------------
-        RequestBody::ParseTemplate { .. } | RequestBody::RenderPreview { .. } => {
-            Err(not_implemented("the template editor"))
+        RequestBody::ParseTemplate { source } => {
+            let (tokens, error) = templates::parse(&view.snapshot, &source);
+            Ok(ResponseBody::TemplateTokens { tokens, error })
+        }
+        RequestBody::RenderPreview { source, values } => {
+            let answer =
+                templates::preview(&view.snapshot, &source, values.expose(), (shared.clock)());
+            Ok(ResponseBody::Preview {
+                parts: answer.parts,
+                cursor: answer.cursor,
+                fields: answer.fields,
+                error: answer.error,
+            })
         }
 
         // ---- Diagnostics --------------------------------------------------------------------
@@ -409,19 +484,70 @@ fn put_exclusion(shared: &Shared, app_id: &str, display_name: String, excluded: 
     })
 }
 
-fn put_snippet(shared: &Shared, view: &View, snippet: Snippet) -> Answer {
+/// The snippets of `view` that `query` selects, in the library's order.
+fn matching<'v>(view: &'v View, query: &SnippetQuery) -> impl Iterator<Item = &'v Snippet> {
+    let (folder, tag) = (query.folder, query.tag);
+    view.snippets()
+        .filter(move |s| folder.is_none_or(|f| s.folder_id == f))
+        .filter(move |s| tag.is_none_or(|t| view.tags_of(s.meta.id).contains(&t)))
+}
+
+fn put_snippet(shared: &Shared, view: &View, snippet: Snippet, tags: Option<Vec<Id>>) -> Answer {
     if !view.folders.iter().any(|f| f.meta.id == snippet.folder_id) {
         return Err(err(
             ErrorCode::Invalid,
             "the snippet's folder is not a folder of the personal profile",
         ));
     }
+    if let Some(tags) = &tags
+        && let Some(unknown) = tags
+            .iter()
+            .find(|t| !view.tags.iter().any(|tag| tag.meta.id == **t))
+    {
+        return Err(err(
+            ErrorCode::Invalid,
+            format!("{unknown} is not a tag of the personal profile"),
+        ));
+    }
+    let id = snippet.meta.id;
     write(shared, move |ctx| {
+        let now = clock::timestamp();
+        // One transaction: the row (a deleted one comes back) and its links.
         let meta = ctx
             .store
-            .put_snippet(&snippet, clock::timestamp())
+            .write(|tx| {
+                let meta = tx.put(&snippet, now)?;
+                if let Some(tags) = &tags {
+                    let want: BTreeSet<Id> = tags.iter().copied().collect();
+                    let links: Vec<SnippetTag> = tx
+                        .list::<SnippetTag>(ListOptions::LIVE)?
+                        .into_iter()
+                        .filter(|l| l.snippet_id == id)
+                        .collect();
+                    let mut have = BTreeSet::new();
+                    for link in links {
+                        if !want.contains(&link.tag_id) || !have.insert(link.tag_id) {
+                            tx.delete::<SnippetTag>(link.meta.id, now)?;
+                        }
+                    }
+                    for tag in want.difference(&have) {
+                        tx.put(
+                            &SnippetTag {
+                                meta: SyncMeta::new(new_id(), now),
+                                snippet_id: id,
+                                tag_id: *tag,
+                            },
+                            now,
+                        )?;
+                    }
+                }
+                Ok(meta)
+            })
             .map_err(|e| store_error(&e))?;
-        ctx.library_changed();
+        ctx.rows_changed(ChangedRows {
+            snippets: vec![id],
+            ..ChangedRows::default()
+        });
         Ok(meta)
     })
     .map(|meta| ResponseBody::Saved { meta })
@@ -434,33 +560,233 @@ fn put_folder(shared: &Shared, view: &View, folder: Folder) -> Answer {
             "the folder must belong to the personal profile",
         ));
     }
+    let id = folder.meta.id;
     write(shared, move |ctx| {
         let meta = ctx
             .store
             .put_folder(&folder, clock::timestamp())
             .map_err(|e| store_error(&e))?;
-        ctx.library_changed();
+        ctx.rows_changed(ChangedRows {
+            folders: vec![id],
+            ..ChangedRows::default()
+        });
         Ok(meta)
     })
     .map(|meta| ResponseBody::Saved { meta })
 }
 
-fn put_tag(shared: &Shared, view: &View, tag: Tag) -> Answer {
+/// Checks a tag's name and colour (the UX specification's eight colours) and that no other
+/// tag of the profile has the name.
+fn checked_tag(view: &View, mut tag: Tag) -> Result<Tag, ErrorBody> {
     if tag.profile_id != view.profile {
         return Err(err(
             ErrorCode::Invalid,
             "the tag must belong to the personal profile",
         ));
     }
+    let name = tag.name.trim().to_owned();
+    if name.is_empty() {
+        return Err(err(ErrorCode::Invalid, "the tag name is empty"));
+    }
+    if name.chars().count() > MAX_TAG_NAME || name.chars().any(char::is_control) {
+        return Err(err(
+            ErrorCode::Invalid,
+            format!("a tag name has at most {MAX_TAG_NAME} characters and no line break"),
+        ));
+    }
+    if !tag
+        .color
+        .as_deref()
+        .is_some_and(|c| TAG_COLORS.contains(&c))
+    {
+        return Err(err(
+            ErrorCode::Invalid,
+            format!("the tag colour must be one of {}", TAG_COLORS.join(", ")),
+        ));
+    }
+    let folded = name.to_lowercase();
+    if let Some(other) = view
+        .tags
+        .iter()
+        .find(|t| t.meta.id != tag.meta.id && t.name.trim().to_lowercase() == folded)
+    {
+        return Err(err(
+            ErrorCode::Conflict,
+            format!("the tag {} has that name already", other.meta.id),
+        ));
+    }
+    tag.name = name;
+    Ok(tag)
+}
+
+fn put_tag(shared: &Shared, view: &View, tag: Tag) -> Answer {
+    let tag = checked_tag(view, tag)?;
+    let id = tag.meta.id;
     write(shared, move |ctx| {
         let meta = ctx
             .store
             .put_tag(&tag, clock::timestamp())
             .map_err(|e| store_error(&e))?;
-        ctx.library_changed();
+        ctx.rows_changed(ChangedRows {
+            tags: vec![id],
+            ..ChangedRows::default()
+        });
         Ok(meta)
     })
     .map(|meta| ResponseBody::Saved { meta })
+}
+
+/// The tags, by name, each with the number of snippets that carry it.
+fn list_tags(view: &View) -> Vec<TagEntry> {
+    let mut counts: HashMap<Id, u64> = HashMap::new();
+    for tags in view.snippet_tags.values() {
+        for tag in tags {
+            *counts.entry(*tag).or_default() += 1;
+        }
+    }
+    view.tags
+        .iter()
+        .map(|tag| TagEntry {
+            tag: tag.clone(),
+            snippets: counts.get(&tag.meta.id).copied().unwrap_or(0),
+        })
+        .collect()
+}
+
+/// Deletes a tag and its links in one transaction.
+fn delete_tag(shared: &Shared, view: &View, id: Id) -> Answer {
+    if !view.tags.iter().any(|t| t.meta.id == id) {
+        return Err(err(ErrorCode::NotFound, format!("tag {id} not found")));
+    }
+    write(shared, move |ctx| {
+        let now = clock::timestamp();
+        let snippets = ctx
+            .store
+            .write(|tx| {
+                let mut snippets = Vec::new();
+                for link in tx.list::<SnippetTag>(ListOptions::LIVE)? {
+                    if link.tag_id == id {
+                        tx.delete::<SnippetTag>(link.meta.id, now)?;
+                        snippets.push(link.snippet_id);
+                    }
+                }
+                tx.delete::<Tag>(id, now)?;
+                Ok(snippets)
+            })
+            .map_err(|e| store_error(&e))?;
+        ctx.rows_changed(ChangedRows {
+            snippets,
+            tags: vec![id],
+            ..ChangedRows::default()
+        });
+        Ok(())
+    })
+    .and_then(|()| done())
+}
+
+/// One page of summaries (no bodies beyond the first line).
+fn summaries(view: &View, query: &SnippetQuery, offset: u32, limit: u32) -> Answer {
+    if limit == 0 || limit > MAX_SUMMARIES {
+        return Err(err(
+            ErrorCode::Invalid,
+            format!("the limit must be 1 to {MAX_SUMMARIES}"),
+        ));
+    }
+    let excluded: HashMap<Id, &ExclusionReason> = view
+        .snapshot
+        .excluded()
+        .iter()
+        .map(|e| (e.snippet, &e.reason))
+        .collect();
+    let all: Vec<&Snippet> = matching(view, query).collect();
+    let start = usize::try_from(offset).unwrap_or(usize::MAX).min(all.len());
+    let end = start
+        .saturating_add(usize::try_from(limit).unwrap_or(usize::MAX))
+        .min(all.len());
+    let page: Vec<SnippetSummary> = all[start..end]
+        .iter()
+        .map(|s| {
+            let broken = match (excluded.get(&s.meta.id), view.snapshot.compiled(s.meta.id)) {
+                (Some(ExclusionReason::Duplicate { .. }), _) => Some("duplicate".to_owned()),
+                (Some(ExclusionReason::Template(e)), _) | (None, Some(Err(e))) => {
+                    Some(e.code().to_owned())
+                }
+                _ => None,
+            };
+            SnippetSummary {
+                id: s.meta.id,
+                folder: s.folder_id,
+                abbreviation: s.abbreviation.as_str().to_owned(),
+                label: s.label.clone(),
+                first_line: s
+                    .body
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .take(SUMMARY_LINE_CHARS)
+                    .collect(),
+                kind: match s.kind {
+                    SnippetKind::Plain => "plain",
+                    SnippetKind::Rich => "rich",
+                }
+                .to_owned(),
+                trigger: trigger_name(s.trigger).to_owned(),
+                enabled: s.enabled,
+                tags: view.tags_of(s.meta.id).to_vec(),
+                broken,
+                updated_at: s.meta.updated_at,
+            }
+        })
+        .collect();
+    Ok(ResponseBody::SnippetSummaries {
+        revision: view.revision,
+        total: u64::try_from(all.len()).unwrap_or(u64::MAX),
+        summaries: page,
+        next: (end < all.len()).then(|| u32::try_from(end).unwrap_or(u32::MAX)),
+    })
+}
+
+const fn trigger_name(trigger: Trigger) -> &'static str {
+    match trigger {
+        Trigger::Immediate => "immediate",
+        Trigger::Delimiter => "delimiter",
+    }
+}
+
+/// What saving `abbreviation` would run into (§4.4), from the snapshot.
+fn check_abbreviation(
+    view: &View,
+    abbreviation: &str,
+    trigger: &str,
+    snippet: Option<Id>,
+) -> Answer {
+    let abbreviation =
+        Abbreviation::new(abbreviation).map_err(|e| err(ErrorCode::Invalid, e.to_string()))?;
+    let trigger = match trigger {
+        "immediate" => Trigger::Immediate,
+        "delimiter" => Trigger::Delimiter,
+        _ => {
+            return Err(err(
+                ErrorCode::Invalid,
+                "the trigger must be immediate or delimiter",
+            ));
+        }
+    };
+    let key = abbreviation.fold_key();
+    let conflict = view
+        .snippets()
+        .find(|s| Some(s.meta.id) != snippet && s.abbreviation.fold_key() == key)
+        .map(|s| s.meta.id);
+    let (hides, hidden_by) =
+        view.snapshot
+            .matcher()
+            .shadowing_of(abbreviation.as_str(), trigger, snippet);
+    Ok(ResponseBody::AbbreviationCheck {
+        conflict,
+        hides,
+        hidden_by,
+    })
 }
 
 fn put_setting(shared: &Shared, view: &View, key: String, value: Option<String>) -> Answer {
@@ -474,6 +800,11 @@ fn put_setting(shared: &Shared, view: &View, key: String, value: Option<String>)
         None => next.remove(&key),
     };
     engine_settings(&next).map_err(|m| err(ErrorCode::Invalid, m))?;
+    if key == PALETTE_HOTKEY_KEY {
+        // The chord is taken from the system before it is stored: a chord the system refuses
+        // is the client's error, and the one registered before stays.
+        palette_hotkey(shared, view, value.as_deref())?;
+    }
     let for_injector = key == INJECTION_SETTINGS_KEY;
     write(shared, move |ctx| {
         // The injector checks its settings by taking them (ADR-0025): a refusal is the
@@ -505,34 +836,111 @@ fn put_setting(shared: &Shared, view: &View, key: String, value: Option<String>)
     .and_then(|()| done())
 }
 
+/// The setting that holds the palette's chord.
+const PALETTE_HOTKEY_KEY: &str = "palette_hotkey";
+
+/// Registers `value` as the palette's chord (none: unregisters it). A chord that does not parse
+/// is `invalid`; one the system refuses (another application has it) is `conflict`, and the
+/// chord of the current setting is registered again.
+fn palette_hotkey(shared: &Shared, view: &View, value: Option<&str>) -> Result<(), ErrorBody> {
+    let chord = value
+        .map(|text| {
+            Chord::parse(text).map_err(|_| {
+                err(
+                    ErrorCode::Invalid,
+                    "the palette_hotkey setting is not a valid chord",
+                )
+            })
+        })
+        .transpose()?;
+    let platform = &shared.platform;
+    let _ = platform.unregister(PALETTE_HOTKEY);
+    let Some(chord) = chord else {
+        return Ok(());
+    };
+    match platform.register(PALETTE_HOTKEY, chord) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            shared
+                .logger
+                .warn(format_args!("cannot register the palette hotkey: {e}"));
+            if let Some(old) = view
+                .settings
+                .get(PALETTE_HOTKEY_KEY)
+                .and_then(|t| Chord::parse(t).ok())
+            {
+                let _ = platform.register(PALETTE_HOTKEY, old);
+            }
+            Err(err(
+                ErrorCode::Conflict,
+                "the system refused this shortcut; another application may use it",
+            ))
+        }
+    }
+}
+
+/// Where the case-folded `query` (as characters) first occurs in `text`, as a UTF-16 range of
+/// `text`: folding can turn one character into several, so each folded character remembers
+/// the range of the character it came from.
+fn folded_range(text: &str, query: &[char]) -> Option<[usize; 2]> {
+    if query.is_empty() {
+        return None;
+    }
+    let mut folded: Vec<(char, usize, usize)> = Vec::new();
+    let mut at = 0;
+    for c in text.chars() {
+        let end = at + c.len_utf16();
+        folded.extend(fold_char(c).map(|f| (f, at, end)));
+        at = end;
+    }
+    folded
+        .windows(query.len())
+        .find(|w| w.iter().map(|(c, _, _)| *c).eq(query.iter().copied()))
+        .map(|w| [w[0].1, w[w.len() - 1].2])
+}
+
 /// The palette search over the snapshot: case-folded substring matching on the abbreviation,
-/// the label and the body, best first. Task 3.6 replaces it with the fuzzy search of
+/// the label, the body and the names of the snippet's tags, best first; each hit says which
+/// field matched and where. Task 3.6 replaces it with the fuzzy search of
 /// `iamb-core`.
 fn search(view: &View, query: &str, limit: usize) -> Vec<SearchHit> {
     let q = fold_abbreviation(query.trim());
     if q.is_empty() {
         return Vec::new();
     }
+    let q_chars: Vec<char> = q.chars().collect();
+    let tag_names: HashMap<Id, &str> = view
+        .tags
+        .iter()
+        .map(|t| (t.meta.id, t.name.as_str()))
+        .collect();
     let mut hits: Vec<SearchHit> = view
         .snippets()
         .filter_map(|s| {
             let abbr = s.abbreviation.fold_key();
-            let score = if abbr == q {
-                100
+            let (score, field, text) = if abbr == q {
+                (100, SearchField::Abbreviation, s.abbreviation.as_str())
             } else if abbr.starts_with(&q) {
-                80
+                (80, SearchField::Abbreviation, s.abbreviation.as_str())
             } else if abbr.contains(&q) {
-                60
+                (60, SearchField::Abbreviation, s.abbreviation.as_str())
             } else if fold_abbreviation(&s.label).contains(&q) {
-                40
+                (40, SearchField::Label, s.label.as_str())
             } else if fold_abbreviation(&s.body).contains(&q) {
-                20
+                (20, SearchField::Body, s.body.as_str())
             } else {
-                return None;
+                let name = view
+                    .tags_of(s.meta.id)
+                    .iter()
+                    .filter_map(|t| tag_names.get(t))
+                    .find(|name| fold_abbreviation(name).contains(&q))?;
+                (10, SearchField::Tag, *name)
             };
             Some(SearchHit {
                 snippet: s.meta.id,
                 score,
+                field: Some(field),
+                ranges: folded_range(text, &q_chars).into_iter().collect(),
             })
         })
         .collect();
@@ -617,8 +1025,12 @@ fn dry(
     } else {
         parse_error_hints(view, typed)
     };
+    let at = clock::timestamp();
     Ok(ResponseBody::DryRun {
-        actions: actions.iter().map(WireAction::from).collect(),
+        actions: actions
+            .iter()
+            .map(|a| WireAction::from_engine(a, at))
+            .collect(),
         hints,
     })
 }
@@ -636,7 +1048,7 @@ fn parse_error_hints(view: &View, typed: &str) -> Vec<WireDiagnostic> {
         {
             let key = sn.abbreviation.fold_key();
             if typed_fold.ends_with(&key) || body.is_some_and(|b| b.ends_with(&key)) {
-                let mut d = WireDiagnostic::code(e.code());
+                let mut d = WireDiagnostic::code(e.code(), clock::timestamp());
                 d.snippet = Some(sn.meta.id);
                 out.push(d);
             }

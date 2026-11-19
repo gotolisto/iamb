@@ -61,6 +61,42 @@
 //! watcher is started again; its first report, the focus as it is, brings the next verdict.
 //! While starting fails, it is tried again at the next heartbeat.
 //!
+//! # Iamb's own panels (the 2.8 review's finding 16)
+//!
+//! On macOS the form and the palette are non-activating panels: the application behind them
+//! stays the frontmost one, so the focus thread keeps its verdict (`normal`) and keys typed
+//! into a panel would be buffered and matched as if typed into that application. The UI host
+//! says when a panel has the keyboard (`PanelFocus`). While one has it:
+//!
+//! - every key (`Char`, `Backspace`, `Boundary`) is dropped before the hand-off and the engine
+//!   see it, and before the key-target check (a key typed into the panel names Iamb's own
+//!   process, which is no focus report's): nothing is stored, matched or captured. Injection
+//!   markers, composition, overflow and hotkeys go on as before;
+//! - the engine is held in `own_window`: the panel's start delivers `SecureState(OwnWindow)`
+//!   (after disturbing the hand-off, which cancels an expansion still waiting for its start
+//!   marker), and every verdict the focus thread sends meanwhile is noted and delivered as
+//!   `own_window`. Explicit requests are refused (`refused_own_window`), as in any window of
+//!   Iamb's.
+//!
+//! When the panel gives the keyboard back, the last verdict the focus thread sent for the
+//! current focus is delivered again (none, when the verdict for the latest focus change is
+//! still to come: it is delivered when it comes). This happens on the engine thread, in queue
+//! order, so a `FormSubmit` or `ExpandSnippet` the UI host sends right after `shown: false`
+//! finds the field's verdict in force. A panel's hold ends with `shown: false`; with
+//! `FormSubmit` or `FormCancel` for a form, `ExpandSnippet` or `ReopenLastForm` for the palette
+//! (the UI host hides the panel before it sends them); with the UI host's disconnection; or when
+//! its lease runs out ([`PanelFocus` holds for a lease](iamb_ipc::PANEL_FOCUS_LEASE), renewed
+//! by every `shown: true`), with the diagnostic `panel_focus_expired`. On Windows the panels take
+//! the foreground, so the focus thread reports `own_window` itself; the message changes
+//! nothing there.
+//!
+//! # Screen lock and sign-out (the 2.8 review's finding 13)
+//!
+//! Before each message, a forget requested by the session watcher
+//! ([`Shared::forget_pending`]) is carried out: the remembered form values are overwritten
+//! (`Engine::forget_form_values`, whose values overwrite themselves when dropped) and the
+//! hand-off is disturbed, which overwrites what it captured.
+//!
 //! # Why an injection stopped
 //!
 //! Every outcome but `Finished` becomes `InjectionCancelled`, whose diagnostic is
@@ -85,7 +121,9 @@ use iamb_core::engine::{
 use iamb_core::model::Id;
 use iamb_core::sensitive::Sensitive;
 use iamb_core::template::{FieldSpec, FormValues};
-use iamb_ipc::{EventBody, FocusRef, InjectionStatus, Secret, WireDiagnostic, WireField};
+use iamb_ipc::{
+    EventBody, FocusRef, InjectionStatus, PanelKind, Secret, WireDiagnostic, WireField,
+};
 use iamb_platform::{
     CancelReason, FocusChange, FocusToken, InjectionOutcome, InjectionRequest, KeyTarget,
     ListenerEvent, Routed, TypedHandoff, split_actions,
@@ -93,7 +131,9 @@ use iamb_platform::{
 
 use super::keys::KeyQueue;
 use super::store::StoreMsg;
-use super::{EngineMsg, EngineStatus, Explicit, FocusMsg, PALETTE_HOTKEY, Shared, WakeCounters};
+use super::{
+    EngineMsg, EngineStatus, Explicit, FocusMsg, PALETTE_HOTKEY, Shared, WakeCounters, coded,
+};
 
 /// How long a parked request waits for the focus change of its window: the UI host's
 /// `restore_focus` limit (500 ms) and some margin.
@@ -148,6 +188,12 @@ struct Parked {
     deadline: Instant,
 }
 
+/// One of Iamb's panels has the keyboard (module docs).
+struct Panel {
+    kind: PanelKind,
+    until: Instant,
+}
+
 /// What an expansion in flight will count as usage.
 struct InFlight {
     snippet: Id,
@@ -186,9 +232,19 @@ pub(crate) struct EngineThread {
     unconfirmed: Option<KeyTarget>,
     /// The target of the key being handled, for the request of an expansion it triggers.
     trigger: Option<KeyTarget>,
+    /// A panel of Iamb's has the keyboard (module docs).
+    panel: Option<Panel>,
+    panel_lease: Duration,
+    /// The last verdict for the current focus, as the focus thread sent it; `None` until the
+    /// verdict for the latest focus change is in.
+    verdict: Option<SecureState>,
 }
 
 impl EngineThread {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the thread's parts and settings, each passed once at start"
+    )]
     pub(crate) fn new(
         shared: Arc<Shared>,
         engine: Engine,
@@ -197,6 +253,7 @@ impl EngineThread {
         injector_tx: Sender<InjectionRequest>,
         heartbeat: Box<dyn FnMut() + Send>,
         heartbeat_every: Duration,
+        panel_lease: Duration,
     ) -> Self {
         Self {
             shared,
@@ -221,6 +278,9 @@ impl EngineThread {
             elsewhere: None,
             unconfirmed: None,
             trigger: None,
+            panel: None,
+            panel_lease,
+            verdict: None,
         }
     }
 
@@ -235,6 +295,7 @@ impl EngineThread {
                 self.check_watcher();
             }
             self.expire(now);
+            self.forget_if_asked();
             let wake = self.next_deadline();
             let msg = super::recv_counted(
                 rx,
@@ -261,13 +322,84 @@ impl EngineThread {
         consider(self.parked.as_ref().map(|p| p.deadline));
         consider(self.ack_deadline.map(|(_, t)| t));
         consider(self.values_touched.map(|t| t + FORM_VALUES_TTL));
+        consider(self.panel.as_ref().map(|p| p.until));
         next
+    }
+
+    /// Carries out a forget the session watcher asked for (module docs).
+    fn forget_if_asked(&mut self) {
+        if self.shared.forget_pending.swap(false, Ordering::SeqCst) {
+            self.forget();
+        }
+    }
+
+    /// Overwrites the remembered form values and what the hand-off captured.
+    fn forget(&mut self) {
+        self.values_touched = None;
+        self.engine.forget_form_values();
+        self.handoff.disturb();
+    }
+
+    /// A verdict from the focus thread (or the watcher check): noted, and delivered as
+    /// `own_window` while a panel has the keyboard (module docs).
+    fn deliver_verdict(&mut self, state: SecureState) {
+        self.verdict = Some(state);
+        let state = if self.panel.is_some() {
+            SecureState::OwnWindow
+        } else {
+            state
+        };
+        self.handoff.disturb();
+        self.handle(Event::SecureState(state));
+    }
+
+    /// `PanelFocus` (module docs).
+    fn panel_focus(&mut self, kind: PanelKind, shown: bool) {
+        if shown {
+            let until = Instant::now() + self.panel_lease;
+            if let Some(panel) = &mut self.panel {
+                panel.kind = kind;
+                panel.until = until;
+                return;
+            }
+            self.panel = Some(Panel { kind, until });
+            self.shared
+                .logger
+                .info(format_args!("the {} panel has the keyboard", kind.as_str()));
+            self.handoff.disturb();
+            self.handle(Event::SecureState(SecureState::OwnWindow));
+        } else if self.panel.as_ref().is_some_and(|p| p.kind == kind) {
+            self.end_panel();
+        }
+    }
+
+    /// The panel no longer has the keyboard: the field's own verdict is in force again.
+    fn end_panel(&mut self) {
+        let Some(panel) = self.panel.take() else {
+            return;
+        };
+        self.shared.logger.info(format_args!(
+            "the {} panel gave the keyboard back",
+            panel.kind.as_str()
+        ));
+        if let Some(state) = self.verdict {
+            self.handoff.disturb();
+            self.handle(Event::SecureState(state));
+        }
+    }
+
+    /// A request that the UI host sends only once `kind`'s panel is hidden ends its hold.
+    fn panel_hidden(&mut self, kind: PanelKind) {
+        if self.panel.as_ref().is_some_and(|p| p.kind == kind) {
+            self.end_panel();
+        }
     }
 
     /// The last UI host disconnected: every form session it was sent is cancelled. Without
     /// this a form acknowledged by a UI host that then died stays open, and the engine refuses
     /// every typed match with `form_open` until the worker restarts.
     fn ui_host_gone(&mut self) {
+        self.end_panel();
         self.ack_deadline = None;
         if matches!(
             &self.parked,
@@ -281,8 +413,7 @@ impl EngineThread {
         let sessions: Vec<FormSessionId> = self.forms.drain().map(|(s, _)| s).collect();
         for session in sessions {
             self.handle(Event::FormCancelled { session });
-            self.shared
-                .diagnostic(WireDiagnostic::code("form_ui_host_gone"));
+            self.shared.diagnostic(coded("form_ui_host_gone"));
         }
     }
 
@@ -298,8 +429,13 @@ impl EngineThread {
             self.ack_deadline = None;
             self.forms.remove(&session);
             self.handle(Event::FormCancelled { session });
-            self.shared
-                .diagnostic(WireDiagnostic::code("form_not_acknowledged"));
+            self.shared.diagnostic(coded("form_not_acknowledged"));
+        }
+        if self.panel.as_ref().is_some_and(|p| now >= p.until) {
+            // The UI host stopped renewing its panel's hold: it may hang. Keys count as typed
+            // into the focused application again.
+            self.shared.diagnostic(coded("panel_focus_expired"));
+            self.end_panel();
         }
         if self
             .values_touched
@@ -310,7 +446,9 @@ impl EngineThread {
         }
     }
 
+    #[allow(clippy::too_many_lines, reason = "one arm per message")]
     fn on_message(&mut self, msg: EngineMsg) {
+        self.forget_if_asked();
         match msg {
             EngineMsg::Key => {
                 if let Some((event, target)) = self.keys.pop() {
@@ -324,12 +462,12 @@ impl EngineThread {
                     // judges it again): the focus may be anywhere by now.
                     state = SecureState::Unknown;
                 }
-                // As it is wired, this never finds a capture: each verdict follows its own
-                // `FocusChanged`, which disturbed already, and the engine is suspended between
-                // the two, so nothing can be armed. It stays so the hand-off's writer duty
-                // (disturb before every event that clears the buffer) does not rest on that.
-                self.handoff.disturb();
-                self.handle(Event::SecureState(state));
+                // The disturb in `deliver_verdict`, as it is wired, never finds a capture:
+                // each verdict follows its own `FocusChanged`, which disturbed already, and the
+                // engine is suspended between the two, so nothing can be armed. It stays so
+                // the hand-off's writer duty (disturb before every event that clears the
+                // buffer) does not rest on that.
+                self.deliver_verdict(state);
             }
             EngineMsg::Injected { expansion, outcome } => {
                 self.handoff.finish(expansion);
@@ -356,8 +494,15 @@ impl EngineThread {
                     }
                 }
             }
-            EngineMsg::Request { request, focus } => self.on_request(request, focus),
+            EngineMsg::Request { request, focus } => {
+                match &request {
+                    Explicit::Submit { .. } => self.panel_hidden(PanelKind::Form),
+                    Explicit::Expand(_) | Explicit::Reopen => self.panel_hidden(PanelKind::Palette),
+                }
+                self.on_request(request, focus);
+            }
             EngineMsg::FormCancel(session) => {
+                self.panel_hidden(PanelKind::Form);
                 self.forms.remove(&session);
                 if self.ack_deadline.is_some_and(|(s, _)| s == session) {
                     self.ack_deadline = None;
@@ -369,6 +514,14 @@ impl EngineThread {
                 self.handle(Event::FormCancelled { session });
             }
             EngineMsg::UiHostGone => self.ui_host_gone(),
+            EngineMsg::PanelFocus {
+                panel,
+                shown,
+                reply,
+            } => {
+                self.panel_focus(panel, shown);
+                let _ = reply.send(());
+            }
             EngineMsg::FormAck(session) => {
                 if self.ack_deadline.is_some_and(|(s, _)| s == session) {
                     self.ack_deadline = None;
@@ -386,10 +539,9 @@ impl EngineThread {
                 }
             }
             EngineMsg::Snapshot(snapshot) => self.handle(Event::SnapshotChanged(snapshot)),
-            EngineMsg::ForgetFormValues => {
-                self.values_touched = None;
-                self.engine.forget_form_values();
-            }
+            // The forget itself ran at the top of this function, when the session watcher or
+            // `Worker::forget_form_values` asked for it; the message only woke the thread.
+            EngineMsg::ForgetFormValues => {}
             EngineMsg::Status(reply) => {
                 let _ = reply.send(self.status());
             }
@@ -429,6 +581,18 @@ impl EngineThread {
     }
 
     fn on_key(&mut self, event: ListenerEvent, target: Option<KeyTarget>) {
+        if self.panel.is_some()
+            && matches!(
+                event,
+                ListenerEvent::Char { .. }
+                    | ListenerEvent::Backspace { .. }
+                    | ListenerEvent::Boundary { .. }
+            )
+        {
+            // Typed into one of Iamb's panels: neither the hand-off nor the engine sees it
+            // (module docs). Dropping the event drops its character.
+            return;
+        }
         // A stamp the inspector contradicted counts as none (module docs).
         let target = target.filter(|t| self.unconfirmed != Some(*t));
         if let (Some(target), Some(focus)) = (target, &self.focus)
@@ -496,8 +660,7 @@ impl EngineThread {
         episode.synced = Some(now);
         let lasted = now.duration_since(episode.since) >= RESYNC_AFTER;
         if first {
-            self.shared
-                .diagnostic(WireDiagnostic::code("keys_for_unreported_window"));
+            self.shared.diagnostic(coded("keys_for_unreported_window"));
         }
         self.resync(target, lasted);
     }
@@ -545,8 +708,7 @@ impl EngineThread {
             self.shared.logger.warn(format_args!(
                 "the focus watcher stopped; the focus counts as unknown until it runs again"
             ));
-            self.handoff.disturb();
-            self.handle(Event::SecureState(SecureState::Unknown));
+            self.deliver_verdict(SecureState::Unknown);
         }
         let _ = platform.unwatch();
         match platform.watch(super::focus_sink(self.shared.focus_tx.clone())) {
@@ -566,6 +728,7 @@ impl EngineThread {
     fn on_focus(&mut self, change: FocusChange) {
         // Anything else that clears the engine's buffer disturbs a capture.
         self.handoff.disturb();
+        self.verdict = None;
         self.handle(Event::FocusChanged(change.app.app.clone()));
         let token = change.token;
         self.focus = Some(change);
@@ -615,7 +778,7 @@ impl EngineThread {
     }
 
     fn dropped(&self, request: &Explicit, code: &str) {
-        let mut d = WireDiagnostic::code(code);
+        let mut d = coded(code);
         if let Explicit::Expand(snippet) = request {
             d.snippet = Some(*snippet);
         }
@@ -647,7 +810,7 @@ impl EngineThread {
         for action in other {
             match action {
                 Action::Diagnostic(d) => {
-                    let mut wire = WireDiagnostic::from(&d);
+                    let mut wire = WireDiagnostic::from_engine(&d, crate::clock::timestamp());
                     if let Some(code) = self.cancel_code
                         && wire.code == "injection_cancelled"
                     {
@@ -712,7 +875,7 @@ impl EngineThread {
             // §4.5 step 2: abandon. Hook point: ask the supervisor to start the UI host, once
             // the supervisor runs one (it does not yet).
             self.handle(Event::FormCancelled { session });
-            let mut d = WireDiagnostic::code("form_no_ui_host");
+            let mut d = coded("form_no_ui_host");
             d.snippet = Some(snippet);
             self.shared.diagnostic(d);
             return;

@@ -365,6 +365,23 @@ On Windows the file is `C:\iamb-compat\library.db`. The worker log
 `the injection_overrides setting was refused` with the reason. To remove all overrides, delete
 the row: `DELETE FROM setting WHERE key = 'injection_overrides';`.
 
+## Screen lock and sign-out (finding 13 of the 2.8 review)
+
+The worker forgets a form's remembered answers when the session tells it the user left
+(architecture §4.5, §5). The service tests cover the mock; these checks cover the systems. Each
+check: with the service running and its log open (`logs/worker.log`), do the action and look
+for the line `session event <name>`; then unlock or log in again.
+
+| Action | Windows | macOS |
+| --- | --- | --- |
+| Lock the screen | Win+L: `session event locked` | Ctrl+Cmd+Q: `session event locked` (the distributed notification; the display sleeping says the same) |
+| Switch user | Start menu, switch user: `session event locked` (the session locks first) | Fast user switching menu: `session event switched_out` |
+| Sign out | Sign out: `session event signing_out` (the worker then ends with the session) | Log Out: `session event signing_out` |
+| A credential prompt on the secure desktop | An elevation prompt: `session event locked` (a report too many; only a form's answers are lost) | — |
+
+With a form snippet (a `{field}`), submit it once, lock and unlock, and type it again: the form
+opens empty. Record a missing line as a failure of the session watcher, with the OS version.
+
 ## Delivering the result
 
 1. Run `iamb-compat report --results compat-<os>.jsonl` for each OS.

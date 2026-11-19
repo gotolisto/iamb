@@ -27,6 +27,7 @@ pub mod log;
 pub mod paths;
 pub mod platform;
 pub mod supervisor;
+pub mod templates;
 pub mod worker;
 
 /// The build version.

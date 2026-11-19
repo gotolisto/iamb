@@ -9,6 +9,7 @@ use crate::listener::KeyListener;
 use crate::login_item::LoginItem;
 use crate::memory::MemoryLock;
 use crate::permissions::Permissions;
+use crate::session::SessionEvents;
 
 /// Everything Iamb needs from an operating system: every platform trait at once.
 ///
@@ -39,6 +40,7 @@ pub trait Platform:
     + LoginItem
     + MemoryLock
     + LocalEndpoint
+    + SessionEvents
 {
 }
 
@@ -52,5 +54,6 @@ impl<T> Platform for T where
         + LoginItem
         + MemoryLock
         + LocalEndpoint
+        + SessionEvents
 {
 }

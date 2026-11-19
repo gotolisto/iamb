@@ -24,7 +24,7 @@
       {
         "entity": "tag",
         "row": {
-          "color": "#aabbcc",
+          "color": "blue",
           "created_at": 1763400000000,
           "deleted_at": null,
           "id": "03030303-0303-0303-0303-030303030303",
@@ -38,6 +38,6 @@
     ],
     "type": "apply_remote"
   },
-  "id": 35,
+  "id": 40,
   "kind": "request"
 }

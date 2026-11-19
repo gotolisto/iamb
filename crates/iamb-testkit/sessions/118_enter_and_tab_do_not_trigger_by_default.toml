@@ -1,4 +1,4 @@
-description = "By default Enter and Tab end a word without expanding it: the application acts on them first (review 2.8, finding 1)"
+description = "By default Enter and Tab end a word without expanding it: the application acts on them first (review 2.8, finding 1); a diagnostic names the snippet that did not expand"
 
 [[snippet]]
 abbr = "brb"
@@ -9,7 +9,7 @@ type = "brb"
 
 [[step]]
 key = "enter"
-expect = []
+expect = [{ diagnostic = "not_a_delimiter", snippet = "brb" }]
 buffered = 0
 
 [[step]]
@@ -17,6 +17,14 @@ type = "brb"
 
 [[step]]
 key = "tab"
+expect = [{ diagnostic = "not_a_delimiter", snippet = "brb" }]
+buffered = 0
+
+[[step]]
+type = "xyz"
+
+[[step]]
+key = "enter"
 expect = []
 buffered = 0
 

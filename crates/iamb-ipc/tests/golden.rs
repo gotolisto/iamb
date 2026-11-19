@@ -13,12 +13,13 @@ use iamb_core::model::{
     Abbreviation, Folder, FolderDefaults, Id, Sha256, Snippet, SyncMeta, Tag, Timestamp,
 };
 use iamb_ipc::{
-    AttachmentRef, ConflictPolicy, ErrorBody, ErrorCode, EventBody, ExcludedEntry, FocusRef,
-    GrantState, HealthReport, Hello, InjectionStatus, PROTOCOL_VERSION, PendingReview,
-    PermissionName, RemoteRow, Request, RequestBody, Response, ResponseBody, Role, SearchHit,
-    Secret, ServiceStatus, ShadowedEntry, SnippetQuery, SyncStatus, TemplateErrorInfo,
-    TemplateToken, TransferFormat, Welcome, Wire, WireAction, WireDiagnostic, WireExclusion,
-    WireField, WireOutboxEntry,
+    AttachmentRef, ChangedRows, ConflictPolicy, ErrorBody, ErrorCode, EventBody, ExcludedEntry,
+    FocusRef, GrantState, HealthReport, Hello, InjectionStatus, PROTOCOL_VERSION, PanelKind,
+    PendingReview, PermissionName, PreviewBlank, PreviewCursor, PreviewPart, RemoteRow, Request,
+    RequestBody, Response, ResponseBody, Role, SearchField, SearchHit, Secret, ServiceStatus,
+    ShadowedEntry, SnippetQuery, SnippetSummary, SyncStatus, TagEntry, TemplateAttribute,
+    TemplateErrorInfo, TemplateToken, TransferFormat, Welcome, Wire, WireAction, WireDiagnostic,
+    WireExclusion, WireField, WireOutboxEntry,
 };
 
 fn id(n: u8) -> Id {
@@ -57,7 +58,7 @@ fn tag() -> Tag {
         meta: meta(3),
         profile_id: id(9),
         name: "work".to_owned(),
-        color: Some("#aabbcc".to_owned()),
+        color: Some("blue".to_owned()),
     }
 }
 
@@ -91,7 +92,7 @@ fn diagnostic() -> WireDiagnostic {
         snippet: Some(id(1)),
         expansion: Some(7),
         app: None,
-        at: Some(Timestamp(1_763_400_000_500)),
+        at: Timestamp(1_763_400_000_500),
     }
 }
 
@@ -111,14 +112,33 @@ fn requests() -> Vec<RequestBody> {
         RequestBody::ListSnippets {
             query: SnippetQuery {
                 folder: Some(id(2)),
+                tag: None,
             },
         },
         RequestBody::GetSnippet { id: id(1) },
-        RequestBody::PutSnippet { snippet: snippet() },
+        RequestBody::PutSnippet {
+            snippet: snippet(),
+            tags: Some(vec![id(3)]),
+        },
         RequestBody::DeleteSnippet { id: id(1) },
         RequestBody::PutFolder { folder: folder() },
         RequestBody::DeleteFolder { id: id(2) },
         RequestBody::PutTag { tag: tag() },
+        RequestBody::ListTags {},
+        RequestBody::DeleteTag { id: id(3) },
+        RequestBody::ListSnippetSummaries {
+            query: SnippetQuery {
+                folder: None,
+                tag: Some(id(3)),
+            },
+            offset: 200,
+            limit: 100,
+        },
+        RequestBody::CheckAbbreviation {
+            abbreviation: ";rl".to_owned(),
+            trigger: "immediate".to_owned(),
+            snippet: Some(id(1)),
+        },
         RequestBody::Search {
             text: Secret::new("right".to_owned()),
             limit: 20,
@@ -164,6 +184,10 @@ fn requests() -> Vec<RequestBody> {
         },
         RequestBody::FormCancel { session: 2 },
         RequestBody::ReopenLastForm {},
+        RequestBody::PanelFocus {
+            panel: PanelKind::Form,
+            shown: true,
+        },
         RequestBody::ParseTemplate {
             source: "Hi {field name=Name}".to_owned(),
         },
@@ -217,13 +241,19 @@ fn responses() -> Vec<ResponseBody> {
         },
         ResponseBody::Snippets {
             snippets: vec![snippet()],
+            tags: BTreeMap::from([(id(1), vec![id(3)])]),
         },
-        ResponseBody::Snippet { snippet: snippet() },
+        ResponseBody::Snippet {
+            snippet: snippet(),
+            tags: vec![id(3)],
+        },
         ResponseBody::Saved { meta: meta(1) },
         ResponseBody::SearchResults {
             hits: vec![SearchHit {
                 snippet: id(1),
                 score: 90,
+                field: Some(SearchField::Label),
+                ranges: vec![[0, 4]],
             }],
         },
         ResponseBody::Imported {
@@ -287,26 +317,62 @@ fn responses() -> Vec<ResponseBody> {
                     diagnostic: diagnostic(),
                 },
             ],
-            hints: vec![WireDiagnostic::code("E_UNKNOWN_TOKEN")],
+            hints: vec![WireDiagnostic::code(
+                "E_UNKNOWN_ATTR",
+                Timestamp(1_763_400_000_600),
+            )],
         },
         ResponseBody::Permissions {
             accessibility: GrantState::Granted,
             input_monitoring: GrantState::Denied,
         },
         ResponseBody::TemplateTokens {
-            tokens: vec![TemplateToken {
-                kind: "text".to_owned(),
-                start: 0,
-                end: 3,
-            }],
-            error: None,
+            tokens: vec![
+                TemplateToken {
+                    kind: "text".to_owned(),
+                    start: 0,
+                    end: 3,
+                    attributes: Vec::new(),
+                },
+                TemplateToken {
+                    kind: "field".to_owned(),
+                    start: 3,
+                    end: 20,
+                    attributes: vec![TemplateAttribute {
+                        name: "name".to_owned(),
+                        value: "Name".to_owned(),
+                    }],
+                },
+            ],
+            error: Some(TemplateErrorInfo {
+                code: "E_UNKNOWN_ATTR".to_owned(),
+                start: Some(10),
+                end: Some(20),
+                snippet: None,
+            }),
         },
         ResponseBody::Preview {
-            text: None,
-            error: Some(TemplateErrorInfo {
-                code: "E_UNKNOWN_TOKEN".to_owned(),
-                position: Some(3),
-            }),
+            parts: vec![
+                PreviewPart::Text {
+                    text: "Hi Name, Clipboard".to_owned(),
+                    blanks: vec![PreviewBlank {
+                        start: 3,
+                        end: 7,
+                        field: "Name".to_owned(),
+                        sample: true,
+                    }],
+                    clipboard: vec![[9, 18]],
+                },
+                PreviewPart::Key {
+                    key: "tab".to_owned(),
+                    shift: false,
+                    times: 1,
+                },
+                PreviewPart::Wait { ms: 500 },
+            ],
+            cursor: Some(PreviewCursor { part: 0, offset: 7 }),
+            fields: vec![field()],
+            error: None,
         },
         ResponseBody::Diagnostics {
             entries: vec![diagnostic()],
@@ -338,12 +404,48 @@ fn responses() -> Vec<ResponseBody> {
                 sha256: sha(),
             }],
         },
+        ResponseBody::Tags {
+            tags: vec![TagEntry {
+                tag: tag(),
+                snippets: 12,
+            }],
+        },
+        ResponseBody::SnippetSummaries {
+            revision: 4,
+            total: 250,
+            summaries: vec![SnippetSummary {
+                id: id(1),
+                folder: id(2),
+                abbreviation: "brb".to_owned(),
+                label: "Back soon".to_owned(),
+                first_line: "be right back".to_owned(),
+                kind: "plain".to_owned(),
+                trigger: "delimiter".to_owned(),
+                enabled: true,
+                tags: vec![id(3)],
+                broken: None,
+                updated_at: Timestamp(1_763_400_000_000),
+            }],
+            next: Some(201),
+        },
+        ResponseBody::AbbreviationCheck {
+            conflict: Some(id(4)),
+            hides: vec![id(5)],
+            hidden_by: Vec::new(),
+        },
     ]
 }
 
 fn events() -> Vec<EventBody> {
     vec![
-        EventBody::LibraryChanged { revision: 4 },
+        EventBody::LibraryChanged {
+            revision: 4,
+            changed: Some(ChangedRows {
+                snippets: vec![id(1)],
+                folders: Vec::new(),
+                tags: vec![id(3)],
+            }),
+        },
         EventBody::StatusChanged { status: status() },
         EventBody::PaletteRequested {
             focus: FocusRef {

@@ -21,6 +21,7 @@
 //! | `memory` | `MemoryLock` | 2.6 |
 //! | `endpoint` | `LocalEndpoint` | 2.6 |
 //! | `permissions` | `Permissions` | done: Windows has none |
+//! | `session` | `SessionEvents` | 3.x (the 2.8 review's finding 13) |
 //!
 //! Until its task lands, a module answers [`Unsupported`](iamb_platform::PlatformError).
 //!
@@ -70,6 +71,8 @@ mod permissions;
 mod pipe_names;
 #[cfg(all(windows, feature = "probe"))]
 pub mod probe;
+#[cfg(windows)]
+mod session;
 
 #[cfg(windows)]
 pub use files::restrict_to_current_user;
@@ -91,6 +94,7 @@ pub struct Platform {
     login_item: login_item::State,
     memory: memory::State,
     endpoint: endpoint::State,
+    session: session::State,
 }
 
 #[cfg(windows)]

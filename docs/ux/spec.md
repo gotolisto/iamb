@@ -546,7 +546,8 @@ health. The code is shown small after the sentence for people who look things up
 | `form_no_ui_host`, `form_not_acknowledged` | "“*Label*” could not show its form" · "Iamb's window process was restarting. Type the abbreviation again." | — |
 | `no_last_form` | "There is no earlier form to fill in again" · "Answers are kept for 30 minutes." | Same sentence |
 | `unknown_snippet` | "The snippet no longer exists" | "That snippet was deleted." |
-| `keys_for_unreported_window`, `unexpected_injection_event`, `unknown_form_session`, any unknown code | Not listed by default. "Show technical entries" reveals them as "Technical: *code*" for bug reports | — |
+| `not_a_delimiter` | "“*Label*” did not expand: Enter and Tab do not count as the end of a word" [Why?] (opens the Typing settings) | — |
+| `keys_for_unreported_window`, `unexpected_injection_event`, `unknown_form_session`, `panel_focus_expired`, any unknown code | Not listed by default. "Show technical entries" reveals them as "Technical: *code*" for bug reports | — |
 
 ### 6.3 Errors from the service
 
@@ -687,10 +688,10 @@ All from architecture §6.2 (service endpoint) and §6.4 (account endpoint).
 | Surface | Requests | Events |
 | --- | --- | --- |
 | Menu | `GetStatus`, `SetPaused`, `PutExclusion`, `ListExclusions`, `GetPermissions` | `StatusChanged` |
-| Library | `ListFolders`, `ListSnippets`, `GetSnippet`, `PutSnippet`, `DeleteSnippet`, `PutFolder`, `DeleteFolder`, `PutTag`, `Import`, `Export`, `Health`, `ListPendingReviews` | `LibraryChanged` |
-| Editor | `ParseTemplate`, `RenderPreview`, `PutSnippet` | `LibraryChanged` |
-| Fill-in form | `FormAck`, `FormSubmit`, `FormCancel`, `ReopenLastForm` | `FormRequested`, `DiagnosticAdded` |
-| Palette | `Search`, `ExpandSnippet`, `RenderPreview`, `ReopenLastForm` | `PaletteRequested`, `DiagnosticAdded` |
+| Library | `ListFolders`, `ListSnippets`, `ListSnippetSummaries`, `GetSnippet`, `PutSnippet`, `DeleteSnippet`, `PutFolder`, `DeleteFolder`, `PutTag`, `ListTags`, `DeleteTag`, `Import`, `Export`, `Health`, `ListPendingReviews` | `LibraryChanged` |
+| Editor | `ParseTemplate`, `RenderPreview`, `CheckAbbreviation`, `PutSnippet`, `ListTags`, `PutTag` | `LibraryChanged` |
+| Fill-in form | `FormAck`, `PanelFocus`, `FormSubmit`, `FormCancel`, `ReopenLastForm` | `FormRequested`, `DiagnosticAdded` |
+| Palette | `PanelFocus`, `Search`, `ExpandSnippet`, `RenderPreview`, `ReopenLastForm` | `PaletteRequested`, `DiagnosticAdded` |
 | Onboarding | `GetStatus`, `GetPermissions`, `OpenPermissionSettings`, `SetTestField`, `ListFolders`, `PutSnippet`, `GetSettings`, `PutSetting`, `RecentDiagnostics` | `StatusChanged` |
 | Settings | `GetSettings`, `PutSetting`, `ListExclusions`, `PutExclusion` | `SettingsChanged` |
 | Why didn’t it expand? | `RecentDiagnostics`, `DryRun` | `DiagnosticAdded` |
@@ -709,27 +710,29 @@ helper"; neither goes over the service endpoint.
 ### 11.2 Needed from the service
 
 Each entry says what the design needs, why, and what the UI does until it exists. Entries
-marked **blocks** stop a flow from working as specified; the others degrade gracefully.
+marked **blocks** stop a flow from working as specified; the others degrade gracefully. Entries
+marked **Available** are answered by the service since protocol 3 (architecture §6.2); the "Until
+then" column is kept for a UI that meets an older service.
 
 **For Phase 3**
 
 | # | Needed | Why | Until then |
 | --- | --- | --- | --- |
-| 1 | `ParseTemplate` and `RenderPreview` answered (they return `not_implemented` today; task 3.4). Tokens should carry each macro's attributes; `RenderPreview` should return the action list (text, key presses, waits), the cursor position and the list of fill-in fields, not only text | Chips, chip cards, the preview with keys and blanks, "Try the form" | **Blocks** the template editor. The UI can read attributes from the source between a token's `start` and `end`, and show a text-only preview |
-| 2 | Tags: list them, delete one, and read and set the tags of a snippet (`PutSnippet` carries no tags; there is no `ListTags`) | Tags in the sidebar, the editor and search | **Blocks** tags in 3.3; everything else works without |
-| 3 | A light way to list snippets: summaries (no body beyond a first line) or paging, and `LibraryChanged` naming the rows that changed | 10,000 snippets with bodies may not fit one 8 MB frame and take long to redraw | `ListSnippets` per folder; full reload on `LibraryChanged` |
+| 1 | **Available.** `ParseTemplate` and `RenderPreview` answered (they returned `not_implemented` before protocol 3; task 3.4). Tokens carry their attributes; errors their code, `start`, `end` and the included snippet that holds them; the preview its parts (text with the ranges each field produced, `sample` where the field's name stands in for a missing value, the clipboard ranges; key presses; waits), the cursor and the fields. Positions are UTF-16 offsets. Tokens should carry each macro's attributes; `RenderPreview` should return the action list (text, key presses, waits), the cursor position and the list of fill-in fields, not only text | Chips, chip cards, the preview with keys and blanks, "Try the form" | **Blocks** the template editor. The UI can read attributes from the source between a token's `start` and `end`, and show a text-only preview |
+| 2 | **Available.** Tags: `ListTags` (with counts), `PutTag` (create, rename, recolour; the colour must be one of the eight names, the name unique without regard to case), `DeleteTag` (detaches it everywhere); `PutSnippet` carries the snippet's tags, `GetSnippet` and `ListSnippets` return them, `SnippetQuery.tag` filters by one, and `Search` matches tag names | Tags in the sidebar, the editor and search | **Blocks** tags in 3.3; everything else works without |
+| 3 | **Available.** A light way to list snippets: `ListSnippetSummaries` (pages of at most 1,000, no body beyond a first line, with tags and the reason a snippet is broken), and `LibraryChanged` naming the snippets, folders and tags that changed (nothing named means reload: an import) | 10,000 snippets with bodies may not fit one 8 MB frame and take long to redraw | `ListSnippets` per folder; full reload on `LibraryChanged` |
 | 4 | Usage per snippet (count, last used) in the list answer, and a way to reset it | "Recently used" in the palette, the editor's footer, "Not used for 90 days" in library health, the reset in Settings | Those parts are hidden; the palette shows its hint |
-| 5 | Shortcuts: re-register `palette_hotkey` when the setting changes; answer `PutSetting` with an error when the system refuses the chord (today only logged); two more settings, for "fill in the last form again" and "pause or resume" | The recorder's "Another app already uses this shortcut"; the two unset shortcuts of Settings | The palette shortcut may need a restart of the service to change; the other two stay hidden |
-| 6 | A timestamp on every diagnostic (`at` is optional today) | The log's time column | The UI stamps entries it receives live and shows no time for older ones |
-| 7 | A diagnostic when a matchable abbreviation is followed by Enter or Tab while they are not delimiters (it names the snippet, as other match diagnostics do) | So the log can answer the most likely beginner question by itself | The fixed line at the foot of the log and the "Test an abbreviation" field |
+| 5 | Shortcuts: re-register `palette_hotkey` when the setting changes; answer `PutSetting` with an error when the system refuses the chord (today only logged); two more settings, for "fill in the last form again" and "pause or resume". **Available:** the first two (`conflict` when the system refuses the chord, which is then not stored and the old one stays; `invalid` for one that does not parse). Not yet: the two more shortcuts | The recorder's "Another app already uses this shortcut"; the two unset shortcuts of Settings | The palette shortcut may need a restart of the service to change; the other two stay hidden |
+| 6 | **Available.** A timestamp on every diagnostic (`at` is required since protocol 3) | The log's time column | The UI stamps entries it receives live and shows no time for older ones |
+| 7 | **Available.** A diagnostic when a matchable abbreviation is followed by Enter or Tab while they are not delimiters (it names the snippet, as other match diagnostics do): `not_a_delimiter` | So the log can answer the most likely beginner question by itself | The fixed line at the foot of the log and the "Test an abbreviation" field |
 | 8 | The outcome of an explicit request (`ExpandSnippet`, `FormSubmit`, `ReopenLastForm`) as an event: typed, or refused with the code | A reliable notice. Today success is silent and failure arrives as `DiagnosticAdded`, which the UI must match to its request by snippet and time | The UI matches a `DiagnosticAdded` for the same snippet within 3 s of its request |
 | 9 | An event when a permission or the listener state changes | Onboarding and the "Needs you" icon without polling | `GetPermissions` every second while the permissions step is visible, every 30 s while something is missing |
-| 10 | Restoring a deleted snippet (a request, or `PutSnippet` accepting a soft-deleted id) | "Undo" after delete | Undo re-creates the snippet with a new id (usage is lost) |
-| 11 | A check for an abbreviation (`conflict`, hides, hidden by) without saving | The editor's warnings from the one authority, with the service's case folding | The UI checks against its list with the same folding rule; `PutSnippet` still decides |
-| 12 | `Search` hits with the matched field and ranges | Highlighting that agrees with the ranking | The UI marks plain substring matches itself |
+| 10 | **Available.** Restoring a deleted snippet: `PutSnippet` with the deleted snippet's id restores it, with its usage and tags | "Undo" after delete | Undo re-creates the snippet with a new id (usage is lost) |
+| 11 | **Available.** A check for an abbreviation (`conflict`, hides, hidden by) without saving: `CheckAbbreviation` | The editor's warnings from the one authority, with the service's case folding | The UI checks against its list with the same folding rule; `PutSnippet` still decides |
+| 12 | **Available.** `Search` hits with the matched field and ranges (UTF-16) | Highlighting that agrees with the ranking | The UI marks plain substring matches itself |
 | 13 | Packaging: the macOS helper listed as "Iamb" with the app icon in System Settings; a way for the UI host to learn the display the focused window is on | The permissions step; panels on the right screen | Onboarding names the entry as it appears; panels use the display under the pointer |
-| 14 | A way to say "one of Iamb's panels has the keyboard" (a UI-role message, or suspension from `FormRequested` and `PaletteRequested` until they are answered). Already tracked: finding 16 of the 2.8 review, architecture §8 "Open findings" | On macOS the form and the palette do not activate Iamb, so what is typed into them would be buffered, and could expand, as if typed into the app behind | **Blocks** shipping the form and the palette on macOS (tasks 3.5 and 3.6). No workaround in the UI |
-| 15 | Screen-lock and sign-out events that clear the remembered answers (finding 13, same place) | "Your last answers" must not survive a locked screen | Answers are still cleared after 30 minutes and at restart; tracked for task 3.5 |
+| 14 | **Available:** `PanelFocus(panel, shown)` (architecture §4.5; ADR-0013 addendum). The UI host sends `shown: true` and waits for the answer before the panel takes the keyboard, sends it again every 10 seconds while the panel is open (a 30-second lease), and sends `shown: false` when the panel gives the keyboard back, before `FormSubmit` or `ExpandSnippet`, and when it resigns the keyboard (a click into the app behind it). A way to say "one of Iamb's panels has the keyboard" (a UI-role message, or suspension from `FormRequested` and `PaletteRequested` until they are answered). Already tracked: finding 16 of the 2.8 review, architecture §8 "Open findings" | On macOS the form and the palette do not activate Iamb, so what is typed into them would be buffered, and could expand, as if typed into the app behind | **Blocks** shipping the form and the palette on macOS (tasks 3.5 and 3.6). No workaround in the UI |
+| 15 | **Available.** Screen-lock and sign-out events that clear the remembered answers (finding 13, same place): the service watches the session itself; the UI has nothing to send | "Your last answers" must not survive a locked screen | Answers are still cleared after 30 minutes and at restart; tracked for task 3.5 |
 
 **For Phase 4 (flow 6)**
 

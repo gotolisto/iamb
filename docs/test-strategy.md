@@ -295,9 +295,11 @@ artifact `soak-<run id>`):
   `max(2, 10%)`, except within `W` after a restart.
 - **Canary contexts.** Each round types one canary per context: `ordinary` (in a sentence),
   `before-expansion` (directly followed by a no-word-start abbreviation, so the canary is in the
-  engine's buffer when an expansion fires), `secure-field`, `excluded-app` and `paused`. In the
-  last three an abbreviation is typed after the canary and must not expand, and `GetStatus` must
-  report the engine suspended (and paused); in the first two it must not be. A canary counts as
+  engine's buffer when an expansion fires), `secure-field`, `excluded-app`, `paused` and `panel`
+  (typed while the driver, as the UI host, says the palette has the keyboard with `PanelFocus`:
+  the 2.8 review's finding 16). In the last four an abbreviation is typed after the canary and
+  must not expand, and `GetStatus` must report the engine suspended (and paused); in the first
+  two it must not be. A canary counts as
   typed only when the field then holds exactly the expected text.
 - **Scan.** Whole-string forms (`soak::canary`): UTF-8, UTF-16 and UTF-32 in both byte orders,
   upper case, reversed, hex, JSON `\u` escapes and percent encoding (both cases of hex digit),

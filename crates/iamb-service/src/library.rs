@@ -10,7 +10,7 @@ use iamb_core::datetime::{Format, Locale};
 use iamb_core::engine::{EngineSettings, Snapshot};
 use iamb_core::matcher::Delimiters;
 use iamb_core::model::{
-    Folder, FolderDefaults, Id, Profile, ProfileKind, Snippet, SyncMeta, Timestamp,
+    Folder, FolderDefaults, Id, Profile, ProfileKind, Snippet, SnippetTag, SyncMeta, Tag, Timestamp,
 };
 use iamb_store::{AppExclusion, ListOptions, Store, StoreError};
 
@@ -31,6 +31,12 @@ pub struct View {
     pub snippet_ids: Arc<Vec<Id>>,
     /// The personal profile's live folders.
     pub folders: Arc<Vec<Folder>>,
+    /// The personal profile's live tags, by name (case-insensitive).
+    pub tags: Arc<Vec<Tag>>,
+    /// The live links between the snippets of the view and its tags.
+    pub links: Arc<Vec<SnippetTag>>,
+    /// The tags of each snippet that has any, in the order of [`tags`](Self::tags).
+    pub snippet_tags: Arc<BTreeMap<Id, Vec<Id>>>,
     /// Every setting.
     pub settings: Arc<BTreeMap<String, String>>,
     /// The app exclusions.
@@ -45,6 +51,12 @@ impl View {
         self.snippet_ids
             .iter()
             .filter_map(|id| self.snapshot.snippet(*id))
+    }
+
+    /// The tags of `snippet`, in the order of [`tags`](Self::tags).
+    #[must_use]
+    pub fn tags_of(&self, snippet: Id) -> &[Id] {
+        self.snippet_tags.get(&snippet).map_or(&[], Vec::as_slice)
     }
 
     /// Whether the focus verdict must say `excluded` for `app`, the application id the focus
@@ -316,7 +328,34 @@ pub fn build_view(store: &Store, profile: Id, revision: u64) -> Result<View, Sto
         .filter(|s| ids.contains(&s.folder_id))
         .collect();
     snippets.sort_by_key(|s| (s.meta.created_at, s.meta.id));
-    let snippet_ids = snippets.iter().map(|s| s.meta.id).collect();
+    let snippet_ids: Vec<Id> = snippets.iter().map(|s| s.meta.id).collect();
+    let mut tags: Vec<Tag> = lib
+        .tags
+        .into_iter()
+        .filter(|t| t.profile_id == profile)
+        .collect();
+    tags.sort_by_cached_key(|t| (t.name.to_lowercase(), t.meta.id));
+    let tag_order: BTreeMap<Id, usize> = tags
+        .iter()
+        .enumerate()
+        .map(|(i, t)| (t.meta.id, i))
+        .collect();
+    let in_view: BTreeSet<Id> = snippet_ids.iter().copied().collect();
+    let links: Vec<SnippetTag> = lib
+        .snippet_tags
+        .into_iter()
+        .filter(|l| in_view.contains(&l.snippet_id) && tag_order.contains_key(&l.tag_id))
+        .collect();
+    let mut snippet_tags: BTreeMap<Id, Vec<Id>> = BTreeMap::new();
+    for link in &links {
+        let list = snippet_tags.entry(link.snippet_id).or_default();
+        if !list.contains(&link.tag_id) {
+            list.push(link.tag_id);
+        }
+    }
+    for list in snippet_tags.values_mut() {
+        list.sort_by_key(|t| tag_order.get(t).copied().unwrap_or(usize::MAX));
+    }
     let settings = store.list_settings()?;
     let engine = engine_settings(&settings).map_err(StoreError::InvalidData)?;
     let exclusions = store.list_app_exclusions()?;
@@ -331,6 +370,9 @@ pub fn build_view(store: &Store, profile: Id, revision: u64) -> Result<View, Sto
         snapshot: Snapshot::build(snippets, engine),
         snippet_ids: Arc::new(snippet_ids),
         folders: Arc::new(folders),
+        tags: Arc::new(tags),
+        links: Arc::new(links),
+        snippet_tags: Arc::new(snippet_tags),
         settings: Arc::new(settings),
         exclusions: Arc::new(exclusions),
         exclusion_keys: Arc::new(exclusion_keys),

@@ -102,6 +102,7 @@ use crate::login_item::{LoginItem, LoginItemStatus};
 use crate::marker::Marker;
 use crate::memory::{MemoryLock, MemoryRegion};
 use crate::permissions::{Grant, PermissionKind, PermissionStatus, Permissions};
+use crate::session::{SessionEvent, SessionEvents, SessionSink};
 
 use field::Field;
 
@@ -418,6 +419,7 @@ struct Os {
     stream: Mutex<Stream>,
     desk: Mutex<Desk>,
     focus_sink: Mutex<Option<Box<dyn FocusSink>>>,
+    session_sink: Mutex<Option<Box<dyn SessionSink>>>,
     /// While focus reports are held back ([`MockPlatform::hold_focus_reports`]): the changes
     /// not reported yet, oldest first.
     held_focus: Mutex<Option<Vec<FocusChange>>>,
@@ -459,6 +461,7 @@ impl MockPlatform {
                 stream: Mutex::default(),
                 desk: Mutex::new(Desk::new()),
                 focus_sink: Mutex::new(None),
+                session_sink: Mutex::new(None),
                 held_focus: Mutex::new(None),
                 seq: SeqSource::new(),
                 endpoints: Arc::default(),
@@ -904,6 +907,25 @@ impl MockPlatform {
         self.desk().locked.clone()
     }
 
+    /// Reports a session event (a screen lock, a sign-out, …) to the session watcher, as the
+    /// OS would. Returns false when nothing watches.
+    #[must_use = "false: nothing watches the session"]
+    pub fn session_event(&self, event: SessionEvent) -> bool {
+        match lock(&self.os.session_sink).as_mut() {
+            Some(sink) => {
+                sink.session_event(event);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// True while a session watcher is installed.
+    #[must_use]
+    pub fn watching_session(&self) -> bool {
+        lock(&self.os.session_sink).is_some()
+    }
+
     // -----------------------------------------------------------------------------------------
     // The injector's parts
     // -----------------------------------------------------------------------------------------
@@ -1294,6 +1316,22 @@ impl FocusInspector for MockPlatform {
 
     fn is_watching(&self) -> bool {
         lock(&self.os.focus_sink).is_some()
+    }
+}
+
+impl SessionEvents for MockPlatform {
+    fn watch_session(&self, sink: Box<dyn SessionSink>) -> Result<()> {
+        let mut slot = lock(&self.os.session_sink);
+        if slot.is_some() {
+            return Err(PlatformError::AlreadyRunning);
+        }
+        *slot = Some(sink);
+        Ok(())
+    }
+
+    fn unwatch_session(&self) -> Result<()> {
+        *lock(&self.os.session_sink) = None;
+        Ok(())
     }
 }
 

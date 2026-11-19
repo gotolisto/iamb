@@ -1,0 +1,26 @@
+{
+  "id": 23,
+  "kind": "response",
+  "result": {
+    "next": 201,
+    "revision": 4,
+    "summaries": [
+      {
+        "abbreviation": "brb",
+        "enabled": true,
+        "first_line": "be right back",
+        "folder": "02020202-0202-0202-0202-020202020202",
+        "id": "01010101-0101-0101-0101-010101010101",
+        "kind": "plain",
+        "label": "Back soon",
+        "tags": [
+          "03030303-0303-0303-0303-030303030303"
+        ],
+        "trigger": "delimiter",
+        "updated_at": 1763400000000
+      }
+    ],
+    "total": 250,
+    "type": "snippet_summaries"
+  }
+}
