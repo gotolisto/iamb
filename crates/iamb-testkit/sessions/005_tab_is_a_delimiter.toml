@@ -1,4 +1,7 @@
-description = "Tab counts as the delimiter tab before it clears; it is pressed again"
+description = "With Tab added to the delimiters, tab counts as the delimiter tab before it clears; it is pressed again"
+
+[settings]
+delimiters = " .\n\t"
 
 [[snippet]]
 abbr = "brb"

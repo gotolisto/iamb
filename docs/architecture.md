@@ -155,7 +155,7 @@ impl Engine {
 | --- | --- | --- |
 | `Char { ch, seq }` | A key produced text (after layout and dead-key handling), whatever modifiers were held | Appended; then matched |
 | `Backspace { seq }` | Backspace pressed | Last character removed |
-| `Boundary { kind, seq }` | A key or click that produced no text: Enter, Tab, Escape, arrows, navigation keys, mouse click, a shortcut chord | Cleared (Enter and Tab also count as delimiters first) |
+| `Boundary { kind, seq }` | A key or click that produced no text: Enter, Tab, Escape, arrows, navigation keys, mouse click, a shortcut chord | Cleared (Enter and Tab count as delimiters first only when the user added them to the set) |
 | `FocusChanged(app)` | Another window or app took focus | Cleared; engine suspended until `SecureState` arrives |
 | `SecureState(state)` | The focus thread's verdict: `normal`, `secure`, `excluded`, `own_window` or `unknown` | Cleared; engine suspended unless `normal` |
 | `Composing(bool)` | An input method started or finished composing text | Cleared; engine suspended while true |
@@ -237,9 +237,11 @@ pub trait Environment {
   case folding: `ß` does not match `ss`.
 - The matcher is a trie over reversed, case-folded abbreviations.
 - Trigger modes per snippet: `immediate` (fires on the last character) and `delimiter` (fires when
-  a delimiter follows). The delimiter set is a setting; the default is space, Enter, Tab and
-  ``. , ; : ! ? ) ] } " '``. In delimiter mode the delimiter is deleted with the abbreviation and
-  typed again after the expansion, except when the snippet has a `{cursor}`.
+  a delimiter follows). The delimiter set is a setting; the default is space and
+  ``. , ; : ! ? ) ] } " '``. Enter and Tab are not in it (ADR-0026): the application acts on them
+  before the expansion arrives, so it would land in the field or window they move to. A user can
+  add them. In delimiter mode the delimiter is deleted with the abbreviation and typed again after
+  the expansion, except when the snippet has a `{cursor}`.
 - Case modes per snippet: `exact`, `insensitive`, and `adaptive` (insensitive match; the expansion
   follows the case pattern typed: `abc` → as written, `Abc` → first letter capitalised, `ABC` →
   upper case). Adaptive case changes never touch `verbatim` ranges.

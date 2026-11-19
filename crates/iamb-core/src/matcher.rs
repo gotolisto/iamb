@@ -87,11 +87,15 @@ pub struct Delimiters {
 }
 
 impl Delimiters {
-    /// The default set (architecture §4.4): space, newline (Enter), tab and
-    /// `. , ; : ! ? ) ] } " '`.
-    pub const DEFAULT_CHARS: [char; 14] = [
-        ' ', '\n', '\t', '.', ',', ';', ':', '!', '?', ')', ']', '}', '"', '\'',
-    ];
+    /// The default set (architecture §4.4): space and `. , ; : ! ? ) ] } " '`.
+    ///
+    /// Enter (`'\n'`) and Tab (`'\t'`) are not in it. The listener never holds a key back, so the
+    /// application acts on them before the expansion arrives: Tab moves to the next field of a
+    /// form, which can be a password field, and Enter sends a message or closes a dialog. The
+    /// expansion would land wherever the key took the focus (privacy review 2.8, finding 1). A
+    /// user can add them to the `delimiters` setting.
+    pub const DEFAULT_CHARS: [char; 12] =
+        [' ', '.', ',', ';', ':', '!', '?', ')', ']', '}', '"', '\''];
 
     /// A set of the given characters. Order and repeats do not matter.
     #[must_use]

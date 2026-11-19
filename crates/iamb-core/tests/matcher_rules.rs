@@ -122,12 +122,12 @@ fn delimiter_fires_only_when_a_delimiter_follows() {
 #[test]
 fn every_default_delimiter_fires_and_others_do_not() {
     let m = matcher([del(1, "brb")]);
-    assert_eq!(Delimiters::default().iter().count(), 14);
+    assert_eq!(Delimiters::default().iter().count(), 12);
     for d in Delimiters::DEFAULT_CHARS {
         assert_eq!(last(&m, &format!("brb{d}")), plain(1, 3, Some(d)), "{d:?}");
     }
     for c in [
-        'x', '-', '/', '(', '[', '{', '@', '\r', '\u{a0}', '\u{3000}', '0',
+        'x', '-', '/', '(', '[', '{', '@', '\r', '\u{a0}', '\u{3000}', '0', '\n', '\t',
     ] {
         assert_eq!(last(&m, &format!("brb{c}")), None, "{c:?}");
     }

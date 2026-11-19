@@ -1,4 +1,7 @@
-description = "A form triggered by Enter presses Enter again after submit; the submit waits for the verdict on the field focus returned to"
+description = "With Enter added to the delimiters, a form triggered by Enter presses Enter again after submit; the submit waits for the verdict on the field focus returned to"
+
+[settings]
+delimiters = " .\n\t"
 
 [[snippet]]
 abbr = "dear"
