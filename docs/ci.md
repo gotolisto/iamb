@@ -50,7 +50,7 @@ Tauri dependencies would slow every leg.
   leg first installs `libwebkit2gtk-4.1-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`,
   `libxdo-dev` and `xvfb`. Last, the cold-open measurement of the library window
   (`iamb-desktop --measure-open 10`, `docs/test-strategy.md` §8.1): on Linux under Xvfb it fails
-  the job when an open takes more than 400 ms; on Windows and macOS it only prints the numbers
+  the job when an open takes more than 800 ms (twice the lab target of 400 ms, the CI rule of test strategy §2.2; one open on a shared runner was seen at 413 ms while the others took 41-66 ms); on Windows and macOS it only prints the numbers
   (the step may fail without failing the job). The tests include the crash-isolation tests,
   which run a worker on the mock platform in the test process (and, on Linux, kill a UI host
   child process).
@@ -95,7 +95,7 @@ The `desktop` job's steps:
     (cd apps/desktop && pnpm install --frozen-lockfile && pnpm typecheck && pnpm test && pnpm build)
     cargo clippy -p iamb-desktop --all-targets --locked --features tauri/custom-protocol -- -D warnings
     cargo test -p iamb-desktop --locked --features tauri/custom-protocol
-    xvfb-run -a target/debug/iamb-desktop --data-dir "$(mktemp -d)" --measure-open 10 --budget-ms 400
+    xvfb-run -a target/debug/iamb-desktop --data-dir "$(mktemp -d)" --measure-open 10 --budget-ms 800
 
 `cargo xtask` is an alias (see `.cargo/config.toml`) for the `xtask` workspace crate.
 

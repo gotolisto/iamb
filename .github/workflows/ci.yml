@@ -191,7 +191,7 @@ jobs:
           if [ "$RUNNER_OS" = Windows ]; then exe="$exe.exe"; fi
           data="$RUNNER_TEMP/iamb-cold-open"
           if [ "$RUNNER_OS" = Linux ]; then
-            xvfb-run -a "$exe" --data-dir "$data" --measure-open 10 --budget-ms 400
+            xvfb-run -a "$exe" --data-dir "$data" --measure-open 10 --budget-ms 800
           else
             "$exe" --data-dir "$data" --measure-open 10
           fi
