@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use iamb_core::datetime::{Format, LocalDateTime, Locale, civil_from_days};
 use iamb_core::engine::{EngineSettings, Environment, ExclusionReason, Snapshot, dry_run};
 use iamb_core::matcher::Delimiters;
-use iamb_core::model::{Id, ProfileKind, Snippet, fold_abbreviation};
+use iamb_core::model::{Id, ProfileKind, Snippet, Timestamp, fold_abbreviation};
 use iamb_core::template::{FormValues, KeyName};
 use iamb_ipc::{WireAction, key_named};
 use iamb_store::{ListOptions, Store, StoreError};
@@ -144,9 +144,15 @@ impl Outcome {
 /// Characters (not grapheme clusters) are the unit of deletion and caret movement here.
 #[must_use]
 pub fn expand(snapshot: &Snapshot, typed: &str, env: &DryEnv, values: &FormValues) -> Outcome {
+    // A diagnostic among the actions carries the time of the dry run.
+    let at = Timestamp(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX)),
+    );
     let actions: Vec<WireAction> = dry_run(snapshot, typed, env, Some(values))
         .iter()
-        .map(WireAction::from)
+        .map(|a| WireAction::from_engine(a, at))
         .collect();
     let mut out = apply(typed, &actions);
     // A snippet whose template does not parse is not matchable (architecture §4.4), so the

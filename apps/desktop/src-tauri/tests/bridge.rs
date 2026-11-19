@@ -107,8 +107,11 @@ fn service_events_reach_the_front_end() {
         "thank you",
         None,
     );
-    cli.call(RequestBody::PutSnippet { snippet })
-        .expect("saved");
+    cli.call(RequestBody::PutSnippet {
+        snippet,
+        tags: None,
+    })
+    .expect("saved");
     seen.wait_event(|e| matches!(e, UiEvent::LibraryChanged { revision } if *revision >= 2));
     // The service reports no status change for a library change; the front end asks again.
     let view = bridge.refresh_status().expect("status");

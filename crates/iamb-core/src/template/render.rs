@@ -126,6 +126,51 @@ impl fmt::Debug for Rendered {
     }
 }
 
+/// Where a piece of rendered text came from ([`Provenance`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Origin {
+    /// The value of a fill-in field: its index in [`Resolved::form`](super::Resolved::form).
+    Field(usize),
+    /// The clipboard.
+    Clipboard,
+}
+
+/// One piece of text that came from a field or the clipboard, for the editor's preview.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Provenance {
+    /// The index of the [`RenderedAction::Text`] in [`Rendered::actions`].
+    pub action: usize,
+    /// Byte range in that action's text.
+    pub range: Range<usize>,
+    /// Where it came from.
+    pub origin: Origin,
+}
+
+/// A render for the editor's preview ([`Resolved::render_preview`](super::Resolved::render_preview)).
+///
+/// The text may contain field values and clipboard content, so `Debug` prints lengths only.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Preview {
+    /// The actions, exactly as [`Resolved::render`](super::Resolved::render) gives them.
+    pub rendered: Rendered,
+    /// Every piece of text that came from a field or the clipboard, in output order.
+    pub origins: Vec<Provenance>,
+    /// Where the first rendered `{cursor}` is: the index of an action and a byte offset in its
+    /// text. The index is the number of actions when no text comes before the cursor and none
+    /// after it.
+    pub cursor: Option<(usize, usize)>,
+}
+
+impl fmt::Debug for Preview {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Preview")
+            .field("rendered", &self.rendered)
+            .field("origins", &self.origins)
+            .field("cursor", &self.cursor)
+            .finish()
+    }
+}
+
 struct Redacted;
 
 impl fmt::Debug for Redacted {
@@ -151,6 +196,8 @@ struct Renderer<'r> {
     /// Typed bytes before the first rendered cursor.
     cursor_at: Option<usize>,
     steps: usize,
+    /// Where text from fields and the clipboard went, when a preview asked for it.
+    origins: Option<Vec<Provenance>>,
 }
 
 /// The value a field renders with: the submitted value checked against the field, or the
@@ -174,6 +221,41 @@ pub(crate) fn render(
     ctx: &RenderContext<'_>,
     values: &FormValues,
 ) -> Result<Rendered, TemplateError> {
+    run_render(res, ctx, values, false).map(|(rendered, _, _)| rendered)
+}
+
+pub(crate) fn render_preview(
+    res: &Resolved,
+    ctx: &RenderContext<'_>,
+    values: &FormValues,
+) -> Result<Preview, TemplateError> {
+    let (rendered, origins, cursor_at) = run_render(res, ctx, values, true)?;
+    let cursor = cursor_at.map(|at| {
+        let mut before = 0;
+        for (i, action) in rendered.actions.iter().enumerate() {
+            if let RenderedAction::Text { text, .. } = action {
+                if at <= before + text.len() {
+                    return (i, at - before);
+                }
+                before += text.len();
+            }
+        }
+        (rendered.actions.len(), 0)
+    });
+    Ok(Preview {
+        rendered,
+        origins,
+        cursor,
+    })
+}
+
+/// Renders; with `track`, also records where field and clipboard text went.
+fn run_render(
+    res: &Resolved,
+    ctx: &RenderContext<'_>,
+    values: &FormValues,
+    track: bool,
+) -> Result<(Rendered, Vec<Provenance>, Option<usize>), TemplateError> {
     let clipboard = if res.needs_clipboard {
         normalize_newlines(ctx.clipboard.unwrap_or(""))
     } else {
@@ -198,6 +280,7 @@ pub(crate) fn render(
         waited_ms: 0,
         cursor_at: None,
         steps: 0,
+        origins: track.then(Vec::new),
     };
     r.run(&res.root, &res.root.body.nodes)
         .map_err(TemplateError::new)?;
@@ -216,10 +299,16 @@ pub(crate) fn render(
         }
         tail.graphemes(true).count()
     });
-    Ok(Rendered {
-        actions: r.actions,
-        cursor_back,
-    })
+    let cursor_at = r.cursor_at;
+    let origins = r.origins.take().unwrap_or_default();
+    Ok((
+        Rendered {
+            actions: r.actions,
+            cursor_back,
+        },
+        origins,
+        cursor_at,
+    ))
 }
 
 impl<'r> Renderer<'r> {
@@ -252,7 +341,9 @@ impl<'r> Renderer<'r> {
         count > MAX_OUTPUT_CHARS
     }
 
-    fn emit(&mut self, s: &str, verbatim: bool) -> Result<(), ErrorKind> {
+    /// Appends text. `origin` is set for text from a field value or the clipboard, which is
+    /// verbatim (adaptive case leaves it alone).
+    fn emit(&mut self, s: &str, origin: Option<Origin>) -> Result<(), ErrorKind> {
         if s.is_empty() {
             return Ok(());
         }
@@ -260,7 +351,8 @@ impl<'r> Renderer<'r> {
         if self.typed_bytes > MAX_OUTPUT_BYTES {
             return Err(ErrorKind::OutputTooLarge);
         }
-        if let Some(RenderedAction::Text {
+        let verbatim = origin.is_some();
+        let range = if let Some(RenderedAction::Text {
             text,
             verbatim: ranges,
         }) = self.actions.last_mut()
@@ -270,6 +362,7 @@ impl<'r> Renderer<'r> {
             if verbatim {
                 push_range(ranges, start..text.len());
             }
+            start..text.len()
         } else {
             let mut ranges = Vec::new();
             if verbatim {
@@ -278,6 +371,14 @@ impl<'r> Renderer<'r> {
             self.actions.push(RenderedAction::Text {
                 text: s.to_owned(),
                 verbatim: ranges,
+            });
+            0..s.len()
+        };
+        if let (Some(origins), Some(origin)) = (&mut self.origins, origin) {
+            origins.push(Provenance {
+                action: self.actions.len() - 1,
+                range,
+                origin,
             });
         }
         Ok(())
@@ -290,7 +391,7 @@ impl<'r> Renderer<'r> {
                 return Err(ErrorKind::OutputTooLarge);
             }
             match node {
-                Node::Text(t) => self.emit(t, false)?,
+                Node::Text(t) => self.emit(t, None)?,
                 Node::Date {
                     time,
                     format,
@@ -304,7 +405,7 @@ impl<'r> Renderer<'r> {
                     });
                     let key = (Arc::as_ptr(&at.body).addr(), *slot);
                     match self.date_text(key, format, shift) {
-                        Ok(text) => self.emit(&text, false)?,
+                        Ok(text) => self.emit(&text, None)?,
                         Err(kind) => return self.fail(kind),
                     }
                 }
@@ -314,7 +415,7 @@ impl<'r> Renderer<'r> {
                     } else {
                         self.clipboard
                     };
-                    self.emit(clip, true)?;
+                    self.emit(clip, Some(Origin::Clipboard))?;
                 }
                 Node::Cursor => {
                     if self.cursor_at.is_none() {
@@ -327,13 +428,14 @@ impl<'r> Renderer<'r> {
                 }
                 Node::Field { slot, toggle } => {
                     let values = self.values;
-                    let value: &str = &values[self.field(at, *slot)];
+                    let index = self.field(at, *slot);
+                    let value: &str = &values[index];
                     match toggle {
                         Some(t) => {
                             let text = if value == "yes" { &t.on } else { &t.off };
-                            self.emit(text, false)?;
+                            self.emit(text, None)?;
                         }
-                        None => self.emit(value, true)?,
+                        None => self.emit(value, Some(Origin::Field(index)))?,
                     }
                 }
                 Node::Key { key, shift, times } => {

@@ -471,6 +471,54 @@ impl Matcher {
         out
     }
 
+    /// The delimiter-mode snippet whose abbreviation ends at the caret of `buffer`, as if a
+    /// delimiter were typed next: what an Enter or Tab that is not a delimiter (ADR-0026) leaves
+    /// unexpanded. Same rules as [`lookup`](Self::lookup) (longest, case, word start).
+    #[must_use]
+    pub fn delimited_at_caret(&self, buffer: &KeyBuffer) -> Option<Id> {
+        self.longest(&self.delimited, buffer.chars(), buffer.truncated())
+            .map(|(_, index)| self.entries[index].snippet)
+    }
+
+    /// How an abbreviation would stand with the matchable set if it were saved with `trigger`,
+    /// without saving it (the editor's warnings, §4.4): the snippets it would hide (when it
+    /// expands immediately, every longer abbreviation that starts with it) and the immediate
+    /// snippets that would hide it (every shorter one it starts with). The same comparison as
+    /// [`shadowed`](Self::shadowed). `skip` leaves out the snippet being edited.
+    #[must_use]
+    pub fn shadowing_of(
+        &self,
+        abbreviation: &str,
+        trigger: Trigger,
+        skip: Option<Id>,
+    ) -> (Vec<Id>, Vec<Id>) {
+        let chars: Vec<char> = abbreviation.chars().collect();
+        let key = match_key(chars.iter().copied());
+        let mut hides = Vec::new();
+        let mut hidden_by = Vec::new();
+        for entry in &self.entries {
+            if Some(entry.snippet) == skip {
+                continue;
+            }
+            let other = match_key(entry.chars.iter().copied());
+            if trigger == Trigger::Immediate
+                && other.len() > key.len()
+                && other.starts_with(&key)
+                && ends_on_char_boundary(&entry.chars, key.len())
+            {
+                hides.push(entry.snippet);
+            }
+            if entry.trigger == Trigger::Immediate
+                && other.len() < key.len()
+                && key.starts_with(&other)
+                && ends_on_char_boundary(&chars, other.len())
+            {
+                hidden_by.push(entry.snippet);
+            }
+        }
+        (hides, hidden_by)
+    }
+
     /// The delimiter set the matcher was built with.
     #[must_use]
     pub const fn delimiters(&self) -> &Delimiters {

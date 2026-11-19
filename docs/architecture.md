@@ -271,7 +271,9 @@ pub trait Environment {
   a delimiter follows). The delimiter set is a setting; the default is space and
   ``. , ; : ! ? ) ] } " '``. Enter and Tab are not in it (ADR-0026): the application acts on them
   before the expansion arrives, so it would land in the field or window they move to. A user can
-  add them. In delimiter mode the delimiter is deleted with the abbreviation and typed again after
+  add them. When they are not in the set and an Enter or Tab follows an abbreviation that would
+  have expanded after a delimiter, the engine records `not_a_delimiter` naming the snippet, so
+  "Why didn't it expand?" can say so. In delimiter mode the delimiter is deleted with the abbreviation and typed again after
   the expansion, except when the snippet has a `{cursor}`.
 - Case modes per snippet: `exact`, `insensitive`, and `adaptive` (insensitive match; the expansion
   follows the case pattern typed: `abc` → as written, `Abc` → first letter capitalised, `ABC` →
@@ -329,10 +331,32 @@ Keys typed into Iamb's own windows are not expanded: the focus thread reports `o
 UI host's process. The one exception is the onboarding test field, which the UI host declares with
 `SetTestField(window)`.
 
+On macOS the form and the palette are non-activating panels, so the frontmost application stays
+the focused one and the focus thread cannot see that a panel has the keyboard (the 2.8 review's
+finding 16). The UI host says so: `PanelFocus { panel, shown }` (Forms group, `ui` only;
+[ADR-0013](decisions/0013-form-flow.md), addendum). It sends `shown: true` and waits for the
+answer before the panel takes the keyboard, renews it while the panel stays open (the lease is 30
+seconds), and sends `shown: false` once it has given the keyboard back, before `FormSubmit` or
+`ExpandSnippet`. While a panel has the keyboard, the engine thread drops every key (`Char`,
+`Backspace`, `Boundary`) before the hand-off and the engine see it, and before the key-target
+check of §4.1, and holds the engine in `own_window`: verdicts that arrive meanwhile are noted and
+delivered as `own_window`, and explicit requests are refused (`refused_own_window`). When the
+panel gives the keyboard back, the last verdict for the current focus is delivered again, on the
+engine thread in queue order, so the request the UI host sends next finds it in force. A submit
+or cancel ends a form's hold, a pick or `ReopenLastForm` the palette's; a lease that runs out
+(diagnostic `panel_focus_expired`) and the UI host's disconnection end it too. On Windows the
+panels take the foreground and the focus thread reports `own_window` itself; the message changes
+nothing there.
+
 The last submitted values of each form are kept so that a form can be reopened pre-filled
 (`ReopenLastForm`). They are user-entered text and are treated like typed keys: held only in the
 worker's memory, never written to disk or logs, and cleared after 30 minutes without use, on
-screen lock, on sign-out and on restart.
+screen lock, on sign-out and on restart. Screen lock and sign-out reach the worker through the
+platform's `SessionEvents` (§5): every event sets a flag the engine thread reads before its next
+message, so a full engine queue cannot lose it, and the engine thread forgets the values and
+disturbs the typed-characters hand-off. Forgotten values are overwritten, not only freed: a
+`FormValues` overwrites its values with zeros when it is dropped or wiped, the service overwrites
+the copy a `FormSubmit` carried, and a clipboard snapshot overwrites its bytes when dropped.
 
 ### 4.6 Typing while Iamb is injecting
 
@@ -441,6 +465,7 @@ that keys cannot carry (HTML, files) stops the expansion with `Cancelled(Clipboa
 | `LoginItem` | `enable()`, `disable()`, `login_item_status()` | UI host | Per-user Run key | Login-item registration of the helper app |
 | `MemoryLock` | `lock(region)`, `unlock(region)` | service | Keeps the keystroke buffer and hand-off out of the page file | Same, out of swap |
 | `LocalEndpoint` | `bind(name, policy)`, `connect(name, policy, timeout)`; streams carry the verified peer | service, UI host, CLI, sync agent | Named pipe whose name ends in a secret kept in the user-only `run` directory, first instance only, remote clients rejected, user SID checked | Unix socket in a user-only directory, peer uid checked |
+| `SessionEvents` | `watch_session(sink)`, `unwatch_session()`; events `Locked`, `SwitchedOut`, `SigningOut`, `Sleeping` (a report too many only forgets a form's answers) | service | A hidden top-level window and a window-event hook on a thread of their own: `EVENT_SYSTEM_DESKTOPSWITCH` (the lock screen, a secure desktop), `WM_QUERYENDSESSION` and `WM_ENDSESSION`. `WM_WTSSESSION_CHANGE` needs `WTSRegisterSessionNotification`, which the bindings keep in the Remote Desktop namespace the service may not link (§2) | One observer on the main run loop: `com.apple.screenIsLocked` (distributed centre, delivered at once), `NSWorkspaceScreensDidSleepNotification`, `NSWorkspaceSessionDidResignActiveNotification`, `NSWorkspaceWillPowerOffNotification`, `NSWorkspaceWillSleepNotification` |
 
 All traits are object safe and take `&self`, so the service holds one `Arc<dyn Platform>`. The
 OS crates are the only crates allowed `unsafe`, and every `unsafe` block carries a safety comment
@@ -497,13 +522,16 @@ One transport and framing for both endpoints ([ADR-0006](decisions/0006-ipc.md))
   (import, export, attachments) is passed as file paths, never inline.
 - Shape: `Request { id, body }` → `Response { id, result | error }`, plus `Event { topic, body }`
   pushed by the server.
-- The first message is `Hello { protocol: 2, role, client_version }`; a different major protocol
+- The first message is `Hello { protocol: 3, role, client_version }`; a different major protocol
   version is refused with a clear error. The major version is raised whenever a build could
   misread what a build of the previous version sends: a message or field removed, renamed or
   given another meaning, a new required field, or a request answered with another response type.
   Additions an older peer can ignore (a new request, event or optional field) do not raise it.
   `PROTOCOL_VERSION` in `crates/iamb-ipc/src/protocol.rs` lists each step; 2 is `PutExclusion`
-  answering `Exclusions` instead of `Done`.
+  answering `Exclusions` instead of `Done`; 3 makes the time of a diagnostic (`at`) required,
+  gives `Preview` its parts, cursor and fields instead of the text, and turns a template error's
+  `position` into `start` and `end` (template positions are UTF-16 offsets, the unit of the
+  editor's strings).
 - Message bodies are never logged. Logs record the message name, size and duration.
 
 ### 6.2 The service endpoint
@@ -523,9 +551,9 @@ left at the cargo name). On Linux the endpoint names no executable and the role 
 
 | Group | Requests | Events |
 | --- | --- | --- |
-| Library | `ListFolders`, `ListSnippets(query)`, `GetSnippet`, `PutSnippet`, `DeleteSnippet`, `PutFolder`, `DeleteFolder`, `PutTag`, `Search(text)`, `Import(path, format)`, `Export(path, format)`, `Health`, `ListPendingReviews`, `ApproveSnippet(id, rev)` | `LibraryChanged(revision)` |
+| Library | `ListFolders`, `ListSnippets(query)`, `ListSnippetSummaries(query, offset, limit)`, `GetSnippet`, `PutSnippet(snippet, tags)`, `DeleteSnippet`, `CheckAbbreviation(abbreviation, trigger, snippet)`, `PutFolder`, `DeleteFolder`, `PutTag`, `ListTags`, `DeleteTag`, `Search(text)`, `Import(path, format)`, `Export(path, format)`, `Health`, `ListPendingReviews`, `ApproveSnippet(id, rev)` | `LibraryChanged(revision, changed rows)` |
 | Engine control | `GetStatus`, `SetPaused`, `ExpandSnippet(id, focus)`, `DryRun(typed)`, `GetPermissions`, `OpenPermissionSettings(kind)`, `SetTestField(window)` | `StatusChanged`, `PaletteRequested(focus)` |
-| Forms | `FormAck(session)`, `FormSubmit(session, values)`, `FormCancel(session)`, `ReopenLastForm` | `FormRequested(session, spec, focus, last_values)` |
+| Forms | `FormAck(session)`, `FormSubmit(session, values)`, `FormCancel(session)`, `ReopenLastForm`, `PanelFocus(panel, shown)` | `FormRequested(session, spec, focus, last_values)` |
 | Templates | `ParseTemplate(source)`, `RenderPreview(source, values)` | — |
 | Diagnostics | `RecentDiagnostics` | `DiagnosticAdded` |
 | Settings | `GetSettings`, `PutSetting`, `ListExclusions`, `PutExclusion` | `SettingsChanged` |
@@ -537,10 +565,27 @@ requests `FormSubmit` and `FormCancel` become the engine events `FormSubmitted` 
 what clients hear.
 
 `DryRun(typed)` feeds a string to a fresh engine as if each character were typed and returns the
-actions; nothing is injected. `ParseTemplate` returns the token list the editor turns into chips;
-`RenderPreview` returns the rendered output or the error code and position. The editor therefore
-uses the same parser as expansion and always sees the whole library, with no second build of the
-core ([ADR-0017](decisions/0017-ui-host.md)).
+actions; nothing is injected. `ParseTemplate` returns the token list the editor turns into chips
+(each macro with its attributes) and the first parse or resolve error with its span, with every
+`{snippet}` looked up in the snapshot; `RenderPreview` returns what an expansion would do (text,
+key presses and waits in order, with the ranges each fill-in field produced), the cursor
+position and the form's fields, or the error. A text field without a value or default shows its
+name as a sample, and the clipboard is never read (the preview shows the sample `Clipboard`).
+The editor therefore uses the same parser as expansion and always sees the whole library, with
+no second build of the core ([ADR-0017](decisions/0017-ui-host.md); `iamb_service::templates`).
+
+The library window's other needs (`docs/ux/spec.md` §11.2): `PutSnippet` carries the snippet's
+tags (absent: unchanged) and restores a deleted snippet when given its id, with its usage and
+tags (Undo); `ListTags` and `DeleteTag` complete `PutTag`, whose colour must be one of the eight
+names of the design system and whose name must be unique in the profile without regard to case;
+`ListSnippetSummaries` pages the list without bodies (at most 1,000 per page, each with its first
+line, its tags and why it is broken, if it is); `CheckAbbreviation` answers the editor's warnings
+(the snippet that holds the abbreviation, the ones it would hide or be hidden by) from the
+snapshot without writing; a `Search` hit says which field matched and where; `LibraryChanged`
+names the snippets, folders and tags a change touched, or nothing when it may have touched any
+(an import); `PutSetting("palette_hotkey")` registers the chord before it stores it and answers
+`conflict` when the system refuses it (the old chord stays); and every diagnostic carries its
+time.
 
 The React UI never speaks IPC itself. It calls Tauri commands in `iamb-desktop`, which forwards
 them and relays events back.
@@ -759,14 +804,16 @@ typing (never stored, logged or sent, cleared at the next boundary), and an abbr
 can expand.
 
 **Open findings of the Phase 2 privacy review.** Three low findings of
-[`2.8-phase2-privacy-review.md`](reviews/2.8-phase2-privacy-review.md) are left to the tasks that
-can close them; each of those tasks must close its finding before it is done:
+[`2.8-phase2-privacy-review.md`](reviews/2.8-phase2-privacy-review.md) were left to the tasks that
+can close them; each of those tasks must close its finding before it is done. 13 and 16 are closed
+in the service and the platform layer; what is left of them is the UI host's part and checks on
+real machines:
 
 | Finding | What is open | Tracked in |
 | --- | --- | --- |
 | 11, the installed-binary check | Windows trusts any executable in the installation directory with a valid signature from any publisher; macOS identifies the peer by process id, compares it with the service's own designated requirement (which would refuse the UI host and the command-line tool once builds are signed) and does not pass `kSecCSNoNetworkAccess`. The role check of §6.1 rests on this check | Phase 5, with the first signed builds (the signing rules of task 5.2): compare the peer's signer with the running executable's; build the macOS requirement from the team identifier and identify the peer by audit token; set the no-network flag; say in §6.1 what the check does not stop; test with signed builds |
-| 13, screen lock and sign-out | No platform trait reports a screen lock or a sign-out, so remembered form values (§4.5) and the typed-characters hand-off are not cleared then, only after 30 minutes or at restart; forgotten values and dropped clipboard snapshots are freed without being overwritten | Task 3.5 (fill-in form), before a form can be shown: a session-event source in the platform traits (§5), wired to `Worker::forget_form_values` and `TypedHandoff::clear`, and form values and snapshot bytes overwritten before they are freed |
-| 16, Iamb's own panels on macOS | The form and the palette are non-activating panels, so the frontmost application stays the target and typing in them cannot be reported as `own_window` (§4.5) | Tasks 3.5 and 3.6, before the first panel ships: a UI-role message that says a panel has the keyboard (or suspension from `FormRequested` and `PaletteRequested` until the answer), recorded in ADR-0013 |
+| 13, screen lock and sign-out | **Done in the service** (§4.5, §5): `SessionEvents` in the platform traits, the mock and both OS crates; every event forgets the remembered values and disturbs the hand-off; `FormValues`, the wire copy of a submit and clipboard snapshots overwrite their bytes before they are freed. Tests on the mock (`tests/panels.rs`), a Windows unit test of the sign-out messages, a macOS main-loop test of the notifications (`tests/session.rs`). Left: a lock, user switch and sign-out on a real Windows and Mac (`docs/compatibility-run.md`); the IPC frames that carried values (serde's buffers) are freed without being overwritten | Task 3.5: the manual checks on both systems |
+| 16, Iamb's own panels on macOS | **Done in the service** (§4.5, ADR-0013 addendum): `PanelFocus(panel, shown)`, with a lease and the UI-host-gone fallback; keys typed while a panel has the keyboard reach neither the engine nor the hand-off (`tests/panels.rs`, `tests/focus_order.rs`). Left: the UI host must send it (before the panel takes the keyboard, renewed every 10 seconds, and `shown: false` when the panel resigns the keyboard, for example when the user clicks the app behind it), and a check on a Mac that keys typed into the panels do not expand | Tasks 3.5 and 3.6 (the UI host's part) |
 
 ## 9. Sync
 
@@ -853,8 +900,8 @@ The screens, flows, copy and design tokens are in [`docs/ux/spec.md`](ux/spec.md
 | 3.2 Tauri shell | `iamb-desktop`, `iamb-ipc` client, `LoginItem` |
 | 3.3 Library | `apps/desktop/src/library/`, Library messages |
 | 3.4 Template editor | `apps/desktop/src/editor/`, Templates messages |
-| 3.5 Fill-in form | Form panel in `iamb-desktop`; Forms messages; focus tokens in the OS crates; form memory in `iamb-service`; screen-lock and sign-out events and the panels' own-window state on macOS (findings 13 and 16 of the 2.8 review, §8 "Open findings") |
-| 3.6 Search palette | Palette panel in `iamb-desktop`; `iamb-core::search`; `Hotkeys`; `PaletteRequested`; the palette's own-window state on macOS (finding 16 of the 2.8 review, §8 "Open findings") |
+| 3.5 Fill-in form | Form panel in `iamb-desktop`; Forms messages; focus tokens in the OS crates; form memory in `iamb-service`; sending `PanelFocus` from the form panel, and the manual lock and sign-out checks (findings 13 and 16 of the 2.8 review, §8 "Open findings"; the service's part is done) |
+| 3.6 Search palette | Palette panel in `iamb-desktop`; `iamb-core::search`; `Hotkeys`; `PaletteRequested`; sending `PanelFocus` from the palette (finding 16 of the 2.8 review, §8 "Open findings"; the service's part is done) |
 | 3.7 Onboarding | `apps/desktop/src/onboarding/`, `GetPermissions`, `SetTestField` |
 | 3.8 Rich text snippets | `iamb-core::rich`, `Paste` action, clipboard building in `iamb-service`, attachments in `iamb-store` |
 | 3.9 Settings and diagnostics | `apps/desktop/src/settings/`, Settings and Diagnostics messages |

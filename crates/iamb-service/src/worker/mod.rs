@@ -38,6 +38,12 @@
 //!   carries only a notice.
 //! - **Where a key went** (§4.1): a key the listener names another window for than the last
 //!   focus change the engine heard of is not handed to the engine ([`engine`]).
+//! - **Iamb's own panels** (§4.5; the 2.8 review's finding 16): while the UI host says a panel
+//!   has the keyboard (`PanelFocus`), keys reach neither the engine nor the hand-off, and the
+//!   engine is held in `own_window` ([`engine`] "Iamb's own panels").
+//! - **Screen lock and sign-out** (§4.5; finding 13): the platform's session watcher sets
+//!   [`Shared::forget_pending`] and wakes the engine thread, which overwrites the remembered
+//!   form values and the hand-off before it handles anything else.
 
 mod endpoint;
 mod engine;
@@ -61,10 +67,11 @@ use iamb_core::engine::{Engine, ExpansionId, FormSessionId, SecureState, Snapsho
 use iamb_core::model::Id;
 use iamb_core::sensitive::Sensitive;
 use iamb_core::template::FormValues;
-use iamb_ipc::{EventBody, InjectionStatus, ServiceStatus, WireDiagnostic};
+use iamb_ipc::{EventBody, InjectionStatus, PanelKind, ServiceStatus, WireDiagnostic};
 use iamb_platform::{
     DEFAULT_EVENT_CAPACITY, EventSink, FocusChange, FocusSink, FocusToken, InjectionOutcome,
-    InjectionRequest, LocalEndpoint, MemoryRegion, PeerPolicy, Platform, TypedHandoff,
+    InjectionRequest, LocalEndpoint, MemoryRegion, PeerPolicy, Platform, SessionEvent, SessionSink,
+    TypedHandoff,
 };
 use iamb_store::{Store, StoreError};
 
@@ -121,6 +128,9 @@ pub struct WorkerConfig {
     pub clock: Arc<dyn Fn() -> LocalDateTime + Send + Sync>,
     /// Where log lines go.
     pub logger: Arc<Logger>,
+    /// How long one `PanelFocus { shown: true }` holds: normally
+    /// [`PANEL_FOCUS_LEASE`](iamb_ipc::PANEL_FOCUS_LEASE).
+    pub panel_focus_lease: Duration,
 }
 
 impl WorkerConfig {
@@ -144,6 +154,7 @@ impl WorkerConfig {
             endpoint_retry: ENDPOINT_RETRY,
             clock: Arc::new(crate::clock::local_now),
             logger: Arc::new(Logger::disabled()),
+            panel_focus_lease: iamb_ipc::PANEL_FOCUS_LEASE,
         }
     }
 }
@@ -278,13 +289,22 @@ pub(crate) enum EngineMsg {
     /// From a reader.
     FormAck(FormSessionId),
     /// From a reader: the last UI host disconnected. Every form session it was sent can no
-    /// longer be submitted or cancelled by anyone, so the engine cancels them all.
+    /// longer be submitted or cancelled by anyone, so the engine cancels them all, and a panel
+    /// it said has the keyboard no longer has it.
     UiHostGone,
+    /// From a reader: one of Iamb's panels has the keyboard, or no longer has it. Answered
+    /// once handled.
+    PanelFocus {
+        panel: PanelKind,
+        shown: bool,
+        reply: Sender<()>,
+    },
     /// From a reader.
     SetPaused(bool),
     /// From the store thread.
     Snapshot(Snapshot),
-    /// Screen lock, sign-out (from task 3.x), or a test.
+    /// Screen lock, sign-out (through [`Shared::forget_pending`], which this only wakes the
+    /// engine thread for), or a test.
     ForgetFormValues,
     /// From a reader: the engine's part of the status.
     Status(Sender<EngineStatus>),
@@ -396,6 +416,10 @@ pub(crate) struct Shared {
     pub policy: PeerPolicy,
     pub exit: ExitSignal,
     pub clock: Arc<dyn Fn() -> LocalDateTime + Send + Sync>,
+    /// Set by the session watcher (screen lock, sign-out): the engine thread overwrites the
+    /// remembered form values and the hand-off before it handles its next message. A flag and
+    /// not only a message, so that a full engine queue cannot lose it.
+    pub forget_pending: AtomicBool,
 }
 
 impl Shared {
@@ -431,14 +455,33 @@ impl Shared {
         }
     }
 
-    /// Records a diagnostic in the ring, tells the UI, and logs its code.
+    /// Records a diagnostic in the ring, stamped with the time, tells the UI, and logs its
+    /// code.
     pub(crate) fn diagnostic(&self, mut entry: WireDiagnostic) {
-        entry.at = Some(crate::clock::timestamp());
+        entry.at = crate::clock::timestamp();
         self.logger.info(format_args!("diagnostic {}", entry.code));
         self.diagnostics.push(entry.clone());
         self.clients
             .broadcast(&EventBody::DiagnosticAdded { entry });
     }
+}
+
+/// A diagnostic with only `code`, stamped now.
+pub(crate) fn coded(code: &str) -> WireDiagnostic {
+    WireDiagnostic::code(code, crate::clock::timestamp())
+}
+
+/// The session watcher's sink: every event asks the engine thread to forget (module docs).
+/// Never blocks: it may run on the OS's main thread.
+fn session_sink(shared: &Arc<Shared>) -> Box<dyn SessionSink> {
+    let shared = Arc::clone(shared);
+    Box::new(move |event: SessionEvent| {
+        shared.forget_pending.store(true, Ordering::SeqCst);
+        shared
+            .logger
+            .info(format_args!("session event {}", event.as_str()));
+        let _ = shared.engine_tx.try_send(EngineMsg::ForgetFormValues);
+    })
 }
 
 /// The address range of the engine's keystroke buffer (architecture §4.1).
@@ -542,6 +585,7 @@ impl Worker {
             endpoint_retry,
             clock,
             logger,
+            panel_focus_lease,
         } = config;
         logger.info(format_args!(
             "worker {} starting, pid {}",
@@ -600,6 +644,7 @@ impl Worker {
             policy,
             exit: ExitSignal::default(),
             clock,
+            forget_pending: AtomicBool::new(false),
         });
 
         let handoff = Arc::new(TypedHandoff::new());
@@ -626,6 +671,7 @@ impl Worker {
                 injector_tx,
                 heartbeat,
                 heartbeat_interval,
+                panel_focus_lease,
             );
             spawn("engine", &mut threads, move || state.run(&engine_rx))?;
         }
@@ -651,6 +697,10 @@ impl Worker {
         match platform.watch(focus_sink(focus_tx)) {
             Ok(()) => shared.watching.store(true, Ordering::Relaxed),
             Err(e) => logger.warn(format_args!("the focus watcher did not start: {e}")),
+        }
+        if let Err(e) = platform.watch_session(session_sink(&shared)) {
+            // Remembered form values still expire after 30 minutes and at restart.
+            logger.warn(format_args!("the session watcher did not start: {e}"));
         }
         register_palette_hotkey(&shared);
 
@@ -757,8 +807,9 @@ impl Worker {
         ExitHandle(Arc::clone(&self.shared))
     }
 
-    /// Forgets remembered form values (screen lock, sign-out).
+    /// Forgets remembered form values, as a screen lock or sign-out does.
     pub fn forget_form_values(&self) {
+        self.shared.forget_pending.store(true, Ordering::SeqCst);
         self.shared.to_engine(EngineMsg::ForgetFormValues);
     }
 
@@ -784,6 +835,7 @@ impl Worker {
         // The engine thread must not start the watcher again (it keeps a stopped one running).
         self.shared.watching.store(false, Ordering::Relaxed);
         let _ = platform.unwatch();
+        let _ = platform.unwatch_session();
         let _ = platform.unregister(PALETTE_HOTKEY);
         self.endpoint.stop();
         self.shared.clients.shutdown_all();
@@ -821,7 +873,8 @@ impl fmt::Debug for ExitHandle {
     }
 }
 
-/// Registers the palette hotkey from the `palette_hotkey` setting, if there is one.
+/// Registers the palette hotkey from the `palette_hotkey` setting, if there is one (worker
+/// start; a change of the setting registers it again, `handlers::put_setting`).
 fn register_palette_hotkey(shared: &Shared) {
     let view = shared.view.get();
     let Some(text) = view.settings.get("palette_hotkey") else {

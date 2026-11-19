@@ -740,3 +740,81 @@ fn form_values_are_checked_against_their_fields() {
     );
     assert_eq!(r.text(), "Size: L ON+|x|");
 }
+
+#[test]
+fn a_preview_says_where_fields_the_clipboard_and_the_cursor_are() {
+    use iamb_core::template::{Origin, Provenance};
+    let settings = Settings::new();
+    let template = Template::parse(
+        "Hi {field name=Name}, {clipboard}!{key name=tab}Re {field name=Topic}{cursor} ok",
+    )
+    .expect("parses");
+    let resolved = template.resolve(&NoSnippets).expect("resolves");
+    let values: FormValues = [("Name", "Kim"), ("Topic", "tea")].into_iter().collect();
+    let ctx = settings.ctx(Some("clip"));
+    let preview = resolved.render_preview(&ctx, &values).expect("renders");
+    // The same actions as an expansion.
+    assert_eq!(
+        preview.rendered,
+        resolved.render(&ctx, &values).expect("renders")
+    );
+    assert_eq!(
+        preview.origins,
+        vec![
+            Provenance {
+                action: 0,
+                range: 3..6,
+                origin: Origin::Field(0)
+            },
+            Provenance {
+                action: 0,
+                range: 8..12,
+                origin: Origin::Clipboard
+            },
+            Provenance {
+                action: 2,
+                range: 3..6,
+                origin: Origin::Field(1)
+            },
+        ]
+    );
+    assert_eq!(preview.cursor, Some((2, 6)));
+    assert!(!format!("{preview:?}").contains("Kim"));
+
+    // A cursor with no text around it is after everything.
+    let lone = Template::parse("{cursor}")
+        .expect("parses")
+        .resolve(&NoSnippets)
+        .expect("resolves")
+        .render_preview(&ctx, &FormValues::new())
+        .expect("renders");
+    assert_eq!(lone.cursor, Some((0, 0)));
+    assert!(lone.origins.is_empty());
+}
+
+#[test]
+fn tokens_are_available_for_a_template_that_does_not_parse() {
+    // `E_BAD_FORMAT` is a value error: the chips are still there.
+    assert!(Template::parse("a {date fmt=\"%Q\"} b").is_err());
+    let tokens = iamb_core::template::tokens("a {date fmt=\"%Q\"} b");
+    assert_eq!(tokens.len(), 3);
+    assert!(matches!(
+        &tokens[1],
+        Token::Macro { name: MacroName::Date, attributes, range } if attributes[0].value == "%Q" && *range == (2..17)
+    ));
+    // An unclosed macro leaves nothing to show as chips.
+    assert!(iamb_core::template::tokens("a {date").is_empty());
+}
+
+#[test]
+fn form_values_are_overwritten_in_place() {
+    let mut text = String::from("secret value");
+    let before = text.as_ptr();
+    iamb_core::template::overwrite(&mut text);
+    assert!(text.is_empty());
+    assert_eq!(text.as_ptr(), before, "the same buffer, not a new one");
+    let mut values: FormValues = [("Name", "Kim")].into_iter().collect();
+    values.wipe();
+    assert!(values.is_empty());
+    assert_eq!(values.get("Name"), None);
+}

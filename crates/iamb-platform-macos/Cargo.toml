@@ -38,6 +38,12 @@ name = "focus"
 path = "tests/focus.rs"
 harness = false
 
+# Session events arrive on the main run loop, which this test runs itself.
+[[test]]
+name = "session"
+path = "tests/session.rs"
+harness = false
+
 # Opens the probe window and types into it; needs the main thread and an interactive session
 # (skipped with a `SKIPPED` line without one).
 [[test]]
@@ -74,7 +80,8 @@ iamb-platform = { path = "../iamb-platform" }
 # Linux. No networking framework may ever be added: this crate is linked into iamb-service
 # (architecture §2, ADR-0008).
 #
-#   objc2, objc2-foundation        everything that talks to Objective-C classes
+#   objc2, objc2-foundation        everything that talks to Objective-C classes; session
+#                                  (the distributed notification centre)
 #   objc2-core-foundation          listener (run loop, mach port), every CF type
 #   objc2-core-graphics            listener (event tap), injector (event source, posting),
 #                                  permissions (Input Monitoring), focus (window ids)
@@ -82,6 +89,7 @@ iamb-platform = { path = "../iamb-platform" }
 #                                  the process id of an application's element and observer)
 #   objc2-app-kit                  clipboard (pasteboard), focus (frontmost application and
 #                                  its activation; `libc` for its process id),
+#                                  session (the workspace's session notifications),
 #                                  main_loop (the application event loop; `NSGraphicsContext`
 #                                  only for the signature of the event that stops it)
 #   objc2-service-management       login_item
@@ -143,6 +151,7 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "NSArray",
     "NSData",
     "NSDictionary",
+    "NSDistributedNotificationCenter",
     "NSError",
     "NSNotification",
     "NSObject",

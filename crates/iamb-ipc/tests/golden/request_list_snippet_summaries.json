@@ -1,0 +1,12 @@
+{
+  "body": {
+    "limit": 100,
+    "offset": 200,
+    "query": {
+      "tag": "03030303-0303-0303-0303-030303030303"
+    },
+    "type": "list_snippet_summaries"
+  },
+  "id": 11,
+  "kind": "request"
+}

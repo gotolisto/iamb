@@ -44,7 +44,7 @@
 //! | --- | --- |
 //! | `Char` | Appended, then matched (dropped unstored while suspended) |
 //! | `Backspace` | Last character removed; if the buffer was empty or the character was the NUL placeholder, the start of the buffer is marked unknown, so a `word_start` abbreviation typed next does not fire until a boundary is typed |
-//! | `Boundary` | Enter and Tab are first matched as the delimiters `\n` and `\t` when the delimiter set holds them (it does not by default, ADR-0026); then cleared |
+//! | `Boundary` | Enter and Tab are first matched as the delimiters `\n` and `\t` when the delimiter set holds them (it does not by default, ADR-0026); when it does not and a delimiter-mode abbreviation ends at the caret, [`Reason::NotADelimiter`] names it; then cleared |
 //! | `FocusChanged`, `SecureState`, `Composing`, `Paused`, `Overflow` | Cleared |
 //! | `SnapshotChanged` | Kept; the next `Char` is matched against the new snapshot |
 //! | an expansion | Cleared; then, unless suspended, if the expansion leaves a known non-boundary character before the caret, a NUL placeholder is pushed so a following `word_start` abbreviation does not fire mid-word. NUL never matches (abbreviations contain no control characters). |
@@ -609,6 +609,16 @@ impl Engine {
                 return Vec::new();
             }
             None => {}
+        }
+        if let Some(d) = kind.as_delimiter()
+            && !self.snapshot.settings().delimiters.contains(d)
+        {
+            // Enter and Tab do not expand (ADR-0026); say so when they would have.
+            let missed = self.snapshot.matcher().delimited_at_caret(&self.buffer);
+            self.buffer.clear();
+            return missed.map_or_else(Vec::new, |snippet| {
+                diagnostic(Diagnostic::new(Reason::NotADelimiter).with_snippet(snippet))
+            });
         }
         if let Some(d) = kind.as_delimiter() {
             let key = if kind == BoundaryKind::Enter {

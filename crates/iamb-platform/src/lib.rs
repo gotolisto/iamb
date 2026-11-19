@@ -15,6 +15,7 @@
 //! | [`Permissions`] | the macOS grants | readers (`GetPermissions`) |
 //! | [`LoginItem`] | start at login | the UI host |
 //! | [`MemoryLock`] | keeping typed characters out of swap | worker start-up |
+//! | [`SessionEvents`] | screen lock, session switch, sign-out ([`session`]) | its own OS thread |
 //! | [`LocalEndpoint`] | the socket or pipe under `iamb-ipc` | readers |
 //!
 //! [`Platform`] is all of them together. Every public item is re-exported at the crate root;
@@ -56,6 +57,7 @@ pub mod memory;
 pub mod mock;
 pub mod permissions;
 pub mod platform;
+pub mod session;
 
 pub use clipboard::{
     ClipboardAccess, ClipboardContent, ClipboardFlavour, ClipboardFormat, ClipboardSnapshot,
@@ -90,6 +92,7 @@ pub use marker::{Marker, PAYLOAD_BITS};
 pub use memory::{MemoryLock, MemoryRegion};
 pub use permissions::{Grant, PermissionKind, PermissionStatus, Permissions};
 pub use platform::Platform;
+pub use session::{SessionEvent, SessionEvents, SessionSink};
 
 /// The engine types the platform layer exchanges with the service, re-exported so an OS crate
 /// needs no direct dependency on `iamb-core`.

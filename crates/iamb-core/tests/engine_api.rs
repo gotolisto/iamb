@@ -336,6 +336,7 @@ fn small_types() {
             "refused_composing",
         ),
         (Reason::RequestCancelled, "request_cancelled"),
+        (Reason::NotADelimiter, "not_a_delimiter"),
     ];
     assert_eq!(SuspendReason::of(SecureState::Normal), None);
     assert_eq!(
@@ -449,4 +450,110 @@ fn typed_resolve_error_is_reported_not_skipped() {
             "{typed}"
         );
     }
+}
+
+#[test]
+fn enter_or_tab_after_an_abbreviation_is_named_not_expanded() {
+    let mut imm = snippet(2, ";sig", "Kind regards");
+    imm.trigger = Trigger::Immediate;
+    let snapshot = Snapshot::build(
+        [snippet(1, "brb", "be right back"), imm],
+        EngineSettings::default(),
+    );
+    let env = FakeEnv::default();
+    let mut engine = Engine::new(snapshot);
+    engine.handle(Event::SecureState(SecureState::Normal), &env);
+    for (i, c) in "brb".chars().enumerate() {
+        assert!(engine.handle(Event::char(c, i as u64), &env).is_empty());
+    }
+    for kind in [BoundaryKind::Enter, BoundaryKind::Tab] {
+        let out = engine.handle(Event::Boundary { kind, seq: 9 }, &env);
+        if kind == BoundaryKind::Enter {
+            assert_eq!(
+                out,
+                vec![Action::Diagnostic(
+                    Diagnostic::new(Reason::NotADelimiter).with_snippet(id(1))
+                )]
+            );
+        } else {
+            // The buffer was cleared by the Enter: nothing to name.
+            assert!(out.is_empty());
+        }
+        assert_eq!(engine.buffered_len(), 0);
+    }
+    // Other boundaries, and Enter after text that is no abbreviation, say nothing.
+    for c in "brb".chars() {
+        engine.handle(Event::char(c, 20), &env);
+    }
+    let out = engine.handle(
+        Event::Boundary {
+            kind: BoundaryKind::Arrow,
+            seq: 21,
+        },
+        &env,
+    );
+    assert!(out.is_empty());
+    for c in "xyz".chars() {
+        engine.handle(Event::char(c, 22), &env);
+    }
+    let out = engine.handle(
+        Event::Boundary {
+            kind: BoundaryKind::Tab,
+            seq: 23,
+        },
+        &env,
+    );
+    assert!(out.is_empty());
+
+    // When the user made Enter a delimiter, it expands instead.
+    let settings = EngineSettings {
+        delimiters: Delimiters::new([' ', '\n']),
+        ..EngineSettings::default()
+    };
+    let mut engine = Engine::new(Snapshot::build(
+        [snippet(1, "brb", "be right back")],
+        settings,
+    ));
+    engine.handle(Event::SecureState(SecureState::Normal), &env);
+    for c in "brb".chars() {
+        engine.handle(Event::char(c, 30), &env);
+    }
+    let out = engine.handle(
+        Event::Boundary {
+            kind: BoundaryKind::Enter,
+            seq: 31,
+        },
+        &env,
+    );
+    assert!(matches!(out.last(), Some(Action::Expanded { .. })));
+}
+
+#[test]
+fn an_unsaved_abbreviation_is_checked_against_the_matchable_set() {
+    let mut ad = snippet(1, "ad", "advert");
+    ad.trigger = Trigger::Immediate;
+    let snapshot = Snapshot::build(
+        [ad, snippet(2, "address", "x"), snippet(3, "brb", "y")],
+        EngineSettings::default(),
+    );
+    let m = snapshot.matcher();
+    // A delimiter-mode "add" is hidden by the immediate "ad" and hides nothing.
+    assert_eq!(
+        m.shadowing_of("add", Trigger::Delimiter, None),
+        (vec![], vec![id(1)])
+    );
+    // An immediate "addr" would hide "address", and is hidden by "ad".
+    assert_eq!(
+        m.shadowing_of("ADDR", Trigger::Immediate, None),
+        (vec![id(2)], vec![id(1)])
+    );
+    // The snippet being edited is left out.
+    assert_eq!(
+        m.shadowing_of("a", Trigger::Immediate, Some(id(2))),
+        (vec![id(1)], vec![])
+    );
+    assert_eq!(
+        m.shadowing_of("brb", Trigger::Immediate, None),
+        (vec![], vec![])
+    );
 }

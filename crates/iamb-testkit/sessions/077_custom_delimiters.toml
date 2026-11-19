@@ -26,3 +26,5 @@ type = "brb"
 
 [[step]]
 key = "enter"
+# Enter is not in this set: nothing expands, and the diagnostic says why (ADR-0026).
+expect = [{ diagnostic = "not_a_delimiter", snippet = "brb" }]

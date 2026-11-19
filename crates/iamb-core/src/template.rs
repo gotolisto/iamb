@@ -90,7 +90,7 @@ use std::hash::BuildHasher;
 use std::sync::Arc;
 
 pub use error::{ErrorKind, TemplateError};
-pub use render::{RenderContext, Rendered, RenderedAction};
+pub use render::{Origin, Preview, Provenance, RenderContext, Rendered, RenderedAction};
 pub use syntax::{Attribute, MacroName, Token};
 
 /// Maximum nesting of `{if}` inside one template body, and of `{snippet}` below the template.
@@ -304,6 +304,35 @@ impl FormValues {
     }
 }
 
+impl FormValues {
+    /// Overwrites every value with zeros where it lies in memory, then forgets them all
+    /// (architecture §4.5: remembered values are overwritten, not only dropped, on screen lock,
+    /// sign-out and expiry). Dropping a `FormValues` does the same.
+    pub fn wipe(&mut self) {
+        for value in self.values.values_mut() {
+            overwrite(value);
+        }
+        self.values.clear();
+    }
+}
+
+impl Drop for FormValues {
+    fn drop(&mut self) {
+        self.wipe();
+    }
+}
+
+/// Overwrites the bytes of `text` with zeros in place (its buffer does not move: the zeros are
+/// written into the capacity it already has) and leaves it empty. The writes go through
+/// [`std::hint::black_box`] so they are not removed as dead stores.
+pub fn overwrite(text: &mut String) {
+    let len = text.len();
+    text.clear();
+    text.extend(std::iter::repeat_n('\0', len));
+    std::hint::black_box(&mut *text);
+    text.clear();
+}
+
 impl<K: Into<String>, V: AsRef<str>> FromIterator<(K, V)> for FormValues {
     fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
         let mut values = Self::new();
@@ -415,6 +444,30 @@ impl Resolved {
     ) -> Result<Rendered, TemplateError> {
         render::render(self, ctx, values)
     }
+
+    /// As [`render`](Self::render), for the editor's preview: the same actions, plus where each
+    /// piece of text that came from a field or the clipboard is ([`Preview::origins`]) and where
+    /// the cursor is ([`Preview::cursor`]).
+    ///
+    /// # Errors
+    /// As [`render`](Self::render).
+    pub fn render_preview(
+        &self,
+        ctx: &RenderContext<'_>,
+        values: &FormValues,
+    ) -> Result<Preview, TemplateError> {
+        render::render_preview(self, ctx, values)
+    }
+}
+
+/// The literal text runs and macros of `source`, in order, with `char` ranges into it: what the
+/// editor shows as text and chips (task 3.4). Unlike [`Template::tokens`] this also works for a
+/// template that does not parse, as long as every macro is closed and its attributes are
+/// written correctly (a template that fails with `E_UNCLOSED_MACRO` or `E_BAD_SYNTAX` has no
+/// tokens: the list is empty). Values are not checked here; [`Template::parse`] does that.
+#[must_use]
+pub fn tokens(source: &str) -> Vec<Token> {
+    syntax::tokens(source)
 }
 
 /// Parses, resolves and renders `source` in one call (tests, CLI dry run, previews).

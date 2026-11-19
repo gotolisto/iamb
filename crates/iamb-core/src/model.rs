@@ -376,7 +376,8 @@ impl Abbreviation {
 }
 
 /// Folds one character of an abbreviation or of typed text (see [`Abbreviation::fold_key`]).
-pub(crate) fn fold_char(c: char) -> std::char::ToLowercase {
+#[must_use]
+pub fn fold_char(c: char) -> std::char::ToLowercase {
     if c == 'ς' { 'σ' } else { c }.to_lowercase()
 }
 

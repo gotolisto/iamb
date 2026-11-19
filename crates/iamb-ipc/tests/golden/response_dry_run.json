@@ -73,7 +73,8 @@
     ],
     "hints": [
       {
-        "code": "E_UNKNOWN_TOKEN"
+        "at": 1763400000600,
+        "code": "E_UNKNOWN_ATTR"
       }
     ],
     "type": "dry_run"

@@ -1,6 +1,6 @@
 {
   "client_version": "0.0.0",
   "kind": "hello",
-  "protocol": 2,
+  "protocol": 3,
   "role": "ui"
 }

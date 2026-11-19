@@ -24,6 +24,7 @@
 //! | `login_item` | `LoginItem` | 2.6 |
 //! | `memory` | `MemoryLock` | 2.6 |
 //! | `endpoint` | `LocalEndpoint` | 2.6 |
+//! | `session` | `SessionEvents` | 3.x (the 2.8 review's finding 13) |
 //!
 //! Until its task lands, a module answers [`Unsupported`](iamb_platform::PlatformError).
 //!
@@ -102,6 +103,8 @@ mod memory;
 mod permissions;
 #[cfg(all(target_os = "macos", feature = "probe"))]
 pub mod probe;
+#[cfg(target_os = "macos")]
+mod session;
 
 #[cfg(target_os = "macos")]
 pub use hardening::harden_process;

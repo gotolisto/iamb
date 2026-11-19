@@ -17,7 +17,6 @@
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
-use iamb_ipc::WireDiagnostic;
 use iamb_platform::{EndpointName, LocalEndpoint, LocalListener, PeerPolicy, Result};
 
 use super::{Shared, WakeCounters, ipc};
@@ -120,7 +119,7 @@ pub(crate) fn run(
                          it, and the endpoint is tried again every {} ms",
                         binder.retry.as_millis()
                     ));
-                    shared.diagnostic(WireDiagnostic::code("endpoint_unavailable"));
+                    shared.diagnostic(super::coded("endpoint_unavailable"));
                 } else if attempts.is_multiple_of(LOG_EVERY) {
                     shared.logger.warn(format_args!(
                         "the service endpoint still cannot be served after {attempts} \

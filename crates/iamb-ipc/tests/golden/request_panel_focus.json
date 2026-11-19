@@ -1,0 +1,9 @@
+{
+  "body": {
+    "panel": "form",
+    "shown": true,
+    "type": "panel_focus"
+  },
+  "id": 30,
+  "kind": "request"
+}

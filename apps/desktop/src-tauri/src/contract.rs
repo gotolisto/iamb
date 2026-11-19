@@ -295,7 +295,7 @@ pub enum Forward {
 pub fn forward(event: &EventBody) -> Forward {
     match event {
         EventBody::StatusChanged { status } => Forward::Status(status.clone()),
-        EventBody::LibraryChanged { revision } => Forward::Ui(UiEvent::LibraryChanged {
+        EventBody::LibraryChanged { revision, .. } => Forward::Ui(UiEvent::LibraryChanged {
             revision: *revision,
         }),
         EventBody::FormRequested {
@@ -339,7 +339,7 @@ pub const fn set_paused(paused: bool) -> RequestBody {
 #[must_use]
 pub const fn list_snippets(folder: Option<Id>) -> RequestBody {
     RequestBody::ListSnippets {
-        query: SnippetQuery { folder },
+        query: SnippetQuery { folder, tag: None },
     }
 }
 
@@ -376,7 +376,7 @@ pub fn status_from(response: ResponseBody) -> Result<ServiceStatus, Unexpected> 
 /// [`Unexpected`] for any other response.
 pub fn snippets_from(response: ResponseBody) -> Result<Vec<SnippetSummary>, Unexpected> {
     match response {
-        ResponseBody::Snippets { snippets } => {
+        ResponseBody::Snippets { snippets, .. } => {
             Ok(snippets.iter().map(SnippetSummary::from).collect())
         }
         other => Err(Unexpected { got: other.name() }),
@@ -390,7 +390,7 @@ pub fn snippets_from(response: ResponseBody) -> Result<Vec<SnippetSummary>, Unex
 /// [`Unexpected`] for any other response.
 pub fn snippet_from(response: ResponseBody) -> Result<SnippetDetail, Unexpected> {
     match response {
-        ResponseBody::Snippet { snippet } => Ok(SnippetDetail::from(&snippet)),
+        ResponseBody::Snippet { snippet, .. } => Ok(SnippetDetail::from(&snippet)),
         other => Err(Unexpected { got: other.name() }),
     }
 }

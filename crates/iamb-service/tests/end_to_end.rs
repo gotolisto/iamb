@@ -377,12 +377,15 @@ fn library_writes_rebuild_the_snapshot_and_notify() {
         "thank you",
         None,
     );
-    match ui.call(RequestBody::PutSnippet { snippet: ty }) {
+    match ui.call(RequestBody::PutSnippet {
+        snippet: ty,
+        tags: None,
+    }) {
         Ok(ResponseBody::Saved { meta }) => assert_eq!(meta.id, id(9)),
         other => panic!("unexpected {other:?}"),
     }
     wait_event(&mut ui, |e| {
-        matches!(e, EventBody::LibraryChanged { revision: 2 })
+        matches!(e, EventBody::LibraryChanged { revision: 2, .. })
     });
     h.settle();
     h.os.type_text("ty ");
@@ -399,14 +402,17 @@ fn library_writes_rebuild_the_snapshot_and_notify() {
         None,
     );
     assert_eq!(
-        ui.call(RequestBody::PutSnippet { snippet: clash })
-            .map_err(|e| e.remote_code()),
+        ui.call(RequestBody::PutSnippet {
+            snippet: clash,
+            tags: None,
+        })
+        .map_err(|e| e.remote_code()),
         Err(Some(ErrorCode::Conflict))
     );
     match ui.call(RequestBody::ListSnippets {
         query: iamb_ipc::SnippetQuery::default(),
     }) {
-        Ok(ResponseBody::Snippets { snippets }) => assert_eq!(snippets.len(), 5),
+        Ok(ResponseBody::Snippets { snippets, .. }) => assert_eq!(snippets.len(), 5),
         other => panic!("unexpected {other:?}"),
     }
     match ui.call(RequestBody::Search {
@@ -505,14 +511,23 @@ fn roles_are_enforced_and_missing_counterparts_say_so() {
             .map_err(|e| e.remote_code()),
         Err(Some(ErrorCode::NotImplemented))
     );
-    let mut ui = h.client(Role::Ui);
+    // Only the UI host may say that one of its panels has the keyboard.
     assert_eq!(
-        ui.call(RequestBody::ParseTemplate {
-            source: String::new()
+        cli.call(RequestBody::PanelFocus {
+            panel: iamb_ipc::PanelKind::Palette,
+            shown: true
         })
         .map_err(|e| e.remote_code()),
-        Err(Some(ErrorCode::NotImplemented))
+        Err(Some(ErrorCode::NotPermitted))
     );
+    let mut ui = h.client(Role::Ui);
+    // The editor's group is answered (task 3.4): no longer `not_implemented`.
+    assert!(matches!(
+        ui.call(RequestBody::ParseTemplate {
+            source: String::new()
+        }),
+        Ok(ResponseBody::TemplateTokens { error: None, .. })
+    ));
     match ui.call(RequestBody::GetStatus {}) {
         Ok(ResponseBody::Status { status }) => {
             assert_eq!(status.clients, 3);

@@ -82,7 +82,7 @@ fn a_short_soak_passes_and_its_scan_can_fail() {
     assert!(recoveries[0]["probe_ms"].as_u64().expect("ms") < 2000);
     assert!(report["totals"]["expansions_ok"].as_u64().expect("n") > 5);
     assert!(report["totals"]["edits"].as_u64().expect("n") >= 3);
-    assert_eq!(report["canaries"].as_array().expect("canaries").len(), 5);
+    assert_eq!(report["canaries"].as_array().expect("canaries").len(), 6);
     for rule in report["rules"].as_array().expect("rules") {
         assert_ne!(rule["verdict"], "fail", "{rule}");
     }
@@ -101,7 +101,7 @@ fn a_short_soak_passes_and_its_scan_can_fail() {
         control["value"]
             .as_str()
             .expect("value")
-            .contains("150 of 150 planted shapes found"),
+            .contains("180 of 180 planted shapes found"),
         "{control}"
     );
     assert_eq!(rule("no-crash-dumps")["verdict"], "pass");
@@ -160,7 +160,7 @@ fn a_short_soak_passes_and_its_scan_can_fail() {
         .iter()
         .map(|c| c["text"].as_str().expect("text").to_owned())
         .collect();
-    assert_eq!(texts.len(), 5);
+    assert_eq!(texts.len(), 6);
     for file in [
         "report.json",
         "canary-scan.json",

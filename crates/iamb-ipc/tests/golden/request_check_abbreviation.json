@@ -1,0 +1,10 @@
+{
+  "body": {
+    "abbreviation": ";rl",
+    "snippet": "01010101-0101-0101-0101-010101010101",
+    "trigger": "immediate",
+    "type": "check_abbreviation"
+  },
+  "id": 12,
+  "kind": "request"
+}
