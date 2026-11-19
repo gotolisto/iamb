@@ -106,7 +106,7 @@ fn miss_probes(lib: &[FixtureSnippet], matcher: &Matcher, count: usize, seed: u6
 /// abbreviation (in a case its mode accepts) and, for delimiter snippets, a delimiter.
 fn hit_probes(entries: &[MatchEntry], matcher: &Matcher, count: usize, seed: u64) -> Vec<Probe> {
     const LEADS: &[&str] = &["thanks for the ", "see ", "ok ", "please find "];
-    const DELIMS: &[char] = &[' ', '.', ',', '\n'];
+    const DELIMS: &[char] = &[' ', '.', ',', ';'];
     let mut rng = SplitMix64::new(seed);
     (0..count)
         .map(|_| {
