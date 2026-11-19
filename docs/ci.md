@@ -21,9 +21,12 @@ Tauri dependencies would slow every leg.
   workspace with `--locked`. Between the two, each leg builds the service on its own in
   release (`cargo build -p iamb-service --release`, check 4 of ADR-0008: no feature that
   another workspace member, such as `iamb-testkit` with `probe`, turns on in a shared
-  dependency is unified into it) and runs clippy on that build alone; the Linux leg also
-  fails when the binary imports a name-resolution function (`getaddrinfo`, `gethostbyname`,
-  `getnameinfo`, read with `objdump -T`). The Windows and macOS legs then run clippy with `-D warnings` for
+  dependency is unified into it) and runs clippy on that build alone. The next step reads the
+  binary's imports with the toolchain's `llvm-nm` / `llvm-objdump` on every OS, prints the
+  libraries it links, and fails on a name-resolution or HTTP function or library
+  (`getaddrinfo`, `GetAddrInfo*`, `DnsQuery`, WinHTTP, WinINet, CFNetwork, Network.framework).
+  `ws2_32.dll` alone is not an error on Windows: the standard library may link it without the
+  service calling it. The Windows and macOS legs then run clippy with `-D warnings` for
   the whole workspace, so code that exists only on one OS is linted, with its tests, on that
   OS; the step runs even when a test failed. The Linux leg skips it because `lint` already
   does it.
@@ -152,8 +155,7 @@ source file of the six crates and fails on an `allow` or `expect` attribute (als
 or `clippy::all`, on an `extern` block that declares a socket, connection or name-resolution
 function (or names one with `link_name`), and on a `#[link]` attribute or `link!` macro that
 names a networking library (`ws2_32`, `dnsapi`, `winhttp`, `wininet`, `CFNetwork`, `Network`,
-…). The import check of the built binary covers Linux only (`objdump -T`, above); the same
-check for the Windows and macOS binaries needs a workflow step that is not in `ci.yml` yet.
+…). The import check of the built binary runs on all three systems (above).
 
 ## Banned terms
 

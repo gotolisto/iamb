@@ -14,11 +14,9 @@
 //! as before, and the worker's log shows the client's connection and its end and nothing else:
 //! no warning, no error, no crash report.
 //!
-//! What does not recover yet: a UI host that dies after acknowledging a form leaves that form
-//! session open in the engine, and while a session is open the engine drops every typed match
-//! (`form_open`), so expansion stays off until the worker restarts. The test of that case is
-//! ignored until the service cancels the open form session when its UI client goes (see the
-//! task report and `forms_and_expansion_recover_after_the_ui_host_died_with_a_form_open`).
+//! A UI host that dies after acknowledging a form: the service cancels the open form session
+//! when its last UI client goes, so expansion and forms recover without a worker restart
+//! (`forms_and_expansion_recover_after_the_ui_host_died_with_a_form_open`).
 
 mod common;
 
@@ -247,12 +245,9 @@ fn killing_the_ui_process_leaves_expansion_running() {
 }
 
 /// A UI host that dies after acknowledging a form: expansion and forms must recover without
-/// restarting the worker. Needs the service to cancel the open form session when the UI client
-/// that was sent it disconnects (`crates/iamb-service/src/worker/ipc.rs`, `serve`, telling the
-/// engine thread as `FormCancel` does); today the session stays open and the engine drops every
-/// typed match with `form_open`.
+/// restarting the worker: when the last UI client disconnects, the service cancels every form
+/// session it was sent (`EngineMsg::UiHostGone`, diagnostic `form_ui_host_gone`).
 #[test]
-#[ignore = "needs the service to cancel an open form when its UI client goes (task 3.2 report)"]
 fn forms_and_expansion_recover_after_the_ui_host_died_with_a_form_open() {
     let service = Service::start(Endpoint::Mock);
     let (bridge, seen) = service.bridge();

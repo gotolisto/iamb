@@ -299,6 +299,36 @@ fn a_form_is_requested_from_the_ui_host_and_submitted() {
 }
 
 #[test]
+fn a_form_acknowledged_by_a_ui_host_that_then_goes_is_cancelled() {
+    let h = Harness::start(LIBRARY);
+    {
+        let mut ui = h.client(Role::Ui);
+        h.os.type_text("hi ");
+        let EventBody::FormRequested { session, .. } =
+            wait_event(&mut ui, |e| matches!(e, EventBody::FormRequested { .. }))
+        else {
+            unreachable!("matched above")
+        };
+        ui.call(RequestBody::FormAck { session }).expect("ack");
+        // The UI host goes with the form open.
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    h.settle();
+    // Without the cancel, the engine refuses every typed match with `form_open` from here on.
+    h.os.type_text("brb ");
+    h.settle();
+    assert!(
+        h.text(h.editor).ends_with("be right back "),
+        "{:?}",
+        h.text(h.editor)
+    );
+    let mut ui = h.client(Role::Ui);
+    let codes = diagnostic_codes(&mut ui);
+    assert!(codes.contains(&"form_ui_host_gone".to_owned()), "{codes:?}");
+    assert!(!codes.contains(&"form_open".to_owned()), "{codes:?}");
+}
+
+#[test]
 fn a_form_with_no_ui_host_or_no_acknowledgement_is_abandoned() {
     let h = Harness::start(LIBRARY);
     let mut cli = h.client(Role::Cli);

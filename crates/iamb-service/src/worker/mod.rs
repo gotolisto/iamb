@@ -277,6 +277,9 @@ pub(crate) enum EngineMsg {
     FormCancel(FormSessionId),
     /// From a reader.
     FormAck(FormSessionId),
+    /// From a reader: the last UI host disconnected. Every form session it was sent can no
+    /// longer be submitted or cancelled by anyone, so the engine cancels them all.
+    UiHostGone,
     /// From a reader.
     SetPaused(bool),
     /// From the store thread.

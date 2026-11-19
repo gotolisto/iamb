@@ -82,11 +82,23 @@ jobs:
         run: |
           cargo build -p iamb-service --release --locked
           cargo clippy -p iamb-service --release --locked -- -D warnings
-          if [ "$RUNNER_OS" = Linux ]; then
-            if objdump -T target/release/iamb-service | grep -E 'getaddrinfo|gethostbyname|getnameinfo'; then
-              echo "the service binary imports a name-resolution function (ADR-0008)" >&2
-              exit 1
-            fi
+      # Follow-up review N6: the service binary imports no name-resolution or HTTP function, on
+      # every OS. The import list is printed so a new import can be looked at.
+      - name: Service binary imports (ADR-0008)
+        shell: bash
+        run: |
+          rustup component add llvm-tools
+          bin="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin"
+          case "$RUNNER_OS" in
+            Linux)   "$bin/llvm-nm" -D -u target/release/iamb-service > imports.txt ;;
+            macOS)   { "$bin/llvm-nm" -u target/release/iamb-service; "$bin/llvm-objdump" --macho --dylibs-used target/release/iamb-service; } > imports.txt ;;
+            Windows) "$bin/llvm-objdump" -p target/release/iamb-service.exe > imports.txt ;;
+          esac
+          grep -Eio 'dll name: .*|^[[:space:]]*/.*dylib.*|^[[:space:]]*/.*framework.*' imports.txt | sort -u || true
+          pattern='getaddrinfo|gethostbyname|gethostbyaddr|getnameinfo|GetAddrInfo|GetNameInfo|DnsQuery|WinHttp|InternetOpen|dnsapi\.dll|winhttp\.dll|wininet\.dll|CFNetwork|Network\.framework'
+          if grep -Ei "$pattern" imports.txt; then
+            echo "the service binary imports networking (ADR-0008)" >&2
+            exit 1
           fi
       - name: Test
         if: runner.os != 'Windows'

@@ -264,6 +264,28 @@ impl EngineThread {
         next
     }
 
+    /// The last UI host disconnected: every form session it was sent is cancelled. Without
+    /// this a form acknowledged by a UI host that then died stays open, and the engine refuses
+    /// every typed match with `form_open` until the worker restarts.
+    fn ui_host_gone(&mut self) {
+        self.ack_deadline = None;
+        if matches!(
+            &self.parked,
+            Some(Parked {
+                request: Explicit::Submit { .. },
+                ..
+            })
+        ) {
+            self.parked = None;
+        }
+        let sessions: Vec<FormSessionId> = self.forms.drain().map(|(s, _)| s).collect();
+        for session in sessions {
+            self.handle(Event::FormCancelled { session });
+            self.shared
+                .diagnostic(WireDiagnostic::code("form_ui_host_gone"));
+        }
+    }
+
     fn expire(&mut self, now: Instant) {
         if self.parked.as_ref().is_some_and(|p| now >= p.deadline)
             && let Some(parked) = self.parked.take()
@@ -346,6 +368,7 @@ impl EngineThread {
                 }
                 self.handle(Event::FormCancelled { session });
             }
+            EngineMsg::UiHostGone => self.ui_host_gone(),
             EngineMsg::FormAck(session) => {
                 if self.ack_deadline.is_some_and(|(s, _)| s == session) {
                     self.ack_deadline = None;

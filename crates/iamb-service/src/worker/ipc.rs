@@ -11,7 +11,7 @@ use std::time::Duration;
 use iamb_ipc::{ConnectionWriter, EventBody, HELLO_TIMEOUT, MessageLog, Role, ServerConnection};
 use iamb_platform::{LocalListener, LocalStream, PlatformError};
 
-use super::{Shared, WakeCounters, handlers};
+use super::{EngineMsg, Shared, WakeCounters, handlers};
 
 /// The most clients served at once (ADR-0009).
 pub const MAX_CLIENTS: usize = 8;
@@ -220,6 +220,10 @@ fn serve(shared: &Arc<Shared>, stream: Box<dyn LocalStream>) {
         handlers::handle(shared, role, body)
     });
     shared.clients.remove(id);
+    if role == Role::Ui && !shared.clients.ui_connected() {
+        // The forms this host was showing can no longer be answered (task 3.2 report).
+        let _ = shared.to_engine(EngineMsg::UiHostGone);
+    }
     writer.shutdown();
     if let Ok(pump) = pump {
         let _ = pump.join();
