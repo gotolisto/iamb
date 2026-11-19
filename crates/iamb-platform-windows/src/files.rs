@@ -279,11 +279,21 @@ mod tests {
             dir.join("after"),
         ] {
             let sddl = dacl_sddl(&inner).expect("readable");
-            assert!(sddl.contains(&format!(";;;{sid})")), "{sddl}");
-            assert!(
-                !sddl.contains(";;;SY)") && !sddl.contains(";;;BA)"),
-                "{sddl}"
-            );
+            // Every entry names the user (the system may write the SID as an alias such as
+            // `LA`), and there is at least one.
+            let trustees: Vec<&str> = sddl
+                .split(";;;")
+                .skip(1)
+                .filter_map(|rest| rest.split(')').next())
+                .collect();
+            assert!(!trustees.is_empty(), "{sddl}");
+            for trustee in trustees {
+                assert_eq!(
+                    trustee_sid(trustee).as_deref(),
+                    Some(sid.as_str()),
+                    "{sddl}"
+                );
+            }
         }
         // Again: nothing to do, and no error.
         restrict_to_current_user(&dir).expect("idempotent");
