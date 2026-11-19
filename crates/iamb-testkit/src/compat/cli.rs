@@ -10,6 +10,8 @@ use iamb_core::datetime::civil_from_days;
 use iamb_platform::ClipboardAccess;
 
 use super::apps::{Os, apps_for};
+use super::latency::{self, ProbeLink as _, ProbeProcess};
+use super::probe::protocol::{Command as ProbeCommand, Reply};
 use super::report::{compute, render_markdown};
 use super::results::{ExceptionRecord, Record, Resolution, ResultSet, append, cell_key, now_secs};
 use super::run::{self, Harness, ModeChoice, Options, StdUi};
@@ -23,7 +25,7 @@ use super::typist::{SystemTypist, Typist};
     name = "iamb-compat",
     version,
     about = "Walks you through the Iamb compatibility matrix (20 apps x 5 snippet types per OS) and reports the result.",
-    after_help = "Typical use:\n  iamb-compat setup --data-dir C:\\iamb-compat\n  iamb-compat run --os windows\n  iamb-compat report --results compat-windows.jsonl"
+    after_help = "Typical use:\n  iamb-compat setup --data-dir C:\\iamb-compat\n  iamb-compat run --os windows\n  iamb-compat report --results compat-windows.jsonl\n  iamb-compat latency"
 )]
 pub struct Cli {
     /// What to do.
@@ -55,6 +57,12 @@ pub enum Command {
     /// Print the expected text of every snippet type (the content of compat-expected.txt).
     #[command(after_help = "Example:\n  iamb-compat expected --date 2026-03-18")]
     Expected(ExpectedArgs),
+    /// Measure the end-to-end latency (last key to expanded text) with the probe window, and
+    /// write the `e2e-plain-p95` result.
+    #[command(
+        after_help = "Needs the latency snippets (`iamb-compat setup --latency`), the service running on them and the probe (`cargo build --release -p iamb-testkit --features probe --bin iamb-probe`).\n\nExample:\n  iamb-compat latency\n  iamb-compat latency --trials 50\n  iamb-compat latency --target browser --open"
+    )]
+    Latency(LatencyArgs),
 }
 
 /// Arguments of `setup`.
@@ -63,6 +71,56 @@ pub struct SetupArgs {
     /// The Iamb data directory to fill (created if missing). Use a directory of its own.
     #[arg(long, value_name = "DIR")]
     pub data_dir: PathBuf,
+    /// Also import the 1,000 snippets of the latency run (`;laaa` to `;lbml`).
+    #[arg(long)]
+    pub latency: bool,
+}
+
+/// Arguments of `latency`.
+#[derive(Debug, Args)]
+pub struct LatencyArgs {
+    /// What the abbreviations are typed into.
+    #[arg(long, value_enum, default_value = "native")]
+    pub target: TargetArg,
+    /// The probe program (default: iamb-probe next to this program).
+    #[arg(long, value_name = "FILE")]
+    pub probe: Option<PathBuf>,
+    /// Trials: 40% short, 40% medium, 20% long bodies (1000 is the KPI sample).
+    #[arg(long, default_value_t = latency::LIBRARY_SIZE, value_name = "N")]
+    pub trials: usize,
+    /// The seed of the trial order (the snippets themselves are fixed).
+    #[arg(long, default_value_t = latency::DEFAULT_ORDER_SEED)]
+    pub seed: u64,
+    /// Where the result goes (default: `IAMB_BENCH_RESULTS_DIR`, else `target/bench-results`).
+    #[arg(long, value_name = "DIR")]
+    pub out: Option<PathBuf>,
+    /// Seconds before the first trial.
+    #[arg(long, default_value_t = 3, value_name = "SECONDS")]
+    pub delay: u64,
+    /// Milliseconds between trials.
+    #[arg(long, default_value_t = 300, value_name = "MS")]
+    pub gap: u64,
+    /// Milliseconds the probe keeps checking the text after a match.
+    #[arg(long, default_value_t = 300, value_name = "MS")]
+    pub settle: u64,
+    /// Milliseconds the probe waits for the last key of a trial.
+    #[arg(long, default_value_t = 10_000, value_name = "MS")]
+    pub key_wait: u64,
+    /// Browser: open the page in the default browser.
+    #[arg(long)]
+    pub open: bool,
+    /// Browser: the page's port on 127.0.0.1 (0: any free port).
+    #[arg(long, default_value_t = 0)]
+    pub port: u16,
+}
+
+/// The latency targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum TargetArg {
+    /// The native probe window (the KPI).
+    Native,
+    /// The probe's page in a browser.
+    Browser,
 }
 
 /// Arguments of `run`.
@@ -238,6 +296,7 @@ fn execute(command: Command) -> Result<(), String> {
             out(render_expected_txt(&a.date)?.trim_end());
             Ok(())
         }
+        Command::Latency(a) => cmd_latency(&a),
     }
 }
 
@@ -255,6 +314,13 @@ fn import_and_say(a: &SetupArgs) -> Result<(), String> {
         done.imported,
         done.skipped
     ));
+    if a.latency {
+        let done = setup::import_latency_fixtures(&a.data_dir)?;
+        out(&format!(
+            "Latency snippets: {} imported, {} already there (;laaa to ;lbml, immediate, exact case).",
+            done.imported, done.skipped
+        ));
+    }
     Ok(())
 }
 
@@ -330,6 +396,131 @@ fn cmd_run(a: &RunArgs) -> Result<(), String> {
         opts.results.display()
     ));
     Ok(())
+}
+
+fn default_probe() -> Result<PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|e| format!("cannot find this program: {e}"))?;
+    Ok(exe.with_file_name(if cfg!(windows) {
+        "iamb-probe.exe"
+    } else {
+        "iamb-probe"
+    }))
+}
+
+fn open_in_browser(url: &str) -> Result<(), String> {
+    let status = if cfg!(windows) {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .status()
+    } else {
+        std::process::Command::new("open").arg(url).status()
+    };
+    match status {
+        Ok(s) if s.success() => Ok(()),
+        Ok(s) => Err(format!("could not open the browser ({s})")),
+        Err(e) => Err(format!("could not open the browser: {e}")),
+    }
+}
+
+fn cmd_latency(a: &LatencyArgs) -> Result<(), String> {
+    if a.trials == 0 {
+        return Err("--trials must be at least 1".to_owned());
+    }
+    let Some(mut typist) = SystemTypist::native() else {
+        return Err(
+            "the latency run types through the system's key sender: run it on Windows or macOS"
+                .to_owned(),
+        );
+    };
+    let program = match &a.probe {
+        Some(p) => p.clone(),
+        None => default_probe()?,
+    };
+    let mut args = Vec::new();
+    if a.target == TargetArg::Browser {
+        args.extend([
+            "--browser".to_owned(),
+            "--port".to_owned(),
+            a.port.to_string(),
+        ]);
+    }
+    let mut probe = ProbeProcess::spawn(&program, &args)?;
+    let (surface, url) = match probe.call(&ProbeCommand::Hello)? {
+        Reply::Hello { surface, url, .. } => (surface, url),
+        other => return Err(format!("the probe answered {other:?}")),
+    };
+    if let Some(url) = &url {
+        out(&format!("Probe page: {url}"));
+        if a.open {
+            open_in_browser(url)?;
+        }
+        out(
+            "Open it in the browser under test (loopback only), click into the field, and keep its tab in front.",
+        );
+        match probe.call(&ProbeCommand::WaitReady {
+            timeout_ms: 300_000,
+        })? {
+            Reply::Ok { .. } => out("The page is connected."),
+            Reply::Error { message } => return Err(message),
+            other => return Err(format!("the probe answered {other:?}")),
+        }
+    }
+    let plan = latency::plan(a.trials, a.seed);
+    out(&format!(
+        "{} trials into the {surface} probe. Starting in {} s: do not touch the keyboard or the mouse.",
+        plan.len(),
+        a.delay
+    ));
+    std::thread::sleep(std::time::Duration::from_secs(a.delay));
+    let pause = |d: std::time::Duration| std::thread::sleep(d);
+    let opts = latency::DriveOptions {
+        gap: std::time::Duration::from_millis(a.gap),
+        settle: std::time::Duration::from_millis(a.settle),
+        key_wait: std::time::Duration::from_millis(a.key_wait),
+    };
+    let outcome = latency::drive(&mut probe, &mut typist, &plan, &opts, &pause, &mut |l| {
+        out(l);
+    });
+    let _ = probe.call(&ProbeCommand::Quit);
+    let outcome = outcome?;
+    let dir = a
+        .out
+        .clone()
+        .unwrap_or_else(iamb_bench::results::default_results_dir);
+    let written = latency::write_results(&outcome, &surface, &dir)?;
+    let passed = outcome.trials.iter().filter(|t| t.sample.pass).count();
+    out(&format!(
+        "\n{passed} of {} trials matched within 2 s.",
+        outcome.trials.len()
+    ));
+    for line in &written.lines {
+        out(&format!(
+            "{:<28} n={:<5} p95 {:>8.1} ms  {}",
+            line.bench,
+            line.count,
+            ms(line.p95),
+            if line.pass {
+                "under 50 ms"
+            } else {
+                "NOT under 50 ms"
+            }
+        ));
+    }
+    if let Some(line) = written.lines.iter().find(|l| l.kpi.is_some()) {
+        out(&format!(
+            "KPI {}: {}",
+            latency::KPI,
+            if line.pass { "met" } else { "not met" }
+        ));
+    }
+    out(&format!("Result: {}", written.result.display()));
+    out(&format!("Trials: {}", written.trials.display()));
+    Ok(())
+}
+
+#[allow(clippy::cast_precision_loss, reason = "a printed number")]
+fn ms(ns: u64) -> f64 {
+    ns as f64 / 1e6
 }
 
 fn cmd_report(a: &ReportArgs) -> Result<(), String> {

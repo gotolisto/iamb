@@ -24,12 +24,17 @@
 //!
 //! Until its task lands, a module answers [`Unsupported`](iamb_platform::PlatformError).
 //!
+//! One module implements no trait and exists only with the `probe` feature (off by default,
+//! enabled only by `iamb-testkit`'s `probe` feature for the `iamb-probe` test app, never by a
+//! shipped binary): `probe`, the window with one Rich Edit control of the end-to-end latency
+//! measurement (`docs/test-strategy.md` §6).
+//!
 //! # Rules for this crate
 //!
 //! - This is one of the two crates where `unsafe` is allowed. Keep each `unsafe` block as
 //!   small as the call it wraps, with a `// SAFETY:` comment that says why the call is sound
 //!   (the lint `clippy::undocumented_unsafe_blocks` is an error here). Nothing outside the
-//!   traits is public.
+//!   traits is public, except the test-only `probe` module behind its feature.
 //! - Bindings come from `windows-sys`: plain function declarations with no wrapper code, and
 //!   only the namespaces listed in `Cargo.toml`. No networking namespace and no `std::net`:
 //!   this crate is linked into the service (architecture §2).
@@ -51,6 +56,8 @@ mod login_item;
 mod memory;
 #[cfg(windows)]
 mod permissions;
+#[cfg(all(windows, feature = "probe"))]
+pub mod probe;
 
 /// The Windows platform: implements every trait of `iamb-platform`
 /// (and so [`iamb_platform::Platform`]).

@@ -318,7 +318,7 @@ What the CI form leaves to the lab run:
 
 | Lab only | Why | How |
 | --- | --- | --- |
-| Real OS layer typing into the probe window | Needs a desktop, the grants and the probe window of task 2.7, which does not exist yet; `iamb-soak` drives only the mock platform today | Until then a lab run is the mock-platform run on the lab machine (the service minus its OS layer) |
+| Real OS layer typing into the probe window | The probe window exists (§6) but `iamb-soak` cannot drive it yet: its worker runs the mock platform in-process and the driver types and reads back through the worker's control endpoint. A `--target probe` needs a worker on the real platform (the service's own worker, with the tap), a typist fast enough for 15 keys/s bursts (the compat typist starts a process per call, 0.3–1 s), the probe's text check in place of the control endpoint's `Check` (a probe command that compares without returning the text), two more probe windows for the `secure-field` and `excluded-app` canary contexts (a password control and a second app id), and the recovery probe expansion through it | Until then a lab run is the mock-platform run on the lab machine (the service minus its OS layer) |
 | Packet capture of the whole machine | Not possible on hosted runners | `tcpdump` (macOS) or `pktmon` (Windows) for the whole run; scan the capture with `iamb-soak scan --location capture=…` or `run --scan` |
 | Crash dumps, the whole user profile | Too large and too shared on CI | `--scan "$HOME"` (or `%USERPROFILE%`) plus the OS crash-dump directories |
 | UI host restart every 24 h | No UI host yet | Add to the driver with task 3.x |
@@ -352,6 +352,62 @@ macOS) plus a local web page variant for browser rows (`performance.now()` on `i
 | Timeout | No match within 2 s counts as a failed expansion and as 2 s latency |
 
 The same probe produces the "correct expansions" KPI and the type-1 timing cells of the matrix.
+
+### 6.1 Running it (`iamb-compat latency`)
+
+Two processes: the driver `iamb-compat latency` and the probe `iamb-probe`, which the driver
+starts. The service runs on its own data directory, as for the matrix
+([`compatibility-run.md`](compatibility-run.md), "End-to-end latency"):
+
+```sh
+# Build: the service alone, then the harness and the probe (feature `probe`, off by default)
+cargo build --release -p iamb-service
+cargo build --release -p iamb-cli -p iamb-testkit
+cargo build --release -p iamb-testkit --features probe --bin iamb-probe
+
+# The 1,000 latency snippets next to the matrix's five; then start the service on that folder
+target/release/iamb-compat setup --data-dir ~/iamb-compat --latency
+
+# Check the probe on this machine without Iamb (types into itself, prints T1 - T0)
+target/release/iamb-probe --self-test
+
+# The KPI run: 1,000 trials into the native probe window (about half an hour)
+IAMB_BENCH_RUNNER=lab-win11-01 target/release/iamb-compat latency
+
+# A short trial run, and the browser variant for the browser rows
+target/release/iamb-compat latency --trials 50
+target/release/iamb-compat latency --target browser --open --trials 100
+```
+
+| Item | Decision |
+| --- | --- |
+| Where the code lives | Rules, protocol, browser page and driver: `iamb-testkit` (`compat::probe`, `compat::latency`), no OS code, tested on every system. The native windows: `iamb_platform_windows::probe` and `iamb_platform_macos::probe`, the only crates where `unsafe` may be, behind their `probe` feature. `iamb-testkit`'s `probe` feature turns those on and builds the `iamb-probe` binary; it is off by default and no shipped binary enables it (the service is built on its own) |
+| Windows control | Rich Edit (`RICHEDIT50W` of `Msftedit.dll`), multi-line, plain-text mode, in a window of the system dialog class subclassed for its `EN_CHANGE` notifications. T0: `Instant::now()` (`QueryPerformanceCounter`) when the message loop takes the control's `WM_KEYDOWN` whose `WM_CHAR` completes the abbreviation. T1: `Instant::now()` on the `EN_CHANGE` after which the text equals the expected result |
+| macOS control | An `NSTextView` subclass (plain text; quote, dash, spelling, replacement, completion and link substitution off) as the window's content, on the main thread under `run_with_main_loop`, activation policy `Regular`. T0: `Instant::now()` (`CLOCK_UPTIME_RAW`, the clock of `mach_absolute_time`) at the top of `keyDown:`. T1: at the top of `didChangeText` |
+| Browser control | A `<textarea>` on a page the probe serves on `127.0.0.1` only (random port and per-run token in the path; requests with another `Host` or `Origin` are refused). T0 and T1 are the page's `performance.now()` at `keydown` and `input`, sent back over loopback; the page is served cross-origin isolated so browsers keep the timer fine-grained. The server is in `iamb-testkit`, never in the service, which stays network-free (`crates/iamb-service/tests/no_network.rs`) |
+| Which key is "last" | The probe is told the keys about to be typed; T0 is the key event after which the characters received since arming end with them. With the fixture's immediate-trigger abbreviations that is the trigger key. Keys after T0 (the expander's deletions and text) are ignored |
+| Matching rule | The control's whole text equals the expected text exactly; `\r\n` and `\r` read as `\n` on both sides (Rich Edit keeps line breaks as `\r`). Changes before T0 never match |
+| Timeout | No match within 2 s after T0: failed, counted as 2 s. A change stamped more than 2 s after T0 fails even if it matches. The last key not arriving within `--key-wait` (10 s): failed (`no-key`), counted as 2 s. The browser gets 1 s of delivery slack before the probe gives up waiting, never in the stamps |
+| Correct expansion | After a match the probe keeps watching for `--settle` (300 ms) and records whether the text is still the expected one (`stable`); a later change (an overshoot) shows there |
+| Control channel | JSON lines on the probe's standard input and output: `hello`, `wait_ready`, `reset`, `expect` (cell, typed keys, expected text), `wait` (→ sample), `report` (→ every sample and the `LatencyRecorder` samples, ascending), `quit` (`compat::probe::protocol`). Only the driver's commands carry text, from its fixture; no reply, result or message does |
+| Typing | The compat typist: `SendKeys` through PowerShell on Windows, System Events through `osascript` on macOS; ordinary unmarked keys, so the listener treats them as typing. Each trial: reset (empty and focus the control), expect, type the abbreviation, wait, then `--gap` (300 ms) |
+| Fixture | `compat::latency::library`: 1,000 fixed plain snippets, 400 short (10–30 characters), 400 medium (31–200), 200 long (201–500), ASCII words, a quarter of the medium and long ones with a line break; abbreviations `;laaa` to `;lbml`, immediate trigger, exact case. `--trials N` keeps the 40/40/20 split; `--seed` only orders the trials |
+| Result | `target/bench-results/<run id>.jsonl` (`--out` or `IAMB_BENCH_RESULTS_DIR` elsewhere) in the format of §3: `e2e/plain/<n>` with `kpi = "e2e-plain-p95"`, `target_stat = "p95"`, `target_ns = 50000000`, plus one line per length class (`e2e/plain-short/400`, …, no KPI); a browser run writes `e2e/plain-browser/<n>` lines without the KPI. Sorted samples in `<run id>.samples/`; `<run id>.trials.jsonl` has one line per trial: cell, snippet number, class, length, pass, stable, focus, latency, failure (never text) |
+| Self-test | `iamb-probe --self-test` types a short string into its own window with synthetic keys (`SendInput` on Windows; key events posted to its own queue on macOS, which need no permission and never reach Iamb) and prints `T1 − T0` |
+
+Tests: the rules, the protocol, the loop and the browser server with a simulated page in
+`iamb-testkit` (every system; `cargo test -p iamb-testkit`, and the binary end to end with
+`--features probe --test probe_browser`); a whole run against a simulated machine down to the
+result files (`compat::latency`); the fixture through the engine's dry run (`tests/compat.rs`).
+The native windows are tested on their OS (`cargo test -p iamb-platform-windows --features
+probe --test probe`, which needs a desktop and fails without one when `IAMB_REQUIRE_DESKTOP`
+is set; `cargo test -p iamb-platform-macos --features probe --test probe`, a `harness = false`
+test that says `SKIPPED` when its window cannot become key): open the probe, type a short
+abbreviation-free string with synthetic keys, check T0, T1 and the match. CI runs all of them.
+
+Not measured here: the typist's own speed (it runs before T0) and the probe's paint; the
+probe's T1 is the control's change, not the first frame on screen (the form KPI of §2.1 has its
+own paint stamp).
 
 ## 7. Task ownership (phases 1–4)
 

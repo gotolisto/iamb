@@ -19,10 +19,24 @@ path = "src/bin/iamb_compat.rs"
 
 # The soak harness (task 2.6) and the canary privacy scan (task 2.5): drives the service's
 # supervisor and worker on the mock platform for minutes to days. Never shipped.
+# The probe window of the end-to-end latency measurement (task 2.7): one text control that
+# times expansions for `iamb-compat latency`. Its native window lives in the two OS crates
+# behind their `probe` feature, which this crate's `probe` feature turns on. Never shipped.
+[[bin]]
+name = "iamb-probe"
+path = "src/bin/iamb_probe.rs"
+required-features = ["probe"]
+
 [[bin]]
 name = "iamb-soak"
 path = "src/bin/iamb_soak.rs"
 required-features = ["soak"]
+
+# `iamb-probe --browser` end to end with a simulated page; runs on every system.
+[[test]]
+name = "probe_browser"
+path = "tests/probe_browser.rs"
+required-features = ["probe"]
 
 [lints]
 workspace = true
@@ -36,10 +50,15 @@ store = ["dep:iamb-store"]
 # `soak` builds `iamb_testkit::soak` and the `iamb-soak` binary on top of the service's library
 # (its supervisor and worker); it adds no feature to `iamb-service` itself.
 soak = ["store", "dep:iamb-service", "dep:iamb-ipc"]
+# `probe` builds the `iamb-probe` binary with the native probe window of the OS crates. Off by
+# default, so that no build that also contains a shipped binary turns on the OS crates'
+# `probe` feature (`cargo build -p iamb-testkit --features probe --bin iamb-probe`).
+probe = ["iamb-platform-windows/probe", "iamb-platform-macos/probe"]
 
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }
 getrandom = "0.4.3"
+iamb-bench = { path = "../iamb-bench" }
 iamb-core = { path = "../iamb-core" }
 iamb-ipc = { path = "../iamb-ipc", optional = true }
 iamb-platform = { path = "../iamb-platform" }

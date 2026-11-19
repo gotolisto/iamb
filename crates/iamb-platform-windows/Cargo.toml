@@ -11,6 +11,19 @@ publish.workspace = true
 [lib]
 path = "src/lib.rs"
 
+[features]
+# `probe`: the probe window of the end-to-end latency measurement (docs/test-strategy.md §6),
+# the public module `probe`. Test tooling for `iamb-probe` in iamb-testkit: off by default and
+# never enabled by a shipped binary (the service is built on its own, without it).
+probe = []
+
+# Opens the probe window and types into it; needs an interactive desktop (IAMB_REQUIRE_DESKTOP
+# turns its skip into a failure).
+[[test]]
+name = "probe"
+path = "tests/probe.rs"
+required-features = ["probe"]
+
 # These tables repeat [workspace.lints] from the root Cargo.toml, because a crate cannot
 # inherit the workspace lints and override one of them. The only differences: `unsafe_code`
 # is allowed (this crate and iamb-platform-macos are the two places where it may be,

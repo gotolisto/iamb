@@ -200,6 +200,53 @@ says what to do first. How a secure field is detected, and what is not, is in th
    "secure field", some app left secure keyboard entry on. `ioreg -l -w 0 | grep SecureInput`
    names its process id; quit that app and note which one it was.
 
+## End-to-end latency (the probe window)
+
+This measures the 50 ms KPI (last key to expanded text, `docs/test-strategy.md` §6) and writes
+its result file. Do it on each OS after the matrix, with the same service and data folder. It
+takes about half an hour for the 1,000 trials and needs no answers; do not touch the keyboard or
+the mouse while it runs.
+
+1. Build the probe (a test app with one text control; it is never shipped):
+
+   ```sh
+   cargo build --release -p iamb-testkit --features probe --bin iamb-probe
+   ```
+
+2. Stop the service, add the 1,000 latency snippets (`;laaa` to `;lbml`) to the data folder,
+   and start the service again as in the steps above:
+
+   ```bat
+   target\release\iamb-compat.exe setup --data-dir C:\iamb-compat --latency
+   ```
+
+   (macOS: `target/release/iamb-compat setup --data-dir ~/iamb-compat --latency`.)
+3. Check the probe itself: `target\release\iamb-probe.exe --self-test` (macOS:
+   `target/release/iamb-probe --self-test`) opens the probe window, types into it and prints
+   `self-test: pass` with a time. On macOS the window must be allowed to come to the front.
+4. Name the machine and run a short trial first, then the full run:
+
+   ```bat
+   set IAMB_BENCH_RUNNER=lab-win11-01
+   target\release\iamb-compat.exe latency --trials 20
+   target\release\iamb-compat.exe latency
+   ```
+
+   (macOS: `IAMB_BENCH_RUNNER=lab-macos-01 target/release/iamb-compat latency`.) The harness
+   starts the probe window, which takes the front, and types each abbreviation as ordinary
+   keys, the way it types in the matrix (on macOS the terminal needs Accessibility, as above).
+   Each failure is printed with its trial id (`t0042-s0417`); `no-key` means the probe did not
+   get the keys (another window took the front).
+5. The result: the harness prints the p95 of the run and of each length class, `KPI
+   e2e-plain-p95: met` or `not met`, and the paths of the files it wrote under
+   `target/bench-results/` (`--out DIR` to put them elsewhere): `<run id>.jsonl`, the samples
+   and `<run id>.trials.jsonl`. None of them holds snippet text. Copy the numbers into
+   `docs/results/2.7-<os>.md` with the machine, OS build and commit, and keep the files.
+6. Browser rows (optional, not the KPI): `iamb-compat latency --target browser --open --trials
+   100` opens the probe's page (served on `127.0.0.1` only) in the default browser; open the
+   printed address in another browser instead to measure that one. Click into the field once
+   and keep the tab in front; the run starts when the page has connected.
+
 ## Notes for the cells
 
 - **T4 and the date.** The harness asks for today's local date once and accepts the next day too,
@@ -218,8 +265,8 @@ says what to do first. How a secure field is detected, and what is not, is in th
   harness asks whether to include the field's text; it can contain other text you have on screen,
   so the answer is no unless you checked.
 - **Undo.** After each T1 cell it asks what one Ctrl+Z or Cmd+Z did. This is noted, not gating.
-- **Latency.** The 50 ms KPI is not measured here (see section 7 of the matrix). The report shows
-  `n/a`.
+- **Latency.** The 50 ms KPI is not measured by the matrix run (see section 7 of the matrix);
+  the report shows `n/a`. The probe window measures it: see "End-to-end latency" above.
 
 ## When a cell fails
 

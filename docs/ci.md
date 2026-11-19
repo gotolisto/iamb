@@ -15,6 +15,12 @@ errors (`RUSTFLAGS=-D warnings`). The pipeline should finish in under ten minute
   the whole workspace, so code that exists only on one OS is linted, with its tests, on that
   OS; the step runs even when a test failed. The Linux leg skips it because `lint` already
   does it.
+  The `probe` feature (the probe window of the latency measurement, off by default) has steps
+  of its own: `lint` runs clippy on `iamb-testkit` with it, on the two OS crates for their
+  targets with it, and on `iamb-testkit --no-default-features --features probe --lib --bins`
+  for both targets; each `test` leg runs `cargo test -p iamb-testkit --features probe --test
+  probe_browser`, and the Windows and macOS legs also the OS crate's `--features probe --test
+  probe` (Windows with `IAMB_REQUIRE_DESKTOP`).
 - `coverage` (Linux): `cargo llvm-cov` on `iamb-core`; fails below 85% line coverage.
 - `ci-ok`: succeeds only if `lint`, `coverage` and every `test` leg succeeded. This is the single
   check to require in branch protection.
