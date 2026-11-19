@@ -1,0 +1,124 @@
+/*
+ * Structure only. Every value is a design token from tokens.css, which is generated from
+ * docs/ux/tokens.json (scripts/tokens.mjs); tokens.test.ts fails on a token that does not exist.
+ * The components of the design system replace these classes in tasks 3.3 to 3.6.
+ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--color-bg-app);
+  color: var(--color-text-primary);
+  font: var(--type-body);
+}
+
+.window {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  height: 100%;
+  padding: var(--space-4);
+}
+
+.panel {
+  border: var(--size-border) solid var(--color-border-subtle);
+  background: var(--color-bg-surface);
+  box-shadow: var(--shadow-panel);
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.title {
+  margin: 0;
+  font: var(--type-title);
+}
+
+.status {
+  margin: 0;
+  flex: 1;
+  color: var(--color-text-secondary);
+}
+
+.muted {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+
+.error {
+  margin: 0;
+  color: var(--color-status-danger-text);
+}
+
+.content {
+  flex: 1;
+  overflow: auto;
+  background: var(--color-bg-surface);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-4);
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: var(--size-border) solid var(--color-border-subtle);
+}
+
+.abbr {
+  font: var(--type-code);
+  min-width: 8ch;
+}
+
+.button {
+  min-height: var(--size-control-md);
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--color-accent-solid);
+  color: var(--color-text-on-accent);
+  font: var(--type-body-strong);
+}
+
+.button:hover:not(:disabled) {
+  background: var(--color-accent-solid-hover);
+}
+
+.button:disabled {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-disabled);
+}
+
+.input {
+  min-height: var(--size-control-md);
+  padding: 0 var(--space-2);
+  border: var(--size-border) solid var(--color-border-control);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  font: var(--type-input);
+}
+
+:focus-visible {
+  outline: var(--size-focus-ring) solid var(--color-border-focus);
+  outline-offset: 2px;
+}
