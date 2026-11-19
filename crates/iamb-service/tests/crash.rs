@@ -64,7 +64,10 @@ fn a_panic_writes_a_metadata_only_report_and_exits_with_a_status() {
         })
         .collect();
     assert_eq!(reports.len(), 1, "one crash report");
-    let report = fs::read_to_string(&reports[0]).expect("report");
+    // Windows writes the source location with backslashes.
+    let report = fs::read_to_string(&reports[0])
+        .expect("report")
+        .replace('\\', "/");
     for line in [
         "process: worker",
         &format!("version: {}", iamb_service::VERSION),
