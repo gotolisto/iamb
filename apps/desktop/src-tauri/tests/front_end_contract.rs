@@ -164,6 +164,7 @@ fn form_samples() -> Value {
         "events": [
             form::FormEvent::Open { session },
             form::FormEvent::Shown { session },
+            form::FormEvent::TargetGone { session },
             form::FormEvent::Closed { session },
         ],
         "focusLost": form::focus_lost(),

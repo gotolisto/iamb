@@ -3,7 +3,9 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
-import { contentText, createFake, renderLibrary, typeContent } from "./testkit";
+import type { FieldView } from "../ipc";
+import type { TemplateService } from "./template";
+import { contentText, createFake, fakeTemplate, renderLibrary, typeContent } from "./testkit";
 
 const fakeWith = () =>
   createFake({
@@ -219,6 +221,34 @@ describe("the editor's fields", () => {
   });
 });
 
+describe("Try the form (spec §4.3, flow 2 step 5)", () => {
+  it("opens the real form and feeds its answers to the preview", async () => {
+    const name: FieldView = { name: "Name", kind: "text", options: [], default: "" };
+    const previews: Array<Record<string, string> | undefined> = [];
+    const tried: Array<{ fields: FieldView[]; label: string; abbreviation: string }> = [];
+    const template: TemplateService = {
+      ...fakeTemplate,
+      preview: async (_source, values) => {
+        previews.push(values);
+        return { parts: [], cursor: null, fields: [name], error: null };
+      },
+      tryForm: async (fields, label, abbreviation) => {
+        tried.push({ fields, label, abbreviation });
+        return { Name: "Ada" };
+      },
+    };
+    const user = userEvent.setup();
+    await renderLibrary(fakeWith(), { template });
+    await screen.findAllByRole("option");
+    await user.click(screen.getByRole("option", { name: /Late delivery/ }));
+    const button = await screen.findByRole("button", { name: "Try the form" });
+    await user.click(button);
+    await waitFor(() => expect(previews.at(-1)).toEqual({ Name: "Ada" }));
+    expect(tried).toEqual([{ fields: [name], label: "Late delivery", abbreviation: ";rlate" }]);
+    expect(await screen.findByText(/your test value/)).toBeTruthy();
+  });
+});
+
 describe("changes made elsewhere", () => {
   it("shows a changed snippet's new text when nothing is being edited", async () => {
     const user = userEvent.setup();
@@ -266,6 +296,23 @@ describe("changes made elsewhere", () => {
     expect(await screen.findByText(/Select a snippet, or press/)).toBeTruthy();
   });
 
+  it("closes a snippet deleted elsewhere even before the list has caught up", async () => {
+    const user = userEvent.setup();
+    const { fake } = await renderLibrary(fakeWith());
+    const row = await screen.findByRole("option", { name: /^Late delivery/ });
+    await user.click(row);
+    await screen.findByLabelText("Content");
+    // The list's own read of the change is slow, so Close comes while the row is still listed.
+    fake.setListDelay(400);
+    await fake.api.deleteSnippet(row.id.replace("row-", ""));
+    expect(
+      await screen.findByText("This snippet no longer exists. It may have been deleted on another device."),
+    ).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(await screen.findByText(/Select a snippet, or press/)).toBeTruthy();
+    expect(screen.queryByText(/This snippet no longer exists/)).toBeNull();
+  });
+
   it("keeps the draft when the service stops, and saves after it is back", async () => {
     const user = userEvent.setup();
     const fake = fakeWith();
@@ -283,5 +330,26 @@ describe("changes made elsewhere", () => {
     fake.setDown(null);
     await user.click(saveButton());
     await waitFor(() => expect(fake.byAbbreviation(";rdraft")?.body).toBe("kept"));
+  });
+});
+
+describe("the footer's usage line", () => {
+  it("says how often and when, and that it is counted on this computer", async () => {
+    const user = userEvent.setup();
+    const fake = fakeWith();
+    const used = fake.byAbbreviation(";rty");
+    expect(used).toBeTruthy();
+    if (used) fake.setUsage(used.id, 31, Date.now() - 86_400_000);
+    await renderLibrary(fake);
+    await user.click(await screen.findByRole("option", { name: /^Thanks for your order/ }));
+    const fact = await screen.findByText(/Used 31 times on this computer · last used yesterday/);
+    expect(fact.closest("footer")).toBeTruthy();
+  });
+
+  it("says a snippet was not used yet, and shows nothing for a service that does not count", async () => {
+    const user = userEvent.setup();
+    await renderLibrary(fakeWith());
+    await user.click(await screen.findByRole("option", { name: /^Late delivery/ }));
+    expect(await screen.findByText(/Not used yet on this computer/)).toBeTruthy();
   });
 });

@@ -59,6 +59,10 @@ use std::sync::{Arc, OnceLock};
 /// A body that expanded cleanly, linked to the bodies its `{snippet}`s include. Shared by every
 /// template of a [`Compiler`] that includes it.
 #[derive(Debug)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent facts about one body, each read on its own"
+)]
 pub(crate) struct Expanded {
     pub(crate) body: Arc<Body>,
     /// The snippet whose body this is; `None` for the template being resolved.
@@ -73,10 +77,13 @@ pub(crate) struct Expanded {
     has_cursor: bool,
     /// A `{field}` or `{if}` in this body or any body below it.
     has_form: bool,
+    /// The snippet whose body this is is rich (its literal text is Markdown). False for the
+    /// template being resolved: the caller picks how to render it.
+    pub(crate) rich: bool,
 }
 
 impl Expanded {
-    fn new(body: Arc<Body>, abbr: Option<&str>, snippets: Vec<Arc<Expanded>>) -> Self {
+    fn new(body: Arc<Body>, abbr: Option<&str>, snippets: Vec<Arc<Expanded>>, rich: bool) -> Self {
         let own_form = body
             .form_events
             .iter()
@@ -89,6 +96,7 @@ impl Expanded {
             abbr: abbr.map(str::to_owned),
             body,
             snippets,
+            rich,
         }
     }
 }
@@ -389,7 +397,8 @@ impl Walk<'_, '_> {
             };
             snippets.push(child);
         }
-        Ok(Arc::new(Expanded::new(body, abbr, snippets)))
+        let rich = abbr.is_some_and(|a| self.c.source.is_rich(a));
+        Ok(Arc::new(Expanded::new(body, abbr, snippets, rich)))
     }
 
     /// Walks the body of snippet `name`, included from a body at `depth`.

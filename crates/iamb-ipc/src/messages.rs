@@ -127,6 +127,13 @@ pub struct SnippetSummary {
     /// (`E_…`), as in [`HealthReport`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub broken: Option<String>,
+    /// How many times it expanded on this computer (device-local, ADR-0015; never synced).
+    /// Absent when the service does not count: a client must not read it as "never used".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uses: Option<u64>,
+    /// When it last expanded on this computer; absent when it has not since the count began.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used: Option<Timestamp>,
     /// When it last changed.
     pub updated_at: Timestamp,
 }
@@ -240,15 +247,40 @@ pub struct ExcludedEntry {
     /// For `duplicate`: the snippet that holds the abbreviation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kept: Option<Id>,
+    /// For a broken reference (`E_SNIPPET_NOT_FOUND`, `E_SNIPPET_CYCLE`, or `E_TOO_DEEP` found
+    /// at a `{snippet}`): the abbreviation the failing `{snippet}` names, as written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+    /// For a template error found in an included snippet: that snippet's abbreviation. Absent
+    /// when the mistake is in the snippet's own content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub included: Option<String>,
 }
 
-/// Library health (task 3.10 adds conflicts, broken references and unused snippets).
+/// A snippet nobody used on this computer for 90 days (device-local, ADR-0015).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnusedEntry {
+    /// The snippet.
+    pub snippet: Id,
+    /// When it last expanded; absent when it never did since it was created (or since the
+    /// counts were reset).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used: Option<Timestamp>,
+}
+
+/// Library health (spec §4.9): one list per kind of problem. Every list is empty when nothing
+/// is wrong; every addition after protocol 3 is optional.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HealthReport {
-    /// Immediate abbreviations that hide longer ones.
+    /// "Never reached": immediate abbreviations that hide longer ones.
     pub shadowed: Vec<ShadowedEntry>,
-    /// Duplicates and templates that do not parse.
+    /// "Will not expand": abbreviations taken by another snippet, templates that do not parse,
+    /// and broken references to other snippets (missing, cyclic, nested too deep).
     pub excluded: Vec<ExcludedEntry>,
+    /// "Not used on this computer for 90 days": enabled snippets that expand but were not used,
+    /// oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unused: Vec<UnusedEntry>,
 }
 
 /// A snippet revision written by someone else that waits for the user's approval (§8 rule 10).
@@ -658,6 +690,35 @@ pub enum PreviewPart {
         /// Milliseconds.
         ms: u32,
     },
+    /// A run of a rich snippet's text, as it would be pasted (task 3.8; only when the request
+    /// asked for `rich`).
+    Formatted {
+        /// The sanitised HTML (`iamb_core::rich`); images reference attachments as
+        /// `attachment:<sha256>`.
+        html: String,
+        /// The plain-text version.
+        plain: String,
+        /// The attachments the HTML references, in order.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<WireAttachment>,
+    },
+}
+
+/// An attachment on the wire (task 3.8): what it is and, when its bytes are on this device,
+/// where (the UI host reads them from there to show an image; bulk data travels as a path).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireAttachment {
+    /// The hash that names it.
+    pub sha256: Sha256,
+    /// Its media type; empty when the profile has no such attachment.
+    pub mime: String,
+    /// Its size in bytes.
+    pub size: u64,
+    /// The original file name.
+    pub file_name: String,
+    /// Where its bytes are, checked against the hash; absent when they are not on this device.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
 }
 
 impl fmt::Debug for PreviewPart {
@@ -666,6 +727,14 @@ impl fmt::Debug for PreviewPart {
             Self::Text { text, blanks, .. } => {
                 write!(f, "Text(len {}, blanks {})", text.len(), blanks.len())
             }
+            Self::Formatted {
+                html, attachments, ..
+            } => write!(
+                f,
+                "Formatted(html len {}, attachments {})",
+                html.len(),
+                attachments.len()
+            ),
             Self::Key { key, shift, times } => write!(f, "Key({key}, shift {shift}, x{times})"),
             Self::Wait { ms } => write!(f, "Wait({ms})"),
         }
@@ -869,6 +938,16 @@ pub enum RequestBody {
     },
     /// Library health. → [`ResponseBody::Health`]
     Health {},
+    /// The snippets used most recently on this computer, newest first (the palette with
+    /// nothing typed, §4.5): a hit has no matched field and no ranges. →
+    /// [`ResponseBody::SearchResults`]
+    RecentSnippets {
+        /// At most this many hits.
+        limit: u32,
+    },
+    /// Forgets every usage count and last-used time on this computer (Settings → Privacy).
+    /// Nothing is synced and no snippet changes. → [`ResponseBody::Done`]
+    ResetUsage {},
     /// Revisions waiting for review. → [`ResponseBody::PendingReviews`]
     ListPendingReviews {},
     /// Approves a revision. → [`ResponseBody::Done`]
@@ -930,6 +1009,12 @@ pub enum RequestBody {
     // ---- Forms ------------------------------------------------------------------------------
     /// The UI host shows the form of `session` (within 2 s of `FormRequested`, or the expansion
     /// is abandoned). → [`ResponseBody::Done`]
+    ///
+    /// Sent again while the form stays open, it renews the form's lease
+    /// ([`FORM_LEASE`](crate::FORM_LEASE); every 10 seconds is enough): a form whose UI host
+    /// stops renewing it is cancelled by the service, with the diagnostic `form_expired`, so
+    /// that a form the UI host no longer shows cannot keep typed abbreviations refused with
+    /// `form_open`. An acknowledgement for a session that is not open changes nothing.
     FormAck {
         /// The session.
         session: u64,
@@ -981,6 +1066,11 @@ pub enum RequestBody {
         /// Form values to render with.
         #[serde(default)]
         values: Secret<WireValues>,
+        /// Render as a rich snippet (task 3.8): each run of text becomes a
+        /// [`PreviewPart::Formatted`] with the sanitised HTML. An older service ignores it and
+        /// answers with plain parts.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        rich: bool,
     },
 
     // ---- Diagnostics ------------------------------------------------------------------------
@@ -1061,11 +1151,25 @@ pub enum RequestBody {
         /// Feature → value.
         entitlements: BTreeMap<String, String>,
     },
+
+    // ---- Library (task 3.8) -----------------------------------------------------------------
+    /// Adds a file as an attachment of the profile that owns `folder`, for an image in a rich
+    /// snippet. The bytes travel as a path (§6.1); the service reads the file, checks its type
+    /// and size (`iamb_store::attachments`) and keeps it under its hash. The same content again
+    /// gives back the attachment that exists. → [`ResponseBody::Attachment`]
+    PutAttachment {
+        /// The file to read.
+        path: PathBuf,
+        /// The name to keep with it (the original file name).
+        file_name: String,
+        /// The folder of the snippet that will use it.
+        folder: Id,
+    },
 }
 
 impl RequestBody {
     /// Every request name, in declaration order (the golden tests cover each).
-    pub const NAMES: [&'static str; 45] = [
+    pub const NAMES: [&'static str; 48] = [
         "list_folders",
         "list_snippets",
         "get_snippet",
@@ -1111,6 +1215,9 @@ impl RequestBody {
         "missing_attachments",
         "set_sync_status",
         "set_entitlements",
+        "put_attachment",
+        "recent_snippets",
+        "reset_usage",
     ];
 
     /// The request's name on the wire (its `type`), for logs.
@@ -1133,6 +1240,8 @@ impl RequestBody {
             Self::Import { .. } => "import",
             Self::Export { .. } => "export",
             Self::Health {} => "health",
+            Self::RecentSnippets { .. } => "recent_snippets",
+            Self::ResetUsage {} => "reset_usage",
             Self::ListPendingReviews {} => "list_pending_reviews",
             Self::ApproveSnippet { .. } => "approve_snippet",
             Self::GetStatus {} => "get_status",
@@ -1162,6 +1271,7 @@ impl RequestBody {
             Self::MissingAttachments {} => "missing_attachments",
             Self::SetSyncStatus { .. } => "set_sync_status",
             Self::SetEntitlements { .. } => "set_entitlements",
+            Self::PutAttachment { .. } => "put_attachment",
         }
     }
 
@@ -1185,8 +1295,10 @@ impl RequestBody {
             | Self::Import { .. }
             | Self::Export { .. }
             | Self::Health {}
+            | Self::RecentSnippets { .. }
             | Self::ListPendingReviews {}
-            | Self::ApproveSnippet { .. } => Group::Library,
+            | Self::ApproveSnippet { .. }
+            | Self::PutAttachment { .. } => Group::Library,
             Self::GetStatus {}
             | Self::SetPaused { .. }
             | Self::ExpandSnippet { .. }
@@ -1204,7 +1316,8 @@ impl RequestBody {
             Self::GetSettings {}
             | Self::PutSetting { .. }
             | Self::ListExclusions {}
-            | Self::PutExclusion { .. } => Group::Settings,
+            | Self::PutExclusion { .. }
+            | Self::ResetUsage {} => Group::Settings,
             Self::OutboxRead { .. }
             | Self::OutboxAck { .. }
             | Self::ApplyRemote { .. }
@@ -1400,11 +1513,16 @@ pub enum ResponseBody {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         hidden_by: Vec<Id>,
     },
+    /// An attachment that was added or found (task 3.8).
+    Attachment {
+        /// The attachment.
+        attachment: WireAttachment,
+    },
 }
 
 impl ResponseBody {
     /// Every response name, in declaration order.
-    pub const NAMES: [&'static str; 24] = [
+    pub const NAMES: [&'static str; 25] = [
         "done",
         "folders",
         "snippets",
@@ -1429,6 +1547,7 @@ impl ResponseBody {
         "tags",
         "snippet_summaries",
         "abbreviation_check",
+        "attachment",
     ];
 
     /// The response's name on the wire (its `type`), for logs.
@@ -1459,6 +1578,7 @@ impl ResponseBody {
             Self::Tags { .. } => "tags",
             Self::SnippetSummaries { .. } => "snippet_summaries",
             Self::AbbreviationCheck { .. } => "abbreviation_check",
+            Self::Attachment { .. } => "attachment",
         }
     }
 }

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "library",
-  "description": "The library window alone may close itself after asking whether to save: it listens for the close request and then destroys the window (src/library/LibraryView.tsx).",
+  "description": "The library window alone may close itself after asking whether to save: it listens for the close request and then destroys the window (src/library/LibraryView.tsx), and it may zoom its own page (Ctrl and + - 0, specification §5.2).",
   "windows": ["library"],
-  "permissions": ["core:window:allow-destroy"]
+  "permissions": ["core:window:allow-destroy", "core:webview:allow-set-webview-zoom"]
 }

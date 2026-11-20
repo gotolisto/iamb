@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
@@ -162,6 +162,63 @@ describe("the library window", () => {
     expect(screen.getByText("A snippet is text you save once and type with a short abbreviation from then on.")).toBeTruthy();
   });
 
+  it("keeps Undo for what a partly failed delete removed, and says what failed", async () => {
+    const user = userEvent.setup();
+    const { fake } = await renderLibrary(base());
+    await user.click(await screen.findByRole("option", { name: /^Late delivery/ }));
+    await user.keyboard("{Shift>}{ArrowDown}{ArrowDown}{/Shift}");
+    expect(await screen.findByText("3 snippets selected")).toBeTruthy();
+    const late = fake.byAbbreviation(";rlate");
+    const deleteSnippet = fake.api.deleteSnippet;
+    fake.api.deleteSnippet = async (id) => {
+      if (id === late?.id) throw { code: "unavailable", message: "busy" };
+      return deleteSnippet(id);
+    };
+    await user.keyboard("{Delete}");
+    expect(
+      await screen.findByText(
+        "Deleted 2 snippets. “Late delivery” could not be deleted: Iamb is busy. Try again in a moment.",
+      ),
+    ).toBeTruthy();
+    expect([...fake.live.values()].map((s) => s.abbreviation)).toEqual([";rlate"]);
+    // Undo brings back the two that were deleted.
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(fake.live.size).toBe(3));
+  });
+
+  it("asks before Quit drops unsaved edits, as closing the window does", async () => {
+    const user = userEvent.setup();
+    let requested: (() => void) | undefined;
+    let quits = 0;
+    await renderLibrary(base(), {
+      onQuitRequested: (h) => {
+        requested = h;
+        return () => {
+          requested = undefined;
+        };
+      },
+      quit: async () => {
+        quits += 1;
+      },
+    });
+    await screen.findAllByRole("option");
+    // Nothing unsaved: Quit goes ahead.
+    act(() => requested?.());
+    await waitFor(() => expect(quits).toBe(1));
+    // An edit that is not saved: the window asks first.
+    await user.click(screen.getByRole("option", { name: /^Opening hours/ }));
+    const label = (await screen.findByLabelText(/^Label/)) as HTMLInputElement;
+    await user.type(label, " now");
+    act(() => requested?.());
+    const dialog = await screen.findByRole("alertdialog");
+    expect(quits).toBe(1);
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(quits).toBe(1);
+    act(() => requested?.());
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: /Do not save|Don’t save/ }));
+    await waitFor(() => expect(quits).toBe(2));
+  });
+
   it("turns a snippet off with the space bar and marks it Off", async () => {
     const user = userEvent.setup();
     const { fake } = await renderLibrary(base());
@@ -254,7 +311,7 @@ describe("the library window", () => {
     await renderLibrary(base());
     await screen.findAllByRole("option");
     await user.click(screen.getByRole("button", { name: /Library health/ }));
-    expect(screen.getByText("Nothing to fix. All 3 snippets can expand.")).toBeTruthy();
+    expect(await screen.findByText("Nothing to fix. All 3 snippets can expand.")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: /Why didn’t it expand\?/ }));
     expect(screen.getByRole("heading", { name: "Why didn’t it expand?" })).toBeTruthy();
     await user.keyboard("{Control>},{/Control}");
@@ -273,7 +330,8 @@ describe("the library window", () => {
     expect(row.textContent).toContain("Broken");
     expect(screen.getByRole("button", { name: /Library health/ }).textContent).toContain("1");
     fireEvent.click(screen.getByRole("button", { name: /Library health/ }));
-    expect(screen.getByText("1 snippet will not expand. They carry a Broken badge in the list.")).toBeTruthy();
+    expect(await screen.findByRole("region", { name: "Will not expand: error in the snippet" })).toBeTruthy();
+    expect(screen.getByText(/Something that starts with \{ is never closed/)).toBeTruthy();
   });
 
   it("warns when a saved snippet will not expand", async () => {

@@ -6,7 +6,13 @@
 //! so a failed import leaves the store unchanged.
 //!
 //! JSON is the lossless format. It is one document with a `format` and `version` header and the
-//! model types' own serde form for `folders`, `snippets`, `tags` and `snippet_tags`. CSV carries
+//! model types' own serde form for `folders`, `snippets`, `tags` and `snippet_tags`. When rich
+//! snippets reference attachments (task 3.8), an `attachments` array carries each one the
+//! profile has, once: `sha256`, `mime`, `file_name` and the bytes as standard base64 in `data`.
+//! An import checks every attachment (type, size and hash, `crate::attachments`) before it
+//! writes anything, keeps the bytes in the target profile under the same hash (so the snippets'
+//! `attachment:` references stay valid) and links the imported snippets to them. A file
+//! without the array is read as before; an older build ignores it. CSV carries
 //! snippets only, with folders and tags written as text, for spreadsheets and hand editing.
 //!
 //! # CSV escaping
@@ -33,8 +39,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use iamb_core::model::{
-    Abbreviation, CaseMode, Folder, FolderDefaults, Id, Snippet, SnippetKind, SnippetTag, SyncMeta,
-    Tag, Timestamp, Trigger,
+    Abbreviation, CaseMode, Folder, FolderDefaults, Id, Sha256, Snippet, SnippetKind, SnippetTag,
+    SyncMeta, Tag, Timestamp, Trigger,
 };
 use serde_json::{Map, Value};
 
@@ -271,7 +277,7 @@ pub fn export(
 ) -> Result<ExportSummary, TransferError> {
     let lib = scoped(&store.load_library()?, profile);
     let (bytes, summary) = match format {
-        Format::Json => encode_json(&lib)?,
+        Format::Json => encode_json(&lib, &exported_attachments(store, profile, &lib)?)?,
         Format::Csv => encode_csv(&lib)?,
     };
     fs::write(path, bytes).map_err(|source| io_error(path, source))?;
@@ -489,7 +495,50 @@ fn path_of(paths: &HashMap<Id, Vec<String>>, folder: Id) -> Vec<String> {
     paths.get(&folder).cloned().unwrap_or_default()
 }
 
-fn encode_json(lib: &Library) -> Result<(Vec<u8>, ExportSummary), TransferError> {
+/// The attachments the rich snippets of `lib` reference that `profile` has, with their bytes,
+/// as JSON values in hash order. Content whose bytes are not on this device is left out.
+fn exported_attachments(
+    store: &Store,
+    profile: Id,
+    lib: &Library,
+) -> Result<Vec<Value>, TransferError> {
+    use base64::Engine as _;
+    let mut refs: Vec<String> = Vec::new();
+    for s in lib.snippets.iter().filter(|s| s.kind == SnippetKind::Rich) {
+        for sha in iamb_core::rich::attachment_refs(&s.body) {
+            refs.push(sha.to_string());
+        }
+    }
+    refs.sort();
+    refs.dedup();
+    let mut out = Vec::new();
+    for text in refs {
+        let Ok(sha) = text.parse::<Sha256>() else {
+            continue;
+        };
+        let Some(row) = store.find_attachment(profile, &sha)? else {
+            continue;
+        };
+        let Some(bytes) = store.read_attachment(profile, &sha)? else {
+            continue;
+        };
+        let mut item = Map::new();
+        item.insert("sha256".to_owned(), Value::from(text));
+        item.insert("mime".to_owned(), Value::from(row.mime));
+        item.insert("file_name".to_owned(), Value::from(row.file_name));
+        item.insert(
+            "data".to_owned(),
+            Value::from(base64::engine::general_purpose::STANDARD.encode(bytes)),
+        );
+        out.push(Value::Object(item));
+    }
+    Ok(out)
+}
+
+fn encode_json(
+    lib: &Library,
+    attachments: &[Value],
+) -> Result<(Vec<u8>, ExportSummary), TransferError> {
     let paths = folder_paths(&lib.folders);
     let mut folders = lib.folders.clone();
     folders.sort_by_key(|f| (path_of(&paths, f.meta.id), f.meta.id));
@@ -536,6 +585,9 @@ fn encode_json(lib: &Library) -> Result<(Vec<u8>, ExportSummary), TransferError>
         "snippet_tags".to_owned(),
         serde_json::to_value(&links).map_err(|e| json_error(&e))?,
     );
+    if !attachments.is_empty() {
+        doc.insert("attachments".to_owned(), Value::Array(attachments.to_vec()));
+    }
     let mut text = serde_json::to_string_pretty(&Value::Object(doc)).map_err(|e| json_error(&e))?;
     text.push('\n');
     let summary = ExportSummary {
@@ -749,6 +801,70 @@ struct JsonDoc {
     tags: Vec<Tag>,
     snippets: Vec<Snippet>,
     links: Vec<SnippetTag>,
+    attachments: Vec<ImportedAttachment>,
+}
+
+/// One checked attachment of a JSON library file.
+struct ImportedAttachment {
+    sha: Sha256,
+    mime: &'static str,
+    file_name: String,
+    bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for ImportedAttachment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImportedAttachment")
+            .field("sha", &self.sha)
+            .field("mime", &self.mime)
+            .field("len", &self.bytes.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Reads and checks the `attachments` array (module docs).
+fn parse_attachments(obj: &Map<String, Value>) -> Result<Vec<ImportedAttachment>, TransferError> {
+    use base64::Engine as _;
+    let Some(value) = obj.get("attachments") else {
+        return Ok(Vec::new());
+    };
+    let items = value
+        .as_array()
+        .ok_or_else(|| invalid("attachments", "expected an array"))?;
+    let mut out = Vec::with_capacity(items.len());
+    for (i, item) in items.iter().enumerate() {
+        let location = format!("attachments[{i}]");
+        let field = |name: &str| -> Result<&str, TransferError> {
+            item.get(name)
+                .and_then(Value::as_str)
+                .ok_or_else(|| invalid(&location, format!("expected a text `{name}`")))
+        };
+        let sha: Sha256 = field("sha256")?
+            .parse()
+            .map_err(|e: iamb_core::model::ModelError| invalid(&location, e.to_string()))?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(field("data")?)
+            .map_err(|e| invalid(&location, format!("`data` is not base64: {e}")))?;
+        let mime =
+            crate::attachments::check(&bytes).map_err(|e| invalid(&location, e.to_string()))?;
+        if crate::attachments::sha256_of(&bytes) != sha {
+            return Err(invalid(
+                &location,
+                crate::AttachmentError::HashMismatch(sha).to_string(),
+            ));
+        }
+        let file_name = crate::attachments::clean_file_name(
+            item.get("file_name").and_then(Value::as_str).unwrap_or(""),
+            "attachment",
+        );
+        out.push(ImportedAttachment {
+            sha,
+            mime,
+            file_name,
+            bytes,
+        });
+    }
+    Ok(out)
 }
 
 fn import_json(
@@ -764,7 +880,39 @@ fn import_json(
     })?;
     let doc: Value = serde_json::from_str(text).map_err(|e| json_error(&e))?;
     let plan = JsonPlan::new(parse_json(&doc)?, new_id)?;
-    apply(store, |w| write_json(w, ctx, &plan, new_id))
+    // Attachment bytes go to their place before the transaction: they are named by their
+    // content, so bytes left there by an import that then fails harm nothing.
+    if !plan.doc.attachments.is_empty() {
+        let dir = store
+            .data_dir()
+            .map(Path::to_path_buf)
+            .ok_or(StoreError::Attachment(
+                crate::AttachmentError::NoDataDirectory,
+            ))?;
+        for a in &plan.doc.attachments {
+            crate::attachments::write_file(&dir, ctx.profile, &a.sha, &a.bytes)?;
+        }
+    }
+    apply(store, |w| {
+        let summary = write_json(w, ctx, &plan, new_id)?;
+        for a in &plan.doc.attachments {
+            w.ensure_attachment(
+                new_id(),
+                ctx.profile,
+                a.sha,
+                a.mime,
+                a.bytes.len() as u64,
+                &a.file_name,
+                ctx.now,
+            )?;
+        }
+        if !plan.doc.attachments.is_empty() {
+            for &snippet in plan.snippets.values() {
+                w.sync_snippet_attachments(snippet, new_id, ctx.now)?;
+            }
+        }
+        Ok(summary)
+    })
 }
 
 fn parse_json(doc: &Value) -> Result<JsonDoc, TransferError> {
@@ -788,6 +936,7 @@ fn parse_json(doc: &Value) -> Result<JsonDoc, TransferError> {
         tags: rows(obj, "tags", serde_json::from_value::<Tag>)?,
         snippets: rows(obj, "snippets", serde_json::from_value::<Snippet>)?,
         links: rows(obj, "snippet_tags", serde_json::from_value::<SnippetTag>)?,
+        attachments: parse_attachments(obj)?,
     })
 }
 

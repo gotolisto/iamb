@@ -142,7 +142,9 @@ export const copy = {
   stillHere: "Your answers are still here.",
   couldNotGetBack: (app: string | null) =>
     app ? `Iamb could not get back to ${app}.` : "Iamb could not get back to the app.",
-  nothingTyped: "Nothing was typed. Click where the text should go and press Insert again, or cancel.",
+  // Insert hands the focus back to the same window again (src-tauri/src/form.rs): the advice
+  // names only what Insert can do. A window that is gone ends the form instead (a notice).
+  nothingTyped: "Nothing was typed. Press Insert to try again, or cancel.",
   description: (fields: number) => `Fill-in form, ${fields} ${fields === 1 ? "field" : "fields"}`,
 } as const;
 

@@ -44,6 +44,7 @@ pub const COMMANDS: &[&str] = &[
     "get_snippet",
     "report_first_paint",
     "dismiss",
+    "app_quit",
     // The library's commands (`app/library_commands.rs`, task 3.3).
     "library_list_folders",
     "library_list_tags",
@@ -57,9 +58,15 @@ pub const COMMANDS: &[&str] = &[
     "library_save_tag",
     "library_delete_tag",
     "library_check_abbreviation",
+    // Library health and the usage reset (task 3.10).
+    "library_health",
+    "library_reset_usage",
     // The template editor's commands (`app/template_commands.rs`, task 3.4).
     "template_parse",
     "template_preview",
+    // Formatted snippets (`app/template_commands.rs`, task 3.8).
+    "template_add_attachment",
+    "template_try_form",
     // The fill-in form's commands (`app/form_panel.rs`, task 3.5).
     "form_ready",
     "form_current",
@@ -67,6 +74,7 @@ pub const COMMANDS: &[&str] = &[
     "form_painted",
     "form_submit",
     "form_cancel",
+    "form_abandon",
     // Settings and diagnostics (`app/settings_commands.rs`, task 3.9).
     "settings_get",
     "settings_put",
@@ -74,6 +82,27 @@ pub const COMMANDS: &[&str] = &[
     "settings_put_exclusion",
     "diagnostics_recent",
     "diagnostics_test",
+    // The onboarding window's commands (`app/onboarding_commands.rs`, task 3.7).
+    "onboarding_permissions",
+    "onboarding_open_permission_settings",
+    "onboarding_test_field",
+    "onboarding_restart_helper",
+    "onboarding_finish",
+    "onboarding_login_item",
+    "onboarding_open_library",
+    "onboarding_close",
+    // The search palette's commands (`app/palette_panel.rs`, task 3.6).
+    "palette_ready",
+    "palette_current",
+    "palette_painted",
+    "palette_search",
+    "palette_recent",
+    "palette_preview",
+    "palette_pick",
+    "palette_open",
+    "library_take_request",
+    // The notice for a refused pick or insert (`app/notice_window.rs`).
+    "notice_current",
 ];
 
 /// The requests the bridge sends, by wire name (the `type` of each).

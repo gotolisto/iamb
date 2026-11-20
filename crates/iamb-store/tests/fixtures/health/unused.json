@@ -1,0 +1,77 @@
+{
+ "description": "Not used for 90 days. Day 1000 is today. Boundary: 90 days ago is reported, 89 is not. A snippet never used counts from its creation. Switched-off snippets are not reported.",
+ "now_day": 1000,
+ "snippets": [
+  {
+   "key": "recent",
+   "abbr": ";recent",
+   "body": "used yesterday",
+   "used": {
+    "day": 999
+   }
+  },
+  {
+   "key": "exactly_90",
+   "abbr": ";d90",
+   "body": "90 days",
+   "used": {
+    "day": 910
+   }
+  },
+  {
+   "key": "days_89",
+   "abbr": ";d89",
+   "body": "89 days",
+   "used": {
+    "day": 911
+   }
+  },
+  {
+   "key": "long_ago",
+   "abbr": ";old",
+   "body": "Holiday closing",
+   "used": {
+    "day": 100
+   }
+  },
+  {
+   "key": "never_old",
+   "abbr": ";never",
+   "body": "never used, made long ago",
+   "created_day": 300
+  },
+  {
+   "key": "never_exactly_90",
+   "abbr": ";nv90",
+   "body": "made 90 days ago",
+   "created_day": 910
+  },
+  {
+   "key": "never_89",
+   "abbr": ";nv89",
+   "body": "made 89 days ago",
+   "created_day": 911
+  },
+  {
+   "key": "never_young",
+   "abbr": ";young",
+   "body": "made 10 days ago",
+   "created_day": 990
+  },
+  {
+   "key": "old_off",
+   "abbr": ";offold",
+   "body": "long unused but off",
+   "enabled": false,
+   "used": {
+    "day": 100
+   }
+  }
+ ],
+ "expect": [
+  "unused exactly_90 last_day=910",
+  "unused long_ago last_day=100",
+  "unused never_old never",
+  "unused never_exactly_90 never"
+ ]
+}

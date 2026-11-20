@@ -44,7 +44,7 @@ Tauri dependencies would slow every leg.
   set it.
 - `desktop` (Linux, Windows, macOS, not fail-fast): the UI host. The front end in
   `apps/desktop` (`pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm test` with vitest,
-  `pnpm build`), then `cargo build`, `cargo clippy -- -D warnings` and `cargo test` for
+  `pnpm build`), on Linux the keyboard-only accessibility run (`node scripts/keyboard-run.mjs`, `docs/accessibility-run.md`), then `cargo build`, `cargo clippy -- -D warnings` and `cargo test` for
   `-p iamb-desktop --all-targets --features tauri/custom-protocol` (the feature embeds the built
   front end, as a release build does; using it for every step builds the crate once). The Linux
   leg first installs `libwebkit2gtk-4.1-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`,
@@ -65,6 +65,10 @@ pushes to `main` and manual runs it runs them once, report only. On a pull reque
 twice and then `cargo xtask bench-compare`, which fails the `bench` job when the same bench
 regresses against `crates/iamb-bench/baselines/ci-ubuntu.jsonl` in both runs, and passes ("not
 armed yet") while that file does not exist (see `docs/test-strategy.md` §3, "Regression rule").
+After them, on every event, it runs the search bench in quick mode with `IAMB_SEARCH_BUDGET_MS=60`
+and `iamb-service`'s `search_timing` test in a release build, each failing the job when the
+palette's search takes more than 60 ms at p95 (twice the 30 ms target, `docs/test-strategy.md`
+§8.7); the search results are kept apart from the compared runs.
 `bench` is not part of `ci-ok`; require it in branch protection as well for a regression to block
 a merge.
 

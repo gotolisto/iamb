@@ -1,0 +1,291 @@
+# Relevance fixtures for the palette's search (task 3.6, `iamb_core::search`, spec 4.5).
+#
+# A small library of a bicycle workshop's replies, and queries with the results the palette
+# must give: `top` lists the first results in order (the result may have more after them),
+# `only = true` says there must be no others, `field` is the field that decided the first
+# hit, and `marked` the text of the first hit's field that the ranges cover.
+# Run by `crates/iamb-core/tests/search_relevance.rs`.
+
+[[snippet]]
+name = "thanks"
+abbreviation = ";rty"
+label = "Thanks for your order"
+body = "Thank you for your order. We build every wheel by hand, so it ships within five days."
+tags = ["orders"]
+
+[[snippet]]
+name = "address"
+abbreviation = ";addr"
+label = "Workshop address"
+body = "Brindlewood Cycles, 12 Millrace Lane, Unit 4 (blue door behind the bakery)"
+tags = ["shop"]
+
+[[snippet]]
+name = "late"
+abbreviation = ";rlate"
+label = "Late delivery"
+body = 'Hi {field name="First name"}, thank you for your patience. Your order {field name="Order number"} left us late.'
+tags = ["orders", "apology"]
+
+[[snippet]]
+name = "return-label"
+abbreviation = ";rret"
+label = "Return label"
+body = "You can return any part within 30 days. I have attached a prepaid label."
+tags = ["returns"]
+
+[[snippet]]
+name = "return-refused"
+abbreviation = ";rno"
+label = "Return refused"
+body = "I am sorry, we cannot take back parts that have been fitted."
+tags = ["returns", "apology"]
+
+[[snippet]]
+name = "retension"
+abbreviation = ";wten"
+label = "Wheel retensioning"
+body = "New wheels settle in. Bring it back after 200 km and we will true it."
+tags = ["shop"]
+
+[[snippet]]
+name = "stock"
+abbreviation = ";roos"
+label = "Out of stock"
+body = "That part is on back order. I can refund it or keep your place in the queue."
+tags = ["returns"]
+
+[[snippet]]
+name = "quote"
+abbreviation = ";wq"
+label = "Wheel build quote"
+body = "Hi {field name=Name}, a wheel build starts at the price on our page."
+tags = []
+
+[[snippet]]
+name = "brb"
+abbreviation = "brb"
+label = "Be right back"
+body = "be right back"
+tags = []
+
+[[snippet]]
+name = "omw"
+abbreviation = "omw"
+label = "On my way"
+body = "on my way"
+tags = []
+
+[[snippet]]
+name = "signature"
+abbreviation = ";sig"
+label = "Email signature"
+body = "Best regards,\nTomás\nBrindlewood Cycles"
+tags = ["shop"]
+
+[[snippet]]
+name = "guarantee"
+abbreviation = ";wnty"
+label = "Guarantee terms"
+body = "Every frame carries a five year guarantee against defects."
+tags = []
+
+[[snippet]]
+name = "refund"
+abbreviation = ";refund"
+label = "Refund issued"
+body = "Your refund of {field name=Amount} is on its way."
+tags = ["orders"]
+
+[[snippet]]
+name = "cv"
+abbreviation = ";cv"
+label = "Résumé request"
+body = "Please send your résumé."
+tags = []
+
+# ---- Abbreviation ------------------------------------------------------------------------
+
+[[query]]
+why = "the exact abbreviation is first"
+text = ";rret"
+top = ["return-label"]
+field = "abbreviation"
+marked = ";rret"
+
+[[query]]
+why = "a prefix of the abbreviation"
+text = ";rr"
+top = ["return-label"]
+field = "abbreviation"
+marked = ";rr"
+
+[[query]]
+why = "no prefix character needed: the abbreviation is found inside, before label and content"
+text = "ret"
+top = ["return-label", "return-refused", "retension"]
+field = "abbreviation"
+marked = "ret"
+
+[[query]]
+why = "a short abbreviation typed whole"
+text = "brb"
+top = ["brb"]
+only = true
+field = "abbreviation"
+
+[[query]]
+why = "letters of an abbreviation in order, with others between them"
+text = "rt"
+top = ["thanks", "late", "return-label"]
+field = "abbreviation"
+marked = "rt"
+
+# ---- Label -------------------------------------------------------------------------------
+
+[[query]]
+why = "several words of a label, in any order"
+text = "late deliv"
+top = ["late"]
+only = true
+
+[[query]]
+why = "the same words the other way round"
+text = "deliv late"
+top = ["late"]
+only = true
+
+[[query]]
+why = "a word in the middle of a label"
+text = "quote"
+top = ["quote"]
+only = true
+field = "label"
+marked = "quote"
+
+[[query]]
+why = "the label that starts with it beats one that has it later, and the shorter one wins"
+text = "wheel"
+top = ["quote", "retension"]
+field = "label"
+marked = "Wheel"
+
+[[query]]
+why = "letters (case folded) match a label that is not an abbreviation"
+text = "OUT OF"
+top = ["stock"]
+field = "label"
+marked = "Outof"
+
+# ---- Content -----------------------------------------------------------------------------
+
+[[query]]
+why = "a word only the content has"
+text = "bakery"
+top = ["address"]
+only = true
+field = "body"
+marked = "bakery"
+
+[[query]]
+why = "content matches come after label matches"
+text = "refund"
+top = ["refund", "stock"]
+only = true
+
+[[query]]
+why = "a word of the content, from a snippet with a field"
+text = "price"
+top = ["quote"]
+only = true
+field = "body"
+marked = "price"
+
+# ---- Tag ---------------------------------------------------------------------------------
+
+[[query]]
+why = "a tag name finds its snippets, in library order"
+text = "apology"
+top = ["late", "return-refused"]
+only = true
+field = "tag"
+marked = "apology"
+
+[[query]]
+why = "a whole tag name"
+text = "returns"
+top = ["return-label", "return-refused", "stock"]
+only = true
+field = "tag"
+
+# ---- Typos -------------------------------------------------------------------------------
+
+[[query]]
+why = "two letters swapped in a label word (and in a tag, which comes last)"
+text = "retrun"
+top = ["return-label", "return-refused", "stock"]
+only = true
+field = "label"
+marked = "Return"
+
+[[query]]
+why = "two letters swapped in an abbreviation"
+text = ";rrte"
+top = ["return-label"]
+field = "abbreviation"
+
+[[query]]
+why = "a letter missing from a tag"
+text = "aplogy"
+top = ["late", "return-refused"]
+only = true
+field = "tag"
+
+[[query]]
+why = "a letter too many"
+text = "adrdess"
+top = ["address"]
+field = "label"
+marked = "address"
+
+[[query]]
+why = "too short to forgive anything"
+text = "rtq"
+top = []
+only = true
+
+[[query]]
+why = "typos come after everything that matches as typed"
+text = "retrun"
+top = ["return-label"]
+field = "label"
+
+# ---- Nothing, and odd queries --------------------------------------------------------------
+
+[[query]]
+why = "the palette's own example of no match"
+text = "warranty"
+top = []
+only = true
+
+[[query]]
+why = "white space alone is no query"
+text = "   "
+top = []
+only = true
+
+[[query]]
+why = "case is folded for letters beyond ASCII too"
+text = "RÉSUMÉ"
+top = ["cv"]
+only = true
+field = "label"
+marked = "Résumé"
+
+[[query]]
+why = "a word that exists in the body only, from a snippet with fields"
+text = "patience"
+top = ["late"]
+only = true
+field = "body"
+marked = "patience"

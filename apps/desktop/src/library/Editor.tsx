@@ -10,7 +10,9 @@ import {
 } from "react";
 
 import type { AbbreviationCheck, CaseMode, Folder, Saved, Snippet, Tag, Trigger } from "./api";
-import { TemplateField } from "./template";
+import { TemplateField, templateService } from "./template";
+import { hasFormatting } from "./template/markdown";
+import { ConfirmDialog } from "./Dialogs";
 import { describeFailure, type Failure } from "./errors";
 import { Icon } from "./Icon";
 import { Menu, type OpenMenu, below } from "./Menu";
@@ -23,14 +25,23 @@ import {
   messageText,
   optionsSummary,
   shortcutLabel,
+  usageText,
 } from "./model";
 import { TagInput } from "./TagInput";
 import type { LibraryData } from "./useLibraryData";
 import type { LibraryEnv } from "./env";
+import type { FieldView } from "../ipc";
 
 /** Exactly the specification's copy (flow 2, step 2). */
 export const CONTENT_PLACEHOLDER =
   "The text Iamb types for you. Type { to insert a date, a fill-in field and more.";
+
+/** The question before a formatted snippet becomes plain text and would lose its formatting
+ * (specification §4.3, "Kinds"; the wording is ours: the specification gives none). */
+export const TO_PLAIN_TITLE = "Switch to plain text?";
+export const TO_PLAIN_BODY =
+  "The formatting would be lost. The text stays as it is, so marks such as ** and - are typed as written, and images become their names.";
+export const TO_PLAIN_CONFIRM = "Switch to plain text";
 
 /** What a new snippet starts with. */
 export interface DraftSeed {
@@ -137,6 +148,11 @@ interface EditorProps {
   onSaved: (saved: Saved, form: { abbreviation: string; trigger: Trigger }, wasNew: boolean) => void;
   /** Cancel, Esc, "Close": back to the list. The window decides whether to ask first. */
   onClose: () => void;
+  /**
+   * "Close" on the notice that the snippet no longer exists: the window drops it from the
+   * selection, whether or not its list has caught up with the deletion yet.
+   */
+  onGone: () => void;
   onDelete: (snippet: Snippet) => void;
   onDuplicate: (snippet: Snippet) => void;
   onShowSnippet: (id: string) => void;
@@ -180,6 +196,9 @@ export function Editor(props: EditorProps) {
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [menu, setMenu] = useState<OpenMenu | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [askPlain, setAskPlain] = useState(false);
+  /** The answers of "Try the form", the preview's test values (spec §4.3). */
+  const [previewValues, setPreviewValues] = useState<Record<string, string> | undefined>(undefined);
   const abbrInput = useRef<HTMLInputElement>(null);
   const root = useRef<HTMLFormElement>(null);
 
@@ -189,6 +208,8 @@ export function Editor(props: EditorProps) {
 
   // ---- Loading the saved snippet -------------------------------------------------------------
   const id = target.kind === "snippet" ? target.id : null;
+  const usageRow = id ? data.rowsById.get(id) : undefined;
+  const usage = usageRow ? usageText(usageRow.uses, usageRow.lastUsed) : null;
   useEffect(() => {
     if (id === null) return;
     // A draft that was just saved is already what the row holds.
@@ -206,7 +227,7 @@ export function Editor(props: EditorProps) {
         setMeta({ updatedAt: s.updatedAt });
       },
       (e: unknown) => {
-        if (live) setNotice(goneNotice(describeFailure(e, "get_snippet"), props.onClose));
+        if (live) setNotice(goneNotice(describeFailure(e, "get_snippet"), props.onGone));
       },
     );
     return () => {
@@ -237,7 +258,7 @@ export function Editor(props: EditorProps) {
         }
       },
       (e: unknown) => {
-        if (live) setNotice(goneNotice(describeFailure(e, "get_snippet"), props.onClose));
+        if (live) setNotice(goneNotice(describeFailure(e, "get_snippet"), props.onGone));
       },
     );
     return () => {
@@ -341,7 +362,7 @@ export function Editor(props: EditorProps) {
           .checkAbbreviation(f.abbreviation, f.trigger, rowId.current ?? undefined)
           .then(setCheck, () => {});
       } else if (failure.kind === "gone") {
-        setNotice(goneNotice(failure, props.onClose));
+        setNotice(goneNotice(failure, props.onGone));
       } else {
         setNotice({
           tone: "danger",
@@ -385,6 +406,20 @@ export function Editor(props: EditorProps) {
   }
 
   const update = (patch: Partial<Form>) => setForm((f) => (f ? { ...f, ...patch } : f));
+  const template = env.template ?? templateService;
+  // "Try the form": the real panel over this window; its answers become the preview's test
+  // values, typed nowhere (flow 2 step 5, flow 4's entry points).
+  const tryForm =
+    template.tryForm && form
+      ? (fields: FieldView[]) => {
+          void template.tryForm?.(fields, form.label, form.abbreviation).then(
+            (values) => {
+              if (values) setPreviewValues(values);
+            },
+            () => undefined,
+          );
+        }
+      : undefined;
   const folder: Folder | undefined = data.folders.find((x) => x.id === form.folderId);
   const prefix = folder?.defaults.abbreviationPrefix ?? "";
 
@@ -405,6 +440,17 @@ export function Editor(props: EditorProps) {
       const abbreviation = isDraft && rowId.current === null && f.abbreviation === from ? to : f.abbreviation;
       return { ...f, folderId, abbreviation };
     });
+
+  /** "Plain text / Formatted": going back to plain text asks first when formatting would be
+   * lost (specification §4.3). */
+  const chooseKind = (next: "plain" | "rich") => {
+    if (next === form.kind) return;
+    if (next === "plain" && hasFormatting(form.body)) {
+      setAskPlain(true);
+      return;
+    }
+    update({ kind: next });
+  };
 
   const toggleEnabled = (next: boolean) => {
     update({ enabled: next });
@@ -508,6 +554,24 @@ export function Editor(props: EditorProps) {
       >
         <header className="editor-head">
           <h2 className="editor-title">{title()}</h2>
+          <div className="seg" role="group" aria-label="Kind">
+            {(
+              [
+                ["plain", "Plain text"],
+                ["rich", "Formatted"],
+              ] as const
+            ).map(([k, label]) => (
+              <button
+                key={k}
+                type="button"
+                aria-pressed={form.kind === k}
+                disabled={!online && form.kind !== k}
+                onClick={() => chooseKind(k)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           {dirty && (
             <span className="not-saved" role="status">
               Not saved
@@ -603,8 +667,11 @@ export function Editor(props: EditorProps) {
               placeholder={CONTENT_PLACEHOLDER}
               describedBy={ids.contentMessages}
               kind={form.kind}
+              imageFolder={form.kind === "rich" ? form.folderId : undefined}
               snippets={data.rows}
               service={env.template}
+              previewValues={previewValues}
+              onTryForm={tryForm}
               onChange={(body) => update({ body })}
             />
             {/* The template's error is shown once, by the field (spec section 6.1). */}
@@ -656,6 +723,7 @@ export function Editor(props: EditorProps) {
             >
               Options
             </button>
+            {usage && <span className="usage-fact"> · {usage}</span>}
           </p>
         </footer>
 
@@ -708,6 +776,19 @@ export function Editor(props: EditorProps) {
       </form>
       {menu && (
         <Menu items={menu.items} x={menu.x} y={menu.y} label={menu.label} onClose={() => setMenu(null)} />
+      )}
+      {askPlain && (
+        <ConfirmDialog
+          title={TO_PLAIN_TITLE}
+          body={TO_PLAIN_BODY}
+          confirm={TO_PLAIN_CONFIRM}
+          mac={mac}
+          onConfirm={() => {
+            setAskPlain(false);
+            update({ kind: "plain" });
+          }}
+          onCancel={() => setAskPlain(false)}
+        />
       )}
     </section>
   );

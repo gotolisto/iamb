@@ -171,6 +171,26 @@ jobs:
           pnpm typecheck
           pnpm test
           pnpm build
+      # Paste fidelity (task 3.8, docs/paste-fidelity.md): every fixture's clipboard content, as
+      # `crates/iamb-service/tests/paste_fidelity.rs` keeps it current, pasted into a rich-text
+      # editor and a plain text field of the runner's Google Chrome, headless.
+      - name: Paste fidelity (headless browser round trip)
+        if: runner.os == 'Linux'
+        working-directory: docs/paste-fidelity
+        run: |
+          npm install --no-save --no-package-lock playwright@1.63.0
+          node browser-paste.mjs
+      # Accessibility, keyboard only (task 3.11, docs/accessibility-run.md): the built front end in
+      # the runner's Chrome over a mocked command layer, walked with the keyboard in the light and
+      # dark themes, with reduced motion and with forced colours; the focus ring is checked at
+      # every step and axe-core (contrast included) must find nothing critical or serious.
+      - name: Keyboard-only run (headless browser)
+        if: runner.os == 'Linux'
+        working-directory: apps/desktop
+        run: |
+          mkdir -p "$RUNNER_TEMP/pw"
+          (cd "$RUNNER_TEMP/pw" && npm install --no-save --no-package-lock playwright@1.63.0)
+          PLAYWRIGHT_MODULE="$RUNNER_TEMP/pw/node_modules/playwright" node scripts/keyboard-run.mjs
       # `tauri/custom-protocol` embeds the built front end as a release does. The tests do not
       # need it; one feature set for every step builds the crate once.
       - name: Build
@@ -210,6 +230,22 @@ jobs:
             xvfb-run -a "$exe" --data-dir "$data" --measure-form 10 --budget-ms 300
           else
             "$exe" --data-dir "$data" --measure-form 10
+          fi
+      # The search palette KPI (docs/test-strategy.md §8.7): from `PaletteRequested` reaching the UI
+      # host to the panel's first paint. Linux under Xvfb is gated at 200 ms, twice the 100 ms
+      # target (§2.2); Windows and macOS report only.
+      - name: Search palette visible
+        if: ${{ !cancelled() }}
+        continue-on-error: ${{ runner.os != 'Linux' }}
+        timeout-minutes: 3
+        run: |
+          exe=target/debug/iamb-desktop
+          if [ "$RUNNER_OS" = Windows ]; then exe="$exe.exe"; fi
+          data="$RUNNER_TEMP/iamb-palette-open"
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a "$exe" --data-dir "$data" --measure-palette 10 --budget-ms 200
+          else
+            "$exe" --data-dir "$data" --measure-palette 10
           fi
 
   coverage:

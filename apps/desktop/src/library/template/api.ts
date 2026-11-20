@@ -8,6 +8,11 @@
 //
 // Privacy: the source and the preview's test values travel only in the command's arguments and
 // its answer. Nothing here logs or stores them (UX specification §9).
+//
+// Formatted snippets (task 3.8): `preview(source, values, true)` asks for the formatted preview,
+// whose parts carry the service's sanitised HTML with the images already embedded by the Rust
+// side; `addAttachment` sends an image's bytes (raw, not JSON) to `template_add_attachment` and
+// gets back the Markdown that shows it.
 
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 
@@ -70,7 +75,9 @@ export interface PreviewBlank {
 export type PreviewPart =
   | { part: "text"; text: string; blanks: PreviewBlank[]; clipboard: Array<[number, number]> }
   | { part: "key"; key: string; shift: boolean; times: number }
-  | { part: "wait"; ms: number };
+  | { part: "wait"; ms: number }
+  /** A run of a formatted snippet: sanitised HTML (images embedded) and its plain text. */
+  | { part: "formatted"; html: string; plain: string };
 
 export interface PreviewCursor {
   /** The part; the number of parts when no text surrounds the cursor. */
@@ -86,16 +93,47 @@ export interface TemplatePreview {
 }
 
 /** The commands this module calls (also listed in `COMMANDS` of `ipc.ts`). */
-export const TEMPLATE_COMMANDS = ["template_parse", "template_preview"] as const;
+export const TEMPLATE_COMMANDS = [
+  "template_parse",
+  "template_preview",
+  "template_add_attachment",
+  "template_try_form",
+] as const;
 
 export type TemplateCommand = (typeof TEMPLATE_COMMANDS)[number];
 
 export type TemplateInvoke = (command: TemplateCommand, args: Record<string, unknown>) => Promise<unknown>;
 
+/** A command whose body is raw bytes, with string headers (Tauri's binary invoke). */
+export type TemplateInvokeRaw = (
+  command: TemplateCommand,
+  body: Uint8Array,
+  headers: Record<string, string>,
+) => Promise<unknown>;
+
+/** An image kept for a formatted snippet. */
+export interface AddedAttachment {
+  sha256: string;
+  mime: string;
+  size: number;
+  fileName: string;
+  /** `![alt](attachment:…)`, to insert into the snippet. */
+  markdown: string;
+}
+
 /** What the editor needs from the service; a fake in tests. */
 export interface TemplateService {
   parse(source: string): Promise<ParsedTemplate>;
-  preview(source: string, values?: Record<string, string>): Promise<TemplatePreview>;
+  /** With `rich`, the preview of a formatted snippet. */
+  preview(source: string, values?: Record<string, string>, rich?: boolean): Promise<TemplatePreview>;
+  /** Keeps an image for a snippet in `folderId`'s profile (formatted snippets only). */
+  addAttachment?(folderId: string, name: string, bytes: Uint8Array): Promise<AddedAttachment>;
+  /**
+   * "Try the form": the real fill-in form with `fields` over the library window. Resolves with
+   * the answers Insert handed in (the preview's test values), or null when it was cancelled;
+   * nothing is typed anywhere.
+   */
+  tryForm?(fields: FieldView[], label: string, abbreviation: string): Promise<Record<string, string> | null>;
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
@@ -170,6 +208,8 @@ function isPart(v: unknown): v is PreviewPart {
       return typeof v.key === "string" && typeof v.shift === "boolean" && isCount(v.times);
     case "wait":
       return isCount(v.ms);
+    case "formatted":
+      return typeof v.html === "string" && typeof v.plain === "string";
     default:
       return false;
   }
@@ -192,25 +232,57 @@ const unexpected: CommandError = {
   message: "the answer did not have the expected shape",
 };
 
+export function isAddedAttachment(v: unknown): v is AddedAttachment {
+  return (
+    isObject(v) &&
+    typeof v.sha256 === "string" &&
+    /^[0-9a-f]{64}$/.test(v.sha256) &&
+    typeof v.mime === "string" &&
+    isCount(v.size) &&
+    typeof v.fileName === "string" &&
+    typeof v.markdown === "string"
+  );
+}
+
 /** The service over `invoke` (Tauri's, or a fake in tests). Answers are checked by the guards. */
-export function createTemplateService(invoke: TemplateInvoke): TemplateService {
-  return {
+export function createTemplateService(invoke: TemplateInvoke, invokeRaw?: TemplateInvokeRaw): TemplateService {
+  const service: TemplateService = {
     async parse(source) {
       const answer = await invoke("template_parse", { source });
       if (!isParsedTemplate(answer)) throw unexpected;
       return answer;
     },
-    async preview(source, values) {
-      const answer = await invoke("template_preview", { source, values: values ?? null });
+    async preview(source, values, rich) {
+      const args: Record<string, unknown> = { source, values: values ?? null };
+      if (rich) args.rich = true;
+      const answer = await invoke("template_preview", args);
       if (!isTemplatePreview(answer)) throw unexpected;
       return answer;
     },
+    async tryForm(fields, label, abbreviation) {
+      const answer = await invoke("template_try_form", { fields, label, abbreviation });
+      if (answer === null) return null;
+      if (!isObject(answer) || !Object.values(answer).every((v) => typeof v === "string")) throw unexpected;
+      return answer as Record<string, string>;
+    },
   };
+  if (invokeRaw) {
+    service.addAttachment = async (folderId, name, bytes) => {
+      const answer = await invokeRaw("template_add_attachment", bytes, {
+        "iamb-folder": folderId,
+        "iamb-file-name": encodeURIComponent(name),
+      });
+      if (!isAddedAttachment(answer)) throw unexpected;
+      return answer;
+    };
+  }
+  return service;
 }
 
 /** The service of the running app. */
-export const templateService: TemplateService = createTemplateService((command, args) =>
-  tauriInvoke(command, args),
+export const templateService: TemplateService = createTemplateService(
+  (command, args) => tauriInvoke(command, args),
+  (command, body, headers) => tauriInvoke(command, body, { headers }),
 );
 
 /** The error code of a failed command, or `internal`. */

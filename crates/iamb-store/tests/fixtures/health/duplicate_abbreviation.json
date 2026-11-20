@@ -1,0 +1,40 @@
+{
+ "description": "Two snippets whose abbreviations are the same without regard to case: the first holds it, the later one does not expand. A later duplicate that is switched off is reported too (it would clash when switched on).",
+ "now_day": 1000,
+ "snippets": [
+  {
+   "key": "mine",
+   "abbr": ";addr",
+   "body": "12 High Street",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "shared",
+   "abbr": ";ADDR",
+   "body": "Workshop address",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "other",
+   "abbr": ";mail",
+   "body": "a@example.org",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "shared_off",
+   "abbr": ";Addr",
+   "body": "off",
+   "enabled": false
+  }
+ ],
+ "expect": [
+  "taken shared kept=mine",
+  "taken shared_off kept=mine"
+ ]
+}

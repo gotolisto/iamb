@@ -234,6 +234,79 @@ fn parse_and_preview_through_the_bridge() {
 }
 
 #[test]
+fn a_formatted_preview_embeds_the_images_the_editor_added() {
+    let service = Service::start(Endpoint::Mock);
+    let (bridge, recorder) = service.bridge();
+    recorder.wait_connected();
+    let folders = iamb_desktop::library::folders(&bridge).expect("folders");
+    let folder: iamb_core::model::Id = folders.folders[0].id.parse().expect("id");
+
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    png.extend_from_slice(&[5; 20]);
+    let added = template::add_attachment(&bridge, folder, "Team logo.png", &png).expect("added");
+    assert_eq!(added.mime, "image/png");
+    assert_eq!(added.file_name, "Team logo.png");
+    assert_eq!(
+        added.markdown,
+        format!("![Team logo](attachment:{})", added.sha256)
+    );
+    // Bytes that are not an image or file the service accepts are refused.
+    let refused =
+        template::add_attachment(&bridge, folder, "x.svg", b"<svg onload=x>").expect_err("refused");
+    assert_eq!(refused.code, "invalid");
+
+    let source = format!(
+        "**Hi** {{field name=Name}} [site](https://example.com) {}",
+        added.markdown
+    );
+    let preview = template::preview_as(&bridge, source, BTreeMap::new(), true).expect("ok");
+    assert_eq!(preview.error, None);
+    assert_eq!(preview.cursor, None);
+    let [PartView::Formatted { html, plain }] = preview.parts.as_slice() else {
+        panic!("one formatted part: {:?}", preview.parts);
+    };
+    assert!(
+        html.starts_with("<p><strong>Hi</strong> Name <a href=\"https://example.com\">site</a> <img src=\"data:image/png;base64,iVBORw0KGgo"),
+        "{html}"
+    );
+    assert!(html.ends_with("\" alt=\"Team logo\"></p>"), "{html}");
+    assert_eq!(plain, "Hi Name site (https://example.com) Team logo");
+
+    // An image whose bytes are not here shows as its alt text.
+    let gone = format!("![Gone](attachment:{})", "ab".repeat(32));
+    let preview = template::preview_as(&bridge, gone, BTreeMap::new(), true).expect("ok");
+    assert_eq!(
+        preview.parts,
+        [PartView::Formatted {
+            html: "<p>Gone</p>".to_owned(),
+            plain: "Gone".to_owned()
+        }]
+    );
+    bridge.stop();
+    // No temporary file is left behind.
+    let leftovers = fs::read_dir(std::env::temp_dir())
+        .expect("temp dir")
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with(&format!("iamb-attachment-{}-", std::process::id()))
+        })
+        .count();
+    assert_eq!(leftovers, 0);
+}
+
+#[test]
+fn file_names_decode_from_the_header() {
+    assert_eq!(
+        template::decode_uri_component("Team%20logo%C3%A9.png"),
+        "Team logoé.png"
+    );
+    assert_eq!(template::decode_uri_component("100%"), "100%");
+    assert_eq!(template::decode_uri_component("%zz"), "%zz");
+}
+
+#[test]
 fn without_a_service_the_commands_say_so() {
     let mut service = Service::start(Endpoint::Mock);
     let (bridge, recorder) = service.bridge();

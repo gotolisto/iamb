@@ -179,8 +179,21 @@ impl fmt::Debug for Redacted {
     }
 }
 
+/// What the text being rendered is (template language §6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// Plain text, typed as it is.
+    Plain,
+    /// The Markdown of a rich body: literal text as written, macro output escaped.
+    Markdown,
+    /// A plain body inside Markdown: everything escaped.
+    Escaped,
+}
+
 struct Renderer<'r> {
     res: &'r Resolved,
+    /// What the body being walked produces.
+    mode: Mode,
     ctx: &'r RenderContext<'r>,
     /// The value of each form field, in form order, after [`field_value`].
     values: &'r [Cow<'r, str>],
@@ -221,7 +234,15 @@ pub(crate) fn render(
     ctx: &RenderContext<'_>,
     values: &FormValues,
 ) -> Result<Rendered, TemplateError> {
-    run_render(res, ctx, values, false).map(|(rendered, _, _)| rendered)
+    run_render(res, ctx, values, false, Mode::Plain).map(|(rendered, _, _)| rendered)
+}
+
+pub(crate) fn render_markdown(
+    res: &Resolved,
+    ctx: &RenderContext<'_>,
+    values: &FormValues,
+) -> Result<Rendered, TemplateError> {
+    run_render(res, ctx, values, false, Mode::Markdown).map(|(rendered, _, _)| rendered)
 }
 
 pub(crate) fn render_preview(
@@ -229,7 +250,24 @@ pub(crate) fn render_preview(
     ctx: &RenderContext<'_>,
     values: &FormValues,
 ) -> Result<Preview, TemplateError> {
-    let (rendered, origins, cursor_at) = run_render(res, ctx, values, true)?;
+    preview_in(res, ctx, values, Mode::Plain)
+}
+
+pub(crate) fn render_preview_markdown(
+    res: &Resolved,
+    ctx: &RenderContext<'_>,
+    values: &FormValues,
+) -> Result<Preview, TemplateError> {
+    preview_in(res, ctx, values, Mode::Markdown)
+}
+
+fn preview_in(
+    res: &Resolved,
+    ctx: &RenderContext<'_>,
+    values: &FormValues,
+    mode: Mode,
+) -> Result<Preview, TemplateError> {
+    let (rendered, origins, cursor_at) = run_render(res, ctx, values, true, mode)?;
     let cursor = cursor_at.map(|at| {
         let mut before = 0;
         for (i, action) in rendered.actions.iter().enumerate() {
@@ -249,12 +287,14 @@ pub(crate) fn render_preview(
     })
 }
 
-/// Renders; with `track`, also records where field and clipboard text went.
+/// Renders; with `track`, also records where field and clipboard text went. `mode` is what the
+/// template itself is: plain, or the Markdown of a rich snippet.
 fn run_render(
     res: &Resolved,
     ctx: &RenderContext<'_>,
     values: &FormValues,
     track: bool,
+    mode: Mode,
 ) -> Result<(Rendered, Vec<Provenance>, Option<usize>), TemplateError> {
     let clipboard = if res.needs_clipboard {
         normalize_newlines(ctx.clipboard.unwrap_or(""))
@@ -269,6 +309,7 @@ fn run_render(
         .collect();
     let mut r = Renderer {
         res,
+        mode,
         ctx,
         values: &values,
         clipboard: &clipboard,
@@ -384,6 +425,94 @@ impl<'r> Renderer<'r> {
         Ok(())
     }
 
+    /// Appends what a macro inserted: escaped inside Markdown, so it never becomes formatting.
+    fn emit_value(&mut self, s: &str, origin: Option<Origin>) -> Result<(), ErrorKind> {
+        if self.mode == Mode::Plain || s.is_empty() {
+            self.emit(s, origin)
+        } else {
+            self.emit(&crate::rich::escape_markdown(s), origin)
+        }
+    }
+
+    /// Where the next text will go: the index of an action and a byte offset in its text.
+    fn mark(&self) -> (usize, usize) {
+        match self.actions.last() {
+            Some(RenderedAction::Text { text, .. }) => (self.actions.len() - 1, text.len()),
+            _ => (self.actions.len(), 0),
+        }
+    }
+
+    /// Replaces the Markdown written since `from` (an included rich snippet's) with its
+    /// plain-text rendering, escaped again when the text around it is Markdown. Each run of
+    /// text between keys and waits is converted on its own. A converted run that held text
+    /// from a field or the clipboard is verbatim as a whole, so adaptive case leaves it alone.
+    fn flatten(&mut self, from: (usize, usize)) -> Result<(), ErrorKind> {
+        let (first, offset) = from;
+        let escape = self.mode == Mode::Escaped;
+        let keep_verbatim = self.mode == Mode::Plain;
+        for i in first..self.actions.len() {
+            let RenderedAction::Text { text, verbatim } = &mut self.actions[i] else {
+                continue;
+            };
+            let start = if i == first { offset } else { 0 };
+            if start >= text.len() {
+                continue;
+            }
+            let mut plain =
+                crate::rich::to_plain(&text[start..]).map_err(|_| ErrorKind::OutputTooLarge)?;
+            if escape {
+                plain = crate::rich::escape_markdown(&plain);
+            }
+            let had_verbatim = verbatim.iter().any(|r| r.end > start);
+            for r in verbatim.iter_mut() {
+                if r.start < start && r.end > start {
+                    r.end = start;
+                }
+            }
+            verbatim.retain(|r| r.start < start);
+            self.typed_bytes = self.typed_bytes - (text.len() - start) + plain.len();
+            text.truncate(start);
+            text.push_str(&plain);
+            if keep_verbatim && had_verbatim && start < text.len() {
+                push_range(verbatim, start..text.len());
+            }
+        }
+        if self.typed_bytes > MAX_OUTPUT_BYTES {
+            return Err(ErrorKind::OutputTooLarge);
+        }
+        if let Some(origins) = &mut self.origins {
+            origins.retain(|o| o.action < first || (o.action == first && o.range.end <= offset));
+        }
+        let mut index = 0;
+        self.actions.retain(|a| {
+            index += 1;
+            index <= first || !matches!(a, RenderedAction::Text { text, .. } if text.is_empty())
+        });
+        Ok(())
+    }
+
+    /// Walks an included snippet's body in the mode the two kinds call for (template
+    /// language §6).
+    fn include(&mut self, child: &'r Expanded) -> Result<(), ErrorKind> {
+        let outer = self.mode;
+        match (outer, child.rich) {
+            (Mode::Plain, false) | (Mode::Markdown, true) => self.run(child, &child.body.nodes),
+            (Mode::Markdown | Mode::Escaped, false) => {
+                self.mode = Mode::Escaped;
+                let r = self.run(child, &child.body.nodes);
+                self.mode = outer;
+                r
+            }
+            (Mode::Plain | Mode::Escaped, true) => {
+                let from = self.mark();
+                self.mode = Mode::Markdown;
+                let r = self.run(child, &child.body.nodes);
+                self.mode = outer;
+                r.and_then(|()| self.flatten(from))
+            }
+        }
+    }
+
     fn run(&mut self, at: &'r Expanded, nodes: &'r [Node]) -> Result<(), ErrorKind> {
         for node in nodes {
             self.steps += 1;
@@ -391,6 +520,7 @@ impl<'r> Renderer<'r> {
                 return Err(ErrorKind::OutputTooLarge);
             }
             match node {
+                Node::Text(t) if self.mode == Mode::Escaped => self.emit_value(t, None)?,
                 Node::Text(t) => self.emit(t, None)?,
                 Node::Date {
                     time,
@@ -405,7 +535,7 @@ impl<'r> Renderer<'r> {
                     });
                     let key = (Arc::as_ptr(&at.body).addr(), *slot);
                     match self.date_text(key, format, shift) {
-                        Ok(text) => self.emit(&text, None)?,
+                        Ok(text) => self.emit_value(&text, None)?,
                         Err(kind) => return self.fail(kind),
                     }
                 }
@@ -415,16 +545,18 @@ impl<'r> Renderer<'r> {
                     } else {
                         self.clipboard
                     };
-                    self.emit(clip, Some(Origin::Clipboard))?;
+                    self.emit_value(clip, Some(Origin::Clipboard))?;
                 }
                 Node::Cursor => {
-                    if self.cursor_at.is_none() {
+                    // Ignored in Markdown: the caret cannot be moved reliably through pasted
+                    // formatting (template language §6).
+                    if self.mode == Mode::Plain && self.cursor_at.is_none() {
                         self.cursor_at = Some(self.typed_bytes);
                     }
                 }
                 Node::Snippet(index) => {
                     let child: &'r Expanded = &at.snippets[*index];
-                    self.run(child, &child.body.nodes)?;
+                    self.include(child)?;
                 }
                 Node::Field { slot, toggle } => {
                     let values = self.values;
@@ -433,9 +565,9 @@ impl<'r> Renderer<'r> {
                     match toggle {
                         Some(t) => {
                             let text = if value == "yes" { &t.on } else { &t.off };
-                            self.emit(text, None)?;
+                            self.emit_value(text, None)?;
                         }
-                        None => self.emit(value, Some(Origin::Field(index)))?,
+                        None => self.emit_value(value, Some(Origin::Field(index)))?,
                     }
                 }
                 Node::Key { key, shift, times } => {

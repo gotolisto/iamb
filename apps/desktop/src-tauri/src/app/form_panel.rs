@@ -10,6 +10,7 @@
 //! | `form_painted` | The panel painted after it was shown (the 150 ms measurement) |
 //! | `form_submit` | Insert: hide, hand the focus back, then `FormSubmit` |
 //! | `form_cancel` | Cancel: hide, hand the focus back, then `FormCancel` |
+//! | `form_abandon` | The answers of a form whose window is gone: kept for "Fill in … again" |
 //!
 //! Each answers only the `form` window: no other window may read or submit a form's values.
 //! None logs its arguments or its answer.
@@ -104,6 +105,7 @@ pub fn start(
     };
     let mut cfg = FormConfig::new(service, host, platform_focus(), Arc::clone(log));
     cfg.follows_connection = !measuring;
+    cfg.on_request = super::notify_request(app);
     FormController::start(cfg)
 }
 
@@ -193,4 +195,17 @@ pub async fn form_submit(
 pub async fn form_cancel(ui: State<'_, Arc<Ui>>, window: WebviewWindow, session: u64) -> Res<()> {
     only_the_form(&window)?;
     blocking(&ui, move |form| form.cancel(session)).await
+}
+
+/// The answers of `session`, whose window is gone (`FormEvent::TargetGone`): the form ends and
+/// the service keeps them for "Fill in … again".
+#[tauri::command]
+pub async fn form_abandon(
+    ui: State<'_, Arc<Ui>>,
+    window: WebviewWindow,
+    session: u64,
+    values: BTreeMap<String, String>,
+) -> Res<()> {
+    only_the_form(&window)?;
+    blocking(&ui, move |form| form.abandon(session, values)).await
 }

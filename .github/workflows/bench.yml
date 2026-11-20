@@ -72,6 +72,18 @@ jobs:
             cargo bench -p iamb-bench --locked --bench "$b" -- --quick || status=1
           done
           exit "$status"
+      # The palette's search (docs/test-strategy.md §8.7): p95 under 30 ms at 10,000 snippets, gated
+      # at twice that. Its result file goes beside the compared runs, not into them.
+      - name: Search benchmark (quick mode)
+        if: ${{ !cancelled() }}
+        env:
+          IAMB_BENCH_RESULTS_DIR: ${{ github.workspace }}/target/bench-results/search
+          IAMB_SEARCH_BUDGET_MS: "60"
+        run: cargo bench -p iamb-bench --locked --bench search -- --quick
+      # The same through the service's IPC, in an optimised build (p95 under 60 ms).
+      - name: Search through the service (release)
+        if: ${{ !cancelled() }}
+        run: cargo test --release -p iamb-service --locked --test search_timing
       - name: Summary
         if: always()
         shell: bash

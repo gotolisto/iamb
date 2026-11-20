@@ -1,0 +1,2775 @@
+{
+ "description": "A library of 284 snippets as a business might keep it, with 27 planted problems of every kind and decoys that must not be reported: a switched-off snippet with a broken reference, a long-unused switched-off one, a reference to a switched-off snippet, one used 89 days ago, one made 20 days ago. ;m1 is broken and also unused, and is reported once, as broken.",
+ "now_day": 1000,
+ "snippets": [
+  {
+   "key": "f000",
+   "abbr": ";f000",
+   "body": "{time} — we are open.",
+   "created_day": 69,
+   "used": {
+    "count": 13,
+    "day": 982
+   }
+  },
+  {
+   "key": "f001",
+   "abbr": ";f001",
+   "body": "Best regards,\nAda",
+   "created_day": 167,
+   "used": {
+    "count": 19,
+    "day": 977
+   }
+  },
+  {
+   "key": "f002",
+   "abbr": ";f002",
+   "body": "{time} — we are open.",
+   "created_day": 867,
+   "used": {
+    "count": 51,
+    "day": 962
+   }
+  },
+  {
+   "key": "f003",
+   "abbr": ";f003",
+   "body": "Best regards,\nAda",
+   "created_day": 481,
+   "used": {
+    "count": 28,
+    "day": 987
+   }
+  },
+  {
+   "key": "f004",
+   "abbr": ";f004",
+   "body": "See you on {date}.",
+   "created_day": 165,
+   "used": {
+    "count": 38,
+    "day": 959
+   }
+  },
+  {
+   "key": "f005",
+   "abbr": ";f005",
+   "body": "See you on {date}.",
+   "created_day": 329,
+   "used": {
+    "count": 14,
+    "day": 951
+   }
+  },
+  {
+   "key": "f006",
+   "abbr": ";f006",
+   "body": "{time} — we are open. {snippet abbr=\";f005\"}",
+   "created_day": 857,
+   "used": {
+    "count": 53,
+    "day": 977
+   }
+  },
+  {
+   "key": "f007",
+   "abbr": ";f007",
+   "body": "Your parcel is on its way.",
+   "created_day": 578,
+   "used": {
+    "count": 20,
+    "day": 999
+   }
+  },
+  {
+   "key": "f008",
+   "abbr": ";f008",
+   "body": "Best regards,\nAda",
+   "created_day": 642,
+   "used": {
+    "count": 31,
+    "day": 999
+   }
+  },
+  {
+   "key": "f009",
+   "abbr": ";f009",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 416,
+   "used": {
+    "count": 6,
+    "day": 968
+   }
+  },
+  {
+   "key": "f010",
+   "abbr": ";f010",
+   "body": "Your parcel is on its way.",
+   "created_day": 597,
+   "used": {
+    "count": 47,
+    "day": 962
+   }
+  },
+  {
+   "key": "f011",
+   "abbr": ";f011",
+   "body": "Your parcel is on its way. {snippet abbr=\";f006\"}",
+   "created_day": 284,
+   "used": {
+    "count": 42,
+    "day": 978
+   }
+  },
+  {
+   "key": "f012",
+   "abbr": ";f012",
+   "body": "Your parcel is on its way. {snippet abbr=\";f000\"}",
+   "created_day": 477,
+   "used": {
+    "count": 10,
+    "day": 981
+   }
+  },
+  {
+   "key": "f013",
+   "abbr": ";f013",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 364,
+   "used": {
+    "count": 11,
+    "day": 999
+   }
+  },
+  {
+   "key": "f014",
+   "abbr": ";f014",
+   "body": "See you on {date}.",
+   "created_day": 148,
+   "used": {
+    "count": 1,
+    "day": 984
+   }
+  },
+  {
+   "key": "f015",
+   "abbr": ";f015",
+   "body": "See you on {date}.",
+   "created_day": 664,
+   "used": {
+    "count": 33,
+    "day": 997
+   }
+  },
+  {
+   "key": "f016",
+   "abbr": ";f016",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 874,
+   "used": {
+    "count": 47,
+    "day": 969
+   }
+  },
+  {
+   "key": "f017",
+   "abbr": ";f017",
+   "body": "{time} — we are open.",
+   "created_day": 478,
+   "used": {
+    "count": 40,
+    "day": 960
+   }
+  },
+  {
+   "key": "f018",
+   "abbr": ";f018",
+   "body": "Best regards,\nAda",
+   "created_day": 53,
+   "used": {
+    "count": 23,
+    "day": 952
+   }
+  },
+  {
+   "key": "f019",
+   "abbr": ";f019",
+   "body": "{time} — we are open.",
+   "created_day": 65,
+   "used": {
+    "count": 41,
+    "day": 996
+   }
+  },
+  {
+   "key": "f020",
+   "abbr": ";f020",
+   "body": "{time} — we are open.",
+   "created_day": 666,
+   "used": {
+    "count": 24,
+    "day": 992
+   }
+  },
+  {
+   "key": "f021",
+   "abbr": ";f021",
+   "body": "Best regards,\nAda",
+   "created_day": 223,
+   "used": {
+    "count": 45,
+    "day": 987
+   }
+  },
+  {
+   "key": "f022",
+   "abbr": ";f022",
+   "body": "Your parcel is on its way.",
+   "created_day": 636,
+   "used": {
+    "count": 14,
+    "day": 947
+   }
+  },
+  {
+   "key": "f023",
+   "abbr": ";f023",
+   "body": "Best regards,\nAda",
+   "created_day": 467,
+   "used": {
+    "count": 3,
+    "day": 976
+   }
+  },
+  {
+   "key": "f024",
+   "abbr": ";f024",
+   "body": "See you on {date}. {snippet abbr=\";f001\"}",
+   "created_day": 467,
+   "used": {
+    "count": 3,
+    "day": 943
+   }
+  },
+  {
+   "key": "f025",
+   "abbr": ";f025",
+   "body": "Thanks for your order {field name=Name}. {snippet abbr=\";f012\"}",
+   "created_day": 9,
+   "used": {
+    "count": 45,
+    "day": 975
+   }
+  },
+  {
+   "key": "f026",
+   "abbr": ";f026",
+   "body": "See you on {date}.",
+   "created_day": 459,
+   "used": {
+    "count": 46,
+    "day": 966
+   }
+  },
+  {
+   "key": "f027",
+   "abbr": ";f027",
+   "body": "Your parcel is on its way.",
+   "created_day": 55,
+   "used": {
+    "count": 42,
+    "day": 994
+   }
+  },
+  {
+   "key": "f028",
+   "abbr": ";f028",
+   "body": "Your parcel is on its way. {snippet abbr=\";f022\"}",
+   "created_day": 157,
+   "used": {
+    "count": 44,
+    "day": 956
+   }
+  },
+  {
+   "key": "f029",
+   "abbr": ";f029",
+   "body": "Best regards,\nAda",
+   "created_day": 458,
+   "used": {
+    "count": 51,
+    "day": 973
+   }
+  },
+  {
+   "key": "f030",
+   "abbr": ";f030",
+   "body": "Your parcel is on its way. {snippet abbr=\";f019\"}",
+   "created_day": 812,
+   "used": {
+    "count": 8,
+    "day": 978
+   }
+  },
+  {
+   "key": "f031",
+   "abbr": ";f031",
+   "body": "{time} — we are open.",
+   "created_day": 625,
+   "used": {
+    "count": 37,
+    "day": 944
+   }
+  },
+  {
+   "key": "f032",
+   "abbr": ";f032",
+   "body": "Best regards,\nAda",
+   "created_day": 340,
+   "used": {
+    "count": 3,
+    "day": 964
+   }
+  },
+  {
+   "key": "f033",
+   "abbr": ";f033",
+   "body": "See you on {date}.",
+   "created_day": 763,
+   "used": {
+    "count": 19,
+    "day": 949
+   }
+  },
+  {
+   "key": "f034",
+   "abbr": ";f034",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 142,
+   "used": {
+    "count": 40,
+    "day": 977
+   }
+  },
+  {
+   "key": "f035",
+   "abbr": ";f035",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 110,
+   "used": {
+    "count": 51,
+    "day": 982
+   }
+  },
+  {
+   "key": "f036",
+   "abbr": ";f036",
+   "body": "{time} — we are open.",
+   "created_day": 452,
+   "used": {
+    "count": 38,
+    "day": 997
+   }
+  },
+  {
+   "key": "f037",
+   "abbr": ";f037",
+   "body": "See you on {date}.",
+   "created_day": 31,
+   "used": {
+    "count": 18,
+    "day": 995
+   }
+  },
+  {
+   "key": "f038",
+   "abbr": ";f038",
+   "body": "See you on {date}.",
+   "created_day": 602,
+   "used": {
+    "count": 14,
+    "day": 976
+   }
+  },
+  {
+   "key": "f039",
+   "abbr": ";f039",
+   "body": "{time} — we are open.",
+   "created_day": 807,
+   "used": {
+    "count": 8,
+    "day": 988
+   }
+  },
+  {
+   "key": "f040",
+   "abbr": ";f040",
+   "body": "Best regards,\nAda",
+   "created_day": 3,
+   "used": {
+    "count": 2,
+    "day": 980
+   }
+  },
+  {
+   "key": "f041",
+   "abbr": ";f041",
+   "body": "Best regards,\nAda",
+   "created_day": 237,
+   "used": {
+    "count": 1,
+    "day": 961
+   }
+  },
+  {
+   "key": "f042",
+   "abbr": ";f042",
+   "body": "Thanks for your order {field name=Name}. {snippet abbr=\";f009\"}",
+   "created_day": 83,
+   "used": {
+    "count": 22,
+    "day": 980
+   }
+  },
+  {
+   "key": "f043",
+   "abbr": ";f043",
+   "body": "{time} — we are open. {snippet abbr=\";f042\"}",
+   "created_day": 0,
+   "used": {
+    "count": 43,
+    "day": 957
+   }
+  },
+  {
+   "key": "f044",
+   "abbr": ";f044",
+   "body": "See you on {date}. {snippet abbr=\";f014\"}",
+   "created_day": 677,
+   "used": {
+    "count": 35,
+    "day": 960
+   }
+  },
+  {
+   "key": "f045",
+   "abbr": ";f045",
+   "body": "Your parcel is on its way.",
+   "created_day": 476,
+   "used": {
+    "count": 7,
+    "day": 982
+   }
+  },
+  {
+   "key": "f046",
+   "abbr": ";f046",
+   "body": "{time} — we are open. {snippet abbr=\";f038\"}",
+   "created_day": 651,
+   "used": {
+    "count": 20,
+    "day": 950
+   }
+  },
+  {
+   "key": "f047",
+   "abbr": ";f047",
+   "body": "Best regards,\nAda",
+   "created_day": 747,
+   "used": {
+    "count": 18,
+    "day": 943
+   }
+  },
+  {
+   "key": "f048",
+   "abbr": ";f048",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 412,
+   "used": {
+    "count": 4,
+    "day": 964
+   }
+  },
+  {
+   "key": "f049",
+   "abbr": ";f049",
+   "body": "See you on {date}.",
+   "created_day": 345,
+   "used": {
+    "count": 44,
+    "day": 957
+   }
+  },
+  {
+   "key": "f050",
+   "abbr": ";f050",
+   "body": "See you on {date}.",
+   "created_day": 865,
+   "used": {
+    "count": 57,
+    "day": 968
+   }
+  },
+  {
+   "key": "f051",
+   "abbr": ";f051",
+   "body": "See you on {date}.",
+   "created_day": 453,
+   "used": {
+    "count": 51,
+    "day": 955
+   }
+  },
+  {
+   "key": "f052",
+   "abbr": ";f052",
+   "body": "Thanks for your order {field name=Name}. {snippet abbr=\";f043\"}",
+   "created_day": 215,
+   "used": {
+    "count": 50,
+    "day": 947
+   }
+  },
+  {
+   "key": "f053",
+   "abbr": ";f053",
+   "body": "{time} — we are open.",
+   "created_day": 667,
+   "used": {
+    "count": 31,
+    "day": 973
+   }
+  },
+  {
+   "key": "f054",
+   "abbr": ";f054",
+   "body": "{time} — we are open.",
+   "created_day": 534,
+   "used": {
+    "count": 55,
+    "day": 994
+   }
+  },
+  {
+   "key": "f055",
+   "abbr": ";f055",
+   "body": "Best regards,\nAda",
+   "created_day": 200,
+   "used": {
+    "count": 16,
+    "day": 951
+   }
+  },
+  {
+   "key": "f056",
+   "abbr": ";f056",
+   "body": "Thanks for your order {field name=Name}. {snippet abbr=\";f020\"}",
+   "created_day": 118,
+   "used": {
+    "count": 27,
+    "day": 971
+   }
+  },
+  {
+   "key": "f057",
+   "abbr": ";f057",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 31,
+   "used": {
+    "count": 15,
+    "day": 986
+   }
+  },
+  {
+   "key": "f058",
+   "abbr": ";f058",
+   "body": "Thanks for your order {field name=Name}. {snippet abbr=\";f040\"}",
+   "created_day": 139,
+   "used": {
+    "count": 5,
+    "day": 963
+   }
+  },
+  {
+   "key": "f059",
+   "abbr": ";f059",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 289,
+   "used": {
+    "count": 3,
+    "day": 947
+   }
+  },
+  {
+   "key": "f060",
+   "abbr": ";f060",
+   "body": "See you on {date}.",
+   "created_day": 893,
+   "used": {
+    "count": 42,
+    "day": 989
+   }
+  },
+  {
+   "key": "f061",
+   "abbr": ";f061",
+   "body": "See you on {date}.",
+   "created_day": 172,
+   "used": {
+    "count": 59,
+    "day": 962
+   }
+  },
+  {
+   "key": "f062",
+   "abbr": ";f062",
+   "body": "See you on {date}.",
+   "created_day": 62,
+   "used": {
+    "count": 16,
+    "day": 943
+   }
+  },
+  {
+   "key": "f063",
+   "abbr": ";f063",
+   "body": "Your parcel is on its way.",
+   "created_day": 350,
+   "used": {
+    "count": 4,
+    "day": 986
+   }
+  },
+  {
+   "key": "f064",
+   "abbr": ";f064",
+   "body": "Best regards,\nAda",
+   "created_day": 466,
+   "used": {
+    "count": 31,
+    "day": 954
+   }
+  },
+  {
+   "key": "f065",
+   "abbr": ";f065",
+   "body": "Your parcel is on its way.",
+   "created_day": 691,
+   "used": {
+    "count": 34,
+    "day": 981
+   }
+  },
+  {
+   "key": "f066",
+   "abbr": ";f066",
+   "body": "Thanks for your order {field name=Name}. {snippet abbr=\";f036\"}",
+   "created_day": 615,
+   "used": {
+    "count": 18,
+    "day": 993
+   }
+  },
+  {
+   "key": "f067",
+   "abbr": ";f067",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 666,
+   "used": {
+    "count": 29,
+    "day": 959
+   }
+  },
+  {
+   "key": "f068",
+   "abbr": ";f068",
+   "body": "Best regards,\nAda {snippet abbr=\";f021\"}",
+   "created_day": 745,
+   "used": {
+    "count": 23,
+    "day": 985
+   }
+  },
+  {
+   "key": "f069",
+   "abbr": ";f069",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 492,
+   "used": {
+    "count": 29,
+    "day": 977
+   }
+  },
+  {
+   "key": "f070",
+   "abbr": ";f070",
+   "body": "Your parcel is on its way.",
+   "created_day": 155,
+   "used": {
+    "count": 43,
+    "day": 974
+   }
+  },
+  {
+   "key": "f071",
+   "abbr": ";f071",
+   "body": "See you on {date}. {snippet abbr=\";f049\"}",
+   "created_day": 204,
+   "used": {
+    "count": 5,
+    "day": 987
+   }
+  },
+  {
+   "key": "f072",
+   "abbr": ";f072",
+   "body": "Best regards,\nAda {snippet abbr=\";f010\"}",
+   "created_day": 425,
+   "used": {
+    "count": 1,
+    "day": 940
+   }
+  },
+  {
+   "key": "f073",
+   "abbr": ";f073",
+   "body": "Thanks for your order {field name=Name}. {snippet abbr=\";f055\"}",
+   "created_day": 575,
+   "used": {
+    "count": 17,
+    "day": 976
+   }
+  },
+  {
+   "key": "f074",
+   "abbr": ";f074",
+   "body": "Best regards,\nAda {snippet abbr=\";f021\"}",
+   "created_day": 414,
+   "used": {
+    "count": 45,
+    "day": 959
+   }
+  },
+  {
+   "key": "f075",
+   "abbr": ";f075",
+   "body": "{time} — we are open.",
+   "created_day": 560,
+   "used": {
+    "count": 48,
+    "day": 976
+   }
+  },
+  {
+   "key": "f076",
+   "abbr": ";f076",
+   "body": "Best regards,\nAda {snippet abbr=\";f016\"}",
+   "created_day": 539,
+   "used": {
+    "count": 28,
+    "day": 984
+   }
+  },
+  {
+   "key": "f077",
+   "abbr": ";f077",
+   "body": "Best regards,\nAda",
+   "created_day": 549,
+   "used": {
+    "count": 16,
+    "day": 941
+   }
+  },
+  {
+   "key": "f078",
+   "abbr": ";f078",
+   "body": "{time} — we are open.",
+   "created_day": 817,
+   "used": {
+    "count": 9,
+    "day": 945
+   }
+  },
+  {
+   "key": "f079",
+   "abbr": ";f079",
+   "body": "{time} — we are open.",
+   "created_day": 310,
+   "used": {
+    "count": 40,
+    "day": 998
+   }
+  },
+  {
+   "key": "f080",
+   "abbr": ";f080",
+   "body": "Your parcel is on its way. {snippet abbr=\";f058\"}",
+   "created_day": 624,
+   "used": {
+    "count": 48,
+    "day": 989
+   }
+  },
+  {
+   "key": "f081",
+   "abbr": ";f081",
+   "body": "Best regards,\nAda",
+   "created_day": 501,
+   "used": {
+    "count": 59,
+    "day": 960
+   }
+  },
+  {
+   "key": "f082",
+   "abbr": ";f082",
+   "body": "{time} — we are open.",
+   "created_day": 179,
+   "used": {
+    "count": 16,
+    "day": 980
+   }
+  },
+  {
+   "key": "f083",
+   "abbr": ";f083",
+   "body": "Best regards,\nAda",
+   "created_day": 262,
+   "used": {
+    "count": 19,
+    "day": 941
+   }
+  },
+  {
+   "key": "f084",
+   "abbr": ";f084",
+   "body": "See you on {date}.",
+   "created_day": 841,
+   "used": {
+    "count": 24,
+    "day": 956
+   }
+  },
+  {
+   "key": "f085",
+   "abbr": ";f085",
+   "body": "Thanks for your order {field name=Name}. {snippet abbr=\";f009\"}",
+   "created_day": 706,
+   "used": {
+    "count": 40,
+    "day": 952
+   }
+  },
+  {
+   "key": "f086",
+   "abbr": ";f086",
+   "body": "Your parcel is on its way.",
+   "created_day": 740,
+   "used": {
+    "count": 27,
+    "day": 994
+   }
+  },
+  {
+   "key": "f087",
+   "abbr": ";f087",
+   "body": "Best regards,\nAda {snippet abbr=\";f009\"}",
+   "created_day": 456,
+   "used": {
+    "count": 20,
+    "day": 986
+   }
+  },
+  {
+   "key": "f088",
+   "abbr": ";f088",
+   "body": "Your parcel is on its way.",
+   "created_day": 524,
+   "used": {
+    "count": 12,
+    "day": 980
+   }
+  },
+  {
+   "key": "f089",
+   "abbr": ";f089",
+   "body": "Best regards,\nAda",
+   "created_day": 572,
+   "used": {
+    "count": 34,
+    "day": 954
+   }
+  },
+  {
+   "key": "f090",
+   "abbr": ";f090",
+   "body": "Best regards,\nAda",
+   "created_day": 764,
+   "used": {
+    "count": 59,
+    "day": 996
+   }
+  },
+  {
+   "key": "f091",
+   "abbr": ";f091",
+   "body": "See you on {date}.",
+   "created_day": 603,
+   "used": {
+    "count": 6,
+    "day": 941
+   }
+  },
+  {
+   "key": "f092",
+   "abbr": ";f092",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 277,
+   "used": {
+    "count": 42,
+    "day": 947
+   }
+  },
+  {
+   "key": "f093",
+   "abbr": ";f093",
+   "body": "See you on {date}.",
+   "created_day": 522,
+   "used": {
+    "count": 54,
+    "day": 991
+   }
+  },
+  {
+   "key": "f094",
+   "abbr": ";f094",
+   "body": "See you on {date}.",
+   "created_day": 430,
+   "used": {
+    "count": 51,
+    "day": 959
+   }
+  },
+  {
+   "key": "f095",
+   "abbr": ";f095",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 413,
+   "used": {
+    "count": 22,
+    "day": 940
+   }
+  },
+  {
+   "key": "f096",
+   "abbr": ";f096",
+   "body": "Best regards,\nAda",
+   "created_day": 590,
+   "used": {
+    "count": 46,
+    "day": 989
+   }
+  },
+  {
+   "key": "f097",
+   "abbr": ";f097",
+   "body": "See you on {date}.",
+   "created_day": 119,
+   "used": {
+    "count": 49,
+    "day": 955
+   }
+  },
+  {
+   "key": "f098",
+   "abbr": ";f098",
+   "body": "Your parcel is on its way.",
+   "created_day": 143,
+   "used": {
+    "count": 15,
+    "day": 956
+   }
+  },
+  {
+   "key": "f099",
+   "abbr": ";f099",
+   "body": "Best regards,\nAda",
+   "created_day": 143,
+   "used": {
+    "count": 59,
+    "day": 981
+   }
+  },
+  {
+   "key": "f100",
+   "abbr": ";f100",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 72,
+   "used": {
+    "count": 22,
+    "day": 998
+   }
+  },
+  {
+   "key": "f101",
+   "abbr": ";f101",
+   "body": "Best regards,\nAda",
+   "created_day": 249,
+   "used": {
+    "count": 14,
+    "day": 951
+   }
+  },
+  {
+   "key": "f102",
+   "abbr": ";f102",
+   "body": "{time} — we are open. {snippet abbr=\";f080\"}",
+   "created_day": 11,
+   "used": {
+    "count": 39,
+    "day": 996
+   }
+  },
+  {
+   "key": "f103",
+   "abbr": ";f103",
+   "body": "Your parcel is on its way.",
+   "created_day": 800,
+   "used": {
+    "count": 50,
+    "day": 992
+   }
+  },
+  {
+   "key": "f104",
+   "abbr": ";f104",
+   "body": "Your parcel is on its way.",
+   "created_day": 702,
+   "used": {
+    "count": 57,
+    "day": 965
+   }
+  },
+  {
+   "key": "f105",
+   "abbr": ";f105",
+   "body": "Your parcel is on its way. {snippet abbr=\";f074\"}",
+   "created_day": 39,
+   "used": {
+    "count": 20,
+    "day": 966
+   }
+  },
+  {
+   "key": "f106",
+   "abbr": ";f106",
+   "body": "Your parcel is on its way.",
+   "created_day": 697,
+   "used": {
+    "count": 24,
+    "day": 953
+   }
+  },
+  {
+   "key": "f107",
+   "abbr": ";f107",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 621,
+   "used": {
+    "count": 42,
+    "day": 989
+   }
+  },
+  {
+   "key": "f108",
+   "abbr": ";f108",
+   "body": "Your parcel is on its way.",
+   "created_day": 705,
+   "used": {
+    "count": 34,
+    "day": 965
+   }
+  },
+  {
+   "key": "f109",
+   "abbr": ";f109",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 191,
+   "used": {
+    "count": 12,
+    "day": 975
+   }
+  },
+  {
+   "key": "f110",
+   "abbr": ";f110",
+   "body": "Best regards,\nAda",
+   "created_day": 295,
+   "used": {
+    "count": 16,
+    "day": 942
+   }
+  },
+  {
+   "key": "f111",
+   "abbr": ";f111",
+   "body": "Your parcel is on its way.",
+   "created_day": 74,
+   "used": {
+    "count": 55,
+    "day": 973
+   }
+  },
+  {
+   "key": "f112",
+   "abbr": ";f112",
+   "body": "Your parcel is on its way.",
+   "created_day": 834,
+   "used": {
+    "count": 30,
+    "day": 966
+   }
+  },
+  {
+   "key": "f113",
+   "abbr": ";f113",
+   "body": "Best regards,\nAda {snippet abbr=\";f080\"}",
+   "created_day": 23,
+   "used": {
+    "count": 7,
+    "day": 940
+   }
+  },
+  {
+   "key": "f114",
+   "abbr": ";f114",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 248,
+   "used": {
+    "count": 18,
+    "day": 948
+   }
+  },
+  {
+   "key": "f115",
+   "abbr": ";f115",
+   "body": "Best regards,\nAda",
+   "created_day": 716,
+   "used": {
+    "count": 18,
+    "day": 944
+   }
+  },
+  {
+   "key": "f116",
+   "abbr": ";f116",
+   "body": "See you on {date}. {snippet abbr=\";f106\"}",
+   "created_day": 302,
+   "used": {
+    "count": 53,
+    "day": 978
+   }
+  },
+  {
+   "key": "f117",
+   "abbr": ";f117",
+   "body": "{time} — we are open.",
+   "created_day": 158,
+   "used": {
+    "count": 41,
+    "day": 950
+   }
+  },
+  {
+   "key": "f118",
+   "abbr": ";f118",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 885,
+   "used": {
+    "count": 38,
+    "day": 948
+   }
+  },
+  {
+   "key": "f119",
+   "abbr": ";f119",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 554,
+   "used": {
+    "count": 28,
+    "day": 953
+   }
+  },
+  {
+   "key": "f120",
+   "abbr": ";f120",
+   "body": "See you on {date}.",
+   "created_day": 642,
+   "used": {
+    "count": 15,
+    "day": 999
+   }
+  },
+  {
+   "key": "f121",
+   "abbr": ";f121",
+   "body": "Best regards,\nAda",
+   "created_day": 151,
+   "used": {
+    "count": 40,
+    "day": 953
+   }
+  },
+  {
+   "key": "f122",
+   "abbr": ";f122",
+   "body": "See you on {date}. {snippet abbr=\";f061\"}",
+   "created_day": 99,
+   "used": {
+    "count": 32,
+    "day": 986
+   }
+  },
+  {
+   "key": "f123",
+   "abbr": ";f123",
+   "body": "Your parcel is on its way. {snippet abbr=\";f026\"}",
+   "created_day": 351,
+   "used": {
+    "count": 19,
+    "day": 962
+   }
+  },
+  {
+   "key": "f124",
+   "abbr": ";f124",
+   "body": "Best regards,\nAda",
+   "created_day": 512,
+   "used": {
+    "count": 36,
+    "day": 965
+   }
+  },
+  {
+   "key": "f125",
+   "abbr": ";f125",
+   "body": "Best regards,\nAda",
+   "created_day": 676,
+   "used": {
+    "count": 19,
+    "day": 987
+   }
+  },
+  {
+   "key": "f126",
+   "abbr": ";f126",
+   "body": "{time} — we are open. {snippet abbr=\";f008\"}",
+   "created_day": 191,
+   "used": {
+    "count": 35,
+    "day": 974
+   }
+  },
+  {
+   "key": "f127",
+   "abbr": ";f127",
+   "body": "{time} — we are open. {snippet abbr=\";f047\"}",
+   "created_day": 705,
+   "used": {
+    "count": 9,
+    "day": 985
+   }
+  },
+  {
+   "key": "f128",
+   "abbr": ";f128",
+   "body": "{time} — we are open.",
+   "created_day": 45,
+   "used": {
+    "count": 17,
+    "day": 976
+   }
+  },
+  {
+   "key": "f129",
+   "abbr": ";f129",
+   "body": "Your parcel is on its way.",
+   "created_day": 75,
+   "used": {
+    "count": 50,
+    "day": 954
+   }
+  },
+  {
+   "key": "f130",
+   "abbr": ";f130",
+   "body": "Your parcel is on its way.",
+   "created_day": 881,
+   "used": {
+    "count": 59,
+    "day": 953
+   }
+  },
+  {
+   "key": "f131",
+   "abbr": ";f131",
+   "body": "{time} — we are open.",
+   "created_day": 528,
+   "used": {
+    "count": 19,
+    "day": 944
+   }
+  },
+  {
+   "key": "f132",
+   "abbr": ";f132",
+   "body": "Your parcel is on its way.",
+   "created_day": 423,
+   "used": {
+    "count": 6,
+    "day": 983
+   }
+  },
+  {
+   "key": "f133",
+   "abbr": ";f133",
+   "body": "Best regards,\nAda",
+   "created_day": 780,
+   "used": {
+    "count": 29,
+    "day": 987
+   }
+  },
+  {
+   "key": "f134",
+   "abbr": ";f134",
+   "body": "Best regards,\nAda",
+   "created_day": 199,
+   "used": {
+    "count": 36,
+    "day": 969
+   }
+  },
+  {
+   "key": "f135",
+   "abbr": ";f135",
+   "body": "Your parcel is on its way.",
+   "created_day": 654,
+   "used": {
+    "count": 3,
+    "day": 961
+   }
+  },
+  {
+   "key": "f136",
+   "abbr": ";f136",
+   "body": "See you on {date}.",
+   "created_day": 486,
+   "used": {
+    "count": 27,
+    "day": 949
+   }
+  },
+  {
+   "key": "f137",
+   "abbr": ";f137",
+   "body": "{time} — we are open.",
+   "created_day": 57,
+   "used": {
+    "count": 13,
+    "day": 972
+   }
+  },
+  {
+   "key": "f138",
+   "abbr": ";f138",
+   "body": "Your parcel is on its way.",
+   "created_day": 763,
+   "used": {
+    "count": 10,
+    "day": 955
+   }
+  },
+  {
+   "key": "f139",
+   "abbr": ";f139",
+   "body": "Thanks for your order {field name=Name}. {snippet abbr=\";f068\"}",
+   "created_day": 160,
+   "used": {
+    "count": 38,
+    "day": 998
+   }
+  },
+  {
+   "key": "f140",
+   "abbr": ";f140",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 334,
+   "used": {
+    "count": 7,
+    "day": 998
+   }
+  },
+  {
+   "key": "f141",
+   "abbr": ";f141",
+   "body": "Your parcel is on its way.",
+   "created_day": 281,
+   "used": {
+    "count": 42,
+    "day": 977
+   }
+  },
+  {
+   "key": "f142",
+   "abbr": ";f142",
+   "body": "{time} — we are open.",
+   "created_day": 722,
+   "used": {
+    "count": 10,
+    "day": 941
+   }
+  },
+  {
+   "key": "f143",
+   "abbr": ";f143",
+   "body": "See you on {date}.",
+   "created_day": 494,
+   "used": {
+    "count": 42,
+    "day": 964
+   }
+  },
+  {
+   "key": "f144",
+   "abbr": ";f144",
+   "body": "Your parcel is on its way. {snippet abbr=\";f101\"}",
+   "created_day": 324,
+   "used": {
+    "count": 25,
+    "day": 949
+   }
+  },
+  {
+   "key": "f145",
+   "abbr": ";f145",
+   "body": "Your parcel is on its way.",
+   "created_day": 329,
+   "used": {
+    "count": 36,
+    "day": 956
+   }
+  },
+  {
+   "key": "f146",
+   "abbr": ";f146",
+   "body": "Your parcel is on its way.",
+   "created_day": 56,
+   "used": {
+    "count": 37,
+    "day": 975
+   }
+  },
+  {
+   "key": "f147",
+   "abbr": ";f147",
+   "body": "Best regards,\nAda",
+   "created_day": 75,
+   "used": {
+    "count": 43,
+    "day": 971
+   }
+  },
+  {
+   "key": "f148",
+   "abbr": ";f148",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 316,
+   "used": {
+    "count": 1,
+    "day": 964
+   }
+  },
+  {
+   "key": "f149",
+   "abbr": ";f149",
+   "body": "See you on {date}.",
+   "created_day": 553,
+   "used": {
+    "count": 33,
+    "day": 997
+   }
+  },
+  {
+   "key": "f150",
+   "abbr": ";f150",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 209,
+   "used": {
+    "count": 44,
+    "day": 983
+   }
+  },
+  {
+   "key": "f151",
+   "abbr": ";f151",
+   "body": "{time} — we are open.",
+   "created_day": 386,
+   "used": {
+    "count": 18,
+    "day": 957
+   }
+  },
+  {
+   "key": "f152",
+   "abbr": ";f152",
+   "body": "Your parcel is on its way.",
+   "created_day": 642,
+   "used": {
+    "count": 34,
+    "day": 967
+   }
+  },
+  {
+   "key": "f153",
+   "abbr": ";f153",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 127,
+   "used": {
+    "count": 51,
+    "day": 988
+   }
+  },
+  {
+   "key": "f154",
+   "abbr": ";f154",
+   "body": "{time} — we are open.",
+   "created_day": 41,
+   "used": {
+    "count": 17,
+    "day": 989
+   }
+  },
+  {
+   "key": "f155",
+   "abbr": ";f155",
+   "body": "See you on {date}.",
+   "created_day": 526,
+   "used": {
+    "count": 13,
+    "day": 969
+   }
+  },
+  {
+   "key": "f156",
+   "abbr": ";f156",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 677,
+   "used": {
+    "count": 39,
+    "day": 951
+   }
+  },
+  {
+   "key": "f157",
+   "abbr": ";f157",
+   "body": "Best regards,\nAda",
+   "created_day": 867,
+   "used": {
+    "count": 58,
+    "day": 974
+   }
+  },
+  {
+   "key": "f158",
+   "abbr": ";f158",
+   "body": "See you on {date}.",
+   "created_day": 313,
+   "used": {
+    "count": 52,
+    "day": 998
+   }
+  },
+  {
+   "key": "f159",
+   "abbr": ";f159",
+   "body": "{time} — we are open.",
+   "created_day": 18,
+   "used": {
+    "count": 33,
+    "day": 995
+   }
+  },
+  {
+   "key": "f160",
+   "abbr": ";f160",
+   "body": "{time} — we are open.",
+   "created_day": 382,
+   "used": {
+    "count": 4,
+    "day": 988
+   }
+  },
+  {
+   "key": "f161",
+   "abbr": ";f161",
+   "body": "Your parcel is on its way.",
+   "created_day": 283,
+   "used": {
+    "count": 21,
+    "day": 948
+   }
+  },
+  {
+   "key": "f162",
+   "abbr": ";f162",
+   "body": "Best regards,\nAda",
+   "created_day": 105,
+   "used": {
+    "count": 5,
+    "day": 980
+   }
+  },
+  {
+   "key": "f163",
+   "abbr": ";f163",
+   "body": "Best regards,\nAda",
+   "created_day": 158,
+   "used": {
+    "count": 44,
+    "day": 944
+   }
+  },
+  {
+   "key": "f164",
+   "abbr": ";f164",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 350,
+   "used": {
+    "count": 11,
+    "day": 980
+   }
+  },
+  {
+   "key": "f165",
+   "abbr": ";f165",
+   "body": "{time} — we are open.",
+   "created_day": 713,
+   "used": {
+    "count": 25,
+    "day": 945
+   }
+  },
+  {
+   "key": "f166",
+   "abbr": ";f166",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 724,
+   "used": {
+    "count": 14,
+    "day": 977
+   }
+  },
+  {
+   "key": "f167",
+   "abbr": ";f167",
+   "body": "See you on {date}.",
+   "created_day": 813,
+   "used": {
+    "count": 47,
+    "day": 968
+   }
+  },
+  {
+   "key": "f168",
+   "abbr": ";f168",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 283,
+   "used": {
+    "count": 3,
+    "day": 996
+   }
+  },
+  {
+   "key": "f169",
+   "abbr": ";f169",
+   "body": "See you on {date}.",
+   "created_day": 119,
+   "used": {
+    "count": 36,
+    "day": 960
+   }
+  },
+  {
+   "key": "f170",
+   "abbr": ";f170",
+   "body": "Best regards,\nAda",
+   "created_day": 507,
+   "used": {
+    "count": 30,
+    "day": 995
+   }
+  },
+  {
+   "key": "f171",
+   "abbr": ";f171",
+   "body": "Best regards,\nAda {snippet abbr=\";f062\"}",
+   "created_day": 612,
+   "used": {
+    "count": 48,
+    "day": 946
+   }
+  },
+  {
+   "key": "f172",
+   "abbr": ";f172",
+   "body": "Best regards,\nAda",
+   "created_day": 832,
+   "used": {
+    "count": 34,
+    "day": 999
+   }
+  },
+  {
+   "key": "f173",
+   "abbr": ";f173",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 88,
+   "used": {
+    "count": 57,
+    "day": 992
+   }
+  },
+  {
+   "key": "f174",
+   "abbr": ";f174",
+   "body": "Your parcel is on its way.",
+   "created_day": 587,
+   "used": {
+    "count": 38,
+    "day": 961
+   }
+  },
+  {
+   "key": "f175",
+   "abbr": ";f175",
+   "body": "Best regards,\nAda",
+   "created_day": 387,
+   "used": {
+    "count": 32,
+    "day": 968
+   }
+  },
+  {
+   "key": "f176",
+   "abbr": ";f176",
+   "body": "{time} — we are open.",
+   "created_day": 468,
+   "used": {
+    "count": 34,
+    "day": 967
+   }
+  },
+  {
+   "key": "f177",
+   "abbr": ";f177",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 110,
+   "used": {
+    "count": 37,
+    "day": 991
+   }
+  },
+  {
+   "key": "f178",
+   "abbr": ";f178",
+   "body": "Best regards,\nAda",
+   "created_day": 211,
+   "used": {
+    "count": 50,
+    "day": 955
+   }
+  },
+  {
+   "key": "f179",
+   "abbr": ";f179",
+   "body": "Best regards,\nAda",
+   "created_day": 39,
+   "used": {
+    "count": 51,
+    "day": 963
+   }
+  },
+  {
+   "key": "f180",
+   "abbr": ";f180",
+   "body": "See you on {date}.",
+   "created_day": 440,
+   "used": {
+    "count": 33,
+    "day": 970
+   }
+  },
+  {
+   "key": "f181",
+   "abbr": ";f181",
+   "body": "See you on {date}.",
+   "created_day": 343,
+   "used": {
+    "count": 47,
+    "day": 996
+   }
+  },
+  {
+   "key": "f182",
+   "abbr": ";f182",
+   "body": "Best regards,\nAda",
+   "created_day": 357,
+   "used": {
+    "count": 42,
+    "day": 987
+   }
+  },
+  {
+   "key": "f183",
+   "abbr": ";f183",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 146,
+   "used": {
+    "count": 16,
+    "day": 966
+   }
+  },
+  {
+   "key": "f184",
+   "abbr": ";f184",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 634,
+   "used": {
+    "count": 10,
+    "day": 958
+   }
+  },
+  {
+   "key": "f185",
+   "abbr": ";f185",
+   "body": "See you on {date}.",
+   "created_day": 284,
+   "used": {
+    "count": 11,
+    "day": 991
+   }
+  },
+  {
+   "key": "f186",
+   "abbr": ";f186",
+   "body": "See you on {date}.",
+   "created_day": 281,
+   "used": {
+    "count": 58,
+    "day": 999
+   }
+  },
+  {
+   "key": "f187",
+   "abbr": ";f187",
+   "body": "{time} — we are open. {snippet abbr=\";f035\"}",
+   "created_day": 723,
+   "used": {
+    "count": 20,
+    "day": 949
+   }
+  },
+  {
+   "key": "f188",
+   "abbr": ";f188",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 675,
+   "used": {
+    "count": 1,
+    "day": 948
+   }
+  },
+  {
+   "key": "f189",
+   "abbr": ";f189",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 347,
+   "used": {
+    "count": 55,
+    "day": 946
+   }
+  },
+  {
+   "key": "f190",
+   "abbr": ";f190",
+   "body": "See you on {date}.",
+   "created_day": 200,
+   "used": {
+    "count": 38,
+    "day": 966
+   }
+  },
+  {
+   "key": "f191",
+   "abbr": ";f191",
+   "body": "{time} — we are open. {snippet abbr=\";f031\"}",
+   "created_day": 770,
+   "used": {
+    "count": 5,
+    "day": 974
+   }
+  },
+  {
+   "key": "f192",
+   "abbr": ";f192",
+   "body": "Best regards,\nAda {snippet abbr=\";f144\"}",
+   "created_day": 277,
+   "used": {
+    "count": 30,
+    "day": 990
+   }
+  },
+  {
+   "key": "f193",
+   "abbr": ";f193",
+   "body": "See you on {date}.",
+   "created_day": 631,
+   "used": {
+    "count": 13,
+    "day": 995
+   }
+  },
+  {
+   "key": "f194",
+   "abbr": ";f194",
+   "body": "See you on {date}. {snippet abbr=\";f010\"}",
+   "created_day": 840,
+   "used": {
+    "count": 26,
+    "day": 985
+   }
+  },
+  {
+   "key": "f195",
+   "abbr": ";f195",
+   "body": "Best regards,\nAda",
+   "created_day": 794,
+   "used": {
+    "count": 19,
+    "day": 987
+   }
+  },
+  {
+   "key": "f196",
+   "abbr": ";f196",
+   "body": "Your parcel is on its way.",
+   "created_day": 515,
+   "used": {
+    "count": 45,
+    "day": 951
+   }
+  },
+  {
+   "key": "f197",
+   "abbr": ";f197",
+   "body": "{time} — we are open.",
+   "created_day": 795,
+   "used": {
+    "count": 1,
+    "day": 940
+   }
+  },
+  {
+   "key": "f198",
+   "abbr": ";f198",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 305,
+   "used": {
+    "count": 20,
+    "day": 947
+   }
+  },
+  {
+   "key": "f199",
+   "abbr": ";f199",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 48,
+   "used": {
+    "count": 16,
+    "day": 949
+   }
+  },
+  {
+   "key": "f200",
+   "abbr": ";f200",
+   "body": "Best regards,\nAda {snippet abbr=\";f162\"}",
+   "created_day": 364,
+   "used": {
+    "count": 2,
+    "day": 996
+   }
+  },
+  {
+   "key": "f201",
+   "abbr": ";f201",
+   "body": "{time} — we are open.",
+   "created_day": 710,
+   "used": {
+    "count": 58,
+    "day": 990
+   }
+  },
+  {
+   "key": "f202",
+   "abbr": ";f202",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 721,
+   "used": {
+    "count": 17,
+    "day": 959
+   }
+  },
+  {
+   "key": "f203",
+   "abbr": ";f203",
+   "body": "See you on {date}. {snippet abbr=\";f138\"}",
+   "created_day": 270,
+   "used": {
+    "count": 20,
+    "day": 960
+   }
+  },
+  {
+   "key": "f204",
+   "abbr": ";f204",
+   "body": "Your parcel is on its way.",
+   "created_day": 889,
+   "used": {
+    "count": 38,
+    "day": 975
+   }
+  },
+  {
+   "key": "f205",
+   "abbr": ";f205",
+   "body": "Best regards,\nAda",
+   "created_day": 48,
+   "used": {
+    "count": 5,
+    "day": 995
+   }
+  },
+  {
+   "key": "f206",
+   "abbr": ";f206",
+   "body": "Your parcel is on its way.",
+   "created_day": 106,
+   "used": {
+    "count": 49,
+    "day": 986
+   }
+  },
+  {
+   "key": "f207",
+   "abbr": ";f207",
+   "body": "Best regards,\nAda",
+   "created_day": 748,
+   "used": {
+    "count": 22,
+    "day": 949
+   }
+  },
+  {
+   "key": "f208",
+   "abbr": ";f208",
+   "body": "Best regards,\nAda",
+   "created_day": 348,
+   "used": {
+    "count": 17,
+    "day": 983
+   }
+  },
+  {
+   "key": "f209",
+   "abbr": ";f209",
+   "body": "See you on {date}.",
+   "created_day": 433,
+   "used": {
+    "count": 23,
+    "day": 941
+   }
+  },
+  {
+   "key": "f210",
+   "abbr": ";f210",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 162,
+   "used": {
+    "count": 24,
+    "day": 956
+   }
+  },
+  {
+   "key": "f211",
+   "abbr": ";f211",
+   "body": "Best regards,\nAda",
+   "created_day": 485,
+   "used": {
+    "count": 53,
+    "day": 995
+   }
+  },
+  {
+   "key": "f212",
+   "abbr": ";f212",
+   "body": "Your parcel is on its way. {snippet abbr=\";f119\"}",
+   "created_day": 486,
+   "used": {
+    "count": 23,
+    "day": 945
+   }
+  },
+  {
+   "key": "f213",
+   "abbr": ";f213",
+   "body": "Your parcel is on its way. {snippet abbr=\";f193\"}",
+   "created_day": 63,
+   "used": {
+    "count": 7,
+    "day": 942
+   }
+  },
+  {
+   "key": "f214",
+   "abbr": ";f214",
+   "body": "Your parcel is on its way.",
+   "created_day": 322,
+   "used": {
+    "count": 53,
+    "day": 981
+   }
+  },
+  {
+   "key": "f215",
+   "abbr": ";f215",
+   "body": "Thanks for your order {field name=Name}. {snippet abbr=\";f152\"}",
+   "created_day": 597,
+   "used": {
+    "count": 53,
+    "day": 971
+   }
+  },
+  {
+   "key": "f216",
+   "abbr": ";f216",
+   "body": "Best regards,\nAda {snippet abbr=\";f084\"}",
+   "created_day": 324,
+   "used": {
+    "count": 46,
+    "day": 942
+   }
+  },
+  {
+   "key": "f217",
+   "abbr": ";f217",
+   "body": "{time} — we are open.",
+   "created_day": 776,
+   "used": {
+    "count": 38,
+    "day": 987
+   }
+  },
+  {
+   "key": "f218",
+   "abbr": ";f218",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 872,
+   "used": {
+    "count": 33,
+    "day": 979
+   }
+  },
+  {
+   "key": "f219",
+   "abbr": ";f219",
+   "body": "Best regards,\nAda",
+   "created_day": 674,
+   "used": {
+    "count": 53,
+    "day": 999
+   }
+  },
+  {
+   "key": "f220",
+   "abbr": ";f220",
+   "body": "{time} — we are open.",
+   "created_day": 560,
+   "used": {
+    "count": 52,
+    "day": 993
+   }
+  },
+  {
+   "key": "f221",
+   "abbr": ";f221",
+   "body": "Your parcel is on its way. {snippet abbr=\";f047\"}",
+   "created_day": 144,
+   "used": {
+    "count": 35,
+    "day": 950
+   }
+  },
+  {
+   "key": "f222",
+   "abbr": ";f222",
+   "body": "See you on {date}.",
+   "created_day": 537,
+   "used": {
+    "count": 41,
+    "day": 991
+   }
+  },
+  {
+   "key": "f223",
+   "abbr": ";f223",
+   "body": "Your parcel is on its way.",
+   "created_day": 93,
+   "used": {
+    "count": 16,
+    "day": 982
+   }
+  },
+  {
+   "key": "f224",
+   "abbr": ";f224",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 433,
+   "used": {
+    "count": 49,
+    "day": 992
+   }
+  },
+  {
+   "key": "f225",
+   "abbr": ";f225",
+   "body": "Best regards,\nAda",
+   "created_day": 134,
+   "used": {
+    "count": 45,
+    "day": 966
+   }
+  },
+  {
+   "key": "f226",
+   "abbr": ";f226",
+   "body": "Best regards,\nAda",
+   "created_day": 877,
+   "used": {
+    "count": 23,
+    "day": 957
+   }
+  },
+  {
+   "key": "f227",
+   "abbr": ";f227",
+   "body": "{time} — we are open.",
+   "created_day": 620,
+   "used": {
+    "count": 13,
+    "day": 957
+   }
+  },
+  {
+   "key": "f228",
+   "abbr": ";f228",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 559,
+   "used": {
+    "count": 24,
+    "day": 992
+   }
+  },
+  {
+   "key": "f229",
+   "abbr": ";f229",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 633,
+   "used": {
+    "count": 13,
+    "day": 955
+   }
+  },
+  {
+   "key": "f230",
+   "abbr": ";f230",
+   "body": "Best regards,\nAda",
+   "created_day": 531,
+   "used": {
+    "count": 20,
+    "day": 954
+   }
+  },
+  {
+   "key": "f231",
+   "abbr": ";f231",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 436,
+   "used": {
+    "count": 55,
+    "day": 985
+   }
+  },
+  {
+   "key": "f232",
+   "abbr": ";f232",
+   "body": "See you on {date}.",
+   "created_day": 1,
+   "used": {
+    "count": 10,
+    "day": 999
+   }
+  },
+  {
+   "key": "f233",
+   "abbr": ";f233",
+   "body": "Thanks for your order {field name=Name}.",
+   "created_day": 644,
+   "used": {
+    "count": 56,
+    "day": 947
+   }
+  },
+  {
+   "key": "f234",
+   "abbr": ";f234",
+   "body": "{time} — we are open.",
+   "created_day": 775,
+   "used": {
+    "count": 13,
+    "day": 948
+   }
+  },
+  {
+   "key": "f235",
+   "abbr": ";f235",
+   "body": "Your parcel is on its way.",
+   "created_day": 610,
+   "used": {
+    "count": 12,
+    "day": 998
+   }
+  },
+  {
+   "key": "f236",
+   "abbr": ";f236",
+   "body": "See you on {date}. {snippet abbr=\";f177\"}",
+   "created_day": 117,
+   "used": {
+    "count": 57,
+    "day": 996
+   }
+  },
+  {
+   "key": "f237",
+   "abbr": ";f237",
+   "body": "Best regards,\nAda {snippet abbr=\";f232\"}",
+   "created_day": 823,
+   "used": {
+    "count": 2,
+    "day": 951
+   }
+  },
+  {
+   "key": "f238",
+   "abbr": ";f238",
+   "body": "Best regards,\nAda {snippet abbr=\";f233\"}",
+   "created_day": 817,
+   "used": {
+    "count": 57,
+    "day": 951
+   }
+  },
+  {
+   "key": "f239",
+   "abbr": ";f239",
+   "body": "Best regards,\nAda",
+   "created_day": 182,
+   "used": {
+    "count": 24,
+    "day": 989
+   }
+  },
+  {
+   "key": "m1",
+   "abbr": ";m1",
+   "body": "Hello {snippet abbr=\";gone1\"}"
+  },
+  {
+   "key": "m2",
+   "abbr": ";m2",
+   "body": "{snippet abbr=\";f001\"} and {snippet abbr=\";gone2\"}",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "hub",
+   "abbr": ";hub",
+   "body": "Includes {snippet abbr=\";m1\"}",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "cy1",
+   "abbr": ";cy1",
+   "body": "{snippet abbr=\";cy2\"}",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "cy2",
+   "abbr": ";cy2",
+   "body": "{snippet abbr=\";cy1\"}",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "selfm",
+   "abbr": ";selfm",
+   "body": "{snippet abbr=\";selfm\"}",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "dp1",
+   "abbr": ";dp1",
+   "body": "{snippet abbr=\";dp2\"}",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "dp2",
+   "abbr": ";dp2",
+   "body": "{snippet abbr=\";dp3\"}",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "dp3",
+   "abbr": ";dp3",
+   "body": "{snippet abbr=\";dp4\"}",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "dp4",
+   "abbr": ";dp4",
+   "body": "{snippet abbr=\";dp5\"}",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "dp5",
+   "abbr": ";dp5",
+   "body": "{snippet abbr=\";dp6\"}",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "dp6",
+   "abbr": ";dp6",
+   "body": "{snippet abbr=\";dp7\"}",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "dp7",
+   "abbr": ";dp7",
+   "body": "{snippet abbr=\";dp8\"}",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "dp8",
+   "abbr": ";dp8",
+   "body": "{snippet abbr=\";dp9\"}",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "dp9",
+   "abbr": ";dp9",
+   "body": "{snippet abbr=\";dp10\"}",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "dp10",
+   "abbr": ";dp10",
+   "body": "end",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "te1",
+   "abbr": ";te1",
+   "body": "{date fmt=\"%Q\"}",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "te2",
+   "abbr": ";te2",
+   "body": "oops {date",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "dupa",
+   "abbr": ";F010",
+   "body": "clash",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "dupb",
+   "abbr": ";F200",
+   "body": "clash",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "qq",
+   "abbr": ";qq",
+   "body": "x",
+   "trigger": "immediate",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "qqa",
+   "abbr": ";qqa",
+   "body": "a",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "qqb",
+   "abbr": ";qqb",
+   "body": "b",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "zz",
+   "abbr": ";zz",
+   "body": "x",
+   "trigger": "immediate",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "zzz",
+   "abbr": ";zzz",
+   "body": "z",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "u1",
+   "abbr": ";u1",
+   "body": "seasonal",
+   "used": {
+    "day": 899
+   }
+  },
+  {
+   "key": "u2",
+   "abbr": ";u2",
+   "body": "seasonal",
+   "used": {
+    "day": 889
+   }
+  },
+  {
+   "key": "u3",
+   "abbr": ";u3",
+   "body": "seasonal",
+   "used": {
+    "day": 879
+   }
+  },
+  {
+   "key": "u4",
+   "abbr": ";u4",
+   "body": "seasonal",
+   "used": {
+    "day": 869
+   }
+  },
+  {
+   "key": "u5",
+   "abbr": ";u5",
+   "body": "seasonal",
+   "used": {
+    "day": 859
+   }
+  },
+  {
+   "key": "u6",
+   "abbr": ";u6",
+   "body": "seasonal",
+   "used": {
+    "day": 849
+   }
+  },
+  {
+   "key": "u7",
+   "abbr": ";u7",
+   "body": "seasonal",
+   "used": {
+    "day": 839
+   }
+  },
+  {
+   "key": "u8",
+   "abbr": ";u8",
+   "body": "seasonal",
+   "used": {
+    "day": 829
+   }
+  },
+  {
+   "key": "u9",
+   "abbr": ";u9",
+   "body": "seasonal",
+   "used": {
+    "day": 819
+   }
+  },
+  {
+   "key": "u10",
+   "abbr": ";u10",
+   "body": "seasonal",
+   "used": {
+    "day": 809
+   }
+  },
+  {
+   "key": "un1",
+   "abbr": ";un1",
+   "body": "never used",
+   "created_day": 401
+  },
+  {
+   "key": "un2",
+   "abbr": ";un2",
+   "body": "never used",
+   "created_day": 402
+  },
+  {
+   "key": "un3",
+   "abbr": ";un3",
+   "body": "never used",
+   "created_day": 403
+  },
+  {
+   "key": "dis1",
+   "abbr": ";dis1",
+   "body": "{snippet abbr=\";gone3\"}",
+   "enabled": false
+  },
+  {
+   "key": "dis2",
+   "abbr": ";dis2",
+   "body": "long unused but off",
+   "enabled": false,
+   "used": {
+    "day": 50
+   }
+  },
+  {
+   "key": "offt",
+   "abbr": ";offt",
+   "body": "included while off",
+   "enabled": false
+  },
+  {
+   "key": "ref_off",
+   "abbr": ";refoff",
+   "body": "uses {snippet abbr=\";offt\"}",
+   "used": {
+    "day": 995
+   }
+  },
+  {
+   "key": "d89",
+   "abbr": ";d89",
+   "body": "used 89 days ago",
+   "used": {
+    "day": 911
+   }
+  },
+  {
+   "key": "newish",
+   "abbr": ";newish",
+   "body": "made 20 days ago",
+   "created_day": 980
+  }
+ ],
+ "expect": [
+  "error m1 E_SNIPPET_NOT_FOUND ref=;gone1",
+  "error m2 E_SNIPPET_NOT_FOUND ref=;gone2",
+  "error hub E_SNIPPET_NOT_FOUND ref=;gone1 in=;m1",
+  "error cy1 E_SNIPPET_CYCLE ref=;cy2",
+  "error cy2 E_SNIPPET_CYCLE ref=;cy1",
+  "error selfm E_SNIPPET_CYCLE ref=;selfm",
+  "error dp1 E_TOO_DEEP ref=;dp10 in=;dp9",
+  "error te1 E_BAD_FORMAT",
+  "error te2 E_UNCLOSED_MACRO",
+  "taken dupa kept=f010",
+  "taken dupb kept=f200",
+  "never_reached qqa by=qq",
+  "never_reached qqb by=qq",
+  "never_reached zzz by=zz",
+  "unused u1 last_day=899",
+  "unused u2 last_day=889",
+  "unused u3 last_day=879",
+  "unused u4 last_day=869",
+  "unused u5 last_day=859",
+  "unused u6 last_day=849",
+  "unused u7 last_day=839",
+  "unused u8 last_day=829",
+  "unused u9 last_day=819",
+  "unused u10 last_day=809",
+  "unused un1 never",
+  "unused un2 never",
+  "unused un3 never"
+ ]
+}

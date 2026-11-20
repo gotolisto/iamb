@@ -1,0 +1,10 @@
+description = "A rich snippet ignores {cursor}; text between key presses is pasted piece by piece"
+
+[[snippet]]
+abbr = "rk"
+body = '*one*{cursor}{key name=tab}two{wait ms=10}'
+kind = "rich"
+
+[[step]]
+type = "rk "
+expect = [{ delete = 3 }, { paste = "one", html = "<p><em>one</em></p>" }, { key = "tab" }, { paste = "two" }, { wait = 10 }, { text = " " }, { expanded = "rk" }]

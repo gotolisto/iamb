@@ -50,6 +50,7 @@ function harness(form: FormOpen | null, os: Os = "win") {
     painted: vi.fn(() => Promise.resolve()),
     submit: vi.fn((_s: number, _v: Record<string, string>) => Promise.resolve()),
     cancel: vi.fn(() => Promise.resolve()),
+    abandon: vi.fn((_s: number, _v: Record<string, string>) => Promise.resolve()),
   } satisfies FormApi;
   const listen: ListenForm = (h) => {
     handler = h;
@@ -281,7 +282,7 @@ describe("the fill-in form panel", () => {
     await user.keyboard("Jun{Enter}");
     const banner = await screen.findByRole("alert");
     expect(banner.textContent).toBe(
-      "Iamb could not get back to Mail. Nothing was typed. Click where the text should go and press Insert again, or cancel.",
+      "Iamb could not get back to Mail. Nothing was typed. Press Insert to try again, or cancel.",
     );
     expect(screen.getByText("Your answers are still here.")).toBeTruthy();
     expect(screen.getByRole("textbox", { name: "Customer" })).toHaveProperty("value", "Jun");
@@ -309,6 +310,28 @@ describe("the fill-in form panel", () => {
     await h.send({ type: "closed", session: 7 });
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(h.view.container.innerHTML).not.toContain("secret");
+  });
+
+  it("hands its answers in and forgets them when the window it is for is gone", async () => {
+    const h = await opened(formOf({ fields: [field("Customer", "text", [], "you")] }));
+    const user = userEvent.setup();
+    await user.keyboard("Jun");
+    await h.send({ type: "target_gone", session: 8 });
+    expect(h.api.abandon).not.toHaveBeenCalled();
+    await h.send({ type: "target_gone", session: 7 });
+    expect(h.api.abandon).toHaveBeenCalledWith(7, { Customer: "Jun" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(h.view.container.innerHTML).not.toContain("Jun");
+  });
+
+  it("closes, without the banner, when Insert finds the window gone", async () => {
+    const h = await opened(formOf());
+    h.api.submit.mockImplementationOnce(() =>
+      Promise.reject({ code: "target_gone", message: "gone" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Insert/ }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("ignores the events of another session", async () => {

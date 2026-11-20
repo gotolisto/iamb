@@ -1,0 +1,66 @@
+{
+ "description": "An immediate abbreviation that is the beginning of a longer one: the longer one is never reached. A delimiter-triggered shorter one hides nothing.",
+ "now_day": 1000,
+ "snippets": [
+  {
+   "key": "rl",
+   "abbr": ";rl",
+   "body": "later",
+   "trigger": "immediate",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "rlate",
+   "abbr": ";rlate",
+   "body": "Late delivery",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "rlater",
+   "abbr": ";rlater",
+   "body": "Even later",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "wait",
+   "abbr": ";wa",
+   "body": "wait",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "waiting",
+   "abbr": ";waiting",
+   "body": "waiting",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "rx_off",
+   "abbr": ";rx",
+   "body": "off immediate",
+   "trigger": "immediate",
+   "enabled": false
+  },
+  {
+   "key": "rxy",
+   "abbr": ";rxy",
+   "body": "not hidden by a switched-off one",
+   "used": {
+    "day": 990
+   }
+  }
+ ],
+ "expect": [
+  "never_reached rlate by=rl",
+  "never_reached rlater by=rl"
+ ]
+}

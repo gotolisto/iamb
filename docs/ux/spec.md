@@ -293,8 +293,8 @@ For finding a snippet without its abbreviation. Flow 5 walks through it.
 - Same place and behaviour as the form panel; 620 px wide. A query row, up to eight result
   rows, a three-line preview of the selected snippet, a footer of key hints.
 - With an empty query: "Fill in “…” again" when a form was submitted in the last 30 minutes,
-  then the snippets used most recently on this computer; until the service can report usage
-  (§11), the hint "Type to search by abbreviation, label, text or tag."
+  then the snippets used most recently on this computer (up to eight rows in all); when none was
+  used or the service cannot report usage (§11), the hint "Type to search by abbreviation, label, text or tag."
 - Rows show label, abbreviation, folder and first line, with matches marked. Badges: "Asks
   for values" icon, Off, Needs review, Broken. Enter does what the footer says for the
   selected row: insert, fill in and insert, review, or open.
@@ -384,8 +384,10 @@ not shown; when all are empty: "Nothing to fix. All 76 snippets can expand."
 | Never reached | "“Late delivery” (;rlate) · ;rl expands immediately and fires first." | Open ;rl · Open ;rlate |
 | Not used on this computer for 90 days | "“Holiday closing” · last used 14 December" | Turn off · Delete. Header: "Counted on this computer only." |
 
-Today's `Health` answer covers the second and third rows and template errors; task 3.10 adds
-broken references and unused snippets (architecture §11).
+`Health` answers every row (task 3.10): template errors and broken references (a `{snippet}` that
+names nothing, a cycle, nesting over 8 levels) under the first, taken abbreviations, never reached,
+and snippets not used for 90 days on this computer. A reference to a snippet that is switched off
+is not broken. A snippet is listed once, in the first row that applies.
 
 ### 4.10 Review of received snippets
 
@@ -721,7 +723,7 @@ then" column is kept for a UI that meets an older service.
 | 1 | **Available.** `ParseTemplate` and `RenderPreview` answered (they returned `not_implemented` before protocol 3; task 3.4). Tokens carry their attributes; errors their code, `start`, `end` and the included snippet that holds them; the preview its parts (text with the ranges each field produced, `sample` where the field's name stands in for a missing value, the clipboard ranges; key presses; waits), the cursor and the fields. Positions are UTF-16 offsets. Tokens should carry each macro's attributes; `RenderPreview` should return the action list (text, key presses, waits), the cursor position and the list of fill-in fields, not only text | Chips, chip cards, the preview with keys and blanks, "Try the form" | **Blocks** the template editor. The UI can read attributes from the source between a token's `start` and `end`, and show a text-only preview |
 | 2 | **Available.** Tags: `ListTags` (with counts), `PutTag` (create, rename, recolour; the colour must be one of the eight names, the name unique without regard to case), `DeleteTag` (detaches it everywhere); `PutSnippet` carries the snippet's tags, `GetSnippet` and `ListSnippets` return them, `SnippetQuery.tag` filters by one, and `Search` matches tag names | Tags in the sidebar, the editor and search | **Blocks** tags in 3.3; everything else works without |
 | 3 | **Available.** A light way to list snippets: `ListSnippetSummaries` (pages of at most 1,000, no body beyond a first line, with tags and the reason a snippet is broken), and `LibraryChanged` naming the snippets, folders and tags that changed (nothing named means reload: an import) | 10,000 snippets with bodies may not fit one 8 MB frame and take long to redraw | `ListSnippets` per folder; full reload on `LibraryChanged` |
-| 4 | Usage per snippet (count, last used) in the list answer, and a way to reset it | "Recently used" in the palette, the editor's footer, "Not used for 90 days" in library health, the reset in Settings | Those parts are hidden; the palette shows its hint |
+| 4 | **Available** (task 3.10). Usage per snippet (`uses`, `last_used`) in the list answer, `RecentSnippets` for the palette, and `ResetUsage` | "Recently used" in the palette, the editor's footer, "Not used for 90 days" in library health, the reset in Settings | Those parts are hidden; the palette shows its hint (an older service answers `unknown_request`) |
 | 5 | Shortcuts: re-register `palette_hotkey` when the setting changes; answer `PutSetting` with an error when the system refuses the chord (today only logged); two more settings, for "fill in the last form again" and "pause or resume". **Available:** the first two (`conflict` when the system refuses the chord, which is then not stored and the old one stays; `invalid` for one that does not parse). Not yet: the two more shortcuts | The recorder's "Another app already uses this shortcut"; the two unset shortcuts of Settings | The palette shortcut may need a restart of the service to change; the other two stay hidden |
 | 6 | **Available.** A timestamp on every diagnostic (`at` is required since protocol 3) | The log's time column | The UI stamps entries it receives live and shows no time for older ones |
 | 7 | **Available.** A diagnostic when a matchable abbreviation is followed by Enter or Tab while they are not delimiters (it names the snippet, as other match diagnostics do): `not_a_delimiter` | So the log can answer the most likely beginner question by itself | The fixed line at the foot of the log and the "Test an abbreviation" field |

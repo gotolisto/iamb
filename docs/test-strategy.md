@@ -66,7 +66,8 @@ hardware, power plugged in, no other user apps running). Every lab number is rec
 | Service restart < 2 s (2.6) | Kill worker → supervisor restarts → IPC `Health` answers and a probe expansion succeeds; 20 kills during soak; max | Lab; CI nightly report | max < 2 s |
 | UI cold open < 400 ms (3.2) | Library window (created on demand, so every open is cold): the tray's "Open library" action → the window's first paint, which the front end reports; `iamb-desktop --measure-open 20` with the UI host warm; the first open after the host started reported separately; max and median (§8) | Lab; CI every PR (Linux under Xvfb gated at 800 ms, twice the lab target as §2.2 sets for CI; Windows and macOS report only) | Lab max < 400 ms |
 | Fill-in form visible, the UI host's part (3.5) | `FormRequested` reaching the UI host → the form panel's first paint after it was shown, which the front end reports as the cold open does; `iamb-desktop --measure-form 20` after the hidden panel painted once; the first form after start reported separately; max and median (§8.5). The service's part (the match to `FormRequested` and the round trips `FormAck`, `GetSnippet`, `PanelFocus`) is timed in `tests/form.rs` | Lab; CI every PR (Linux under Xvfb gated at 300 ms, twice the target as §2.2 sets; Windows and macOS report only) | Lab max < 150 ms; the end-to-end KPI of §2.1 stays the lab's |
-| Palette results < 30 ms at 10,000 snippets (3.6) | Bench `store/search/10000` (query → ranked IDs) plus UI render timing in the palette; 500 queries from a fixed list; p95 | CI (store part); lab (end to end) | Lab p95 < 30 ms; CI store part p95 < 30 ms |
+| Palette results < 30 ms at 10,000 snippets (3.6) | Bench `search/query/10000` (`iamb_core::search`: query to the 50 best hits with their fields and ranges): 500 queries from a fixed mix (abbreviation prefixes, words, fragments, typos, two words, queries that match nothing), each timed, p95; and `iamb-service/tests/search_timing.rs`, the same through IPC and the worker (400 queries, release build); the rows are drawn from a list in memory, no request (§8.7) | CI Linux (the bench, `IAMB_SEARCH_BUDGET_MS=60`, and the release test, both gated at twice the target); lab (end to end) | Lab p95 < 30 ms; CI p95 < 60 ms |
+| Search palette visible, the UI host's part (3.6) | `PaletteRequested` reaching the UI host → the palette panel's first paint after it was shown, which the front end reports as the form does; `iamb-desktop --measure-palette 20` after the hidden panel painted once; the first palette after start reported separately; max and median (§8.7). The service's part (the hotkey to `PaletteRequested`, `PanelFocus`) is timed in `tests/palette.rs` | Lab; CI every PR (Linux under Xvfb gated at 200 ms, twice the target as §2.2 sets; Windows and macOS report only) | Lab max < 100 ms; the end-to-end KPI of §2.1 stays the lab's |
 | Library list scrolls at 60 frames per second with 10,000 snippets (3.3) | `apps/desktop/scripts/scroll-kpi.mjs`: the built front end in Chromium (Playwright) with a mocked command layer, 10,000 snippets, `requestAnimationFrame` gaps over 10 s of scrolling per driver; p95 and dropped frames (§8.4) | CI Linux (report); lab on each OS's web view | p95 frame time ≤ 16.8 ms and no frame over 25 ms at 1× CPU; lab on WebView2 and WKWebView |
 
 ## 3. Benchmark harness (`crates/iamb-bench`)
@@ -666,3 +667,304 @@ its show time.
 Needs real machines: the steps are in `docs/compatibility-run.md`, "The fill-in form panel"
 (F1 to F10 in each of the 20 apps of each OS). On the mock, `tests/form.rs` checks that the
 hand-back (`restore_focus`) comes before `FormSubmit` and that a refused hand-back sends nothing.
+
+### 8.6 Onboarding (task 3.7)
+
+Tests: "Walkthroughs on fresh machines". KPI: "Install to first expansion under 2 minutes for 3 of
+3 testers".
+
+**What runs here.**
+
+- `src/onboarding/*.test.ts(x)` (component tests over a fake service): every step and state of
+  flow 1, on both systems. Welcome (the service not running, a restart this build cannot do);
+  Permissions (nothing granted, one, both, the keyboard moving to Continue, the restart banner when
+  both grants are there and the listener is still off, "Skip for now", the permissions step alone
+  with "Done" for "Fix permissions"); First snippet (the three errors, the saved snippet's trigger,
+  case and word start, skipped when the library has a snippet); Try it (the test field declared on
+  entering and withdrawn on leaving and when the window closes, the expansion recognised, Enter
+  and Tab, the switch, and each cause of "nothing happens" in its order); Done (the end, the login
+  item, the shortcut the system refused, the library opening on the new snippet, Esc). One test
+  fails when any command receives what was typed in the test field.
+- `tests/onboarding.rs` (a real worker on the mock platform, through the bridge): permissions
+  missing then granted; the settings page opening; typing the starter abbreviation into the
+  declared test field expands it, and does not before it is declared or after it is cleared; a
+  window of another process cannot be declared; another window of Iamb stays unexpanded; finishing
+  sets `ui.onboarding_done`, stores the default shortcut or reports the refusal, and the window
+  does not open at the next start (the worker restarted over the same data root); the login item;
+  no typed text in any log.
+- `tests/onboarding_contract.rs`: the requests against `iamb-ipc`'s golden files and the payloads
+  against `src/onboarding/onboarding.fixtures.json` (`IAMB_BLESS=1` to rewrite).
+
+**Scripted timing** (`scripted_first_run_timing`, on the mock platform): the steps automated
+through the same functions the window's commands call, from the moment the window opens to the first
+expansion in the test field, and on to the end. Result here (2026-11-20, debug build, the machine
+of §8.1; it prints its marks with `--nocapture`):
+
+| Mark | Time from the window opening |
+| --- | --- |
+| permissions read, both granted (macOS path) | 0.5 to 0.7 ms |
+| first snippet saved | 3 to 4 ms |
+| test field declared | 3 to 4 ms |
+| first expansion (abbreviation and a space typed) | 3.5 to 4.5 ms |
+| onboarding done (field withdrawn, shortcut and `ui.onboarding_done` stored) | 6 to 8 ms |
+
+The test asserts that the first expansion comes within 5 s. This says that the service's side of the
+steps costs nothing next to the 2 minutes. It does not time the window, the web view or a person.
+
+**What needs real machines and testers.** The KPI itself, three people on each OS from a clean
+machine: `docs/onboarding-walkthrough.md` (what to install, the two clocks and their marks, what
+counts as a pass, the timing sheet). Also on real machines: the permission rows on macOS
+(`GetPermissions` against the real grants, the helper listed as "Iamb" with its icon, the grants
+taking effect without a restart or with the restart banner), `SetTestField` with the real focus
+inspector (the window's token on each OS), the login item, and the window and tray menu entries on
+a real desktop (the window itself was checked under Xvfb on Linux with the mock service: it opens
+at start while `ui.onboarding_done` is not set).
+
+### 8.7 Search palette (task 3.6)
+
+What runs where:
+
+- **Relevance fixtures** (`spec/search/relevance.toml`, run by `crates/iamb-core/tests/search_relevance.rs`):
+  a workshop's 14 snippets and 28 queries with the results that must come first, in order, and the
+  field and the marked text of the first hit. They cover an abbreviation typed whole, as a prefix, in
+  the middle and as letters in order; a label word and several words in any order; content only the
+  content has; a tag name; two letters swapped, a letter missing from a tag, a letter too many in a
+  label; a query too short to forgive anything; "warranty", which the palette's own example says
+  matches nothing; white space; letters beyond ASCII; and ties, which keep the library's order. The
+  rules are in `crates/iamb-core/src/search.rs` (module docs). Unit tests there cover the tiers, the
+  typo distance, UTF-16 ranges for surrogate pairs and for letters that fold to two, a body that is
+  not ASCII, and the cut of a long query.
+- **The service** (`crates/iamb-service/tests/editor.rs`, `end_to_end.rs`): `Search` answers with the
+  field and the ranges, unchanged in shape.
+- **Component tests** (`pnpm test`; `src/palette/*.test.ts(x)`): the dialog with its combobox and
+  listbox and the hint; the query box focused and the paint reported on `shown`; search on every
+  change with the count ("4 of 76"); an answer to an older query dropped; matches marked with
+  `<mark>`; the arrows wrap, Page Up and Page Down jump; Enter on each kind of row (insert, fill in
+  and insert, review, open, select in the library, open the form, create), with the footer saying
+  which; Ctrl+1 to Ctrl+9 (⌘ on a Mac) and Ctrl+E (⌘E); Esc; the empty state with "Fill in “…”
+  again"; "No snippet matches “…”." with "New snippet labelled “…”"; "Iamb could not get back to …";
+  the dimmed list after 300 ms and "Iamb is not running." with "Start it again" after 2 s; the query
+  gone when the palette closes and in no storage; the count announced; the stylesheet uses only
+  tokens and never animates. `src/library/usePaletteRequests.test.tsx`: what the library does with
+  the requests a pick leaves for it.
+- **End to end** (`apps/desktop/src-tauri/tests/palette.rs`): the real bridge and the palette's flow
+  (and the form's) against a real worker on the mock platform, with recorded panels in place of the
+  windows: the shortcut registered through `PutSetting`, pressed on the mock, the palette shown,
+  searched, and a pick types the text in the target window (nothing deleted); Esc changes nothing
+  and the keyboard is the app's again; keys typed while the palette holds the keyboard never reach
+  the engine; a pick for a snippet with blanks hides the palette and shows the form, which then
+  holds the keyboard and submits (and the shortcut does nothing while the form is open); the
+  shortcut again closes it; a focus that cannot be given back sends nothing and brings the panel
+  back; a panel that loses the keyboard gives it back to the app and takes it again; the lease
+  renewed past its length; the tray opens it for the application in front; opened from Iamb's own
+  window a pick goes to the library and types nothing; "Fill in … again" after a submitted form;
+  the service going away and the UI host killed with the palette open; a typo, an abbreviation
+  first and a no-match through the rows; the list of snippets read again after `LibraryChanged`;
+  the preview; the default shortcut offered once; no query in any log.
+- **Contract** (`tests/front_end_contract.rs`): the `palette_*` commands and `library_take_request`
+  in the three lists.
+
+#### Results in under 30 ms at 10,000 snippets
+
+Method. `cargo bench -p iamb-bench --bench search -- --quick` times 500 queries over the
+10,000-snippet fixture (each snippet with a label of its first three words and up to two of forty
+tags), `limit` 50, one at a time, p95 (`LatencyRecorder`); `IAMB_SEARCH_BUDGET_MS` makes it fail
+over a budget (CI: 60). `cargo test --release -p iamb-service --test search_timing -- --nocapture`
+imports 10,000 snippets into a worker and times 400 `Search` requests over IPC. The first version
+of the search (substring matching, folding each body on every query) was not timed; the one here
+does not allocate per snippet, searches an ASCII body in place and looks at the lower tiers of a
+snippet only when no better tier matched.
+
+Result here (2026-11-20, the machine of §8.1, a release build, while other builds ran):
+
+| What | p50 | p95 | p99 | max |
+| --- | --- | --- | --- | --- |
+| `search/query/10000`, the ranking alone, 500 queries | 6.6 ms | 11.1 ms | 13.2 ms | 14.7 ms |
+| `Search` over IPC through the worker, 400 queries | 5.3 ms | 6.9 ms | | 10.9 ms |
+
+The slowest queries are the ones that match nothing (every tier and the typo tier for every
+snippet); the floor of 3.2 ms is the scan of the bodies. In a debug build, through the bridge and
+with the rows built from the list the UI host holds (`search_through_the_bridge_at_10000_snippets`,
+100 queries): p50 93 ms, p95 107 ms, which is about ten times a release build and is only held to
+600 ms. The rows are drawn from the list in memory; the list is read in pages of 1,000 the first
+time the palette opens (`palette_current`, in the background) and again after a `LibraryChanged`;
+a query that arrives before it is read waits for it (10,000 snippets: about 1 s in a debug build
+through the mock).
+
+What this does not measure: the key to the screen (the web view's paint of the rows, which the lab
+measures with the palette's front end on WebView2 and `WKWebView`), and the preview's round trips
+(`GetSnippet` and `RenderPreview`, 50 ms after the selection stops moving).
+
+#### Visible in under 100 ms
+
+Method. The clock starts when `PaletteRequested` reaches the UI host (the bridge's reader thread
+stamps it, monotonic and wall clock) and stops at the panel's first paint after it was shown,
+which the front end reports with `palette_painted` the way the form's is (§8.5). In between:
+the palette handed to the hidden panel (which clears its query and draws the empty state),
+`PanelFocus` and its answer, then the window placed and shown. `iamb-desktop --measure-palette RUNS
+[--budget-ms MS]` waits for start-up and for the hidden panel's one paint (shown out of sight once
+when its page reports it loaded, `palette_ready`), then hands the flow `RUNS` requests and closes
+each. Its service answers at once; the round trip to a real worker (`PanelFocus`) is measured by
+`the_shortcut_opens_the_palette_and_a_pick_types_where_the_cursor_was` in `tests/palette.rs`,
+which prints it.
+
+    xvfb-run -a iamb-desktop --data-dir "$(mktemp -d)" --measure-palette 20 --budget-ms 100
+
+Result here (2026-11-20; the machine of §8.1, Xvfb with software rendering, a debug build with
+the built front end embedded, `--features tauri/custom-protocol`): 3 processes of 10 palettes each,
+first palette after start 37 to 52 ms (shown after 1 to 2 ms), median of the later ones 23 to 24
+ms, every one within 52 ms; within 100 ms. The round trip to a real worker on the mock platform
+took under 2 ms (`PanelFocus`).
+
+What this does not measure: the shortcut to `PaletteRequested` in the service (the hotkey thread, the
+focus token), and WebView2 and `WKWebView`, whose numbers come from the `desktop` CI job on their
+runners (report only) and, for the KPI, from the lab. On macOS the panel is not yet the
+non-activating panel (`apps/desktop/README.md`).
+
+#### Focus returns correctly, and the keys stay out of the engine
+
+Needs real machines: the steps are in `docs/compatibility-run.md`, "The search palette" (P1 to P16
+in each of the 20 apps of each OS). On the mock, `tests/palette.rs` checks that the hand-back
+(`restore_focus`) comes before `ExpandSnippet`, that a refused hand-back sends nothing, and that
+what is typed while the palette holds the keyboard reaches neither the engine nor the hand-off.
+
+### 8.8 Rich text snippets (task 3.8)
+
+KPI: at least 90% of paste-fidelity cases pass; plain-text fallback everywhere. The matrix
+(Gmail, Outlook, Word, Google Docs, Slack, Notes on the systems each runs on), the nine fixture
+snippets, what counts as a pass and the 90% rule are in [`docs/paste-fidelity.md`](paste-fidelity.md);
+running it needs real machines and real applications.
+
+Method, without them:
+
+- **Rendering and sanitising** (`iamb-core::rich`): the examples of `spec/rich/examples.toml`
+  (Markdown to the clipboard's HTML and plain text, hostile input included) in
+  `tests/rich_spec.rs`; property tests in `tests/rich_props.rs` (2,000 generated documents of
+  Markdown and HTML fragments: every tag and attribute allowed, links only `http`, `https` and
+  `mailto`, images only attachments, balanced, nesting within 32; escaped text renders as itself;
+  pathological inputs of 20,000 to 40,000 characters each render in under 2 s in a debug build).
+- **Templates in Markdown**: the typing sessions `072` and `119`–`121` of `iamb-testkit` (macro
+  output escaped, `{cursor}` ignored, keys splitting the pastes, plain and rich snippets inside each
+  other) and `rich_props.rs`.
+- **Attachments** (`iamb-store`): `tests/attachments.rs` (content addressing, private files, types
+  read from the bytes, size limits, damaged bytes read as missing, the snippet links, a JSON export
+  and import carrying the bytes, an import with a wrong hash writing nothing).
+- **The clipboard**: `iamb-service/tests/rich.rs` on the mock platform (a formatted snippet pastes
+  HTML with its image embedded and the user's clipboard comes back without a history entry; a
+  missing image and an application set to type key by key give plain text; the editor's
+  `PutAttachment`, formatted `RenderPreview` and the links written on save);
+  `tests/paste_fidelity.rs` (the fixture file current and importable, the clipboard content of each
+  fixture current in `docs/paste-fidelity/clipboard.json`); the `HTML Format` offsets
+  (`iamb-platform-windows`, `clipboard/html.rs`) and the macOS pasteboard item
+  (`iamb-platform-macos`, `clipboard/layout.rs`), pure code that runs on every OS.
+- **A browser's paste**: `docs/paste-fidelity/browser-paste.mjs` puts each fixture's clipboard
+  content on headless Google Chrome's clipboard and pastes it with the shortcut into a rich-text
+  editor and a plain text field (CI: `desktop` job on Linux). Result here (2026-11-20): 9 of 9
+  fixtures pass, formatted and plain.
+- **The editor**: `src/library/EditorFormatted.test.tsx` (the kind control, saving the kind, the
+  question before formatting would be lost), `src/library/template/Formatted.test.tsx` (the
+  formatting toolbar and its shortcuts, images from the picker, a paste and a drop, refusals, the
+  formatted preview and its links that do not navigate), `src/library/template/markdown.test.ts`;
+  in Rust, `src-tauri/tests/template_commands.rs` (the formatted preview with the image embedded
+  from its file, `template_add_attachment` through the bridge, no temporary file left).
+
+What this does not cover: what each application's own paste filter keeps (the matrix), the
+system clipboards themselves (the platform crates' paste tests and the compatibility run), and
+pasting large images into slow applications (the paste wait of each app's strategy).
+
+### 8.9 Library health and usage statistics (task 3.10)
+
+**KPI: library health detects 100% of planted problems.** Method: a library is written with the
+problems put in on purpose, with the list of exactly what must be reported and as what, and the
+test fails on a miss and on a false alarm.
+
+- **Fixture libraries** (`crates/iamb-store/tests/fixtures/health/*.json`): one file per kind of
+  problem (`missing_reference`, `cycle`, `depth`, `template_error` with a snippet that includes a
+  broken one, `duplicate_abbreviation`, `shadowed`, `unused`, `unused_after_reset`) and
+  `mixed.json`, a library of 284 snippets as a business might keep one, with 27 planted problems
+  of every kind and decoys that must not be reported (a switched-off snippet with a broken
+  reference, a long-unused switched-off one, a reference to a switched-off snippet, one used 89
+  days ago, one made 20 days ago, a broken snippet that is also unused, reported once). Each file
+  has `now_day`, its snippets (abbreviation, content, trigger, on or off, creation day, last use)
+  and `expect`: one line per planted problem (`error <key> <CODE> ref=… in=…`,
+  `taken <key> kept=<key>`, `never_reached <key> by=<key>`, `unused <key> last_day=<n>|never`).
+- **The test** (`crates/iamb-store/tests/health.rs`) builds the engine's snapshot from each file,
+  runs `iamb_store::health::analyse`, writes what it reports in the same lines and compares the
+  two sets. It prints the detection rate of every file and the total (`cargo test -p iamb-store
+  --test health -- --nocapture`). Result here (2026-11-20): 46 of 46 planted problems detected
+  (100.0%), 0 false alarms; the sidebar count equals the snippets reported once.
+- **Timing**: `health_over_ten_thousand_snippets_is_fast` makes 10,000 snippets with about a
+  tenth in trouble (486 will not expand, 102 never reached, 986 unused) and times `analyse`:
+  about 40 ms in a debug build on the development machine (the bound is 1 s). The snapshot's
+  build, which happens once per library change already, takes about 160 ms in the same build;
+  the `Health` request adds the read of the usage rows (10,000 small rows) on the store thread.
+- **Usage**: `iamb-store/tests/crud.rs` (usage touches neither the snippet nor the outbox; a
+  reset forgets every count, notes when and changes no snippet or outbox row; the most recently
+  used come newest first and skip deleted snippets), `iamb-service/tests/usage_health.rs` (an
+  expansion counts once; the list answer carries `uses` and `last_used`; `RecentSnippets` is
+  newest first with no matched field; `ResetUsage` clears the counts, is refused to the
+  command-line tool and leaves the outbox as an unused library has it; health through the
+  endpoint names the missing snippet, the cycle, the shadowing and the unused snippets, and a
+  reset starts the 90 days again), `iamb-ipc/tests/golden` (the new messages and fields).
+- **The window** (Vitest): `src/library/health/Health.test.tsx` (the sections with the
+  specification's titles and none that is empty, each entry's line and buttons, opening, turning
+  off and deleting from an entry, the badge counting snippets once, the clean state, following a
+  change while open, the failure and its retry, the sentences), the editor footer's usage line
+  (`Editor.test.tsx`), "Most used on this computer" (`model.test.ts`), the recent list of the
+  palette (`palette/PaletteView.test.tsx`: newest first, eight rows with "Fill in … again", the hint
+  when there is nothing) and the reset in Settings (`settings/SettingsView.test.tsx`: it asks first,
+  forgets only when confirmed, says when the service does not answer).
+
+Not covered: usage recorded on a real platform (the mock's end-to-end test in
+`iamb-service/tests/end_to_end.rs` records through the same store thread), and the reading of
+"never used" for libraries made before the counts were reset by a build that did not record the
+reset (they count from creation).
+
+### 8.10 Accessibility and polish (task 3.11)
+
+KPI: 0 critical accessibility issues, against WCAG 2.1 AA (`docs/ux/spec.md` §8). Three layers.
+
+- **axe-core in the component tests** (`apps/desktop/src/a11y.test.tsx`, helper `src/a11y.ts`).
+  `axe-core` 4.13.0 (MPL-2.0; a dev dependency, 2026-08-05) was chosen over `vitest-axe` and
+  `jest-axe` because those are thin wrappers that pin their own copy of it; calling `axe.run`
+  directly needs no matcher plumbing. It runs over 38 states: the library (list, no filter match,
+  empty, service not running, editor plain with messages and options, formatted, preview, the
+  unsaved-changes dialog, the new folder and new tag dialogs, a menu, the toast), Library health
+  (clean, broken), the seven Settings sections and the service-down state, "Why didn't it expand?"
+  (entries, empty), the form (every field type, remembered answers, the "could not get back"
+  banner), the palette (nothing typed, recent, results, no match) and every onboarding step. The
+  bar in jsdom is zero violations of any impact. Rules that need layout or style sheets
+  (`color-contrast`, `target-size`, `scrollable-region-focusable`, the page-level `region`,
+  `landmark-one-main`, `page-has-heading-one`) cannot answer in jsdom and run in layer 3. A
+  check of 2.5.3 Label in name (`scripts/label-in-name.mjs`: a control with an `aria-label` and
+  visible text must be named starting with that text) runs in both layers, because axe's own
+  rule for it is experimental and stricter than the commitment. A canary test checks that the
+  harness fails on a bad page.
+  Counts before the fixes (jsdom): critical 1 in each of the 6 states that hold the template
+  editor (`aria-expanded` on a `role="textbox"`), serious 1 in each of the 4 palette states
+  (`aria-label` on a plain `div`), minor 1 in each of the 3 form states (`role="dialog"` on a
+  `form`); the other 28 states 0. After: 0 in every impact in all 38 states.
+- **Style sheets** (`src/styles/a11y.test.ts`): no colour value outside `tokens.css` (hex,
+  functions, named colours; the test is shown to see one), dark by the system and dark chosen in
+  Settings carry the same values, `base.css` zeroes every duration under
+  `prefers-reduced-motion`, only transforms and opacity are transitioned and with the duration
+  tokens, every window's sheet has a `forced-colors` block, and no rule removes the focus ring
+  without another one around it.
+- **The keyboard-only run** (`apps/desktop/scripts/keyboard-run.mjs`, mock
+  `keyboard-mock.mjs`; `docs/accessibility-run.md`): the built front end in Chromium, keyboard
+  only, in four settings (light, dark, reduced motion, forced colours). After each of 45 steps
+  per setting it checks that something has the focus, that it is on screen and has a ring (2.4.7),
+  runs axe-core with contrast and Label in name, and fails the step on critical or serious.
+  Result here (2026-11-20): 4 settings x 45 steps, critical 0, serious 0, moderate 4 (the same
+  one in each setting: `region`, a context menu is a popup outside the landmarks; a landmark
+  around every popup would lengthen a screen reader's landmark list for no gain), minor 0.
+  First run, before the fixes: critical 5 (the collapsed sidebar's buttons had no names at 640
+  px), serious 0 once the experimental rule was left out, moderate 49 steps (no `main`, no `h1`,
+  a skipped heading level, the menu), and these failures: no ring on the palette's query field,
+  focus lost to the page after Ctrl+, from the editor and after Undo, Undo unreachable in time,
+  the window 880 px wide at 200% zoom.
+  Run it with `PLAYWRIGHT_MODULE=<playwright> IAMB_CHROME_PATH=<chrome> node scripts/keyboard-run.mjs`
+  after `pnpm build`; CI runs it in the desktop job on Linux.
+- **Not covered here**: real screen readers (NVDA, Narrator, VoiceOver), the focus handed to and
+  taken back from the non-activating panels, Increase contrast on macOS, real 200% zoom and the
+  zoom keys, and the native title bar; `docs/accessibility-run.md` lists the steps for a person.

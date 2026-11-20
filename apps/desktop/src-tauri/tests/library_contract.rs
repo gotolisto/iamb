@@ -59,6 +59,8 @@ fn the_requests_match_their_golden_files() {
         ("request_delete_snippet", library::delete_snippet(id(1))),
         ("request_delete_folder", library::delete_folder(id(2))),
         ("request_delete_tag", library::delete_tag(id(3))),
+        ("request_health", library::health_request()),
+        ("request_reset_usage", library::reset_usage_request()),
         (
             "request_check_abbreviation",
             library::check_abbreviation(
@@ -163,6 +165,8 @@ fn every_request_the_library_sends_is_a_ui_request() {
         "request_put_tag",
         "request_delete_tag",
         "request_check_abbreviation",
+        "request_health",
+        "request_reset_usage",
     ] {
         let Wire::Request(r) = golden(file) else {
             panic!("{file}");
@@ -180,6 +184,7 @@ fn samples() -> Value {
         "snippet": library::full_from(ok("response_snippet")).expect("snippet"),
         "saved": library::saved_from(ok("response_saved")).expect("saved"),
         "check": library::check_from(ok("response_abbreviation_check")).expect("check"),
+        "health": library::health_from(ok("response_health")).expect("health"),
     })
 }
 

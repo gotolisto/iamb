@@ -1,0 +1,24 @@
+{
+  "finished": {
+    "hotkeyRefused": false,
+    "paletteHotkey": "Ctrl+Shift+Space"
+  },
+  "login": [
+    "enabled",
+    "disabled",
+    "requires_approval",
+    "unavailable"
+  ],
+  "permissions": {
+    "accessibility": "granted",
+    "inputMonitoring": "denied"
+  },
+  "refused": {
+    "hotkeyRefused": true,
+    "paletteHotkey": null
+  },
+  "windows": {
+    "accessibility": "not_required",
+    "inputMonitoring": "not_required"
+  }
+}

@@ -90,6 +90,25 @@
 //! the foreground, so the focus thread reports `own_window` itself; the message changes
 //! nothing there.
 //!
+//! # A form session always ends (the Phase 3 UI review's finding 1)
+//!
+//! While a form session is open the engine refuses every typed match with `form_open`, so a
+//! session nobody answers would stop Iamb expanding anything. Besides `FormSubmit`,
+//! `FormCancel`, the 2 s acknowledgement and the UI host's disconnection, three things end one:
+//!
+//! - a submit for a window that no longer exists
+//!   ([`FocusInspector::window_exists`](iamb_platform::FocusInspector::window_exists)) is not
+//!   parked: the session ends at once, typing nothing, and its values are kept for
+//!   `ReopenLastForm` as a refused submit's are (`Engine::abandon_form`), with the diagnostic
+//!   `form_target_gone`;
+//! - a parked submit that is dropped (its window never got the focus, `request_focus_timeout`,
+//!   or a newer request replaced it, `request_cancelled`) ends its session the same way;
+//! - an acknowledged session whose UI host stops renewing it (`FormAck` again, at least once
+//!   per [`FORM_LEASE`](iamb_ipc::FORM_LEASE)) is cancelled, with the diagnostic
+//!   `form_expired`. The UI host renews it every 10 s while the form is open, also while its
+//!   panel has stepped aside; the lease bounds a UI host that hangs or lost track of its form
+//!   while its connection stays up, as the `PanelFocus` lease bounds a panel's hold.
+//!
 //! # Screen lock and sign-out (the 2.8 review's finding 13)
 //!
 //! Before each message, a forget requested by the session watcher
@@ -219,6 +238,9 @@ pub(crate) struct EngineThread {
     /// The focus token of each requested form, for its submit.
     forms: HashMap<FormSessionId, Option<FocusToken>>,
     ack_deadline: Option<(FormSessionId, Instant)>,
+    /// The acknowledged form session and when its lease runs out (module docs).
+    form_lease: Option<(FormSessionId, Instant)>,
+    form_lease_for: Duration,
     values_touched: Option<Instant>,
     paused: bool,
     /// The code the next `injection_cancelled` diagnostic is given instead (module docs).
@@ -254,6 +276,7 @@ impl EngineThread {
         heartbeat: Box<dyn FnMut() + Send>,
         heartbeat_every: Duration,
         panel_lease: Duration,
+        form_lease: Duration,
     ) -> Self {
         Self {
             shared,
@@ -271,6 +294,8 @@ impl EngineThread {
             parked: None,
             forms: HashMap::new(),
             ack_deadline: None,
+            form_lease: None,
+            form_lease_for: form_lease,
             values_touched: None,
             paused: false,
             cancel_code: None,
@@ -321,6 +346,7 @@ impl EngineThread {
         };
         consider(self.parked.as_ref().map(|p| p.deadline));
         consider(self.ack_deadline.map(|(_, t)| t));
+        consider(self.form_lease.map(|(_, t)| t));
         consider(self.values_touched.map(|t| t + FORM_VALUES_TTL));
         consider(self.panel.as_ref().map(|p| p.until));
         next
@@ -401,6 +427,7 @@ impl EngineThread {
     fn ui_host_gone(&mut self) {
         self.end_panel();
         self.ack_deadline = None;
+        self.form_lease = None;
         if matches!(
             &self.parked,
             Some(Parked {
@@ -421,7 +448,7 @@ impl EngineThread {
         if self.parked.as_ref().is_some_and(|p| now >= p.deadline)
             && let Some(parked) = self.parked.take()
         {
-            self.dropped(&parked.request, "request_focus_timeout");
+            self.dropped(parked.request, "request_focus_timeout");
         }
         if let Some((session, deadline)) = self.ack_deadline
             && now >= deadline
@@ -430,6 +457,17 @@ impl EngineThread {
             self.forms.remove(&session);
             self.handle(Event::FormCancelled { session });
             self.shared.diagnostic(coded("form_not_acknowledged"));
+        }
+        if let Some((session, until)) = self.form_lease
+            && now >= until
+        {
+            // The UI host stopped renewing its form (module docs).
+            self.form_lease = None;
+            if self.forms.remove(&session).is_some() {
+                self.panel_hidden(PanelKind::Form);
+                self.handle(Event::FormCancelled { session });
+                self.shared.diagnostic(coded("form_expired"));
+            }
         }
         if self.panel.as_ref().is_some_and(|p| now >= p.until) {
             // The UI host stopped renewing its panel's hold: it may hang. Keys count as typed
@@ -496,7 +534,10 @@ impl EngineThread {
             }
             EngineMsg::Request { request, focus } => {
                 match &request {
-                    Explicit::Submit { .. } => self.panel_hidden(PanelKind::Form),
+                    Explicit::Submit { session, .. } => {
+                        self.end_lease(*session);
+                        self.panel_hidden(PanelKind::Form);
+                    }
                     Explicit::Expand(_) | Explicit::Reopen => self.panel_hidden(PanelKind::Palette),
                 }
                 self.on_request(request, focus);
@@ -504,6 +545,7 @@ impl EngineThread {
             EngineMsg::FormCancel(session) => {
                 self.panel_hidden(PanelKind::Form);
                 self.forms.remove(&session);
+                self.end_lease(session);
                 if self.ack_deadline.is_some_and(|(s, _)| s == session) {
                     self.ack_deadline = None;
                 }
@@ -525,6 +567,11 @@ impl EngineThread {
             EngineMsg::FormAck(session) => {
                 if self.ack_deadline.is_some_and(|(s, _)| s == session) {
                     self.ack_deadline = None;
+                }
+                // The first acknowledgement starts the lease, each later one renews it, while
+                // the session waits for its answer (module docs).
+                if self.forms.contains_key(&session) {
+                    self.form_lease = Some((session, Instant::now() + self.form_lease_for));
                 }
             }
             EngineMsg::SetPaused(on) => {
@@ -748,7 +795,14 @@ impl EngineThread {
         };
         if let Some(old) = self.parked.take() {
             // A newer request replaces a waiting one (§4.5).
-            self.dropped(&old.request, "request_cancelled");
+            self.dropped(old.request, "request_cancelled");
+        }
+        if let (Explicit::Submit { .. }, Some(token)) = (&request, focus)
+            && !self.shared.platform.window_exists(&token)
+        {
+            // Its window will never get the focus (module docs).
+            self.dropped(request, "form_target_gone");
+            return;
         }
         match focus {
             Some(token) if self.focus.as_ref().map(|c| c.token) != Some(token) => {
@@ -777,12 +831,27 @@ impl EngineThread {
         self.handle(event);
     }
 
-    fn dropped(&self, request: &Explicit, code: &str) {
+    /// An explicit request that will never be forwarded, with the diagnostic `code`. A form
+    /// submit ends its session too, typing nothing and keeping its values for `ReopenLastForm`
+    /// (module docs): otherwise the engine would refuse every typed match with `form_open`.
+    fn dropped(&mut self, request: Explicit, code: &str) {
         let mut d = coded(code);
-        if let Explicit::Expand(snippet) = request {
-            d.snippet = Some(*snippet);
+        match request {
+            Explicit::Expand(snippet) => d.snippet = Some(snippet),
+            Explicit::Submit { session, values } => {
+                self.values_touched = Some(Instant::now());
+                d.snippet = self.engine.abandon_form(session, values);
+            }
+            Explicit::Reopen => {}
         }
         self.shared.diagnostic(d);
+    }
+
+    /// The form session `session` was answered: its lease ends.
+    fn end_lease(&mut self, session: FormSessionId) {
+        if self.form_lease.is_some_and(|(s, _)| s == session) {
+            self.form_lease = None;
+        }
     }
 
     /// Hands the usage of a finished expansion to the store thread, once: on its end marker
@@ -827,7 +896,28 @@ impl EngineThread {
                 _ => {}
             }
         }
-        for batch in batches {
+        for mut batch in batches {
+            // A rich snippet's images are read and embedded before the injector starts
+            // (task 3.8); a missing one makes its paste plain text.
+            if batch
+                .steps
+                .iter()
+                .any(|s| matches!(s, iamb_platform::InjectionStep::Paste(_)))
+            {
+                let view = self.shared.view.get();
+                let profile = view
+                    .snapshot
+                    .snippet(batch.snippet)
+                    .and_then(|s| view.folders.iter().find(|f| f.meta.id == s.folder_id))
+                    .map_or(view.profile, |f| f.profile_id);
+                let missing =
+                    crate::rich::prepare_steps(&mut batch.steps, &self.shared.data_root, profile);
+                if !missing.is_empty() {
+                    let mut d = coded("attachment_missing");
+                    d.snippet = Some(batch.snippet);
+                    self.shared.diagnostic(d);
+                }
+            }
             // Arm before the injector can run: it must find the hand-off capturing.
             self.handoff.arm(batch.expansion);
             self.usage.insert(

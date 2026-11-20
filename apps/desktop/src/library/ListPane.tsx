@@ -45,6 +45,8 @@ interface ListPaneProps {
   onFilter: (value: string) => void;
   sort: SortMode;
   onSort: (mode: SortMode) => void;
+  /** The service counts usage, so "Most used on this computer" is offered. */
+  canSortByUse?: boolean;
   selection: Selection;
   onSelection: (next: Selection) => void;
   /** Enter, or a double click: move to the editor. */
@@ -362,11 +364,14 @@ export function ListPane(props: ListPaneProps) {
             <span className="visually-hidden">Sort by</span>
             <select
               value={props.sort}
-              onChange={(e) => props.onSort(e.target.value === "changed" ? "changed" : "label")}
+              onChange={(e) =>
+                props.onSort(e.target.value === "changed" || e.target.value === "used" ? e.target.value : "label")
+              }
               aria-label="Sort by"
             >
               <option value="label">Label</option>
               <option value="changed">Recently changed</option>
+              {props.canSortByUse && <option value="used">Most used on this computer</option>}
             </select>
           </label>
         </div>
@@ -442,8 +447,8 @@ function menuFor(props: ListPaneProps, id: string, ids: string[], x: number, y: 
     y,
     label,
     items: [
-      ...(many ? [] : [{ label: "Open", onSelect: () => props.onOpen(id) }]),
-      { label: turnOff ? "Turn off" : "Turn on", onSelect: () => props.onToggle(ids) },
+      ...(many ? [] : [{ label: "Open", keys: "Enter", onSelect: () => props.onOpen(id) }]),
+      { label: turnOff ? "Turn off" : "Turn on", keys: "Space", onSelect: () => props.onToggle(ids) },
       ...(many
         ? []
         : [
@@ -453,7 +458,7 @@ function menuFor(props: ListPaneProps, id: string, ids: string[], x: number, y: 
               onSelect: () => props.onDuplicate(id),
             },
           ]),
-      { label: "Delete", danger: true, onSelect: () => props.onDelete(ids) },
+      { label: "Delete", danger: true, keys: props.mac ? "Meta+Backspace" : "Delete", onSelect: () => props.onDelete(ids) },
     ],
   };
 }

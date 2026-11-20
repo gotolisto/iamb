@@ -40,6 +40,9 @@ export function FormView({
   onNextPaint = afterNextPaint,
 }: FormViewProps) {
   const [shown, setShown] = useState<Shown | null>(null);
+  /** The form as last rendered, for an event handler set up once. */
+  const latest = useRef<Shown | null>(null);
+  latest.current = shown;
   const root = useRef<HTMLDivElement>(null);
   const session = useRef<number | null>(null);
   /** A `shown` event that came before the form was rendered. */
@@ -98,6 +101,16 @@ export function FormView({
           if (event.session === session.current) panelShown(event.session);
           else pendingShown.current = event.session;
           break;
+        case "target_gone": {
+          // The window the text was for is gone: the answers go to Rust once, to be kept for
+          // "Fill in … again", and the panel forgets them.
+          const cur = latest.current;
+          if (event.session !== session.current || !cur) break;
+          const values = submission(cur.form.fields, cur.values);
+          forget();
+          void api.abandon(event.session, values).catch(() => undefined);
+          break;
+        }
         case "closed":
           if (event.session === session.current) forget();
           break;

@@ -92,6 +92,7 @@ fn templates_are_parsed_and_previewed_against_the_library() {
         RequestBody::RenderPreview {
             source: "Dear {field name=Name}, {snippet abbr=\";sig\"} {date}".to_owned(),
             values: Secret::new(BTreeMap::new()),
+            rich: false,
         },
     ) {
         ResponseBody::Preview {

@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "tokens": "node scripts/tokens.mjs",
+    "a11y:keyboard": "node scripts/keyboard-run.mjs",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -26,6 +27,7 @@
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.7",
     "@vitejs/plugin-react": "6.1.2",
+    "axe-core": "4.13.0",
     "jsdom": "30.1.3",
     "typescript": "7.0.2",
     "vite": "8.3.5",

@@ -114,9 +114,7 @@ describe("keys and copy", () => {
   it("is the specification's", () => {
     expect(copy.goesInto("Mail")).toBe("Goes into Mail");
     expect(copy.couldNotGetBack("Mail")).toBe("Iamb could not get back to Mail.");
-    expect(copy.nothingTyped).toBe(
-      "Nothing was typed. Click where the text should go and press Insert again, or cancel.",
-    );
+    expect(copy.nothingTyped).toBe("Nothing was typed. Press Insert to try again, or cancel.");
     expect(copy.stillHere).toBe("Your answers are still here.");
     expect(copy.description(1)).toBe("Fill-in form, 1 field");
     expect(copy.description(4)).toBe("Fill-in form, 4 fields");

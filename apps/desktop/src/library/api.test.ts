@@ -5,6 +5,7 @@ import {
   createLibraryApi,
   isAbbreviationCheck,
   isFolders,
+  isHealth,
   isSaved,
   isSnippet,
   isSummary,
@@ -22,6 +23,7 @@ describe("the payloads of the library commands (written by tests/library_contrac
     expect(isSnippet(fixtures.snippet)).toBe(true);
     expect(isSaved(fixtures.saved)).toBe(true);
     expect(isAbbreviationCheck(fixtures.check)).toBe(true);
+    expect(isHealth(fixtures.health)).toBe(true);
   });
 
   it("are refused when a field is wrong", () => {
@@ -31,6 +33,8 @@ describe("the payloads of the library commands (written by tests/library_contrac
     expect(isSnippet({ ...fixtures.snippet, trigger: "sometimes" })).toBe(false);
     expect(isSaved({ id: "x" })).toBe(false);
     expect(isAbbreviationCheck({ conflict: null, hides: "x", hiddenBy: [] })).toBe(false);
+    expect(isHealth({ ...fixtures.health, unused: [{ snippet: 1, lastUsed: null }] })).toBe(false);
+    expect(isHealth({ ...fixtures.health, excluded: [{ snippet: "a" }] })).toBe(false);
   });
 });
 
@@ -63,6 +67,8 @@ describe("the commands", () => {
     await api.checkAbbreviation(";r", "immediate");
     await api.checkAbbreviation(";r", "delimiter", "i");
     await api.saveTag({ name: "n", color: "red" });
+    await api.health();
+    await api.resetUsage();
     expect(calls).toEqual([
       ["library_list_folders", undefined],
       ["library_list_tags", undefined],
@@ -75,6 +81,8 @@ describe("the commands", () => {
       ["library_check_abbreviation", { abbreviation: ";r", trigger: "immediate", snippet: null }],
       ["library_check_abbreviation", { abbreviation: ";r", trigger: "delimiter", snippet: "i" }],
       ["library_save_tag", { draft: { name: "n", color: "red" } }],
+      ["library_health", undefined],
+      ["library_reset_usage", undefined],
     ]);
     // Every command the front end calls is one Rust registers (tests/front_end_contract.rs).
     for (const [command] of calls) expect(COMMANDS as readonly string[]).toContain(command);

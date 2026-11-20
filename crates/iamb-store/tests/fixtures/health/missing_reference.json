@@ -1,0 +1,56 @@
+{
+ "description": "A snippet that includes an abbreviation that does not exist (spec 4.9 row 1). A reference to a snippet that is switched off is not broken.",
+ "now_day": 1000,
+ "snippets": [
+  {
+   "key": "out_of_office",
+   "abbr": ";ooo",
+   "body": "Away. {snippet abbr=\";sig2\"}",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "sig",
+   "abbr": ";sig",
+   "body": "Best, Ada",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "uses_sig",
+   "abbr": ";usig",
+   "body": "Hi. {snippet abbr=\";sig\"}",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "off_target",
+   "abbr": ";off",
+   "body": "Switched off",
+   "enabled": false
+  },
+  {
+   "key": "uses_off",
+   "abbr": ";uoff",
+   "body": "Includes {snippet abbr=\";off\"}",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "wrong_case",
+   "abbr": ";wc",
+   "body": "{snippet abbr=\";SIG\"}",
+   "used": {
+    "day": 990
+   }
+  }
+ ],
+ "expect": [
+  "error out_of_office E_SNIPPET_NOT_FOUND ref=;sig2",
+  "error wrong_case E_SNIPPET_NOT_FOUND ref=;SIG"
+ ]
+}

@@ -6,6 +6,8 @@ pub mod datetime;
 pub mod engine;
 pub mod matcher;
 pub mod model;
+pub mod rich;
+pub mod search;
 pub mod sensitive;
 pub mod template;
 

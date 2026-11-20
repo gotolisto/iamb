@@ -1,0 +1,22 @@
+description = "A plain snippet in a rich one is escaped; a rich one in a plain one gives its plain text"
+
+[[snippet]]
+abbr = "plain"
+body = "2 * 3 = 6"
+
+[[snippet]]
+abbr = "rich"
+body = '**Total**: {snippet abbr="plain"}'
+kind = "rich"
+
+[[snippet]]
+abbr = "mix"
+body = 'Note: {snippet abbr="rich"}!'
+
+[[step]]
+type = "rich "
+expect = [{ delete = 5 }, { paste = "Total: 2 * 3 = 6", html = "<p><strong>Total</strong>: 2 * 3 = 6</p>" }, { text = " " }, { expanded = "rich" }]
+
+[[step]]
+type = "mix "
+expect = [{ delete = 4 }, { text = "Note: Total: 2 * 3 = 6!" }, { text = " " }, { expanded = "mix" }]

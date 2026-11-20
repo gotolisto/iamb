@@ -1,0 +1,29 @@
+{
+ "description": "The counts were reset on day 950 (Settings, Privacy). A snippet that was never used counts from the reset, not from its creation, so a reset does not make the whole library unused at once; 90 days after the reset it does.",
+ "now_day": 1000,
+ "usage_reset_day": 950,
+ "snippets": [
+  {
+   "key": "made_long_ago",
+   "abbr": ";mla",
+   "body": "never used since the reset",
+   "created_day": 100
+  },
+  {
+   "key": "made_before_reset",
+   "abbr": ";mbr",
+   "body": "never used since the reset",
+   "created_day": 940
+  },
+  {
+   "key": "used_since",
+   "abbr": ";us",
+   "body": "used since the reset",
+   "created_day": 100,
+   "used": {
+    "day": 980
+   }
+  }
+ ],
+ "expect": []
+}

@@ -424,6 +424,47 @@ fails the KPI for that app unless it has an exception record, as for the matrix 
 until the non-activating panel exists (`apps/desktop/README.md`, "The macOS panel"), F1's menu-bar
 check fails by design; record it as a known limitation and check the rest.
 
+## The search palette (task 3.6; finding 16 of the 2.8 review)
+
+The palette is the second panel that must hand the keyboard and the focus back correctly, and the
+macOS half of finding 16 applies to it as to the form: keys typed into the query must not expand
+in the app behind it. The end-to-end tests cover the flow on the mock
+(`apps/desktop/src-tauri/tests/palette.rs`).
+
+Setup: as for the form (the service running against the compatibility folder, the UI host built
+with its front end and started against it). The UI host offers the default shortcut,
+Ctrl+Shift+Space, to a service that has none; if the system refuses it, the log says so
+(`the default palette shortcut was not registered`) and Settings → Shortcuts has the choice. Add a
+snippet whose label has a word the abbreviation does not (`iamb add ";rret" --label "Return label"
+"You can return any part within 30 days."`).
+
+For each of the 20 apps of your OS, with the cursor in a text field of the app:
+
+| # | Do | Pass when |
+| --- | --- | --- |
+| P1 | Press the shortcut | The palette appears at once in the upper third of the screen, 620 px wide, the cursor in the query box, nothing typed in it, the hint "Type to search by abbreviation, label, text or tag." The log says `palette N: first paint … ms after the request arrived`; note the number (under 100 ms). macOS: the app keeps its name in the menu bar. Windows: the app's title bar turns inactive |
+| P2 | Type `ret` | The first row is "Return label" with the abbreviation `;rret`, the matched letters heavier; "N of M" shows at the right; the strip below shows the text it would type |
+| P3 | Type `;cpt1 ` in the query | Nothing expands, in the palette or in the app behind it; the worker log has no match for `;cpt1` (the macOS half of finding 16) |
+| P4 | Clear the query, type `ret`, press Enter | The palette disappears; the cursor is back in the app's field where it was; the text is typed there; nothing was deleted. Pause Iamb first and check that this still works |
+| P5 | Open it again and press Esc | The palette disappears; the cursor is back where it was; nothing was typed or deleted. The next time it opens, the query is empty |
+| P6 | Open it; press the shortcut again | The palette closes and the focus is the app's |
+| P7 | Open it; click into the app's field behind; type `;cpt1 ` there | The palette stays; the keys are the app's and `;cpt1` expands there; click back into the query and type: nothing expands |
+| P8 | Open it; switch to another app (⌘⇥ / Alt+Tab), then back | The palette steps aside and comes back with the target app |
+| P9 | Open it, leave it for a minute, then type `;cpt1 ` into it | Nothing expands (the lease was renewed); the worker log has no `panel_focus_expired` |
+| P10 | Pick a snippet with a `{field}` | The palette is replaced by the fill-in form in the same place; the form's first field has the keyboard; nothing the palette held remains (type `;cpt1 ` in the field: nothing expands) |
+| P11 | In a password field of the app, open the palette and pick a snippet | A refusal in the diagnostics (`refused_secure_field`) and nothing typed. The notice of flow 5 does not exist yet (`apps/desktop/README.md`); look in "Why didn't it expand?" |
+| P12 | Close the target window with the palette open; press Enter on a snippet | The palette stays with "Iamb could not get back to the app. Click where the text should go and press Enter again."; Esc closes it |
+| P13 | Tray or menu-bar menu: "Search snippets…" | The palette opens for the app that was in front when the menu opened (Windows: the menu may have taken the focus; note which window the text then goes into) |
+| P14 | In the library window, press Ctrl+K (⌘K) | The palette opens over the library window; Enter on a result selects that snippet in the library; nothing is typed |
+| P15 | Submit a form, then open the palette with nothing typed | The first row is "Fill in “…” again"; Enter opens the form with the last answers |
+| P16 | Type a word that matches nothing | "No snippet matches “…”." and one row "New snippet labelled “…”"; Enter opens the library with a draft whose label is the word |
+
+Record per app: P1 time, and pass or fail of P2 to P16, with the OS version and the app's
+version. A failure of P4 or P5 (the focus did not come back, or came back to another field) fails
+the focus KPI for that app unless it has an exception record, as for the matrix cells. On macOS,
+until the non-activating panel exists (`apps/desktop/README.md`, "The macOS panel"), P1's
+menu-bar check fails by design; record it as a known limitation and check the rest.
+
 ## Delivering the result
 
 1. Run `iamb-compat report --results compat-<os>.jsonl` for each OS.

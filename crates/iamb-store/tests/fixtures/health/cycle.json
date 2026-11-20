@@ -1,0 +1,51 @@
+{
+ "description": "A snippet that includes itself, directly or through others. Every snippet whose expansion would loop is reported; one that merely sits beside the loop is not.",
+ "now_day": 1000,
+ "snippets": [
+  {
+   "key": "self",
+   "abbr": ";self",
+   "body": "again {snippet abbr=\";self\"}",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "ping",
+   "abbr": ";ping",
+   "body": "a {snippet abbr=\";pong\"}",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "pong",
+   "abbr": ";pong",
+   "body": "b {snippet abbr=\";ping\"}",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "twice",
+   "abbr": ";twice",
+   "body": "{snippet abbr=\";plain\"}{snippet abbr=\";plain\"}",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "plain",
+   "abbr": ";plain",
+   "body": "plain",
+   "used": {
+    "day": 990
+   }
+  }
+ ],
+ "expect": [
+  "error self E_SNIPPET_CYCLE ref=;self",
+  "error ping E_SNIPPET_CYCLE ref=;pong",
+  "error pong E_SNIPPET_CYCLE ref=;ping"
+ ]
+}

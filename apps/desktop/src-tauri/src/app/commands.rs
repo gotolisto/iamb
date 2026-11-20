@@ -15,6 +15,37 @@ use crate::timing::PaintMarks;
 
 type Res<T> = Result<T, CommandError>;
 
+/// The windows that may call the library's, Settings' and "Why didn't it expand?"'s commands:
+/// the library window, and the onboarding window, which reads the folders and saves its first
+/// snippet and the shortcut. The form, the palette and the notice may not (the Phase 3 UI
+/// review's finding 8): what they show must not be able to change the library or the settings.
+pub const LIBRARY_CALLERS: [&str; 2] = [windows::LIBRARY, super::onboarding_commands::ONBOARDING];
+
+/// `Ok` when the calling `window` is one of `allowed`; `not_permitted` otherwise.
+///
+/// # Errors
+///
+/// `not_permitted` for any other window.
+pub fn caller(window: &WebviewWindow, allowed: &[&str]) -> Res<()> {
+    may_call(window.label(), allowed)
+}
+
+/// [`caller`] by the window's label.
+///
+/// # Errors
+///
+/// `not_permitted` when `label` is not one of `allowed`.
+pub fn may_call(label: &str, allowed: &[&str]) -> Res<()> {
+    if allowed.contains(&label) {
+        Ok(())
+    } else {
+        Err(CommandError::new(
+            "not_permitted",
+            "this window may not do this",
+        ))
+    }
+}
+
 async fn blocking<T: Send + 'static>(
     bridge: &Bridge,
     f: impl FnOnce(&Bridge) -> Res<T> + Send + 'static,
@@ -91,4 +122,32 @@ pub async fn report_first_paint(
 #[tauri::command]
 pub async fn dismiss(window: WebviewWindow) -> Res<()> {
     windows::dismiss(&window).map_err(|e| CommandError::new("internal", e.to_string()))
+}
+
+/// Ends Iamb: the tray's "Quit Iamb" asked the library window first (`tray`), which asked
+/// about unsaved edits and calls this. The library window only.
+#[tauri::command]
+pub async fn app_quit(app: tauri::AppHandle, window: WebviewWindow) -> Res<()> {
+    caller(&window, &[windows::LIBRARY])?;
+    app.exit(0);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_library_and_onboarding_windows_reach_the_library_and_settings() {
+        assert!(may_call(windows::LIBRARY, &LIBRARY_CALLERS).is_ok());
+        assert!(may_call("onboarding", &LIBRARY_CALLERS).is_ok());
+        for panel in [windows::FORM, windows::PALETTE, windows::NOTICE, "other"] {
+            assert_eq!(
+                may_call(panel, &LIBRARY_CALLERS).map_err(|e| e.code),
+                Err("not_permitted".to_owned()),
+                "{panel}"
+            );
+        }
+        assert!(may_call("onboarding", &[windows::LIBRARY]).is_err());
+    }
 }

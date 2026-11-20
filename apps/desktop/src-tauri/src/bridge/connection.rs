@@ -12,7 +12,9 @@
 //! not know, which the protocol allows (architecture §6.1). A call whose response is lost that
 //! way ends with its timeout.
 //!
-//! Nothing here logs or keeps a message body (architecture §8 rule 3).
+//! Nothing here logs or keeps a message body (architecture §8 rule 3). Once a request is
+//! written, its frame is overwritten with zeros, and so are the values of a `FormSubmit` (§4.5:
+//! forgotten values are overwritten, not only freed; the Phase 3 UI review's finding 19).
 
 use std::collections::HashMap;
 use std::fmt;
@@ -184,7 +186,10 @@ impl Connection {
             }
             pending.waiters.insert(id, tx);
         }
-        let payload = match (Wire::Request(Request { id, body })).encode() {
+        let wire = Wire::Request(Request { id, body });
+        let encoded = wire.encode();
+        forget_wire(wire);
+        let mut payload = match encoded {
             Ok(p) => p,
             Err(e) => {
                 self.lock_pending().waiters.remove(&id);
@@ -195,6 +200,7 @@ impl Connection {
             let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
             write_frame(&mut *writer, &payload)
         };
+        wipe(&mut payload);
         if written.is_err() {
             self.lock_pending().waiters.remove(&id);
             return Err(CallError::Disconnected);
@@ -283,4 +289,67 @@ pub fn hello(client_version: &str) -> Wire {
         role: Role::Ui,
         client_version: client_version.to_owned(),
     })
+}
+
+/// Overwrites the form values a sent request carried (module docs).
+fn forget_wire(wire: Wire) {
+    if let Wire::Request(Request {
+        body: RequestBody::FormSubmit { values, .. },
+        ..
+    }) = wire
+    {
+        for mut value in values.into_inner().into_values() {
+            iamb_core::template::overwrite(&mut value);
+        }
+    }
+}
+
+/// Overwrites a written frame with zeros before it is freed (module docs).
+fn wipe(payload: &mut Vec<u8>) {
+    zero(payload);
+    payload.clear();
+}
+
+/// Writes zeros over `bytes`; the writes go through [`std::hint::black_box`] so that they are
+/// not removed as dead stores.
+fn zero(bytes: &mut [u8]) {
+    bytes.fill(0);
+    std::hint::black_box(bytes);
+}
+
+#[cfg(test)]
+mod scrub_tests {
+    use std::collections::BTreeMap;
+
+    use iamb_ipc::Secret;
+
+    use super::*;
+
+    #[test]
+    fn a_written_frame_is_overwritten_in_place() {
+        let mut payload = b"{\"values\":{\"Name\":\"Ada\"}}".to_vec();
+        let at = payload.as_ptr();
+        zero(&mut payload);
+        assert!(payload.iter().all(|b| *b == 0), "every byte is zero");
+        assert_eq!(payload.as_ptr(), at, "in the same buffer");
+        wipe(&mut payload);
+        assert!(payload.is_empty());
+    }
+
+    #[test]
+    fn only_a_form_submit_has_values_to_forget() {
+        // Each kind of request goes through without a panic; the values' own overwrite is
+        // `iamb_core::template::overwrite`, tested there.
+        forget_wire(Wire::Request(Request {
+            id: 1,
+            body: RequestBody::FormSubmit {
+                session: 1,
+                values: Secret::new(BTreeMap::from([("Name".to_owned(), "Ada".to_owned())])),
+            },
+        }));
+        forget_wire(Wire::Request(Request {
+            id: 2,
+            body: RequestBody::FormCancel { session: 1 },
+        }));
+    }
 }

@@ -6,8 +6,12 @@
 //
 // Privacy: the test values (`values`) are sent only in the one request; the preview never reads
 // the clipboard (the service shows the word "Clipboard").
+//
+// A formatted snippet (task 3.8, `rich`) previews as the formatted result: the service's
+// sanitised HTML (raw HTML disabled, links limited to http, https and mailto; UX specification
+// §9 rule 8), with its images embedded as data by the Rust side. Links in it do not navigate.
 
-import { forwardRef, useEffect, useRef, useState, type ReactNode } from "react";
+import { forwardRef, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 
 import type { FieldView } from "../../ipc";
 import { failureCode, type PreviewPart, type TemplatePreview as Preview, type TemplateService } from "./api";
@@ -27,6 +31,8 @@ export interface TemplatePreviewProps {
   delayMs?: number;
   /** ⌘⇧P / Ctrl+Shift+P inside the preview: back to the text. */
   onBack?: () => void;
+  /** A formatted snippet: preview the formatted result. */
+  rich?: boolean | undefined;
 }
 
 type State =
@@ -46,7 +52,7 @@ function valuesKey(values: Record<string, string> | undefined): string {
 }
 
 export const TemplatePreview = forwardRef<HTMLElement, TemplatePreviewProps>(function TemplatePreview(
-  { source, service, values, onTryForm, delayMs = PREVIEW_DELAY_MS, onBack },
+  { source, service, values, onTryForm, delayMs = PREVIEW_DELAY_MS, onBack, rich = false },
   ref,
 ) {
   const [state, setState] = useState<State>({ kind: "waiting" });
@@ -58,7 +64,7 @@ export const TemplatePreview = forwardRef<HTMLElement, TemplatePreviewProps>(fun
   useEffect(() => {
     const mine = ++seq.current;
     const timer = setTimeout(() => {
-      service.preview(source, valuesRef.current).then(
+      (rich ? service.preview(source, valuesRef.current, true) : service.preview(source, valuesRef.current)).then(
         (preview) => {
           // An older answer that arrives after a newer request is dropped.
           if (mine === seq.current) setState({ kind: "ready", preview });
@@ -69,7 +75,7 @@ export const TemplatePreview = forwardRef<HTMLElement, TemplatePreviewProps>(fun
       );
     }, delayMs);
     return () => clearTimeout(timer);
-  }, [source, key, service, delayMs]);
+  }, [source, key, service, delayMs, rich]);
 
   const preview = state.kind === "ready" ? state.preview : null;
   const fields = preview?.fields ?? [];
@@ -163,7 +169,24 @@ function renderParts(p: Preview): ReactNode[] {
   return out;
 }
 
+/** Keeps a click on a link in the formatted preview from navigating the window. */
+function stayHere(e: ReactMouseEvent) {
+  if ((e.target as HTMLElement).closest("a")) e.preventDefault();
+}
+
 function renderPart(part: PreviewPart, i: number, cursorAt: number | null): ReactNode {
+  if (part.part === "formatted") {
+    // The service's sanitised rendering (module docs); nothing here builds HTML.
+    return (
+      <div
+        key={i}
+        className="tpl-formatted"
+        onClick={stayHere}
+        onAuxClick={stayHere}
+        dangerouslySetInnerHTML={{ __html: part.html }}
+      />
+    );
+  }
   if (part.part === "key") {
     const label = keyLabel(part.key, part.shift, part.times);
     return (

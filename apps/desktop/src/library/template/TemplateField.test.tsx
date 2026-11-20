@@ -269,7 +269,9 @@ describe("the insert list", () => {
     await type(box, "{");
     const list = screen.getByRole("listbox", { name: "Insert" });
     expect(within(list).getAllByRole("option")).toHaveLength(9);
-    expect(box.getAttribute("aria-expanded")).toBe("true");
+    // `aria-expanded` is not an attribute of a textbox: the open list is `aria-controls`.
+    expect(box.getAttribute("aria-controls")).toBe(list.id);
+    expect(box.hasAttribute("aria-expanded")).toBe(false);
     await type(box, "da");
     expect(within(list).getAllByRole("option").map((o) => o.textContent)).toEqual(["Datetoday, or shifted"]);
     await key(box, "Enter");

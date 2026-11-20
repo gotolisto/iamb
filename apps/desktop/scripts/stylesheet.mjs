@@ -2,7 +2,7 @@
 // custom properties it uses, and those tokens.css defines. `src/form/styles.test.ts` checks the
 // form panel's stylesheet with it, as `src/styles/tokens.test.ts` checks base.css.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -20,4 +20,15 @@ export function undefinedTokens(path) {
   );
   const used = new Set([...stylesheet(path).matchAll(/var\((--[a-z0-9-]+)/g)].map((m) => m[1]));
   return { used: used.size, missing: [...used].filter((t) => !defined.has(t)) };
+}
+
+/** The paths (relative to `src/`, always with `/`, on Windows too) of every style sheet there. */
+export function stylesheets(dir = "") {
+  const out = [];
+  for (const entry of readdirSync(join(here, "../src", dir), { withFileTypes: true })) {
+    const path = dir ? `${dir}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) out.push(...stylesheets(path));
+    else if (entry.name.endsWith(".css")) out.push(path);
+  }
+  return out.sort();
 }

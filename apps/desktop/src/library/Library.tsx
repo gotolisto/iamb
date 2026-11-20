@@ -21,10 +21,12 @@ import {
   subtreeIds,
 } from "./model";
 import { Diagnostics } from "./diagnostics";
+import { HealthView, affectedCount, useHealth } from "./health";
 import { SettingsView } from "./settings";
 import { Sidebar, type View, sameView } from "./Sidebar";
 import { Toast, type ToastState } from "./Toasts";
 import { useLibraryData } from "./useLibraryData";
+import { usePaletteRequests } from "./usePaletteRequests";
 import "./library.css";
 
 // ---- What the window remembers (a convenience: it renders without it) -----------------------
@@ -37,13 +39,35 @@ interface Remembered {
   snippet: string | null;
 }
 
+/**
+ * A one-shot request from another window (onboarding, task 3.7) to open at a view: written just
+ * before the window is shown, honoured when it is at most this old, and removed once the window
+ * has used it.
+ */
+const OPEN_KEY = "iamb.library.open";
+const OPEN_FRESH_MS = 10_000;
+
+function requestedView(): View | null {
+  try {
+    const raw = window.localStorage.getItem(OPEN_KEY);
+    if (!raw) return null;
+    const v = JSON.parse(raw) as { view?: unknown; at?: unknown };
+    if (v.view === "diagnostics" && typeof v.at === "number" && Date.now() - v.at < OPEN_FRESH_MS) {
+      return { kind: "diagnostics" };
+    }
+  } catch {
+    // No storage: the window opens where it was.
+  }
+  return null;
+}
+
 function recall(): Remembered {
   try {
     const raw = window.localStorage.getItem(STORE_KEY);
     if (raw) {
       const v = JSON.parse(raw) as Partial<Remembered>;
       return {
-        sort: v.sort === "changed" ? "changed" : "label",
+        sort: v.sort === "changed" || v.sort === "used" ? v.sort : "label",
         view: v.view && (v.view.kind === "folder" || v.view.kind === "tag") ? v.view : null,
         snippet: typeof v.snippet === "string" ? v.snippet : null,
       };
@@ -109,8 +133,16 @@ export function Library({ env }: { env: LibraryEnv }) {
   const { api } = env;
   const mac = env.mac ?? isMac();
   const initial = useRef(recall());
+  const requested = useRef(requestedView());
+  useEffect(() => {
+    try {
+      window.localStorage.removeItem(OPEN_KEY);
+    } catch {
+      // Nothing to remove.
+    }
+  }, []);
   const [sort, setSort] = useState<SortMode>(initial.current.sort);
-  const [view, setView] = useState<View>(initial.current.view ?? { kind: "all" });
+  const [view, setView] = useState<View>(requested.current ?? initial.current.view ?? { kind: "all" });
   const [filter, setFilter] = useState("");
   const [selection, setSelection] = useState<Selection>(
     initial.current.snippet ? single(initial.current.snippet) : NO_SELECTION,
@@ -186,7 +218,16 @@ export function Library({ env }: { env: LibraryEnv }) {
   const scopeName = folder?.name ?? tag?.name ?? "All snippets";
   const filterLabel = folder || tag ? `Filter ${scopeName}` : "Filter snippets";
   const listLabel = folder || tag ? `Snippets in ${scopeName}` : "All snippets";
-  const broken = useMemo(() => data.rows.filter((r) => isTemplateError(r.broken)).length, [data.rows]);
+  const healthOpen = view.kind === "health";
+  const report = useHealth(env, data.change.n, healthOpen);
+  // The badge counts what library health lists; until it has answered, the broken rows.
+  const broken = useMemo(
+    () =>
+      report.health
+        ? affectedCount(report.health)
+        : data.rows.filter((r) => isTemplateError(r.broken)).length,
+    [report.health, data.rows],
+  );
 
   useEffect(() => {
     document.title =
@@ -218,6 +259,20 @@ export function Library({ env }: { env: LibraryEnv }) {
         }),
     );
   }, [env, api]);
+
+  // "Quit Iamb" from the tray asks about unsaved edits as the close does (the Phase 3 UI
+  // review's finding 17).
+  useEffect(() => {
+    if (!env.onQuitRequested) return;
+    return env.onQuitRequested(() =>
+      guard(() => {
+        closing.current = true;
+        void env.quit?.().catch(() => {
+          closing.current = false;
+        });
+      }),
+    );
+  }, [env, guard]);
 
   // ---- Choosing what the editor shows -----------------------------------------------------
   const changeSelection = useCallback(
@@ -251,6 +306,25 @@ export function Library({ env }: { env: LibraryEnv }) {
 
   const focusList = () => requestAnimationFrame(() => listEl.current?.focus());
 
+  // Focus is never lost (spec §5.6): the editor goes when Settings, Library health or the log
+  // open from a shortcut, and the keyboard would be left on nothing. It goes to the view's title
+  // (or back to the list when the list returns); a view opened from the sidebar keeps the focus
+  // on the button that opened it.
+  const viewTitle = useRef<HTMLHeadingElement>(null);
+  const firstView = useRef(true);
+  useEffect(() => {
+    if (firstView.current) {
+      firstView.current = false;
+      return;
+    }
+    const frame = requestAnimationFrame(() => {
+      const now = document.activeElement;
+      if (now && now !== document.body) return;
+      (viewTitle.current ?? listEl.current)?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [view.kind]);
+
   const openDraft = useCallback(
     (seed: DraftSeed) => {
       guard(() => {
@@ -280,17 +354,44 @@ export function Library({ env }: { env: LibraryEnv }) {
     });
   }, [data.folders, folder, openDraft, tag]);
 
-  const rowsById = useRef(data.rowsById);
-  rowsById.current = data.rowsById;
+  /** "New snippet labelled “…”" from the search palette: a draft with that label. */
+  const newLabelled = useCallback(
+    (label: string) => {
+      const target =
+        folder ??
+        data.folders.find((f) => f.parentId === null) ??
+        data.folders[0];
+      if (!target) return;
+      openDraft({
+        key: nextKey("d"),
+        folderId: target.id,
+        abbreviation: target.defaults.abbreviationPrefix ?? "",
+        label,
+        body: "",
+        trigger: target.defaults.trigger ?? "delimiter",
+        caseMode: target.defaults.caseMode ?? "insensitive",
+        tags: tag ? [tag.id] : [],
+      });
+    },
+    [data.folders, folder, openDraft, tag],
+  );
+
   const closeEditor = useCallback(() => {
     guard(() => {
       setDraft(null);
       setEditorKey("none");
-      // A snippet that went while it was open was kept selected until now.
-      setSelection((s) => (s.ids.size === 1 && s.active !== null && !rowsById.current.has(s.active) ? NO_SELECTION : s));
       focusList();
     });
   }, [guard]);
+
+  // The open snippet no longer exists (the editor learnt it from the service): it was kept
+  // selected so that the editor could say so, and goes now. Nothing is left to save.
+  const dropGone = useCallback(() => {
+    setDraft(null);
+    setEditorKey("none");
+    setSelection((s) => (s.ids.size === 1 ? NO_SELECTION : s));
+    focusList();
+  }, []);
 
   const duplicate = useCallback(
     (s: Snippet) => {
@@ -328,6 +429,8 @@ export function Library({ env }: { env: LibraryEnv }) {
     },
     [data.rowsById, guard, view],
   );
+
+  usePaletteRequests(env.palette, data.ready, { onNew: newLabelled, onShow: showSnippet });
 
   // ---- Saving, deleting, turning on and off ----------------------------------------------------
   const onSaved = useCallback(
@@ -368,25 +471,53 @@ export function Library({ env }: { env: LibraryEnv }) {
       if (ids.length === 0) return;
       const set = new Set(ids);
       const next = neighbourOf(set);
-      let full: Snippet[] = [];
-      try {
-        // What Undo needs: the whole row, with its tags.
-        full = (await Promise.all(ids.map((id) => api.getSnippet(id).catch(() => null)))).filter(
-          (s): s is Snippet => s !== null,
-        );
-        await Promise.all(full.map((s) => api.deleteSnippet(s.id)));
-      } catch (e) {
-        showToast([{ text: describeFailure(e, "delete_snippet").text }]);
+      // What Undo needs: the whole row, with its tags. A row that cannot be read is not deleted
+      // (there would be nothing to undo with) and counts as failed.
+      const read = await Promise.allSettled(ids.map((id) => api.getSnippet(id)));
+      const toDelete = read.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+      // Each delete on its own: one that fails must not hide the others, which are done
+      // (the Phase 3 UI review's finding 6).
+      const results = await Promise.allSettled(toDelete.map((s) => api.deleteSnippet(s.id)));
+      const full = toDelete.filter((_, i) => results[i]?.status === "fulfilled");
+      const failures: Array<{ id: string; reason: unknown }> = [];
+      read.forEach((r, i) => {
+        if (r.status === "rejected") failures.push({ id: ids[i] ?? "", reason: r.reason });
+      });
+      results.forEach((r, i) => {
+        const s = toDelete[i];
+        if (r.status === "rejected" && s) failures.push({ id: s.id, reason: r.reason });
+      });
+      const titleOf = (id: string): string => {
+        const row = data.rowsById.get(id);
+        return row ? rowTitle(row) : "";
+      };
+      const failed =
+        failures.length === 0
+          ? ""
+          : `${
+              failures.length === 1 && failures[0] && titleOf(failures[0].id)
+                ? `“${titleOf(failures[0].id)}” could not be deleted`
+                : `${failures.length} ${failures.length === 1 ? "snippet" : "snippets"} could not be deleted`
+            }: ${describeFailure(failures[0]?.reason, "delete_snippet").text}`;
+      if (full.length === 0) {
+        if (failures.length > 0) showToast([{ text: describeFailure(failures[0]?.reason, "delete_snippet").text }]);
         return;
       }
-      if (full.length === 0) return;
       const label = full.length === 1 && full[0] ? rowTitle({ label: full[0].label, firstLine: full[0].body, abbreviation: full[0].abbreviation }) : "";
       setDraft(null);
-      setSelection(next ? single(next) : NO_SELECTION);
-      setEditorKey(next ? `snippet-${next}` : "none");
+      // What could not be deleted stays selected, so that the user sees what is left.
+      const left = failures.map((f) => f.id).filter((id) => data.rowsById.has(id));
+      if (left.length > 0) {
+        setSelection({ ids: new Set(left), active: left[0] ?? null, anchor: left[0] ?? null });
+        setEditorKey(left.length === 1 ? `snippet-${left[0]}` : "none");
+      } else {
+        setSelection(next ? single(next) : NO_SELECTION);
+        setEditorKey(next ? `snippet-${next}` : "none");
+      }
       focusList();
+      const deleted = full.length === 1 ? `Deleted “${label}”.` : `Deleted ${full.length} snippets.`;
       showToast(
-        [{ text: full.length === 1 ? `Deleted “${label}”.` : `Deleted ${full.length} snippets.` }],
+        [{ text: failed ? `${deleted} ${failed}` : deleted }],
         {
           label: "Undo",
           run: () => {
@@ -573,12 +704,14 @@ export function Library({ env }: { env: LibraryEnv }) {
   );
 
   // ---- Panes and shortcuts ------------------------------------------------------------------
-  const focusPane = (n: 0 | 1 | 2) => {
-    const name = ["sidebar", "list", "editor"][n];
+  const focusPane = (n: 0 | 1 | 2 | 3) => {
+    const name = ["sidebar", "list", "editor", "toast"][n];
     const pane = document.querySelector<HTMLElement>(`[data-pane="${name}"]`);
     if (!pane) return;
     const target =
-      n === 0
+      n === 3
+        ? pane.querySelector<HTMLElement>("button")
+        : n === 0
         ? (pane.querySelector<HTMLElement>("[data-nav-focus]") ?? pane.querySelector<HTMLElement>('[tabindex="0"], button'))
         : n === 1
           ? pane.querySelector<HTMLElement>('[role="listbox"]')
@@ -586,11 +719,15 @@ export function Library({ env }: { env: LibraryEnv }) {
     target?.focus();
   };
 
+  // F6 visits the panes, and the toast too while it offers an action (Undo), which a keyboard
+  // user would otherwise have to Tab to through the whole editor within 10 seconds.
   const cyclePane = (back: boolean) => {
-    const names = ["sidebar", "list", "editor"];
+    const names = ["sidebar", "list", "editor", "toast"];
+    const there = names.map((n) => document.querySelector(`[data-pane="${n}"]`) !== null);
+    const count = there[3] ? 4 : 3;
     const at = names.findIndex((n) => document.querySelector(`[data-pane="${n}"]`)?.contains(document.activeElement));
-    const next = (((at < 0 ? 0 : at) + (back ? -1 : 1)) % 3 + 3) % 3;
-    focusPane(next as 0 | 1 | 2);
+    const next = (((at < 0 ? 0 : at) + (back ? -1 : 1)) % count + count) % count;
+    focusPane(next as 0 | 1 | 2 | 3);
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
@@ -615,6 +752,10 @@ export function Library({ env }: { env: LibraryEnv }) {
     } else if (k === "s" && !e.shiftKey) {
       e.preventDefault();
       void editor.current?.save();
+    } else if (k === "k" && !e.shiftKey) {
+      // Find in all snippets: the search palette over this window (spec §5.2).
+      e.preventDefault();
+      if (online) void env.palette?.open().catch(() => undefined);
     } else if (k === "f" && !e.shiftKey) {
       e.preventDefault();
       filterInput.current?.focus();
@@ -737,20 +878,35 @@ export function Library({ env }: { env: LibraryEnv }) {
   const rightArea = (() => {
     if (view.kind === "settings" || view.kind === "diagnostics" || view.kind === "health") {
       return (
-        <section className="pane view-pane" aria-label={view.kind === "settings" ? "Settings" : view.kind === "health" ? "Library health" : "Why didn’t it expand?"}>
-          <h1 className="view-title">
+        <main className="pane view-pane" aria-label={view.kind === "settings" ? "Settings" : view.kind === "health" ? "Library health" : "Why didn’t it expand?"}>
+          <h1 className="view-title" ref={viewTitle} tabIndex={-1}>
             {view.kind === "settings" ? "Settings" : view.kind === "health" ? "Library health" : "Why didn’t it expand?"}
           </h1>
           {view.kind === "health" ? (
-            broken === 0 ? (
-              <p>
-                Nothing to fix. All {data.rows.length} {data.rows.length === 1 ? "snippet" : "snippets"} can expand.
-              </p>
-            ) : (
-              <p>
-                {broken} {broken === 1 ? "snippet" : "snippets"} will not expand. They carry a Broken badge in the list.
-              </p>
-            )
+            <HealthView
+              health={report.health}
+              error={report.error}
+              rows={data.rowsById}
+              total={data.rows.length}
+              onRetry={report.reload}
+              onOpen={(id) => {
+                guard(() => {
+                  setView({ kind: "all" });
+                  setFilter("");
+                  setDraft(null);
+                  setSelection(single(id));
+                  setEditorKey(`snippet-${id}`);
+                });
+              }}
+              onTurnOff={(id) => {
+                void api
+                  .setEnabled(id, false)
+                  .then(() => data.reload({ rows: true }))
+                  .then(() => report.reload())
+                  .catch((e: unknown) => showToast([{ text: describeFailure(e, "put_snippet").text }]));
+              }}
+              onDelete={(id) => void deleteSnippets([id]).then(() => report.reload())}
+            />
           ) : view.kind === "settings" ? (
             <SettingsView env={env} section={view.section} />
           ) : (
@@ -768,11 +924,12 @@ export function Library({ env }: { env: LibraryEnv }) {
               onOpenSettings={(section) => changeView({ kind: "settings", section })}
             />
           )}
-        </section>
+        </main>
       );
     }
     return (
-      <>
+      <main className="library-main">
+        <h1 className="visually-hidden">{listLabel}</h1>
         <ListPane
           listLabel={listLabel}
           filterLabel={filterLabel}
@@ -799,6 +956,7 @@ export function Library({ env }: { env: LibraryEnv }) {
           filter={filter}
           onFilter={setFilter}
           sort={sort}
+          canSortByUse={data.rows.some((r) => r.uses !== null)}
           onSort={setSort}
           selection={draft ? NO_SELECTION : selection}
           onSelection={changeSelection}
@@ -823,6 +981,7 @@ export function Library({ env }: { env: LibraryEnv }) {
             mac={mac}
             onSaved={onSaved}
             onClose={closeEditor}
+            onGone={dropGone}
             onDelete={deleteFromEditor}
             onDuplicate={duplicate}
             onShowSnippet={showSnippet}
@@ -831,7 +990,7 @@ export function Library({ env }: { env: LibraryEnv }) {
         ) : selection.ids.size > 1 ? (
           <section className="pane editor-pane center" aria-label="Snippet" data-pane="editor">
             <div className="empty">
-              <h3 className="empty-title">{selection.ids.size} snippets selected</h3>
+              <h2 className="empty-title">{selection.ids.size} snippets selected</h2>
               <div className="empty-actions">
                 <button type="button" className="button" onClick={() => void toggleEnabled([...selection.ids])}>
                   Turn off
@@ -847,7 +1006,7 @@ export function Library({ env }: { env: LibraryEnv }) {
             <p className="help">Select a snippet, or press {shortcutLabel({ key: "N" }, mac)} to make one.</p>
           </section>
         )}
-      </>
+      </main>
     );
   })();
 
@@ -894,7 +1053,7 @@ export function Library({ env }: { env: LibraryEnv }) {
       </div>
 
       <MenuHost menu={menu} onClose={() => setMenu(null)} />
-      <Toast toast={toast} onDismiss={dismissToast} />
+      <Toast toast={toast} onDismiss={dismissToast} fallback={focusList} />
 
       {leave && (
         <LeaveDialog

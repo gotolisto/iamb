@@ -17,19 +17,20 @@ use iamb_core::datetime::LocalDateTime;
 use iamb_core::engine::{Environment, ExclusionReason, FormSessionId, dry_run};
 use iamb_core::model::{
     Abbreviation, Folder, Id, Snippet, SnippetKind, SnippetTag, SyncMeta, Tag, Trigger,
-    fold_abbreviation, fold_char,
+    fold_abbreviation,
 };
 use iamb_core::sensitive::Sensitive;
 use iamb_core::template::{FormValues, overwrite};
 use iamb_ipc::{
     ChangedRows, ConflictPolicy, ErrorBody, ErrorCode, ExcludedEntry, GrantState, HealthReport,
     RequestBody, ResponseBody, Role, SUMMARY_LINE_CHARS, SearchField, SearchHit, ShadowedEntry,
-    SnippetQuery, SnippetSummary, TAG_COLORS, TagEntry, TransferFormat, WireAction, WireDiagnostic,
-    WireExclusion, WireValues,
+    SnippetQuery, SnippetSummary, TAG_COLORS, TagEntry, TransferFormat, UnusedEntry, WireAction,
+    WireAttachment, WireDiagnostic, WireExclusion, WireValues,
 };
 use iamb_platform::{Chord, INJECTION_SETTINGS_KEY};
+use iamb_store::health::{self, Why};
 use iamb_store::transfer::{self, Format, OnConflict, TransferError};
-use iamb_store::{AppExclusion, ListOptions, StoreError};
+use iamb_store::{AppExclusion, ListOptions, StoreError, Usage};
 
 use super::store::{StoreCtx, new_id};
 use super::{EngineMsg, Explicit, FocusMsg, PALETTE_HOTKEY, Shared};
@@ -68,9 +69,9 @@ fn store_error(e: &StoreError) -> ErrorBody {
     match e {
         StoreError::AbbreviationConflict { .. } => err(ErrorCode::Conflict, e.to_string()),
         StoreError::NotFound { .. } => err(ErrorCode::NotFound, e.to_string()),
-        StoreError::FolderTooDeep { .. } | StoreError::InvalidData(_) => {
-            err(ErrorCode::Invalid, e.to_string())
-        }
+        StoreError::FolderTooDeep { .. }
+        | StoreError::InvalidData(_)
+        | StoreError::Attachment(_) => err(ErrorCode::Invalid, e.to_string()),
         _ => err(ErrorCode::Internal, e.to_string()),
     }
 }
@@ -169,7 +170,7 @@ pub(crate) fn handle(shared: &Arc<Shared>, _role: Role, body: RequestBody) -> An
             query,
             offset,
             limit,
-        } => summaries(&view, &query, offset, limit),
+        } => summaries(shared, &view, &query, offset, limit),
         RequestBody::CheckAbbreviation {
             abbreviation,
             trigger,
@@ -230,14 +231,32 @@ pub(crate) fn handle(shared: &Arc<Shared>, _role: Role, body: RequestBody) -> An
                 snippets: u64::try_from(s.snippets).unwrap_or(u64::MAX),
             })
         }
-        RequestBody::Health {} => Ok(ResponseBody::Health {
-            report: health(&view),
+        RequestBody::Health {} => health(shared, &view),
+        RequestBody::RecentSnippets { limit } => recent(shared, &view, limit),
+        RequestBody::ResetUsage {} => write(shared, |ctx| {
+            let n = ctx
+                .store
+                .reset_usage(clock::timestamp())
+                .map_err(|e| store_error(&e))?;
+            // Counts only: which snippets they were is the user's business (ADR-0015).
+            Ok(n)
+        })
+        .and_then(|n| {
+            shared
+                .logger
+                .info(format_args!("usage reset: {n} snippets had counts"));
+            done()
         }),
         // Only snippets written by other members need review, and other members' snippets
         // arrive with sync (task 4.4); until then there are none.
         RequestBody::ListPendingReviews {} => Ok(ResponseBody::PendingReviews {
             reviews: Vec::new(),
         }),
+        RequestBody::PutAttachment {
+            path,
+            file_name,
+            folder,
+        } => put_attachment(shared, &view, &path, file_name, folder),
         RequestBody::ApproveSnippet { id, rev } => write(shared, move |ctx| {
             ctx.store
                 .put_approval(id, rev, clock::timestamp())
@@ -355,9 +374,22 @@ pub(crate) fn handle(shared: &Arc<Shared>, _role: Role, body: RequestBody) -> An
             let (tokens, error) = templates::parse(&view.snapshot, &source);
             Ok(ResponseBody::TemplateTokens { tokens, error })
         }
-        RequestBody::RenderPreview { source, values } => {
-            let answer =
-                templates::preview(&view.snapshot, &source, values.expose(), (shared.clock)());
+        RequestBody::RenderPreview {
+            source,
+            values,
+            rich,
+        } => {
+            let answer = if rich {
+                templates::preview_rich(
+                    &view.snapshot,
+                    &source,
+                    values.expose(),
+                    (shared.clock)(),
+                    &|sha| crate::rich::attachment_info(&shared.data_root, view.profile, sha),
+                )
+            } else {
+                templates::preview(&view.snapshot, &source, values.expose(), (shared.clock)())
+            };
             Ok(ResponseBody::Preview {
                 parts: answer.parts,
                 cursor: answer.cursor,
@@ -541,6 +573,8 @@ fn put_snippet(shared: &Shared, view: &View, snippet: Snippet, tags: Option<Vec<
                         )?;
                     }
                 }
+                // The attachments its Markdown references (task 3.8).
+                tx.sync_snippet_attachments(id, &mut new_id, now)?;
                 Ok(meta)
             })
             .map_err(|e| store_error(&e))?;
@@ -551,6 +585,86 @@ fn put_snippet(shared: &Shared, view: &View, snippet: Snippet, tags: Option<Vec<
         Ok(meta)
     })
     .map(|meta| ResponseBody::Saved { meta })
+}
+
+/// The bytes of the file a `PutAttachment` names, at most the media limit (the Phase 3 UI
+/// review's finding 10). Only a regular file is read: a FIFO or a device would pass a size check
+/// (its length is 0) and then block this thread, or never end. The kind is checked before the
+/// file is opened (opening a FIFO waits for a writer) and again on the open handle, and the
+/// read stops one byte past the limit whatever the length said.
+fn read_attachment_file(path: &std::path::Path) -> Result<Vec<u8>, ErrorBody> {
+    use std::io::Read;
+    let limit = iamb_store::attachments::MAX_MEDIA_BYTES;
+    let too_large = |size: u64| {
+        store_error(&StoreError::Attachment(
+            iamb_store::AttachmentError::TooLarge { size, limit },
+        ))
+    };
+    let unreadable = || err(ErrorCode::NotFound, "the file cannot be read");
+    let not_a_file = || err(ErrorCode::Invalid, "the attachment must be a regular file");
+    let meta = std::fs::metadata(path).map_err(|_| unreadable())?;
+    if !meta.is_file() {
+        return Err(not_a_file());
+    }
+    if meta.len() > limit {
+        return Err(too_large(meta.len()));
+    }
+    let file = std::fs::File::open(path).map_err(|_| unreadable())?;
+    if !file.metadata().map_err(|_| unreadable())?.is_file() {
+        return Err(not_a_file());
+    }
+    let mut bytes = Vec::new();
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| unreadable())?;
+    if bytes.len() as u64 > limit {
+        return Err(too_large(bytes.len() as u64));
+    }
+    Ok(bytes)
+}
+
+/// `PutAttachment` (task 3.8): reads the file here, on the client's reader thread, and writes
+/// it on the store thread.
+fn put_attachment(
+    shared: &Shared,
+    view: &View,
+    path: &std::path::Path,
+    file_name: String,
+    folder: Id,
+) -> Answer {
+    let Some(profile) = view
+        .folders
+        .iter()
+        .find(|f| f.meta.id == folder)
+        .map(|f| f.profile_id)
+    else {
+        return Err(err(
+            ErrorCode::Invalid,
+            "the folder is not a folder of the personal profile",
+        ));
+    };
+    if !path.is_absolute() {
+        return Err(err(
+            ErrorCode::Invalid,
+            "the attachment path must be absolute",
+        ));
+    }
+    let bytes = read_attachment_file(path)?;
+    write(shared, move |ctx| {
+        let row = ctx
+            .store
+            .add_attachment(new_id(), profile, &bytes, &file_name, clock::timestamp())
+            .map_err(|e| store_error(&e))?;
+        let path = ctx.store.attachment_path(profile, &row.sha256);
+        Ok(WireAttachment {
+            sha256: row.sha256,
+            mime: row.mime,
+            size: row.size,
+            file_name: row.file_name,
+            path,
+        })
+    })
+    .map(|attachment| ResponseBody::Attachment { attachment })
 }
 
 fn put_folder(shared: &Shared, view: &View, folder: Folder) -> Answer {
@@ -685,7 +799,13 @@ fn delete_tag(shared: &Shared, view: &View, id: Id) -> Answer {
 }
 
 /// One page of summaries (no bodies beyond the first line).
-fn summaries(view: &View, query: &SnippetQuery, offset: u32, limit: u32) -> Answer {
+fn summaries(
+    shared: &Shared,
+    view: &View,
+    query: &SnippetQuery,
+    offset: u32,
+    limit: u32,
+) -> Answer {
     if limit == 0 || limit > MAX_SUMMARIES {
         return Err(err(
             ErrorCode::Invalid,
@@ -699,6 +819,14 @@ fn summaries(view: &View, query: &SnippetQuery, offset: u32, limit: u32) -> Answ
         .map(|e| (e.snippet, &e.reason))
         .collect();
     let all: Vec<&Snippet> = matching(view, query).collect();
+    // Usage is device-local and is not part of the view (it changes at every expansion without
+    // a rebuild), so it is read from the store, once per page.
+    let usage: HashMap<Id, Usage> = write(shared, |ctx| {
+        ctx.store.list_usage().map_err(|e| store_error(&e))
+    })?
+    .into_iter()
+    .map(|u| (u.snippet_id, u))
+    .collect();
     let start = usize::try_from(offset).unwrap_or(usize::MAX).min(all.len());
     let end = start
         .saturating_add(usize::try_from(limit).unwrap_or(usize::MAX))
@@ -735,6 +863,8 @@ fn summaries(view: &View, query: &SnippetQuery, offset: u32, limit: u32) -> Answ
                 enabled: s.enabled,
                 tags: view.tags_of(s.meta.id).to_vec(),
                 broken,
+                uses: Some(usage.get(&s.meta.id).map_or(0, |u| u.count)),
+                last_used: usage.get(&s.meta.id).and_then(|u| u.last_used),
                 updated_at: s.meta.updated_at,
             }
         })
@@ -879,105 +1009,126 @@ fn palette_hotkey(shared: &Shared, view: &View, value: Option<&str>) -> Result<(
     }
 }
 
-/// Where the case-folded `query` (as characters) first occurs in `text`, as a UTF-16 range of
-/// `text`: folding can turn one character into several, so each folded character remembers
-/// the range of the character it came from.
-fn folded_range(text: &str, query: &[char]) -> Option<[usize; 2]> {
-    if query.is_empty() {
-        return None;
-    }
-    let mut folded: Vec<(char, usize, usize)> = Vec::new();
-    let mut at = 0;
-    for c in text.chars() {
-        let end = at + c.len_utf16();
-        folded.extend(fold_char(c).map(|f| (f, at, end)));
-        at = end;
-    }
-    folded
-        .windows(query.len())
-        .find(|w| w.iter().map(|(c, _, _)| *c).eq(query.iter().copied()))
-        .map(|w| [w[0].1, w[w.len() - 1].2])
-}
-
-/// The palette search over the snapshot: case-folded substring matching on the abbreviation,
-/// the label, the body and the names of the snippet's tags, best first; each hit says which
-/// field matched and where. Task 3.6 replaces it with the fuzzy search of
-/// `iamb-core`.
+/// The palette search over the snapshot: fuzzy matching on the abbreviation, the label, the
+/// body and the names of the snippet's tags, best first; each hit says which field matched and
+/// where (`iamb_core::search`, which holds the ranking).
 fn search(view: &View, query: &str, limit: usize) -> Vec<SearchHit> {
-    let q = fold_abbreviation(query.trim());
-    if q.is_empty() {
-        return Vec::new();
-    }
-    let q_chars: Vec<char> = q.chars().collect();
     let tag_names: HashMap<Id, &str> = view
         .tags
         .iter()
         .map(|t| (t.meta.id, t.name.as_str()))
         .collect();
-    let mut hits: Vec<SearchHit> = view
-        .snippets()
-        .filter_map(|s| {
-            let abbr = s.abbreviation.fold_key();
-            let (score, field, text) = if abbr == q {
-                (100, SearchField::Abbreviation, s.abbreviation.as_str())
-            } else if abbr.starts_with(&q) {
-                (80, SearchField::Abbreviation, s.abbreviation.as_str())
-            } else if abbr.contains(&q) {
-                (60, SearchField::Abbreviation, s.abbreviation.as_str())
-            } else if fold_abbreviation(&s.label).contains(&q) {
-                (40, SearchField::Label, s.label.as_str())
-            } else if fold_abbreviation(&s.body).contains(&q) {
-                (20, SearchField::Body, s.body.as_str())
-            } else {
-                let name = view
-                    .tags_of(s.meta.id)
-                    .iter()
-                    .filter_map(|t| tag_names.get(t))
-                    .find(|name| fold_abbreviation(name).contains(&q))?;
-                (10, SearchField::Tag, *name)
-            };
-            Some(SearchHit {
-                snippet: s.meta.id,
-                score,
-                field: Some(field),
-                ranges: folded_range(text, &q_chars).into_iter().collect(),
-            })
+    let docs = view.snippets().map(|s| iamb_core::search::Doc {
+        id: s.meta.id,
+        abbreviation: s.abbreviation.as_str(),
+        label: s.label.as_str(),
+        body: s.body.as_str(),
+        tags: view.tags_of(s.meta.id),
+    });
+    iamb_core::search::search(query, limit, docs, &|id| tag_names.get(&id).copied())
+        .into_iter()
+        .map(|h| SearchHit {
+            snippet: h.id,
+            score: h.score,
+            field: Some(match h.field {
+                iamb_core::search::Field::Abbreviation => SearchField::Abbreviation,
+                iamb_core::search::Field::Label => SearchField::Label,
+                iamb_core::search::Field::Body => SearchField::Body,
+                iamb_core::search::Field::Tag => SearchField::Tag,
+            }),
+            ranges: h.ranges,
         })
-        .collect();
-    hits.sort_by_key(|h| std::cmp::Reverse(h.score));
-    hits.truncate(limit);
-    hits
+        .collect()
 }
 
-fn health(view: &View) -> HealthReport {
-    HealthReport {
-        shadowed: view
-            .snapshot
-            .shadowed()
-            .into_iter()
-            .map(|s| ShadowedEntry {
-                by: s.by,
-                hidden: s.hidden,
-            })
-            .collect(),
-        excluded: view
-            .snapshot
-            .excluded()
-            .iter()
-            .map(|e| match &e.reason {
-                ExclusionReason::Duplicate { kept } => ExcludedEntry {
-                    snippet: e.snippet,
-                    reason: "duplicate".to_owned(),
-                    kept: Some(*kept),
-                },
-                ExclusionReason::Template(t) => ExcludedEntry {
-                    snippet: e.snippet,
-                    reason: t.code().to_owned(),
-                    kept: None,
-                },
-            })
-            .collect(),
+/// Library health (spec §4.9): the findings of [`iamb_store::health`] over the view and the
+/// device-local usage.
+fn health(shared: &Shared, view: &View) -> Answer {
+    let (usage, since) = write(shared, |ctx| {
+        let usage = ctx.store.list_usage().map_err(|e| store_error(&e))?;
+        let since = ctx.store.usage_reset_at().map_err(|e| store_error(&e))?;
+        Ok((usage, since))
+    })?;
+    let found = health::analyse(
+        &view.snapshot,
+        view.snippets(),
+        &usage,
+        since,
+        clock::timestamp(),
+    );
+    Ok(ResponseBody::Health {
+        report: HealthReport {
+            shadowed: found
+                .shadowed
+                .into_iter()
+                .map(|s| ShadowedEntry {
+                    by: s.by,
+                    hidden: s.hidden,
+                })
+                .collect(),
+            excluded: found
+                .excluded
+                .into_iter()
+                .map(|e| match e.why {
+                    Why::Duplicate { kept } => ExcludedEntry {
+                        snippet: e.snippet,
+                        reason: "duplicate".to_owned(),
+                        kept: Some(kept),
+                        reference: None,
+                        included: None,
+                    },
+                    Why::Template {
+                        code,
+                        reference,
+                        included,
+                    } => ExcludedEntry {
+                        snippet: e.snippet,
+                        reason: code.to_owned(),
+                        kept: None,
+                        reference,
+                        included,
+                    },
+                })
+                .collect(),
+            unused: found
+                .unused
+                .into_iter()
+                .map(|u| UnusedEntry {
+                    snippet: u.snippet,
+                    last_used: u.last_used,
+                })
+                .collect(),
+        },
+    })
+}
+
+/// The snippets used most recently, newest first (the palette with nothing typed).
+fn recent(shared: &Shared, view: &View, limit: u32) -> Answer {
+    if limit == 0 || limit > MAX_SUMMARIES {
+        return Err(err(
+            ErrorCode::Invalid,
+            format!("the limit must be 1 to {MAX_SUMMARIES}"),
+        ));
     }
+    // More than asked for: a snippet that left the personal library since is skipped.
+    let want = usize::try_from(limit).unwrap_or(usize::MAX);
+    let used = write(shared, move |ctx| {
+        ctx.store
+            .recent_usage(want.saturating_mul(2).saturating_add(8))
+            .map_err(|e| store_error(&e))
+    })?;
+    let hits = used
+        .into_iter()
+        .filter(|u| view.snapshot.snippet(u.snippet_id).is_some())
+        .take(want)
+        .map(|u| SearchHit {
+            snippet: u.snippet_id,
+            score: 0,
+            field: None,
+            ranges: Vec::new(),
+        })
+        .collect();
+    Ok(ResponseBody::SearchResults { hits })
 }
 
 struct DryEnv {

@@ -22,6 +22,8 @@ workspace = true
 # Architecture §2: the IPC client and the platform crates, never the engine or the store.
 # `iamb-core` only for the model types that travel in messages (ids, snippets).
 [dependencies]
+# The preview of a formatted snippet embeds its images as data URIs (`template`, task 3.8).
+base64 = "0.23.1"
 iamb-core = { path = "../../../crates/iamb-core" }
 iamb-ipc = { path = "../../../crates/iamb-ipc" }
 iamb-platform = { path = "../../../crates/iamb-platform" }

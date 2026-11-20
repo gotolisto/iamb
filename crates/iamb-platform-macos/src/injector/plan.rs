@@ -11,7 +11,7 @@
 //! | `PressKey { key, shift, times }` | `times` presses of that key, with Shift when asked |
 //! | `MoveCaretBack(n)` | `n` presses of Left |
 //! | `Wait(ms)` | a [`Burst::Wait`] |
-//! | `Paste(content)` | a [`Burst::Paste`] |
+//! | `Paste(content)` | a [`Burst::Paste`]; with the `keys` method, its plain text typed instead (an application that must not be pasted into gets a rich snippet's plain-text version, as on Windows) |
 //!
 //! Consecutive key operations form one [`Burst::Events`]; a wait or a paste ends a burst. macOS
 //! cannot post a batch that real keys cannot interleave (architecture §4.6), so a burst is
@@ -235,7 +235,10 @@ impl<'s> Planner<'s> {
         match step {
             InjectionStep::DeleteBack(n) => self.press(KeyPress::DELETE, *n),
             InjectionStep::TypeText(text) => self.type_text(text),
-            InjectionStep::Paste(content) => self.paste(content.clone()),
+            InjectionStep::Paste(content) => match &content.text {
+                Some(text) if self.strategy.method == Method::Keys => self.type_text(text),
+                _ => self.paste(content.clone()),
+            },
             InjectionStep::PressKey { key, shift, times } => {
                 self.press(KeyPress::named(*key, *shift), usize::from(*times));
             }
@@ -386,6 +389,26 @@ mod tests {
             "paste Some(\"p\") Some(\"<b>p</b>\") settle 250ms"
         );
         assert!(lines[4].ends_with("«c»"));
+    }
+
+    #[test]
+    fn a_paste_under_the_keys_method_types_its_plain_text() {
+        let keys = Strategy {
+            method: Method::Keys,
+            ..Strategy::DEFAULT
+        };
+        let steps = [InjectionStep::Paste(ClipboardContent::rich(
+            "bold",
+            "<b>bold</b>",
+        ))];
+        let bursts = plan(0, &steps, &keys);
+        assert_eq!(script(&bursts), ["events(gap 0ms): «bold»"]);
+        let files = ClipboardContent {
+            files: vec![std::path::PathBuf::from("/tmp/a.pdf")],
+            ..ClipboardContent::default()
+        };
+        let bursts = plan(0, &[InjectionStep::Paste(files)], &keys);
+        assert!(matches!(bursts[..], [Burst::Paste { .. }]));
     }
 
     #[test]

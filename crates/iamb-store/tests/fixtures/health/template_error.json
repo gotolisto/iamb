@@ -1,0 +1,67 @@
+{
+ "description": "Content that does not parse or resolve: an unclosed macro, an unbalanced if, an unknown date code, a field used before it exists. A snippet that includes a broken one is reported too, naming the included snippet.",
+ "now_day": 1000,
+ "snippets": [
+  {
+   "key": "unclosed",
+   "abbr": ";unc",
+   "body": "hello {date",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "unbalanced",
+   "abbr": ";unb",
+   "body": "{if field=Name is=yes}x",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "bad_format",
+   "abbr": ";fmt",
+   "body": "{date fmt=\"%Q\"}",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "undefined_field",
+   "abbr": ";fld",
+   "body": "{if field=Missing is=yes}x{endif}",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "fine",
+   "abbr": ";fine",
+   "body": "fine {date}",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "includes_broken",
+   "abbr": ";inc",
+   "body": "see {snippet abbr=\";unc\"}",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "off_and_broken",
+   "abbr": ";offb",
+   "body": "broken {",
+   "enabled": false
+  }
+ ],
+ "expect": [
+  "error unclosed E_UNCLOSED_MACRO",
+  "error unbalanced E_UNBALANCED_IF",
+  "error bad_format E_BAD_FORMAT",
+  "error undefined_field E_FIELD_UNDEFINED",
+  "error includes_broken E_UNCLOSED_MACRO in=;unc"
+ ]
+}

@@ -79,6 +79,9 @@ pub struct Service {
     pub worker: Option<Worker>,
     /// How long one `PanelFocus { shown: true }` holds in the worker; its default when `None`.
     pub panel_focus_lease: Option<Duration>,
+    /// How long an acknowledged form stays open in the worker without another `FormAck`; its
+    /// default when `None`.
+    pub form_lease: Option<Duration>,
 }
 
 impl Service {
@@ -101,6 +104,7 @@ impl Service {
             endpoint,
             worker: None,
             panel_focus_lease: lease,
+            form_lease: None,
         };
         service.restart();
         service
@@ -121,6 +125,9 @@ impl Service {
         config.logger = Arc::new(ServiceLogger::open(&dirs.logs(), "worker"));
         if let Some(lease) = self.panel_focus_lease {
             config.panel_focus_lease = lease;
+        }
+        if let Some(lease) = self.form_lease {
+            config.form_lease = lease;
         }
         let worker = Worker::start(config).expect("worker starts");
         worker.settle();

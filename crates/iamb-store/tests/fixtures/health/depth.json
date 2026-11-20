@@ -1,0 +1,89 @@
+{
+ "description": "Snippets nested more than 8 deep: ;c1 includes ;c2 ... ;c10. Only ;c1 is over the limit (eight below it is allowed).",
+ "now_day": 1000,
+ "snippets": [
+  {
+   "key": "c1",
+   "abbr": ";c1",
+   "body": "{snippet abbr=\";c2\"}",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "c2",
+   "abbr": ";c2",
+   "body": "{snippet abbr=\";c3\"}",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "c3",
+   "abbr": ";c3",
+   "body": "{snippet abbr=\";c4\"}",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "c4",
+   "abbr": ";c4",
+   "body": "{snippet abbr=\";c5\"}",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "c5",
+   "abbr": ";c5",
+   "body": "{snippet abbr=\";c6\"}",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "c6",
+   "abbr": ";c6",
+   "body": "{snippet abbr=\";c7\"}",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "c7",
+   "abbr": ";c7",
+   "body": "{snippet abbr=\";c8\"}",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "c8",
+   "abbr": ";c8",
+   "body": "{snippet abbr=\";c9\"}",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "c9",
+   "abbr": ";c9",
+   "body": "{snippet abbr=\";c10\"}",
+   "used": {
+    "day": 990
+   }
+  },
+  {
+   "key": "c10",
+   "abbr": ";c10",
+   "body": "end",
+   "used": {
+    "day": 990
+   }
+  }
+ ],
+ "expect": [
+  "error c1 E_TOO_DEEP ref=;c10 in=;c9"
+ ]
+}

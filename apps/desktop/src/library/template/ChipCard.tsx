@@ -91,10 +91,10 @@ export function ChipCard(props: ChipCardProps) {
       style={position ? { top: position.top, left: position.left } : undefined}
       onKeyDown={onKeyDown}
     >
-      <h5 id={titleId}>
+      <h3 id={titleId}>
         <TplIcon name={chipIcon(macro)} />
         {TITLES[macro.name]}
-      </h5>
+      </h3>
       <Settings {...props} />
       <div className="tpl-actions">
         <button type="button" className="tpl-btn tpl-quiet" onClick={onRemove}>

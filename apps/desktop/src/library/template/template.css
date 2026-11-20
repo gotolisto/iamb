@@ -250,7 +250,7 @@
   box-shadow: var(--shadow-popover);
 }
 
-.tpl-card h5 {
+.tpl-card h3 {
   display: flex;
   gap: var(--space-2);
   align-items: center;
@@ -508,4 +508,65 @@ textarea.tpl-input {
 .tpl-chip.is-selected::selection,
 .tpl-chip.is-selected ::selection {
   background: transparent;
+}
+
+/* Formatted snippets (task 3.8): the formatting toolbar and the formatted preview, which shows
+   the service's sanitised HTML as a mail app would. */
+.tpl-format-bar {
+  margin-bottom: var(--space-1);
+}
+
+.tpl-formatted {
+  font: var(--type-body);
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.tpl-formatted > :first-child {
+  margin-top: 0;
+}
+
+.tpl-formatted > :last-child {
+  margin-bottom: 0;
+}
+
+.tpl-formatted p,
+.tpl-formatted ul,
+.tpl-formatted ol,
+.tpl-formatted blockquote,
+.tpl-formatted pre,
+.tpl-formatted table {
+  margin: 0 0 var(--space-2);
+}
+
+.tpl-formatted ul,
+.tpl-formatted ol {
+  padding-inline-start: var(--space-5);
+}
+
+.tpl-formatted blockquote {
+  padding-inline-start: var(--space-3);
+  border-inline-start: var(--size-border) solid var(--color-border-subtle);
+  color: var(--color-text-secondary);
+}
+
+.tpl-formatted a {
+  color: var(--color-accent-text);
+}
+
+.tpl-formatted img {
+  max-width: 100%;
+  height: auto;
+  vertical-align: middle;
+}
+
+.tpl-formatted code,
+.tpl-formatted pre {
+  font-family: var(--font-family-mono);
+}
+
+.tpl-formatted th,
+.tpl-formatted td {
+  padding: var(--space-1) var(--space-2);
+  border: var(--size-border) solid var(--color-border-subtle);
 }

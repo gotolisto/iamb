@@ -114,6 +114,13 @@ const REASONS: Record<string, Reason> = {
   typed_during_injection: {
     title: (c) => `Keys you typed while ${quoted(c)} was being typed may be out of order`,
   },
+  // Task 3.8; not in the specification's table, which predates formatted snippets.
+  attachment_missing: {
+    title: (c) => `${quoted(c)} was typed without its formatting`,
+    detail: () =>
+      "An image or file it shows is not on this computer, so Iamb typed the plain text instead.",
+    action: "open_snippet",
+  },
 
   // Forms.
   form_open: {
@@ -132,6 +139,16 @@ const REASONS: Record<string, Reason> = {
   form_ui_host_gone: {
     title: () => "A fill-in form was closed",
     detail: () => "Iamb's window process stopped while the form was open. Nothing was typed. Type the abbreviation again.",
+  },
+  // Not in the specification's table (the Phase 3 UI review's finding 1): a form whose window
+  // was closed, or whose app quit, ends instead of waiting for ever.
+  form_target_gone: {
+    title: (c) => `${quoted(c)} was not inserted: its window was closed`,
+    detail: () => "Your answers are kept for 30 minutes. Fill in the form again where the text should go.",
+  },
+  form_expired: {
+    title: () => "A fill-in form was closed",
+    detail: () => "Iamb's window process stopped answering while the form was open. Nothing was typed. Type the abbreviation again.",
   },
   no_last_form: fixed("There is no earlier form to fill in again", "Answers are kept for 30 minutes."),
 

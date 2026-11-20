@@ -522,6 +522,9 @@ fn enter_and_tab_as_delimiters_make_the_test_say_expands() {
     let (bridge, seen) = service.bridge();
     seen.wait_connected();
     settings::put_setting(&bridge, "delimiters", Some(" .\n")).expect("put");
+    // The answer comes before the engine has the new snapshot; `SettingsChanged` is sent after
+    // it is queued for the engine, ahead of any key typed from here.
+    seen.wait_event(|e| matches!(e, UiEvent::SettingsChanged {}));
     // The abbreviation followed by Enter now expands on a real keyboard too.
     service.type_text("omw\n");
     assert!(service.text().contains("on my way"));

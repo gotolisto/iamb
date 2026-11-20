@@ -19,13 +19,15 @@
 
 use iamb_core::datetime::LocalDateTime;
 use iamb_core::engine::Snapshot;
+use iamb_core::model::Sha256;
+use iamb_core::rich;
 use iamb_core::template::{
-    FieldKind, FormValues, Origin, RenderContext, RenderedAction, Template, TemplateError, Token,
-    tokens,
+    ErrorKind, FieldKind, FieldSpec, FormValues, Origin, RenderContext, RenderedAction, Template,
+    TemplateError, Token, tokens,
 };
 use iamb_ipc::{
     PreviewBlank, PreviewCursor, PreviewPart, TemplateAttribute, TemplateErrorInfo, TemplateToken,
-    WireField, WireValues,
+    WireAttachment, WireField, WireValues,
 };
 
 /// What the preview shows for clipboard content.
@@ -156,30 +158,8 @@ pub fn preview(
         Err(e) => return fail(&e),
     };
     let form = resolved.form();
-    let mut given = FormValues::new();
-    let mut sample = vec![false; form.len()];
-    for (i, field) in form.iter().enumerate() {
-        match values.get(&field.name) {
-            Some(v) => {
-                given.insert(field.name.clone(), v);
-            }
-            None if field.default.is_empty()
-                && matches!(field.kind, FieldKind::Text | FieldKind::Area) =>
-            {
-                given.insert(field.name.clone(), &field.name);
-                sample[i] = true;
-            }
-            None => {}
-        }
-    }
-    let settings = snapshot.settings();
-    let ctx = RenderContext {
-        now,
-        locale: settings.locale,
-        date_format: &settings.date_format,
-        time_format: &settings.time_format,
-        clipboard: Some(CLIPBOARD_SAMPLE),
-    };
+    let (given, sample) = preview_values(form, values);
+    let ctx = preview_context(snapshot, now);
     let rendered = match resolved.render_preview(&ctx, &given) {
         Ok(p) => p,
         Err(e) => {
@@ -236,6 +216,106 @@ pub fn preview(
         parts,
         cursor,
         fields: form.iter().map(WireField::from).collect(),
+        error: None,
+    }
+}
+
+/// The values a preview renders with: those given, and for a text or area field without a
+/// value or default its name as a sample (module docs). Also which fields show a sample.
+fn preview_values(form: &[FieldSpec], values: &WireValues) -> (FormValues, Vec<bool>) {
+    let mut given = FormValues::new();
+    let mut sample = vec![false; form.len()];
+    for (i, field) in form.iter().enumerate() {
+        match values.get(&field.name) {
+            Some(v) => {
+                given.insert(field.name.clone(), v);
+            }
+            None if field.default.is_empty()
+                && matches!(field.kind, FieldKind::Text | FieldKind::Area) =>
+            {
+                given.insert(field.name.clone(), &field.name);
+                sample[i] = true;
+            }
+            None => {}
+        }
+    }
+    (given, sample)
+}
+
+fn preview_context(snapshot: &Snapshot, now: LocalDateTime) -> RenderContext<'_> {
+    let settings = snapshot.settings();
+    RenderContext {
+        now,
+        locale: settings.locale,
+        date_format: &settings.date_format,
+        time_format: &settings.time_format,
+        clipboard: Some(CLIPBOARD_SAMPLE),
+    }
+}
+
+/// `RenderPreview` with `rich` (task 3.8): `source` rendered as a rich snippet. Each run of
+/// text between keys and waits is one [`PreviewPart::Formatted`]: the sanitised HTML the
+/// clipboard would carry and its plain-text version (`iamb_core::rich`), with the attachments
+/// its images reference as `attachment` describes them. `{cursor}` is ignored, so there is no
+/// cursor. Field values are inserted as text, so a sample shows the field's name in the
+/// formatting around it.
+#[must_use]
+pub fn preview_rich(
+    snapshot: &Snapshot,
+    source: &str,
+    values: &WireValues,
+    now: LocalDateTime,
+    attachment: &dyn Fn(&Sha256) -> WireAttachment,
+) -> PreviewAnswer {
+    let list = tokens(source);
+    let fail = |e: &TemplateError| PreviewAnswer {
+        error: Some(wire_error(source, &list, e)),
+        ..PreviewAnswer::default()
+    };
+    let resolved = match Template::parse(source).and_then(|t| t.resolve(snapshot)) {
+        Ok(r) => r,
+        Err(e) => return fail(&e),
+    };
+    let form = resolved.form();
+    let fields = || form.iter().map(WireField::from).collect();
+    let (given, _) = preview_values(form, values);
+    let ctx = preview_context(snapshot, now);
+    let rendered = match resolved.render_markdown(&ctx, &given) {
+        Ok(r) => r,
+        Err(e) => {
+            let mut answer = fail(&e);
+            answer.fields = fields();
+            return answer;
+        }
+    };
+    let mut parts = Vec::with_capacity(rendered.actions.len());
+    for action in &rendered.actions {
+        parts.push(match action {
+            RenderedAction::Text { text, .. } => match rich::render(text) {
+                Ok(content) if content.is_empty() => continue,
+                Ok(content) => PreviewPart::Formatted {
+                    attachments: content.attachments.iter().map(attachment).collect(),
+                    html: content.html,
+                    plain: content.plain,
+                },
+                Err(_) => {
+                    let mut answer = fail(&TemplateError::new(ErrorKind::OutputTooLarge));
+                    answer.fields = fields();
+                    return answer;
+                }
+            },
+            RenderedAction::Key { key, shift, times } => PreviewPart::Key {
+                key: key.as_str().to_owned(),
+                shift: *shift,
+                times: *times,
+            },
+            RenderedAction::Wait { ms } => PreviewPart::Wait { ms: *ms },
+        });
+    }
+    PreviewAnswer {
+        parts,
+        cursor: None,
+        fields: fields(),
         error: None,
     }
 }

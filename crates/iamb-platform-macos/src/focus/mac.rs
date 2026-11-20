@@ -137,6 +137,10 @@ impl FocusInspector for Platform {
         restore::restore(&System, *token, RESTORE_FOCUS_TIMEOUT)
     }
 
+    fn window_exists(&self, token: &FocusToken) -> bool {
+        system::window_exists(*token)
+    }
+
     fn allow_foreground(&self, _pid: u32) -> Result<()> {
         // The form and the palette are non-activating panels (§4.5 step 3): nobody has to
         // be allowed anything.

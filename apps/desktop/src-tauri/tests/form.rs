@@ -17,12 +17,17 @@ use std::time::{Duration, Instant};
 
 use common::{Endpoint, Service, T, id};
 use iamb_desktop::bridge::{Bridge, BridgeConfig, BridgeSink};
+use iamb_desktop::contract::FieldView;
 use iamb_desktop::contract::{ConnectionState, StatusView, UiEvent};
-use iamb_desktop::form::{FOCUS_LOST, FormConfig, FormController, FormEvent, PanelHost};
+use iamb_desktop::form::{
+    FOCUS_LOST, FORM_BUSY, FormConfig, FormController, FormEvent, PanelHost, TARGET_GONE,
+    TRIAL_TARGET,
+};
 use iamb_desktop::log::Logger;
 use iamb_desktop::timing::wall_ms;
 use iamb_ipc::{EventBody, RequestBody, ResponseBody, Role};
-use iamb_platform::{FocusInspector, PeerPolicy};
+use iamb_platform::mock::MockWindow;
+use iamb_platform::{FocusInspector, FocusToken, PeerPolicy};
 
 /// What the panel was asked to do.
 #[derive(Default)]
@@ -240,6 +245,55 @@ fn wait_text(service: &Service, want: &str) {
         service.worker().settle();
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+/// Types `brb ` into `window` until it expands (up to `T`): the engine expands typed
+/// abbreviations again, no form keeps them refused with `form_open`.
+fn wait_expands(service: &Service, window: FocusToken) {
+    let deadline = Instant::now() + T;
+    loop {
+        let before = service.os.text(window).expect("open");
+        service.type_text("brb ");
+        if service.os.text(window).expect("open") == format!("{before}be right back ") {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "typed abbreviations stay refused ({} form_open)",
+            diagnostic_codes(service)
+                .iter()
+                .filter(|c| *c == "form_open")
+                .count()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Opens a mail window, types `hi ` into it and waits for its form; returns the window and
+/// the session.
+fn form_in_mail(service: &Service, host: &Host) -> (FocusToken, u64) {
+    let mail = service
+        .os
+        .open_window(MockWindow::new("org.example.mail", 300));
+    service.os.focus(mail).expect("open");
+    service.worker().sync();
+    service.type_text("hi ");
+    (mail, host.panel.wait_shown(0))
+}
+
+/// "Fill in … again" (here from the editor) opens the form with `Ada`.
+fn reopens_with_ada(host: &Host) {
+    assert_eq!(host.form.last_submitted().as_deref(), Some("label hi"));
+    let before = host.panel.events();
+    host.form.reopen_last().expect("asked");
+    let again = host.panel.wait_shown(before);
+    let form = host.form.current().expect("open");
+    assert_eq!(
+        form.last_values.map(iamb_ipc::Secret::into_inner),
+        Some(values("Name", "Ada")),
+        "the answers were kept"
+    );
+    host.form.cancel(again).expect("cancelled");
 }
 
 fn diagnostic_codes(service: &Service) -> Vec<String> {
@@ -564,4 +618,220 @@ fn form_values_reach_no_log_through_the_form_flow() {
             path.display()
         );
     }
+}
+
+#[test]
+fn a_form_whose_app_quits_while_it_stepped_aside_ends_and_keeps_its_answers() {
+    let service = Service::start(Endpoint::Mock);
+    let host = Host::start(&service);
+    let (mail, session) = form_in_mail(&service, &host);
+    // The user switches to the editor: the panel loses the keyboard and steps aside.
+    service.os.focus(service.editor).expect("open");
+    host.form.keyboard(false);
+    host.panel.wait("stepped aside", |s| !s.visible);
+    // The mail app quits meanwhile.
+    service.os.close_window(mail);
+    host.panel.wait("asked for the answers", |s| {
+        s.events.contains(&FormEvent::TargetGone { session })
+    });
+    // The front end hands in what was typed so far.
+    host.form
+        .abandon(session, values("Name", "Ada"))
+        .expect("abandoned");
+    host.panel.wait("closed", |s| {
+        s.events.contains(&FormEvent::Closed { session })
+    });
+    assert!(!host.panel.visible());
+    assert!(host.form.current().is_none());
+    wait_expands(&service, service.editor);
+    assert_eq!(service.text(), "be right back ", "nothing else was typed");
+    assert!(diagnostic_codes(&service).contains(&"form_target_gone".to_owned()));
+    reopens_with_ada(&host);
+    host.stop();
+}
+
+#[test]
+fn a_form_whose_window_is_gone_ends_even_without_its_answers() {
+    let service = Service::start(Endpoint::Mock);
+    let host = Host::start(&service);
+    let (mail, session) = form_in_mail(&service, &host);
+    service.os.focus(service.editor).expect("open");
+    host.form.keyboard(false);
+    host.panel.wait("stepped aside", |s| !s.visible);
+    service.os.close_window(mail);
+    // The front end never answers (its page is gone): the form is cancelled.
+    host.panel.wait("closed", |s| {
+        s.events.contains(&FormEvent::Closed { session })
+    });
+    assert_eq!(
+        host.form
+            .abandon(session, values("Name", "Ada"))
+            .map_err(|e| e.code),
+        Err("no_form".to_owned()),
+        "too late"
+    );
+    wait_expands(&service, service.editor);
+    host.stop();
+}
+
+#[test]
+fn insert_for_a_window_that_is_gone_ends_the_form_and_keeps_its_answers() {
+    let service = Service::start(Endpoint::Mock);
+    let host = Host::start(&service);
+    let (mail, session) = form_in_mail(&service, &host);
+    // The mail window closes while the user is in the form.
+    service.os.close_window(mail);
+    let err = host
+        .form
+        .submit(session, values("Name", "Ada"))
+        .expect_err("nowhere to type");
+    assert_eq!(err.code, TARGET_GONE);
+    assert!(!host.panel.visible(), "the panel does not come back");
+    assert!(host.form.current().is_none());
+    service.os.focus(service.editor).expect("open");
+    wait_expands(&service, service.editor);
+    reopens_with_ada(&host);
+    host.stop();
+}
+
+#[test]
+fn the_panel_closed_by_the_system_cancels_the_form() {
+    let service = Service::start(Endpoint::Mock);
+    let host = Host::start(&service);
+    service.type_text("hi ");
+    let session = host.panel.wait_shown(0);
+    // Alt+F4, or the window manager's close command, on the panel.
+    host.form.close_requested();
+    host.panel.wait("closed", |s| {
+        !s.visible && s.events.contains(&FormEvent::Closed { session })
+    });
+    assert!(host.form.current().is_none());
+    wait_expands(&service, service.editor);
+    assert_eq!(
+        service.text(),
+        "hi be right back ",
+        "cancel changed nothing"
+    );
+    host.stop();
+}
+
+#[test]
+fn the_form_s_lease_is_renewed_while_it_waits() {
+    let mut service = Service::start(Endpoint::Mock);
+    service.form_lease = Some(Duration::from_millis(600));
+    service.restart();
+    let host = Host::start_with(&service, |cfg| {
+        cfg.lease_renewal = Duration::from_millis(150);
+    });
+    service.type_text("hi ");
+    let session = host.panel.wait_shown(0);
+    // The user clicks into the app and leaves the form waiting, longer than the lease.
+    host.form.keyboard(false);
+    std::thread::sleep(Duration::from_millis(1500));
+    service.type_text("brb ");
+    assert_eq!(service.text(), "hi brb ", "the form is still open");
+    assert!(!diagnostic_codes(&service).contains(&"form_expired".to_owned()));
+    host.form.cancel(session).expect("cancelled");
+    host.stop();
+}
+
+#[test]
+fn try_the_form_shows_the_panel_and_hands_the_answers_to_the_preview() {
+    let service = Service::start(Endpoint::Mock);
+    let host = Host::start(&service);
+    let fields = vec![FieldView {
+        name: "Name".to_owned(),
+        kind: "text".to_owned(),
+        options: Vec::new(),
+        default: String::new(),
+    }];
+    let tried = {
+        let form = Arc::clone(&host.form);
+        let fields = fields.clone();
+        std::thread::spawn(move || form.try_form(fields, "Greeting".to_owned(), "hi".to_owned()))
+    };
+    let session = host.panel.wait_shown(0);
+    let open = host.form.current().expect("open");
+    assert_eq!(open.label, "Greeting");
+    assert_eq!(
+        open.app.as_deref(),
+        Some(TRIAL_TARGET),
+        "goes into the preview"
+    );
+    assert_eq!(open.fields, fields);
+    // While it is open, another try is refused and the service's forms are not blocked by it.
+    assert_eq!(
+        host.form
+            .try_form(fields.clone(), String::new(), String::new())
+            .map_err(|e| e.code),
+        Err(FORM_BUSY.to_owned())
+    );
+    host.form
+        .submit(session, values("Name", "Ada"))
+        .expect("inserted");
+    assert_eq!(
+        tried.join().expect("joined").expect("answered"),
+        Some(values("Name", "Ada"))
+    );
+    assert!(!host.panel.visible());
+    assert!(host.form.current().is_none());
+    service.worker().settle();
+    assert_eq!(service.text(), "", "typed nowhere");
+    assert!(service.os.injected().is_empty());
+    // Cancelled: no answers.
+    let tried = {
+        let form = Arc::clone(&host.form);
+        std::thread::spawn(move || form.try_form(fields, String::new(), "hi".to_owned()))
+    };
+    let before = host.panel.events();
+    let session = host.panel.wait_shown(before);
+    host.form.cancel(session).expect("cancelled");
+    assert_eq!(tried.join().expect("joined").expect("answered"), None);
+    // The service's forms work as before.
+    let before = host.panel.events();
+    service.type_text("hi ");
+    let real = host.panel.wait_shown(before);
+    host.form
+        .submit(real, values("Name", "Kim"))
+        .expect("submitted");
+    wait_text(&service, "Hello Kim! ");
+    host.stop();
+}
+
+#[test]
+fn the_form_offered_again_follows_the_service() {
+    let mut service = Service::start(Endpoint::Mock);
+    let host = Host::start(&service);
+    let submit_one = |host: &Host, service: &Service| {
+        let before = host.panel.events();
+        service.type_text("hi ");
+        let session = host.panel.wait_shown(before);
+        host.form
+            .submit(session, values("Name", "Ada"))
+            .expect("submitted");
+        assert_eq!(host.form.last_submitted().as_deref(), Some("label hi"));
+    };
+    let wait_forgotten = |host: &Host| {
+        let deadline = Instant::now() + T;
+        while host.form.last_submitted().is_some() {
+            assert!(Instant::now() < deadline, "still offered again");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    // The screen locks: the service forgets the answers, and says so to the next reopen; the
+    // row is not offered any more.
+    submit_one(&host, &service);
+    assert!(
+        service
+            .os
+            .session_event(iamb_platform::SessionEvent::Locked)
+    );
+    service.worker().settle();
+    host.form.reopen_last().expect("asked");
+    wait_forgotten(&host);
+    // The service restarts: its answers are gone with it.
+    submit_one(&host, &service);
+    service.restart();
+    wait_forgotten(&host);
+    host.stop();
 }

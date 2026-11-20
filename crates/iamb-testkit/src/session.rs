@@ -53,6 +53,8 @@
 //! Expected actions (`expect`, default none; compared in full and in order):
 //! `{ delete = n }`, `{ text = "…", verbatim = [[start, end]] }` (verbatim default none),
 //! `{ key = "enter", shift = false, times = 1 }`, `{ caret_back = n }`, `{ wait = ms }`,
+//! `{ paste = "plain text", html = "<p>…</p>" }` (a rich snippet's `Paste`; `html` unchecked
+//! when absent),
 //! `{ form = "abbr", fields = ["Name"], last_values = { Name = "Kim" } }` (`fields` unchecked
 //! when absent; `last_values` default none), `{ expanded = "abbr", chars_saved = n }`
 //! (`chars_saved` unchecked when absent), `{ diagnostic = "code", snippet = "abbr", app = "x" }`
@@ -259,6 +261,10 @@ pub struct Expect {
     pub expanded: Option<String>,
     /// `diagnostic` (see the module docs).
     pub diagnostic: Option<String>,
+    /// `paste` (see the module docs).
+    pub paste: Option<String>,
+    /// `html` (see the module docs).
+    pub html: Option<String>,
 
     /// `verbatim` (see the module docs).
     pub verbatim: Option<Vec<[usize; 2]>>,
@@ -286,7 +292,7 @@ enum Canon {
     Key(String, bool, u8),
     CaretBack(usize),
     Wait(u32),
-    Paste(String),
+    Paste(String, Option<String>),
     Form {
         snippet: String,
         fields: Option<Vec<String>>,
@@ -685,7 +691,14 @@ impl Runner {
                 text.clone(),
                 verbatim.iter().map(|r| [r.start, r.end]).collect(),
             ),
-            Action::Paste { plain, .. } => Canon::Paste(plain.clone()),
+            Action::Paste {
+                plain,
+                markdown_html,
+                ..
+            } => Canon::Paste(
+                plain.clone(),
+                matches!(want, Some(Canon::Paste(_, Some(_)))).then(|| markdown_html.clone()),
+            ),
             Action::PressKey { key, shift, times } => {
                 Canon::Key(key.as_str().to_owned(), *shift, *times)
             }
@@ -832,6 +845,7 @@ fn canon_expect(e: &Expect) -> Result<Canon, String> {
         e.form.is_some(),
         e.expanded.is_some(),
         e.diagnostic.is_some(),
+        e.paste.is_some(),
     ]
     .into_iter()
     .filter(|b| *b)
@@ -852,6 +866,8 @@ fn canon_expect(e: &Expect) -> Result<Canon, String> {
         Canon::CaretBack(n)
     } else if let Some(ms) = e.wait {
         Canon::Wait(ms)
+    } else if let Some(p) = &e.paste {
+        Canon::Paste(p.clone(), e.html.clone())
     } else if let Some(s) = &e.form {
         Canon::Form {
             snippet: s.clone(),

@@ -339,8 +339,14 @@ these additions:
 - `{cursor}` is ignored in rich snippets, because the caret cannot be moved reliably through
   pasted formatting.
 
-Examples for rich rendering are added with the Markdown renderer in task 3.8; all examples in
-version 1 of this specification are plain.
+- A line break inside a paragraph is kept as a line break (CommonMark lets a renderer treat soft
+  line breaks as hard ones): a signature or an address keeps its lines.
+- Adaptive case does not apply to pasted content.
+
+The examples of rich rendering, Markdown to the HTML the clipboard carries and its plain-text
+version, are in [`spec/rich/examples.toml`](../spec/rich/examples.toml) (task 3.8); the rules
+of what the HTML may contain are in `iamb-core::rich` and architecture §8 rule 10. All template
+examples in `spec/template/examples/` are plain.
 
 ## 7. Outside this specification
 

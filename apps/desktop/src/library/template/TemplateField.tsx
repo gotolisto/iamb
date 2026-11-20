@@ -13,6 +13,11 @@
 // (the chips are drawn from its tokens; the text itself never waits for it), `RenderPreview`
 // 150 ms after the last change.
 //
+// Formatted snippets (`kind="rich"`, task 3.8): the text is Markdown with the same chips, a second
+// toolbar writes Markdown (bold, italic, link, list, image; `markdown.ts`), an image is added from
+// the file picker or by pasting or dropping it (kept by the service as an attachment), and the
+// preview shows the formatted result from the service's sanitised rendering.
+//
 // Privacy: nothing here logs or stores the template, the preview or test values.
 
 import {
@@ -28,7 +33,7 @@ import {
 } from "react";
 
 import type { FieldView } from "../../ipc";
-import { templateService, type TemplateError, type TemplateService } from "./api";
+import { failureCode, templateService, type TemplateError, type TemplateService } from "./api";
 import { ChipCard } from "./ChipCard";
 import { chipElement, draw, select, selectionIn } from "./dom";
 import { errorMessage } from "./errors";
@@ -72,6 +77,7 @@ import {
   type EditorState,
   type Macro,
 } from "./model";
+import { insertMarkdown, linkSelection, PLACEHOLDERS, toggleList, wrapSelection } from "./markdown";
 import { TemplatePreview } from "./TemplatePreview";
 import "./template.css";
 
@@ -102,6 +108,9 @@ export interface TemplateFieldProps {
   snippets?: ReadonlyArray<{ abbreviation: string; label: string }> | undefined;
   /** The template's current error, when the service answered for the current text. */
   onErrorChange?: ((error: TemplateError | null) => void) | undefined;
+  /** A formatted snippet's folder: images are kept in its profile. Without it (or a service
+   * that cannot keep images) there is no Image button. */
+  imageFolder?: string | undefined;
 }
 
 const isMac = () => typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -120,6 +129,13 @@ interface Parsed {
   source: string;
   error: TemplateError | null;
 }
+
+/** The image types the service keeps (`iamb_store::attachments`). */
+export const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+
+/** What the field says when an image cannot be added. */
+export const IMAGE_REFUSED = "Iamb can add PNG, JPEG, GIF and WebP images of up to 5 MB.";
+export const IMAGE_FAILED = "The image could not be added. Try again.";
 
 /** Consecutive typing is undone as one step when it follows within this time. */
 const TYPING_GROUP_MS = 1000;
@@ -146,6 +162,11 @@ export function TemplateField(props: TemplateFieldProps) {
   onChangeRef.current = onChange;
   const onErrorRef = useRef(props.onErrorChange);
   onErrorRef.current = props.onErrorChange;
+  const rich = kind === "rich";
+  const imageFolder = props.imageFolder;
+  const canAddImage = rich && !readOnly && imageFolder !== undefined && service.addAttachment !== undefined;
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [imageError, setImageError] = useState<string | null>(null);
 
   // ---- Parsing (ParseTemplate after every change; the latest wins) ------------------------
 
@@ -539,6 +560,11 @@ export function TemplateField(props: TemplateFieldProps) {
       e.preventDefault();
       if (readOnly) return;
       syncSelection();
+      const images = imageFiles(e.clipboardData);
+      if (images.length > 0 && canAddImage) {
+        void addImages(images);
+        return;
+      }
       const pasted = e.clipboardData?.getData("text/plain") ?? "";
       if (!pasted) return;
       const at = stateRef.current;
@@ -557,7 +583,14 @@ export function TemplateField(props: TemplateFieldProps) {
     const copy = (e: Event) => onCopy(e as ClipboardEvent, false);
     const cut = (e: Event) => onCopy(e as ClipboardEvent, true);
     const paste = (e: Event) => onPaste(e as ClipboardEvent);
-    const drop = (e: Event) => e.preventDefault();
+    const drop = (e: Event) => {
+      e.preventDefault();
+      const images = imageFiles((e as DragEvent).dataTransfer);
+      if (images.length > 0 && canAddImage && !readOnly) {
+        focused.current = true;
+        void addImages(images);
+      }
+    };
     root.addEventListener("beforeinput", onBeforeInput);
     root.addEventListener("compositionstart", onCompositionStart);
     root.addEventListener("compositionend", onCompositionEnd);
@@ -605,6 +638,18 @@ export function TemplateField(props: TemplateFieldProps) {
     if (mod && e.shiftKey && e.key.toLowerCase() === "p") {
       e.preventDefault();
       previewRef.current?.focus();
+      return;
+    }
+    if (rich && mod && !e.shiftKey && !e.altKey && !readOnly && ["b", "i", "k"].includes(e.key.toLowerCase())) {
+      e.preventDefault();
+      const k = e.key.toLowerCase();
+      commit(
+        k === "b"
+          ? wrapSelection(s, "**", "**", PLACEHOLDERS.bold)
+          : k === "i"
+            ? wrapSelection(s, "*", "*", PLACEHOLDERS.italic)
+            : linkSelection(s),
+      );
       return;
     }
     if (mod && e.key.toLowerCase() === "z") {
@@ -666,6 +711,36 @@ export function TemplateField(props: TemplateFieldProps) {
     focusEditor();
     insertItem(k);
   };
+  /** A formatting button: an edit of the selection the text box has or had. */
+  const format = (edit: (s: EditorState) => EditorState) => {
+    setMore(null);
+    if (document.activeElement === rootRef.current) syncSelection();
+    focused.current = true;
+    commit(edit(stateRef.current));
+    focusEditor();
+  };
+
+  /** Adds images through the service and inserts their Markdown where the selection was. */
+  const addImages = async (files: readonly File[]) => {
+    const add = service.addAttachment;
+    if (!add || imageFolder === undefined) return;
+    setImageError(null);
+    for (const file of files) {
+      if (!IMAGE_TYPES.includes(file.type)) {
+        setImageError(IMAGE_REFUSED);
+        continue;
+      }
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const added = await add.call(service, imageFolder, file.name, bytes);
+        commit(insertMarkdown(stateRef.current, added.markdown));
+      } catch (e) {
+        setImageError(failureCode(e) === "invalid" ? IMAGE_REFUSED : IMAGE_FAILED);
+      }
+    }
+    focusEditor();
+  };
+
   const moreItems = INSERT_ITEMS.filter((i) => !TOOLBAR.includes(i.kind) && (kind === "plain" || i.kind !== "cursor"));
   const toolbarItems = INSERT_ITEMS.filter((i) => TOOLBAR.includes(i.kind) && (kind === "plain" || i.kind !== "cursor"));
 
@@ -675,6 +750,74 @@ export function TemplateField(props: TemplateFieldProps) {
 
   return (
     <div className="tpl-editor">
+      {rich && !readOnly && (
+        <div className="tpl-bar tpl-format-bar" role="toolbar" aria-label="Formatting">
+          <button
+            type="button"
+            className="tpl-btn tpl-quiet"
+            aria-keyshortcuts={isMac() ? "Meta+B" : "Control+B"}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => format((st) => wrapSelection(st, "**", "**", PLACEHOLDERS.bold))}
+          >
+            <b>B</b> Bold
+          </button>
+          <button
+            type="button"
+            className="tpl-btn tpl-quiet"
+            aria-keyshortcuts={isMac() ? "Meta+I" : "Control+I"}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => format((st) => wrapSelection(st, "*", "*", PLACEHOLDERS.italic))}
+          >
+            <i>I</i> Italic
+          </button>
+          <button
+            type="button"
+            className="tpl-btn tpl-quiet"
+            aria-keyshortcuts={isMac() ? "Meta+K" : "Control+K"}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => format(linkSelection)}
+          >
+            Link
+          </button>
+          <button
+            type="button"
+            className="tpl-btn tpl-quiet"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => format(toggleList)}
+          >
+            List
+          </button>
+          {canAddImage && (
+            <>
+              <button
+                type="button"
+                className="tpl-btn tpl-quiet"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  if (document.activeElement === rootRef.current) syncSelection();
+                  fileInput.current?.click();
+                }}
+              >
+                Image…
+              </button>
+              <input
+                ref={fileInput}
+                type="file"
+                accept={IMAGE_TYPES.join(",")}
+                hidden
+                tabIndex={-1}
+                aria-hidden="true"
+                data-testid="image-file"
+                onChange={(e) => {
+                  const files = Array.from(e.currentTarget.files ?? []);
+                  e.currentTarget.value = "";
+                  if (files.length > 0) void addImages(files);
+                }}
+              />
+            </>
+          )}
+        </div>
+      )}
       {!readOnly && (
         <div className="tpl-bar" role="toolbar" aria-label="Insert">
           {toolbarItems.map((item) => (
@@ -735,7 +878,6 @@ export function TemplateField(props: TemplateFieldProps) {
           aria-invalid={message ? true : undefined}
           aria-readonly={readOnly ? true : undefined}
           aria-haspopup={readOnly ? undefined : "listbox"}
-          aria-expanded={readOnly ? undefined : menuOpen}
           aria-controls={menuOpen ? ids.menu : undefined}
           aria-activedescendant={menuOpen ? `${ids.menu}-${active}` : undefined}
           aria-keyshortcuts={isMac() ? "Meta+Shift+P" : "Control+Shift+P"}
@@ -828,9 +970,16 @@ export function TemplateField(props: TemplateFieldProps) {
           </span>
         </p>
       )}
+      {imageError && (
+        <p className="tpl-err" role="alert">
+          <TplIcon name="warn" />
+          <span>{imageError}</span>
+        </p>
+      )}
       {props.preview !== false && (
         <TemplatePreview
           ref={previewRef}
+          rich={rich}
           source={source}
           service={service}
           values={props.previewValues}
@@ -840,6 +989,12 @@ export function TemplateField(props: TemplateFieldProps) {
       )}
     </div>
   );
+}
+
+/** The image files of a paste or a drop. */
+function imageFiles(data: DataTransfer | null | undefined): File[] {
+  if (!data) return [];
+  return Array.from(data.files ?? []).filter((f) => f.type.startsWith("image/"));
 }
 
 function MoreMenu({

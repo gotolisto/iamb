@@ -34,6 +34,28 @@
 //! The service ends the panel's hold by itself on `FormSubmit` and `FormCancel`; the
 //! `shown: false` before them makes the order explicit and costs one message.
 //!
+//! While the form is open, `FormAck` is sent again every [`LEASE_RENEWAL`], whether or not the
+//! panel holds the keyboard: the service cancels a form whose lease
+//! ([`iamb_ipc::FORM_LEASE`]) runs out, so that a UI host that hangs cannot leave typed
+//! abbreviations refused with `form_open`.
+//!
+//! # A form always ends (the Phase 3 UI review's finding 1)
+//!
+//! While a form is open the engine refuses every typed abbreviation (`form_open`), so a form
+//! the user can no longer reach would stop Iamb expanding anything. Besides Insert and Cancel:
+//!
+//! - **The window it is for is gone** (closed, or its application quit), found while the panel
+//!   does not hold the keyboard ([`FocusInspector::window_exists`], every [`FOLLOW_EVERY`]) or
+//!   when Insert cannot give the focus back. The panel hides, and the form ends with its answers
+//!   kept for "Fill in … again" (spec §4.5): Insert hands them in as they are; otherwise the
+//!   front end is asked for them ([`FormEvent::TargetGone`], answered with
+//!   [`FormController::abandon`]), and after [`ABANDON_WAIT`] without them the form is
+//!   cancelled. Either way `FormSubmit` carries them to the service, which sees the window gone,
+//!   types nothing, closes the session and keeps them (diagnostic `form_target_gone`), as it
+//!   keeps a refused submit's; the notice of a refused insert says so (`crate::notice`).
+//! - **The system closes the panel** (Alt+F4, the window manager's close command): the panel's
+//!   close request is Esc ([`FormController::close_requested`]).
+//!
 //! # When the panel loses the keyboard
 //!
 //! A click into the app behind the panel (or any other window) takes the keyboard from it:
@@ -45,6 +67,14 @@
 //! again (after `PanelFocus { shown: true }`). When the user clicks back into the panel, the
 //! window system gives it the keyboard before the UI host hears of it; `PanelFocus { shown:
 //! true }` follows as soon as it does.
+//!
+//! # Trying the form (spec §4.3, flow 2 step 5, flow 4's entry points)
+//!
+//! "Try the form" in the editor's preview opens the same panel over the library window
+//! ([`FormController::try_form`]): no service session, no `FormAck`, no `PanelFocus` (the
+//! keyboard stays in Iamb's own windows) and no focus hand-back. Insert hands the answers back
+//! to the library, whose preview uses them as its test values; nothing is typed anywhere. A
+//! form the service asks for meanwhile replaces it (the trial ends without answers).
 //!
 //! # Privacy (architecture §8, spec §9)
 //!
@@ -95,11 +125,43 @@ pub const FOLLOW_EVERY: Duration = Duration::from_millis(200);
 /// acting on each would send `PanelFocus` twice for nothing.
 pub const KEYBOARD_SETTLE: Duration = Duration::from_millis(60);
 
+/// How long a submitted form is offered again ("Fill in “…” again", spec §4.5); the service
+/// keeps its answers for as long (architecture §4.5).
+pub const LAST_FORM_TTL: Duration = Duration::from_mins(30);
+
 /// The error code of a submit whose focus could not be given back.
 pub const FOCUS_LOST: &str = "focus_lost";
 
 /// The error code of a submit or cancel for a form that is not open.
 pub const NO_FORM: &str = "no_form";
+
+/// The error code of an Insert whose window is gone: the form ended, its answers kept (module
+/// docs).
+pub const TARGET_GONE: &str = "target_gone";
+
+/// How long the front end has to hand in the answers of a form whose window is gone before the
+/// form is cancelled without them (module docs).
+pub const ABANDON_WAIT: Duration = Duration::from_secs(2);
+
+/// The footer's "Goes into …" of a form tried from the editor (flow 4: "the result goes to
+/// the preview").
+pub const TRIAL_TARGET: &str = "the preview";
+
+/// The sessions of forms tried from the editor start here, far from the service's (and within
+/// the integers a JavaScript number holds exactly).
+pub const TRIAL_SESSIONS: u64 = 1 << 52;
+
+/// The error code of "Try the form" while another form is open.
+pub const FORM_BUSY: &str = "form_open";
+
+/// The error of an Insert whose window is gone ([`TARGET_GONE`]).
+#[must_use]
+pub fn target_gone() -> CommandError {
+    CommandError::new(
+        TARGET_GONE,
+        "the window to return to is gone; the form ended and its answers are kept",
+    )
+}
 
 /// The error of a submit whose focus could not be given back ([`FOCUS_LOST`]).
 #[must_use]
@@ -196,6 +258,12 @@ pub enum FormEvent {
         /// The session.
         session: u64,
     },
+    /// The window the form is for is gone (module docs): the front end hands in its answers
+    /// with the `form_abandon` command (they are kept for "Fill in … again"), and the form ends.
+    TargetGone {
+        /// The session.
+        session: u64,
+    },
     /// The form is over (submitted, cancelled, or abandoned because the service went away):
     /// the front end forgets its values.
     Closed {
@@ -265,7 +333,13 @@ pub struct FormConfig {
     /// Whether the end of the connection to the service closes an open form; normally true
     /// (false for the measurement, which has no service).
     pub follows_connection: bool,
+    /// Told of each explicit request just before it is sent (`crate::notice`: a refusal is
+    /// matched to it); nothing by default.
+    pub on_request: OnRequest,
 }
+
+/// Told of an explicit request (what was asked, for which snippet) just before it is sent.
+pub type OnRequest = Arc<dyn Fn(crate::notice::Asked, Option<Id>) + Send + Sync>;
 
 impl FormConfig {
     /// The defaults.
@@ -288,6 +362,7 @@ impl FormConfig {
             follow_every: FOLLOW_EVERY,
             keyboard_settle: KEYBOARD_SETTLE,
             follows_connection: true,
+            on_request: Arc::new(|_, _| {}),
         }
     }
 }
@@ -324,7 +399,8 @@ impl FormTimer {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn start(&self, session: u64, at: Instant, wall_ms: f64) {
+    /// Starts timing `session`, which arrived at `at` (`wall_ms` by the wall clock).
+    pub fn start(&self, session: u64, at: Instant, wall_ms: f64) {
         *self.lock() = (
             Some(Pending {
                 session,
@@ -336,7 +412,8 @@ impl FormTimer {
         );
     }
 
-    fn shown(&self, session: u64) {
+    /// `session`'s panel was shown now.
+    pub fn shown(&self, session: u64) {
         if let Some(p) = self.lock().0.as_mut().filter(|p| p.session == session) {
             p.shown = Some(Instant::now());
         }
@@ -385,6 +462,9 @@ impl FormTimer {
 
 type Reply = Sender<Result<(), CommandError>>;
 
+/// Where a tried form's answers go: `None` when it ended without them (the sender dropped).
+type TrialReply = Sender<Result<Option<WireValues>, CommandError>>;
+
 /// A `FormRequested`, taken apart.
 struct Request {
     session: u64,
@@ -411,6 +491,18 @@ enum Msg {
         session: u64,
         reply: Reply,
     },
+    Abandon {
+        session: u64,
+        values: Secret<WireValues>,
+        reply: Reply,
+    },
+    CloseRequested,
+    Try {
+        fields: Vec<FieldView>,
+        label: String,
+        abbreviation: String,
+        reply: TrialReply,
+    },
     Keyboard(bool),
     ConnectionLost,
     Prepaint,
@@ -432,6 +524,12 @@ struct Open {
     followed: Instant,
     /// A change of the panel's keyboard the window reported, not settled yet.
     keyboard: Option<(bool, Instant)>,
+    /// When `FormAck` was last sent (module docs).
+    acked: Instant,
+    /// The window is gone: the front end was asked for the answers, until then (module docs).
+    gone: Option<Instant>,
+    /// A form tried from the editor: where its answers go (module docs).
+    trial: Option<TrialReply>,
 }
 
 /// The form's flow (module docs). Cheap to share; [`stop`](Self::stop) ends it.
@@ -441,7 +539,13 @@ pub struct FormController {
     timer: Arc<FormTimer>,
     service: Arc<dyn FormService>,
     prepainted: Arc<AtomicBool>,
+    /// The label of the form submitted last, and when (the palette offers it again).
+    last: Arc<Mutex<Option<(Instant, String)>>>,
     thread: Mutex<Option<JoinHandle<()>>>,
+    focus: Option<Arc<dyn FocusInspector>>,
+    own_pid: u32,
+    logger: Arc<Logger>,
+    on_request: OnRequest,
 }
 
 impl std::fmt::Debug for FormController {
@@ -483,6 +587,11 @@ impl FormController {
         let timer = Arc::new(FormTimer::default());
         let service = Arc::clone(&cfg.service);
         let prepainted = Arc::new(AtomicBool::new(false));
+        let last = Arc::new(Mutex::new(None));
+        let focus = cfg.focus.clone();
+        let own_pid = cfg.own_pid;
+        let logger = Arc::clone(&cfg.logger);
+        let on_request = Arc::clone(&cfg.on_request);
         let mut flow = Flow {
             cfg,
             rx,
@@ -491,6 +600,8 @@ impl FormController {
             current: Arc::clone(&current),
             timer: Arc::clone(&timer),
             prepainted: Arc::clone(&prepainted),
+            last: Arc::clone(&last),
+            trials: 0,
         };
         let thread = thread::Builder::new()
             .name("iamb-form".to_owned())
@@ -501,7 +612,12 @@ impl FormController {
             timer,
             service,
             prepainted,
+            last,
             thread: Mutex::new(Some(thread)),
+            focus,
+            own_pid,
+            logger,
+            on_request,
         })
     }
 
@@ -520,6 +636,14 @@ impl FormController {
     /// [`service_event`](Self::service_event) with the arrival given (the measurement, and
     /// tests of a late request).
     pub fn service_event_at(&self, event: &EventBody, at: Instant, wall_ms: f64) {
+        if let EventBody::DiagnosticAdded { entry } = event
+            && entry.code == "no_last_form"
+        {
+            // The service has no answers to offer again (they expired, the screen locked, it
+            // restarted): neither does the palette.
+            lock(&self.last).take();
+            return;
+        }
         if let EventBody::FormRequested {
             session,
             snippet,
@@ -553,9 +677,18 @@ impl FormController {
         self.prepainted.load(Ordering::SeqCst)
     }
 
-    /// The connection to the service ended: an open form is over.
+    /// The connection to the service ended: an open form is over, and the answers it kept may
+    /// be gone with it (a service that restarted forgets them), so the palette stops offering
+    /// them again.
     pub fn connection_lost(&self) {
+        lock(&self.last).take();
         self.send(Msg::ConnectionLost);
+    }
+
+    /// The system asked to close the panel's window (Alt+F4, the window manager's close
+    /// command): the open form is cancelled as Esc cancels it (module docs). Never blocks.
+    pub fn close_requested(&self) {
+        self.send(Msg::CloseRequested);
     }
 
     /// The panel's window gained (`true`) or lost the keyboard. Never blocks.
@@ -577,6 +710,22 @@ impl FormController {
     #[must_use]
     pub fn timer(&self) -> &FormTimer {
         &self.timer
+    }
+
+    /// The label of the snippet whose form was submitted in the last [`LAST_FORM_TTL`], if any
+    /// (the palette's "Fill in “…” again"). Only the label is kept, never an answer.
+    #[must_use]
+    pub fn last_submitted(&self) -> Option<String> {
+        lock(&self.last)
+            .as_ref()
+            .filter(|(at, _)| at.elapsed() < LAST_FORM_TTL)
+            .map(|(_, label)| label.clone())
+    }
+
+    /// Whether a form is open.
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        lock(&self.current).is_some()
     }
 
     /// The form that is open, if any (for a panel whose page loaded after the request).
@@ -620,6 +769,48 @@ impl FormController {
         self.ask(|reply| Msg::Cancel { session, reply })
     }
 
+    /// "Try the form" (module docs): shows the panel with `fields` over the library window and
+    /// blocks until it ends. Answers what Insert handed in, or `None` when it was cancelled
+    /// or replaced; nothing is typed anywhere.
+    ///
+    /// # Errors
+    ///
+    /// [`FORM_BUSY`] while another form is open.
+    pub fn try_form(
+        &self,
+        fields: Vec<FieldView>,
+        label: String,
+        abbreviation: String,
+    ) -> Result<Option<WireValues>, CommandError> {
+        let (reply, answer) = mpsc::channel();
+        if !self.send(Msg::Try {
+            fields,
+            label,
+            abbreviation,
+            reply,
+        }) {
+            return Err(CommandError::new("internal", "the form has stopped"));
+        }
+        // A trial that ended without answers dropped its sender.
+        answer.recv().unwrap_or(Ok(None))
+    }
+
+    /// The front end's answers for a form whose window is gone ([`FormEvent::TargetGone`]):
+    /// the form ends, typing nothing, and the service keeps them for "Fill in … again".
+    ///
+    /// # Errors
+    ///
+    /// [`NO_FORM`] when `session` is not open or its window is not known to be gone (the
+    /// values are then dropped, never sent); the call's errors.
+    pub fn abandon(&self, session: u64, values: WireValues) -> Result<(), CommandError> {
+        let values = Secret::new(values);
+        self.ask(|reply| Msg::Abandon {
+            session,
+            values,
+            reply,
+        })
+    }
+
     /// Asks the service to show the last submitted form again (`ReopenLastForm`); the form
     /// arrives as a new `FormRequested`.
     ///
@@ -631,6 +822,29 @@ impl FormController {
             Ok(_) => Ok(()),
             Err(e) => Err(crate::bridge::command(e)),
         }
+    }
+
+    /// [`reopen_last`](Self::reopen_last) for the window `target` (the tray menu's: the menu
+    /// took the foreground, `crate::palette`): the focus goes back to that window first, as a
+    /// palette pick gives it back, since `ReopenLastForm` runs against the window that has the
+    /// focus when it arrives. A window that will not take the focus is logged; the request is
+    /// sent anyway, and the service refuses it where it cannot type.
+    ///
+    /// # Errors
+    ///
+    /// The call's errors.
+    pub fn reopen_last_for(&self, target: Option<FocusToken>) -> Result<(), CommandError> {
+        if let (Some(focus), Some(token)) = (&self.focus, target)
+            && token.pid() != self.own_pid
+            && focus.focus_token().ok() != Some(token)
+            && let Err(e) = focus.restore_focus(&token)
+        {
+            self.logger.info(format_args!(
+                "reopen: the focus could not be given back ({e})"
+            ));
+        }
+        (self.on_request)(crate::notice::Asked::Reopen, None);
+        self.reopen_last()
     }
 
     /// Stops the thread (an open form is left to the service, which cancels it when the UI
@@ -660,6 +874,9 @@ struct Flow {
     current: Arc<Mutex<Option<FormOpen>>>,
     timer: Arc<FormTimer>,
     prepainted: Arc<AtomicBool>,
+    last: Arc<Mutex<Option<(Instant, String)>>>,
+    /// Forms tried from the editor so far (their sessions, module docs).
+    trials: u64,
 }
 
 impl Flow {
@@ -710,11 +927,24 @@ impl Flow {
             let settle = (at + self.cfg.keyboard_settle).saturating_duration_since(Instant::now());
             wait = Some(wait.map_or(settle, |w| w.min(settle)));
         }
+        let mut consider = |at: Instant| {
+            let left = at.saturating_duration_since(Instant::now());
+            wait = Some(wait.map_or(left, |w| w.min(left)));
+        };
+        if open.trial.is_none() {
+            consider(open.acked + self.cfg.lease_renewal);
+        }
+        if let Some(until) = open.gone {
+            consider(until);
+        }
         wait
     }
 
     fn following(&self, open: &Open) -> bool {
-        self.cfg.focus.is_some() && open.token.is_some() && (open.away || !open.held)
+        self.cfg.focus.is_some()
+            && open.token.is_some()
+            && open.gone.is_none()
+            && (open.away || !open.held)
     }
 
     fn on(&mut self, msg: Msg) {
@@ -732,6 +962,27 @@ impl Flow {
             }
             Msg::Cancel { session, reply } => {
                 let _ = reply.send(self.cancel(session));
+            }
+            Msg::Abandon {
+                session,
+                values,
+                reply,
+            } => {
+                let _ = reply.send(self.abandon(session, values));
+            }
+            Msg::Try {
+                fields,
+                label,
+                abbreviation,
+                reply,
+            } => self.try_form(fields, label, abbreviation, reply),
+            Msg::CloseRequested => {
+                if let Some(session) = self.open.as_ref().map(|o| o.session) {
+                    self.log().info(format_args!(
+                        "form {session}: the system closed the panel; the form is cancelled"
+                    ));
+                    let _ = self.cancel(session);
+                }
             }
             Msg::Keyboard(has) => {
                 if let Some(open) = &mut self.open {
@@ -850,6 +1101,9 @@ impl Flow {
             height,
             followed: Instant::now(),
             keyboard: None,
+            acked: Instant::now(),
+            gone: None,
+            trial: None,
         };
         if let Err(e) = self.cfg.host.show(height) {
             self.log().warn(format_args!(
@@ -912,7 +1166,18 @@ impl Flow {
         };
         self.cfg.host.hide();
         open.visible = false;
+        if let Some(reply) = open.trial.take() {
+            // To the library's preview, typed nowhere (module docs).
+            self.close(session);
+            let _ = reply.send(Ok(Some(values.into_inner())));
+            return Ok(());
+        }
         if let Err(e) = self.give_back(&open) {
+            if self.window_gone(&open) {
+                // Its window will never take the focus (module docs).
+                self.abandon_with(&open, values);
+                return Err(target_gone());
+            }
             // Flow 4: nothing is sent; the panel comes back with every answer.
             self.log().info(format_args!(
                 "form {session}: the focus could not be given back ({e}); nothing was sent"
@@ -928,10 +1193,15 @@ impl Flow {
                 "form {session}: PanelFocus(false) was not answered"
             ));
         }
+        (self.cfg.on_request)(crate::notice::Asked::Form, self.open_snippet());
         let answer = self.call(RequestBody::FormSubmit { session, values });
+        let label = self.offer_label();
         self.close(session);
         match answer {
             Ok(_) => {
+                if let Some(label) = label {
+                    *lock(&self.last) = Some((Instant::now(), label));
+                }
                 self.log().info(format_args!("form {session}: submitted"));
                 Ok(())
             }
@@ -958,6 +1228,11 @@ impl Flow {
                 "form {session}: the focus could not be given back ({e})"
             ));
         }
+        if open.trial.is_some() {
+            // Nothing to tell the service; the library hears "no answers".
+            self.close(session);
+            return Ok(());
+        }
         if open.held {
             let _ = self.panel_focus(false);
         }
@@ -965,6 +1240,155 @@ impl Flow {
         self.close(session);
         self.log().info(format_args!("form {session}: cancelled"));
         answer.map(|_| ()).map_err(crate::bridge::command)
+    }
+
+    /// The name "Fill in “…” again" offers the open form by: its label, or its abbreviation
+    /// when it has none (`None` when neither could be read).
+    fn offer_label(&self) -> Option<String> {
+        lock(&self.current)
+            .as_ref()
+            .map(|f| {
+                if f.label.is_empty() {
+                    f.abbreviation.clone()
+                } else {
+                    f.label.clone()
+                }
+            })
+            .filter(|l| !l.is_empty())
+    }
+
+    /// The snippet of the open form, if it could be read.
+    fn open_snippet(&self) -> Option<Id> {
+        lock(&self.current)
+            .as_ref()
+            .and_then(|f| f.snippet.parse().ok())
+    }
+
+    /// Whether the window of `open` is known to be gone.
+    fn window_gone(&self, open: &Open) -> bool {
+        match (&self.cfg.focus, open.token) {
+            (Some(focus), Some(token)) => !focus.window_exists(&token),
+            _ => false,
+        }
+    }
+
+    /// The window of `open` is gone and the panel does not hold the keyboard: the panel hides
+    /// and the front end is asked for the answers (module docs).
+    fn target_gone(&self, open: &mut Open) {
+        self.log().info(format_args!(
+            "form {}: the window it is for is gone; the form ends",
+            open.session
+        ));
+        if open.visible {
+            self.cfg.host.hide();
+            open.visible = false;
+        }
+        if open.held {
+            let _ = self.panel_focus(false);
+            open.held = false;
+        }
+        open.gone = Some(Instant::now() + ABANDON_WAIT);
+        self.cfg.host.send(&FormEvent::TargetGone {
+            session: open.session,
+        });
+    }
+
+    /// The front end's answers for a form whose window is gone.
+    fn abandon(&mut self, session: u64, values: Secret<WireValues>) -> Result<(), CommandError> {
+        let Some(open) = self
+            .open
+            .take_if(|o| o.session == session && o.gone.is_some())
+        else {
+            forget_values(Some(values));
+            return Err(Self::not_open(session));
+        };
+        self.abandon_with(&open, values);
+        Ok(())
+    }
+
+    /// Ends `open`, whose window is gone, handing `values` to the service, which types nothing
+    /// and keeps them for "Fill in … again" (module docs).
+    fn abandon_with(&mut self, open: &Open, values: Secret<WireValues>) {
+        let session = open.session;
+        if open.visible {
+            self.cfg.host.hide();
+        }
+        if open.held {
+            let _ = self.panel_focus(false);
+        }
+        (self.cfg.on_request)(crate::notice::Asked::Form, self.open_snippet());
+        let answer = self.call(RequestBody::FormSubmit { session, values });
+        let label = self.offer_label();
+        self.close(session);
+        match answer {
+            Ok(_) => {
+                if let Some(label) = label {
+                    *lock(&self.last) = Some((Instant::now(), label));
+                }
+                self.log().info(format_args!(
+                    "form {session}: its window is gone; the form ended, its answers are kept"
+                ));
+            }
+            Err(e) => self.log().warn(format_args!(
+                "form {session}: its window is gone; FormSubmit failed: {}",
+                e.code()
+            )),
+        }
+    }
+
+    /// Shows a form tried from the editor (module docs).
+    fn try_form(
+        &mut self,
+        fields: Vec<FieldView>,
+        label: String,
+        abbreviation: String,
+        reply: TrialReply,
+    ) {
+        if self.open.is_some() {
+            let _ = reply.send(Err(CommandError::new(
+                FORM_BUSY,
+                "another fill-in form is open",
+            )));
+            return;
+        }
+        self.trials += 1;
+        let session = TRIAL_SESSIONS + self.trials;
+        let form = FormOpen {
+            session,
+            snippet: String::new(),
+            label,
+            abbreviation,
+            app: Some(TRIAL_TARGET.to_owned()),
+            fields,
+            last_values: None,
+        };
+        forget(lock(&self.current).replace(form));
+        self.cfg.host.send(&FormEvent::Open { session });
+        let height = self.wait_layout(session);
+        if let Err(e) = self.cfg.host.show(height) {
+            self.log().warn(format_args!(
+                "form {session}: the panel cannot be shown: {e}"
+            ));
+            self.close(session);
+            return;
+        }
+        self.cfg.host.send(&FormEvent::Shown { session });
+        self.log()
+            .info(format_args!("form {session}: tried from the editor"));
+        self.open = Some(Open {
+            session,
+            token: None,
+            held: false,
+            renewed: Instant::now(),
+            visible: true,
+            away: false,
+            height,
+            followed: Instant::now(),
+            keyboard: None,
+            acked: Instant::now(),
+            gone: None,
+            trial: Some(reply),
+        });
     }
 
     /// Shows the panel again with the keyboard, after `PanelFocus { shown: true }`.
@@ -999,7 +1423,8 @@ impl Flow {
     }
 
     fn keyboard(&mut self, has: bool) {
-        let Some(mut open) = self.open.take() else {
+        let Some(mut open) = self.open.take_if(|o| o.trial.is_none()) else {
+            // A tried form holds no keyboard in the service.
             return;
         };
         if open.visible {
@@ -1069,6 +1494,29 @@ impl Flow {
                 }
             }
         }
+        if open.trial.is_none() && open.acked.elapsed() >= self.cfg.lease_renewal {
+            // The form's lease in the service (module docs).
+            if let Err(e) = self.call(RequestBody::FormAck {
+                session: open.session,
+            }) {
+                self.log().warn(format_args!(
+                    "form {}: the form's lease was not renewed ({})",
+                    open.session,
+                    e.code()
+                ));
+            }
+            open.acked = Instant::now();
+        }
+        if open.gone.is_some_and(|until| Instant::now() >= until) {
+            // The front end did not hand in the answers: the form ends without them.
+            let session = open.session;
+            self.log().info(format_args!(
+                "form {session}: no answers came for a form whose window is gone; cancelled"
+            ));
+            let _ = self.call(RequestBody::FormCancel { session });
+            self.close(session);
+            return;
+        }
         if self.following(&open) && open.followed.elapsed() >= self.cfg.follow_every {
             open.followed = Instant::now();
             self.follow(&mut open);
@@ -1080,6 +1528,10 @@ impl Flow {
         let (Some(focus), Some(token)) = (&self.cfg.focus, open.token) else {
             return;
         };
+        if !focus.window_exists(&token) {
+            self.target_gone(open);
+            return;
+        }
         let Ok(front) = focus.focus_token() else {
             return;
         };

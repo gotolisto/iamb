@@ -122,3 +122,35 @@ body {
   outline: var(--size-focus-ring) solid var(--color-border-focus);
   outline-offset: 2px;
 }
+
+/*
+ * Reduce motion (design system §2.6, WCAG 2.3.3): when the system asks for less, every duration
+ * is 0 and nothing animates or scrolls smoothly. No component animates anything but a switch's
+ * thumb and (never) opacity fades, so this is a guard as well as a rule: a transition or an
+ * animation added later is turned off here too (styles/a11y.test.ts checks it is still here).
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-base: 0ms;
+    --duration-slow: 0ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Contrast themes (design system §5): the focus ring is the system's highlight colour. */
+@media (forced-colors: active) {
+  :focus-visible {
+    outline-color: Highlight;
+  }
+}

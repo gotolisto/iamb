@@ -26,6 +26,7 @@ pub mod library;
 pub mod log;
 pub mod paths;
 pub mod platform;
+pub mod rich;
 pub mod supervisor;
 pub mod templates;
 pub mod worker;

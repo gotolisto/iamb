@@ -131,6 +131,9 @@ pub struct WorkerConfig {
     /// How long one `PanelFocus { shown: true }` holds: normally
     /// [`PANEL_FOCUS_LEASE`](iamb_ipc::PANEL_FOCUS_LEASE).
     pub panel_focus_lease: Duration,
+    /// How long an acknowledged form stays open without another `FormAck`: normally
+    /// [`FORM_LEASE`](iamb_ipc::FORM_LEASE).
+    pub form_lease: Duration,
 }
 
 impl WorkerConfig {
@@ -155,6 +158,7 @@ impl WorkerConfig {
             clock: Arc::new(crate::clock::local_now),
             logger: Arc::new(Logger::disabled()),
             panel_focus_lease: iamb_ipc::PANEL_FOCUS_LEASE,
+            form_lease: iamb_ipc::FORM_LEASE,
         }
     }
 }
@@ -416,6 +420,8 @@ pub(crate) struct Shared {
     pub policy: PeerPolicy,
     pub exit: ExitSignal,
     pub clock: Arc<dyn Fn() -> LocalDateTime + Send + Sync>,
+    /// The data root: the attachments of rich snippets are read under it (`crate::rich`).
+    pub data_root: std::path::PathBuf,
     /// Set by the session watcher (screen lock, sign-out): the engine thread overwrites the
     /// remembered form values and the hand-off before it handles its next message. A flag and
     /// not only a message, so that a full engine queue cannot lose it.
@@ -586,6 +592,7 @@ impl Worker {
             clock,
             logger,
             panel_focus_lease,
+            form_lease,
         } = config;
         logger.info(format_args!(
             "worker {} starting, pid {}",
@@ -644,8 +651,10 @@ impl Worker {
             policy,
             exit: ExitSignal::default(),
             clock,
+            data_root: dirs.root().to_path_buf(),
             forget_pending: AtomicBool::new(false),
         });
+        crate::rich::clear_offered_files(dirs.root());
 
         let handoff = Arc::new(TypedHandoff::new());
         let keys = Arc::new(keys::KeyQueue::new());
@@ -672,6 +681,7 @@ impl Worker {
                 heartbeat,
                 heartbeat_interval,
                 panel_focus_lease,
+                form_lease,
             );
             spawn("engine", &mut threads, move || state.run(&engine_rx))?;
         }

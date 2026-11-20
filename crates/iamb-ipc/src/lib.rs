@@ -42,7 +42,8 @@ pub use messages::{
     PreviewCursor, PreviewPart, RemoteRow, RequestBody, ResponseBody, SUMMARY_LINE_CHARS,
     SearchField, SearchHit, ServiceStatus, ShadowedEntry, SnippetQuery, SnippetSummary, SyncStatus,
     TAG_COLORS, TagEntry, TemplateAttribute, TemplateErrorInfo, TemplateToken, TransferFormat,
-    WireAction, WireDiagnostic, WireExclusion, WireField, WireOutboxEntry, WireValues, key_named,
+    UnusedEntry, WireAction, WireAttachment, WireDiagnostic, WireExclusion, WireField,
+    WireOutboxEntry, WireValues, key_named,
 };
 pub use protocol::{
     DecodeError, ErrorBody, ErrorCode, Group, Hello, PROTOCOL_VERSION, Request, Response, Role,
@@ -55,6 +56,10 @@ pub use server::{ConnectionWriter, HELLO_TIMEOUT, ServerConnection};
 /// How long one `PanelFocus { shown: true }` holds without being sent again
 /// ([`RequestBody::PanelFocus`]).
 pub const PANEL_FOCUS_LEASE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How long an acknowledged fill-in form stays open without another `FormAck`
+/// ([`RequestBody::FormAck`]).
+pub const FORM_LEASE: std::time::Duration = std::time::Duration::from_mins(1);
 
 /// The build version, sent in `hello` and `welcome`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

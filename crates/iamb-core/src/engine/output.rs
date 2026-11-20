@@ -83,12 +83,14 @@ fn rewrite(
     (out, ranges)
 }
 
-/// Grapheme clusters of all typed text.
+/// Grapheme clusters of all typed text, and of the plain-text version of pasted content.
 pub(super) fn typed_graphemes(actions: &[Action]) -> usize {
     actions
         .iter()
         .map(|a| match a {
-            Action::TypeText { text, .. } => text.graphemes(true).count(),
+            Action::TypeText { text, .. } | Action::Paste { plain: text, .. } => {
+                text.graphemes(true).count()
+            }
             _ => 0,
         })
         .sum()

@@ -225,7 +225,7 @@ elevated one) keeps it suspended. Iamb fails closed.
 | --- | --- |
 | `DeleteBack(n)` | Press Backspace `n` times: one per `Char` event consumed by the abbreviation and delimiter |
 | `TypeText { text, verbatim }` | Insert plain text. `verbatim` marks ranges that came from field values or the clipboard |
-| `Paste { plain, markdown_html, attachments }` | Insert rich content through the clipboard, then restore the clipboard (emitted from task 3.8; until then rich snippets expand as plain templates) |
+| `Paste { plain, markdown_html, attachments }` | Insert rich content through the clipboard, then restore the clipboard. One per run of a rich snippet's rendered text between `key` and `wait` actions (task 3.8): `markdown_html` is the core's sanitised HTML (`iamb-core::rich`), whose images name attachments by hash, which the service resolves (§9); `plain` is the plain-text version, typed instead where the application must not be pasted into |
 | `PressKey { key, shift, times }` | Press a named key |
 | `MoveCaretBack(n)` | Press Left `n` times: one per extended grapheme cluster after the `{cursor}` position |
 | `Wait(ms)` | Pause before the next action |
@@ -305,6 +305,19 @@ The process that holds the focus is the one that gives it back
 4. On submit the UI host hides the form, returns focus to the token's window, confirms that the
    window is focused, and only then sends `FormSubmit`. The engine emits `DeleteBack` and the
    rendered actions. On cancel the UI host returns focus and nothing else changes.
+
+A form session always ends (the Phase 3 UI review's finding 1). While one is open the engine
+drops every typed match with `form_open`, so a session nobody can answer would stop all
+expansion. Besides submit, cancel, the 2-second acknowledgement and the UI host's disconnection:
+the UI host renews an acknowledged form with `FormAck` every 10 seconds, whether or not its
+panel is on screen, and the service cancels a form whose lease (`FORM_LEASE`, 60 seconds) runs
+out (`form_expired`), as the `PanelFocus` lease bounds a panel's hold; a form submit for a window
+that no longer exists, or a parked submit that is dropped (its window never got the focus, or a
+newer request replaced it), ends the session without typing and keeps its values for
+`ReopenLastForm`, as a refused submit does (`form_target_gone`, `request_focus_timeout`,
+`request_cancelled`). In the UI host, a panel the system closes is cancelled as Esc cancels it,
+and a form whose window is gone (closed, or its application quit) ends with its answers kept:
+the panel hands them in with `FormSubmit` and the service, seeing the window gone, types nothing.
 
 The search palette uses the same mechanism: the hotkey reaches the listener thread, the service
 captures a focus token and sends `PaletteRequested { focus }`; choosing a snippet returns focus and
@@ -551,12 +564,12 @@ left at the cargo name). On Linux the endpoint names no executable and the role 
 
 | Group | Requests | Events |
 | --- | --- | --- |
-| Library | `ListFolders`, `ListSnippets(query)`, `ListSnippetSummaries(query, offset, limit)`, `GetSnippet`, `PutSnippet(snippet, tags)`, `DeleteSnippet`, `CheckAbbreviation(abbreviation, trigger, snippet)`, `PutFolder`, `DeleteFolder`, `PutTag`, `ListTags`, `DeleteTag`, `Search(text)`, `Import(path, format)`, `Export(path, format)`, `Health`, `ListPendingReviews`, `ApproveSnippet(id, rev)` | `LibraryChanged(revision, changed rows)` |
+| Library | `ListFolders`, `ListSnippets(query)`, `ListSnippetSummaries(query, offset, limit)`, `GetSnippet`, `PutSnippet(snippet, tags)`, `DeleteSnippet`, `CheckAbbreviation(abbreviation, trigger, snippet)`, `PutFolder`, `DeleteFolder`, `PutTag`, `ListTags`, `DeleteTag`, `Search(text)`, `Import(path, format)`, `Export(path, format)`, `Health`, `RecentSnippets(limit)`, `ListPendingReviews`, `ApproveSnippet(id, rev)`, `PutAttachment(path, file_name, folder)` | `LibraryChanged(revision, changed rows)` |
 | Engine control | `GetStatus`, `SetPaused`, `ExpandSnippet(id, focus)`, `DryRun(typed)`, `GetPermissions`, `OpenPermissionSettings(kind)`, `SetTestField(window)` | `StatusChanged`, `PaletteRequested(focus)` |
 | Forms | `FormAck(session)`, `FormSubmit(session, values)`, `FormCancel(session)`, `ReopenLastForm`, `PanelFocus(panel, shown)` | `FormRequested(session, spec, focus, last_values)` |
-| Templates | `ParseTemplate(source)`, `RenderPreview(source, values)` | — |
+| Templates | `ParseTemplate(source)`, `RenderPreview(source, values, rich)` | — |
 | Diagnostics | `RecentDiagnostics` | `DiagnosticAdded` |
-| Settings | `GetSettings`, `PutSetting`, `ListExclusions`, `PutExclusion` | `SettingsChanged` |
+| Settings | `GetSettings`, `PutSetting`, `ListExclusions`, `PutExclusion`, `ResetUsage` | `SettingsChanged` |
 | Sync | `OutboxRead(limit)`, `OutboxAck(ids)`, `ApplyRemote(batch)`, `PurgeFolder(id)`, `AttachmentAvailable(profile, sha256)`, `MissingAttachments`, `SetSyncStatus`, `SetEntitlements` | `OutboxChanged` |
 
 Names across the layers: the engine action `ShowForm` becomes the event `FormRequested`; the
@@ -813,7 +826,7 @@ real machines:
 | --- | --- | --- |
 | 11, the installed-binary check | Windows trusts any executable in the installation directory with a valid signature from any publisher; macOS identifies the peer by process id, compares it with the service's own designated requirement (which would refuse the UI host and the command-line tool once builds are signed) and does not pass `kSecCSNoNetworkAccess`. The role check of §6.1 rests on this check | Phase 5, with the first signed builds (the signing rules of task 5.2): compare the peer's signer with the running executable's; build the macOS requirement from the team identifier and identify the peer by audit token; set the no-network flag; say in §6.1 what the check does not stop; test with signed builds |
 | 13, screen lock and sign-out | **Done in the service** (§4.5, §5): `SessionEvents` in the platform traits, the mock and both OS crates; every event forgets the remembered values and disturbs the hand-off; `FormValues`, the wire copy of a submit and clipboard snapshots overwrite their bytes before they are freed. Tests on the mock (`tests/panels.rs`), a Windows unit test of the sign-out messages, a macOS main-loop test of the notifications (`tests/session.rs`). Left: a lock, user switch and sign-out on a real Windows and Mac (`docs/compatibility-run.md`); the IPC frames that carried values (serde's buffers) are freed without being overwritten | Task 3.5: the manual checks on both systems |
-| 16, Iamb's own panels on macOS | **Done in the service** (§4.5, ADR-0013 addendum): `PanelFocus(panel, shown)`, with a lease and the UI-host-gone fallback; keys typed while a panel has the keyboard reach neither the engine nor the hand-off (`tests/panels.rs`, `tests/focus_order.rs`). **The form panel sends it** (task 3.5, `apps/desktop/src-tauri/src/form.rs`): before the panel takes the keyboard, renewed every 10 seconds, and `shown: false` when the panel resigns the keyboard (a click into the app behind it) and before `FormSubmit` and `FormCancel` (`apps/desktop/src-tauri/tests/form.rs`). Left: the palette must send it too, the form panel must become a non-activating panel on macOS (a function in `iamb-platform-macos`, `apps/desktop/README.md`), and a check on a Mac that keys typed into the panels do not expand (`docs/compatibility-run.md`, F2) | Task 3.6 (the palette), the macOS panel function, and the Mac check |
+| 16, Iamb's own panels on macOS | **Done in the service** (§4.5, ADR-0013 addendum): `PanelFocus(panel, shown)`, with a lease and the UI-host-gone fallback; keys typed while a panel has the keyboard reach neither the engine nor the hand-off (`tests/panels.rs`, `tests/focus_order.rs`). **The form panel sends it** (task 3.5, `apps/desktop/src-tauri/src/form.rs`): before the panel takes the keyboard, renewed every 10 seconds, and `shown: false` when the panel resigns the keyboard (a click into the app behind it) and before `FormSubmit` and `FormCancel` (`apps/desktop/src-tauri/tests/form.rs`). **The palette sends it too** (task 3.6, `apps/desktop/src-tauri/src/palette.rs`): the same order, and before `ExpandSnippet` and `ReopenLastForm` (`apps/desktop/src-tauri/tests/palette.rs`). Left: the form panel and the palette must become non-activating panels on macOS (a function in `iamb-platform-macos`, `apps/desktop/README.md`), and a check on a Mac that keys typed into the panels do not expand (`docs/compatibility-run.md`, F2 and P3) | The macOS panel function, and the Mac check |
 
 ## 9. Sync
 
@@ -845,8 +858,13 @@ Task 4.1 specifies the conflict scenarios; the architecture fixes the frame
   go the other way under the same path scheme.
 - When a rich snippet is expanded, the service resolves `attachment:` references while it builds
   the clipboard content: HTML with images embedded as data URIs, plus plain text; a snippet that
-  is only one media file is also offered as a file. A missing attachment falls back to the
-  plain-text rendering with a `Diagnostic`.
+  is only one media file is also offered as a file (a copy named after it in `run/paste/`,
+  emptied when the worker starts). A missing attachment falls back to the
+  plain-text rendering with a `Diagnostic` (`attachment_missing`). Task 3.8 keeps the bytes in
+  `attachments/<profile id>/<sha256>` (`iamb-store::attachments`: types read from the bytes,
+  images up to 5 MiB, media up to 25 MiB, checked against the hash before use), links each rich
+  snippet to the attachments it references, and carries them in a JSON export; the editor adds
+  one with `PutAttachment` (`iamb_service::rich`; `docs/paste-fidelity.md`).
 - Plan features reach the device as `Entitlements` from the agent, stored by the service
   (`SetEntitlements`) and read by the UI.
 
