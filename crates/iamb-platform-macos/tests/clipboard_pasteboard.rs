@@ -217,7 +217,12 @@ fn iambs_writes_carry_the_transient_and_concealed_markers() {
     }
     let first = &items[0];
     assert!(first.contains(&(PLAIN.to_owned(), "Café 🇫🇷".as_bytes().to_vec())));
-    assert!(first.contains(&(HTML.to_owned(), b"<b>Caf\xc3\xa9</b>".to_vec())));
+    // `public.html` starts with a UTF-8 charset declaration (task 3.8): without it Cocoa's HTML
+    // reader takes the bytes for Windows Latin 1 and garbles every non-ASCII character.
+    assert!(first.contains(&(
+        HTML.to_owned(),
+        b"<meta charset=\"utf-8\"><b>Caf\xc3\xa9</b>".to_vec()
+    )));
     assert!(items[1].contains(&(
         "public.file-url".to_owned(),
         b"file:///tmp/iamb%20test.png".to_vec()
