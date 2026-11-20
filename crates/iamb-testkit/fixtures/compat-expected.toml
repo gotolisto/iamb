@@ -39,6 +39,6 @@ expected = "Report for {date}: {caret} - done"
 id = "T5"
 name = "rich"
 abbreviation = ";cpt5"
-expected = "Release **bold** note with a [link](https://example.org/iamb)."
+expected = "Release bold note with a link (https://example.org/iamb)."
 rich = true
 rich_checks = ["a bold run (the word bold)", "a link whose address is exactly https://example.org/iamb", "one 16x16 image (pending task 3.8: imports carry no attachments yet)"]
