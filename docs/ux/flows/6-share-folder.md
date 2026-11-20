@@ -87,6 +87,30 @@ Rules for the recipient's library:
 | The same snippet was changed on two devices | Phase 4 (`Conflicts`, `ConflictRecorded`): the later change wins; "Changed on another device" in the editor with [Show the other version] | Restore the other version |
 | The service or the sync agent is not running | Share and Join are disabled with "Iamb's sync is not running." [Start it again] | The supervisor restarts it |
 
+## What the sync design changes or adds (task 4.1)
+
+[`../../sync-design.md`](../../sync-design.md) fixes the rules behind this flow. Four points
+touch its copy:
+
+- **Step 2 promises more than version 1 does.** "Your other folders stay on this computer until
+  you choose to sync or share them" is not true under the sync design: signing in adopts the
+  library on the computer into the account and syncs all of it; only shared folders are visible
+  to other people. This is open question 1 of the sync design (§13) and the owner's to decide.
+  The design's proposal for the sentence: "Signing in keeps your snippets in step between your
+  computers. Only folders you share can be seen by other people."
+- **A change the server refuses is kept.** When the folder became read-only, was unshared, or
+  the person was removed while their computer held changes it had not sent, those changes are
+  kept on that computer in a list, with [Copy to my snippets] (rule D5; UX spec §11.2, entry 20).
+  The row "The folder was unshared, or the user removed from the group" above gains: "2 changes
+  you made there were not synced. They are kept on this computer." [Show]
+- **Sharing that was stopped elsewhere stays stopped.** A computer that was offline and shares a
+  folder which another of the owner's computers has unshared in the meantime does not win:
+  "Sharing of “Shop replies” was stopped on another computer." (rule C11, scenario S37).
+- **The share dialog should say two more things**: how many snippets of the folder include
+  snippets outside it, which will not work for the others; and, under [Stop sharing], that
+  copies already on the others' computers are removed the next time those computers are online,
+  and that what someone copied before cannot be taken back (sync design §11.3).
+
 ## Timing
 
 | Budget | Value |

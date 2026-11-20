@@ -1,6 +1,9 @@
 # Iamb architecture
 
 Status: approved by the owner on 2026-11-18; §4 amended the same day after the Phase 1 review (ADR-0024) · Task 0.1 ·
+§4.4, §6.2, §6.4, §7, §8 rule 10 and §9 extended by the sync design of task 4.1
+([`sync-design.md`](sync-design.md); ADR-0027, ADR-0028 and ADR-0029, proposed and awaiting the
+owner) ·
 Decision records: [`docs/decisions/`](decisions/README.md) ·
 Review record: [`docs/reviews/0.1-architecture-review.md`](reviews/0.1-architecture-review.md)
 
@@ -259,10 +262,13 @@ pub trait Environment {
   nothing and records a `Diagnostic` with the error code, so a shorter abbreviation cannot fire in
   its place.
 - Abbreviations are unique in the reference set under case-folded comparison. The store enforces
-  this inside a profile. Across profiles (shared folders) a deterministic precedence decides which
-  snippet holds an abbreviation: the user's personal profile first, then the earliest-created
-  share, then the lower folder id. The losers neither trigger nor resolve, and library health
-  lists them.
+  this inside a profile for local edits; rows that arrive by sync are applied as they are, so two
+  devices that each created the same abbreviation offline both keep their snippet
+  ([ADR-0028](decisions/0028-data-model-for-sync.md)). A deterministic precedence decides which
+  snippet holds an abbreviation: the user's personal profile first, then the folders of other
+  profiles by the time the server recorded the user's access to them (the earliest-created
+  share), then the lower id of the shared folder; inside one of these the earlier creation time,
+  then the lower id. The losers neither trigger nor resolve, and library health lists them.
 - Case folding, used by the store's uniqueness check and by the matcher alike, is per-character
   lower-casing with final sigma folded to σ (`Abbreviation::fold_key`). There is no wider Unicode
   case folding: `ß` does not match `ss`.
@@ -570,7 +576,7 @@ left at the cargo name). On Linux the endpoint names no executable and the role 
 | Templates | `ParseTemplate(source)`, `RenderPreview(source, values, rich)` | — |
 | Diagnostics | `RecentDiagnostics` | `DiagnosticAdded` |
 | Settings | `GetSettings`, `PutSetting`, `ListExclusions`, `PutExclusion`, `ResetUsage` | `SettingsChanged` |
-| Sync | `OutboxRead(limit)`, `OutboxAck(ids)`, `ApplyRemote(batch)`, `PurgeFolder(id)`, `AttachmentAvailable(profile, sha256)`, `MissingAttachments`, `SetSyncStatus`, `SetEntitlements` | `OutboxChanged` |
+| Sync | `OutboxRead(limit)`, `OutboxAck(results)`, `ApplyRemote(batch, position)`, `PurgeFolder(id)`, `AttachmentAvailable(profile, sha256)`, `MissingAttachments`, `SetSyncStatus`, `SetEntitlements`; added by the sync design (task 4.1, built in task 4.4): `SyncState`, `Adopt`, `ReconcileBegin`, `ReconcileEnd`, `SetAccess`, `SetKnownUsers`, `PutShare`, `DeleteShare`, `SignedOut`, `AttachmentsToUpload`, `UploadedAttachment` | `OutboxChanged` |
 
 Names across the layers: the engine action `ShowForm` becomes the event `FormRequested`; the
 requests `FormSubmit` and `FormCancel` become the engine events `FormSubmitted` and
@@ -600,6 +606,16 @@ names the snippets, folders and tags a change touched, or nothing when it may ha
 `conflict` when the system refuses it (the old chord stays); and every diagnostic carries its
 time.
 
+The Sync group as the sync design fixes it ([`sync-design.md`](sync-design.md) §7.2, §9): what
+`OutboxRead` returns is one change per row, ready to send (the row as it is now, the base
+revision of its oldest waiting entry, an id that makes a repeat harmless); `OutboxAck` takes the
+server's answer for each change and acts on it (a refused change is kept for the user, one the
+server cannot store yet stays local); `ApplyRemote` never writes a pulled row over an unsent
+change, answers per row, and stores the feed position in the same transaction; `PurgeFolder`
+keeps the folder's unsent changes for the user before it removes the folder. The Library group
+gains `ListKeptChanges`, `CopyKeptChange` and `DismissKeptChange` for those kept changes. No
+build answered the Sync group before task 4.4, which raises the protocol to 4 with it.
+
 The React UI never speaks IPC itself. It calls Tauri commands in `iamb-desktop`, which forwards
 them and relays events back.
 
@@ -627,6 +643,14 @@ to a loopback address that `iamb-sync` listens on for the duration of the sign-i
 links and third-party identity providers both arrive this way. No password, code or token passes
 through the UI host or the service. Invitations are accepted inside the app: after sign-in the
 invitee's pending invitations are listed by `Invitations`; the email only tells them to open Iamb.
+
+The sync design adds what the account screens need ([`sync-design.md`](sync-design.md) §7.2):
+`CreateProfile`, `RenameProfile`, `DeleteProfile`, `TransferOwnership`, `SetMemberRole`,
+`LeaveProfile`, `WithdrawInvitation`, `DeclineInvitation`, `GetConflict`, `ResolveConflict`,
+`Devices`, `RenameDevice`, `RevokeDevice`, `SignOutEverywhere`, `SetDisplayName`, `DeleteAccount`
+and `SyncNow`. Groups, memberships and invitations change only through these calls and need a
+connection; `SetFolderShare` and `RemoveFolderShare` are written to the store as local changes
+(`PutShare`, `DeleteShare` of the Sync group) and so work offline.
 
 ## 7. Data model
 
@@ -667,6 +691,7 @@ Device-local tables, never synced:
 | `sync_state` | The user's position in the server's change feed |
 | `entitlement` | The plan features last reported by the sync agent |
 | `schema_migrations` | Applied migration versions |
+| `folder_access`, `snippet_origin`, `kept_change`, `known_user`, `attachment_state` | Added by the sync design ([`sync-design.md`](sync-design.md) §7.1, built in task 4.4): the user's permission on each folder shared with them and when it began, as the server computed it; who wrote a snippet's content; changes the server refused, kept for the user; display names of authors and members; which attachment files this device has sent. `approval` also keeps the content that was approved, and `sync_state` the account the library belongs to |
 
 Who can do what:
 
@@ -684,6 +709,17 @@ Who can do what:
 The effective library on a device is every non-deleted snippet the user can read under these
 rules. Usage statistics stay on the device
 ([ADR-0015](decisions/0015-local-usage-statistics.md)).
+
+What the sync design adds to this model ([`sync-design.md`](sync-design.md) §3 to §5,
+[ADR-0028](decisions/0028-data-model-for-sync.md)): the server sets `rev` from one growing
+counter, `updated_at` from its own clock and `updated_by` from the caller, and for a snippet also
+who last changed what the snippet does (`content_by`, `content_at`), which travels beside the row
+and is kept in `snippet_origin`; `Profile`, `Membership` and invitations are written by the
+server only, through the account endpoint; a `FolderShare`'s id is derived from its folder and
+group, every other id is made on the device; a folder never changes its profile; a member with
+`edit` may move snippets and sub-folders only within the shared folder; a tag's name and colour
+can be changed by whoever may manage the profile. `sync-design.md` §4 has the permissions row by
+row.
 
 ## 8. Privacy and security rules
 
@@ -765,7 +801,11 @@ These hold for every phase and are what the Phase 2 privacy review checks
       if its template contains `{key}`, `{wait}` or `{clipboard}`, or any line break. Until the
       user approves that revision (the review shows the author and the difference), the last
       approved revision keeps expanding, or nothing if there is none. Single-line plain text from
-      other members expands without review.
+      other members expands without review. "By another user" is the author of the snippet's
+      content as the server records it, not the row's last writer, and what is approved is the
+      content, so that a move or a new label does not ask again and nobody's edit can make
+      someone else's key presses count as the user's own
+      ([ADR-0028](decisions/0028-data-model-for-sync.md), [`sync-design.md`](sync-design.md) D10).
     - Rich snippets render Markdown with raw HTML disabled and links limited to `http`, `https`
       and `mailto`.
     - Downloaded attachments are verified against their SHA-256 before use.
@@ -830,8 +870,19 @@ real machines:
 
 ## 9. Sync
 
-Task 4.1 specifies the conflict scenarios; the architecture fixes the frame
-([ADR-0016](decisions/0016-sync-frame.md)):
+The architecture fixes the frame ([ADR-0016](decisions/0016-sync-frame.md)). Task 4.1 fills it
+in: [`sync-design.md`](sync-design.md) has the server's tables and policies, the protocol, the
+rules for every conflict (`C1` to `C23` on the server, `D1` to `D14` on the device), the threat
+model for sharing and 49 conflict scenarios with their outcomes, which are also in
+`spec/sync/scenarios.toml` for the simulation of task 4.4
+([ADR-0027](decisions/0027-sync-protocol-and-conflict-rules.md),
+[ADR-0028](decisions/0028-data-model-for-sync.md),
+[ADR-0029](decisions/0029-server-readable-content.md)). In short: the last write is the one the
+server accepts last, by its own counter and clock; a write replaces the whole row, and a stale
+one records a conflict that offers the other version back; a delete is a write like any other; a
+device never writes a pulled row over an unsent change; a change the server refuses is kept on
+the device for the user; and the server stores synced content readably in version 1 and never
+interprets it. The frame:
 
 - The server is a Postgres database with row-level security, reached over HTTPS and a live-update
   channel, hosted on Supabase.
@@ -845,10 +896,11 @@ Task 4.1 specifies the conflict scenarios; the architecture fixes the frame
   `folder_revoked` triggers `PurgeFolder`, which removes the folder, its snippets and its cached
   attachments from the device.
 - **Push.** The store writes every local change to `outbox` in the same transaction as the change,
-  with the revision it was based on. The agent pushes in order. The server applies last write
-  wins per row and keeps the overwritten version in a history table. When the base revision is
-  older than the server's row, the server also records a conflict; the device lists conflicts
-  (`Conflicts`) so the user can restore the other version.
+  with the revision it was based on. The agent pushes in order (one change per row, parents
+  before what refers to them). The server applies last write wins per row and keeps the
+  overwritten version in a history table. When the base revision is older than the server's row
+  and another device changed the row's content in between, the server also records a conflict;
+  the device lists conflicts (`Conflicts`) so the user can restore the other version.
 - Deletes are soft and are purged after 30 days on the server and on devices that have read past
   them.
 - **Attachments.** Rows sync first. The agent then downloads every attachment of the effective
@@ -926,7 +978,7 @@ The screens, flows, copy and design tokens are in [`docs/ux/spec.md`](ux/spec.md
 | 3.10 Library health | `iamb-store::health` (conflicts, shadowing, broken references, unused), `Health` message |
 | 3.11 Accessibility and polish | `apps/desktop` |
 | 3.12 Review | `apps/desktop`, `iamb-desktop` |
-| 4.1 Sync design | `docs/sync.md`, extends §7 and §9 |
+| 4.1 Sync design | `docs/sync-design.md`, `spec/sync/scenarios.toml` (checked by `iamb-testkit::sync_scenarios`); extends §7 and §9 |
 | 4.2 Server schema and policies | `server/migrations/`, `server/tests/` |
 | 4.3 Security review | `server/` |
 | 4.4 Sync client | `iamb-sync` (library), `outbox` and `sync_state` in `iamb-store`, Sync messages |

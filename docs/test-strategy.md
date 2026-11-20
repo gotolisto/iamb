@@ -18,6 +18,7 @@ interactive desktop on macOS), so CI uses generous thresholds and never reports 
 | Fuzzing | `cargo-fuzz` (pinned nightly, the only nightly use) | `fuzz/` (its own workspace) target `template` (parse, resolve and render); later `rich_markdown`, `ipc_frame_decode`, `import_json` | Nightly, 10 min per target, toolchain pinned in `.github/workflows/nightly.yml`; corpus seeded from the spec examples and kept between nights | No crash, no hang over 1 s, no OOM over 512 MB |
 | Scripted typing sessions | `iamb-testkit::session` (scripted key stream, fake clock, expected actions) | `crates/iamb-testkit/sessions/*.toml` (run by `crates/iamb-core/tests/engine_sessions.rs`), later `crates/iamb-service/tests/` | CI, every PR | Must pass |
 | Mutation sample | `cargo-mutants` on `iamb-core::matcher` | Config in `crates/iamb-core/.cargo/mutants.toml` | Manual at tasks 1.2 and 1.9; weekly afterwards | ≥ 80% mutants caught; every missed mutant reviewed |
+| Sync conflict scenarios | TOML scenarios with a defined outcome each (`docs/sync-design.md` §12) | `spec/sync/scenarios.toml`; the format and its check in `iamb-testkit::sync_scenarios`, run by `crates/iamb-testkit/tests/sync_scenarios.rs`; replayed by the two-device simulation of task 4.4 | CI, 3 OSes, every PR | At least 30 scenarios; unique ids; every row stated for the server and every device; conflicts, history and rows agree; the design document writes out every scenario and defines every rule cited. From task 4.4: every scenario replays to its outcome |
 | IPC contract | `cargo test` with golden JSON | `crates/iamb-ipc/tests/contract/` (one golden file per message) | CI, every PR | Every message round-trips byte-for-byte; role and version rules tested |
 | Service vs. mock platform | `iamb-platform` mock + `iamb-testkit` | `crates/iamb-service/tests/` | CI, 3 OSes, every PR | Must pass |
 | UI host: bridge, message contract, crash isolation | `cargo test -p iamb-desktop` (a worker on the mock platform in the test process) | `apps/desktop/src-tauri/tests/` (§8) | CI job `desktop`, 3 OSes, every PR | Must pass |
@@ -467,7 +468,8 @@ own paint stamp).
 | 2.8 | Privacy review using the canary scan results |
 | 3.2, 3.5, 3.6 | UI cold open, form and palette timings |
 | 3.7 | Install-to-first-expansion sessions |
-| 4.2–4.4 | Server policy tests (`server/tests/`), sync convergence tests, two-device latency |
+| 4.1 | The sync conflict scenarios and their structural check (`spec/sync/scenarios.toml`, `iamb-testkit::sync_scenarios`) |
+| 4.2–4.4 | Server policy tests (`server/tests/`, the guarantees G1 to G20 of `sync-design.md` §11.5), sync convergence tests (the scenario replay and the 1,000-run simulation with the invariants I1 to I6 of `sync-design.md` §1), two-device latency |
 
 ## 8. UI host (task 3.2)
 

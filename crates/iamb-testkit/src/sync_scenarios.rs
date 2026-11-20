@@ -61,7 +61,8 @@
 //!   has in `start`. A row's `version` in an outcome is the step that wrote its current
 //!   revision, a delete included.
 //! - `absent` means the device or the server holds no row with that id: never received, purged,
-//!   or not visible to that user.
+//!   or not visible to that user. Invitations are not rows of the local store: one is "on" a
+//!   device while the account endpoint lists it for that user.
 //! - `advance` moves the shared clock by whole days; the server's daily purge runs, and each
 //!   device purges at its next sync.
 
