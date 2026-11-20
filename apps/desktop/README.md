@@ -208,8 +208,10 @@ hand-back are the same either way.
 --test panel`, macOS only) converts a borderless window of an `NSWindow` subclass that keeps a
 `focusable` flag as Tauri's does, checks the class, the mask and the other settings, that the flag
 still decides `canBecomeKeyWindow`, that a second call changes nothing and a window of another
-class is refused; then, with a window server session, that the shown panel becomes the key window
-while the app does not become active, and does not become key while its flag says not focusable.
+class is refused; then, once the activation every process gets at launch (`finishLaunching`) has
+been served and another app made active, as when the UI host shows a panel, and with a window
+server session, that the shown panel becomes the key window while the app does not become active,
+and does not become key while its flag says not focusable.
 What only a Mac with the real UI host can confirm (the target app stays active, keys typed into the
 panel go to the panel, the hand-back) is in `docs/compatibility-run.md`, "The macOS panel" (M-P1
 to M-P5).

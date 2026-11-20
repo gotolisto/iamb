@@ -16,7 +16,8 @@
 //! | the window becomes an `IambNonActivatingPanel` (an `NSPanel`) with the non-activating style, `becomesKeyOnlyIfNeeded` off, floating, `hidesOnDeactivate` off, on every Space and over full-screen apps | nothing | |
 //! | the original class's instance variable still reads and decides `canBecomeKeyWindow`; the panel never becomes main | nothing | |
 //! | a second call changes nothing; a window of another class is refused and keeps its class | nothing | |
-//! | shown, the panel becomes the key window and the app does not become active; while its flag says not focusable it does not become key | a window server session, and this process not already active | skipped |
+//! | before the panel is shown, the launch activation has been served and another app is the active one, as when the UI host shows a panel (see `make_another_app_active`) | another app that can be active (Finder is) | failed |
+//! | shown, the panel becomes the key window and the app does not become active; while its flag says not focusable it does not become key | a window server session | skipped |
 //!
 //! A skipped check writes `SKIPPED` and its reason to standard error; a failed one writes
 //! `FAILED` and the process exits with a failure. Nothing is typed.
@@ -70,6 +71,8 @@ mod mac {
     const MAIN_TIMEOUT: Duration = Duration::from_secs(5);
     /// How long the panel gets to become key (or to show that it does not).
     const SETTLE: Duration = Duration::from_secs(3);
+    /// How long the process must stay inactive before the panel is shown.
+    const STAY: Duration = Duration::from_millis(500);
 
     fn say(line: &str) {
         let _ = writeln!(std::io::stderr(), "panel: {line}");
@@ -360,14 +363,26 @@ mod mac {
         .flatten()
     }
 
+    /// Orders both windows out, closes them and releases them, inside a pool of its own so
+    /// that whatever the release autoreleases is drained here, in this job, and not later by the
+    /// event loop as it stops.
     fn close_windows() {
-        let _ = on_main(|_mtm| {
-            UI.with(|ui| {
-                if let Some(ui) = ui.borrow_mut().take() {
-                    ui.panel.orderOut(None);
-                    ui.plain.orderOut(None);
-                }
+        let closed = on_main(|_mtm| {
+            objc2::rc::autoreleasepool(|_| {
+                UI.with(|ui| {
+                    if let Some(ui) = ui.borrow_mut().take() {
+                        ui.panel.orderOut(None);
+                        ui.plain.orderOut(None);
+                        ui.panel.close();
+                        ui.plain.close();
+                    }
+                });
             });
+        });
+        say(if closed.is_some() {
+            "the windows were closed and released"
+        } else {
+            "the main thread did not close the windows"
         });
     }
 
@@ -408,20 +423,72 @@ mod mac {
         (last, was_active)
     }
 
+    /// Puts the test process where the UI host is when a panel is asked for: running for a
+    /// while, and not the active app (the user is typing into another one).
+    ///
+    /// A process that starts the application event loop asks to be activated:
+    /// `-[NSApplication run]` calls `finishLaunching`, which "activates the app" (Apple's
+    /// documentation of `finishLaunching`). The request is served asynchronously, so a process
+    /// that is inactive just after start can become active a moment later, whatever window it
+    /// shows; the first run of this test on a CI runner saw exactly that. The UI host does the
+    /// same at login (and Tauri asks to be activated at launch too), long before any panel is
+    /// shown, and the user has made another app active since. So the test waits for the launch
+    /// activation, hands the active state to another app (`deactivate`, then `hide:` and
+    /// `unhideWithoutActivation` if that was not enough), and checks that it stays inactive
+    /// before the panel is shown. `false` (a failure) when the process cannot be made inactive.
+    fn make_another_app_active(run: &mut Run) -> bool {
+        let active = || on_main(|mtm| NSApplication::sharedApplication(mtm).isActive());
+        let launched_active = wait_until(SETTLE, || active() == Some(true));
+        say(&format!(
+            "the system {} this process at launch",
+            if launched_active {
+                "activated"
+            } else {
+                "did not activate"
+            }
+        ));
+        let _ = on_main(|mtm| NSApplication::sharedApplication(mtm).deactivate());
+        if !wait_until(SETTLE, || active() == Some(false)) {
+            let _ = on_main(|mtm| NSApplication::sharedApplication(mtm).hide(None));
+            let _ = wait_until(SETTLE, || active() == Some(false));
+            let _ = on_main(|mtm| NSApplication::sharedApplication(mtm).unhideWithoutActivation());
+        }
+        // It must stay inactive for a while: a launch activation served late would show here.
+        let start = Instant::now();
+        let mut inactive = true;
+        while start.elapsed() < STAY {
+            inactive &= active() == Some(false);
+            thread::sleep(Duration::from_millis(50));
+        }
+        run.check(
+            "before the panel is shown, another app is the active one",
+            inactive,
+        );
+        inactive
+    }
+
+    /// Polls `done` until it is true, at most `timeout`; whether it became true.
+    fn wait_until(timeout: Duration, mut done: impl FnMut() -> bool) -> bool {
+        let start = Instant::now();
+        loop {
+            if done() {
+                return true;
+            }
+            if start.elapsed() >= timeout {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+
     fn the_panel_takes_the_keyboard_without_activating(run: &mut Run) {
         let what = "shown, the panel becomes key and the app stays inactive";
-        match state() {
-            None => {
-                run.check("the panel exists", false);
-                return;
-            }
-            Some((_, true)) => {
-                say(&format!(
-                    "SKIPPED {what}: this process was already the active app"
-                ));
-                return;
-            }
-            Some(_) => {}
+        if state().is_none() {
+            run.check("the panel exists", false);
+            return;
+        }
+        if !make_another_app_active(run) {
+            return;
         }
         if !show_panel(true) {
             run.check("the panel can be shown", false);
