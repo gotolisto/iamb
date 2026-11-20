@@ -33,10 +33,6 @@
 //! module `probe`: the window with one `NSTextView` of the end-to-end latency measurement
 //! (`docs/test-strategy.md` §6).
 //!
-//! With the `panel` feature (enabled only by the UI host, `iamb-desktop`; the service is built
-//! without it) the crate also has [`make_non_activating_panel`], which turns a Tauri window
-//! into the non-activating panel of the fill-in form and the search palette (ADR-0017).
-//!
 //! One module implements no trait: `main_loop` ([`run_with_main_loop`]) gives the worker's
 //! main thread to the application event loop, because the listener's keyboard-layout reads
 //! and the hotkeys must happen there (`listener`, `hotkeys`). Another, `hardening`
@@ -71,8 +67,7 @@
 //!   traits is public, with two agreed exceptions: [`run_with_main_loop`], because what the
 //!   main thread runs is decided by the process's `main`, which no trait method can reach,
 //!   and [`harden_process`], because it must run before the platform exists (and the
-//!   test-only `probe` module behind its feature, and `make_non_activating_panel` behind
-//!   `panel`, because the windows it converts belong to the UI host, which no trait reaches).
+//!   test-only `probe` module behind its feature).
 //! - No networking framework and no `std::net`: this crate is linked into the service
 //!   (architecture §2).
 //! - The grants (Accessibility, Input Monitoring) belong to the process that creates the
@@ -104,8 +99,6 @@ mod login_item;
 mod main_loop;
 #[cfg(target_os = "macos")]
 mod memory;
-#[cfg(all(target_os = "macos", feature = "panel"))]
-mod panel;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod permissions;
 #[cfg(all(target_os = "macos", feature = "probe"))]
@@ -117,8 +110,6 @@ mod session;
 pub use hardening::harden_process;
 #[cfg(target_os = "macos")]
 pub use main_loop::run_with_main_loop;
-#[cfg(all(target_os = "macos", feature = "panel"))]
-pub use panel::make_non_activating_panel;
 
 /// The macOS platform: implements every trait of `iamb-platform`
 /// (and so [`iamb_platform::Platform`]).

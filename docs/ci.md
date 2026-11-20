@@ -36,10 +36,6 @@ Tauri dependencies would slow every leg.
   for both targets; each `test` leg runs `cargo test -p iamb-testkit --features probe --test
   probe_browser`, and the Windows and macOS legs also the OS crate's `--features probe --test
   probe` (Windows with `IAMB_REQUIRE_DESKTOP`).
-  The `panel` feature of `iamb-platform-macos` (the macOS non-activating panel, enabled only
-  by `iamb-desktop`) likewise: `lint` runs clippy on that crate with it for the macOS target,
-  and the macOS `test` leg runs `cargo test -p iamb-platform-macos --features panel --test
-  panel`. The service is built without it, so it does not change the service binary.
   On macOS the focus test (`cargo test -p iamb-platform-macos --test focus`) fails, rather
   than skips, when its key-stamp check cannot run for a reason other than a missing
   Accessibility or Input Monitoring grant or secure keyboard entry left on; on a machine that

@@ -421,7 +421,8 @@ For each of the 20 apps of your OS, in a text field of the app:
 Record per app: F1 time, and pass or fail of F2 to F10, with the OS version and the app's
 version. A failure of F3 or F4 (the focus did not come back, or came back to another field)
 fails the KPI for that app unless it has an exception record, as for the matrix cells. On macOS,
-F1's menu-bar check is the non-activating panel's; run "The macOS panel" below once as well.
+until the non-activating panel exists (`apps/desktop/README.md`, "The macOS panel"), F1's menu-bar
+check fails by design; record it as a known limitation and check the rest.
 
 ## The search palette (task 3.6; finding 16 of the 2.8 review)
 
@@ -461,33 +462,8 @@ For each of the 20 apps of your OS, with the cursor in a text field of the app:
 Record per app: P1 time, and pass or fail of P2 to P16, with the OS version and the app's
 version. A failure of P4 or P5 (the focus did not come back, or came back to another field) fails
 the focus KPI for that app unless it has an exception record, as for the matrix cells. On macOS,
-P1's menu-bar check is the non-activating panel's; run "The macOS panel" below once as well.
-
-## The macOS panel (ADR-0017; finding 16 of the 2.8 review)
-
-On macOS the form and the palette are non-activating panels: they take the keyboard while the app
-being typed into stays the active app (`apps/desktop/README.md`, "The macOS panel"). The test
-`cargo test -p iamb-platform-macos --features panel --test panel` checks the conversion on a test
-window; only a Mac with the real UI host can show that the target app stays active, that the keys
-go to the panel and that the hand-back works. Run these once per macOS version, in TextEdit
-(a new plain-text document) and in one browser text field, with the setup of the two sections
-above, and with Terminal allowed to control System Events (step 3 of the macOS section).
-
-First, in the UI host's log (`logs/desktop.log`), there must be no line `the form window stays an
-ordinary window` or `the palette window stays an ordinary window`. If there is, the conversion
-failed: note the line (it names the reason) and stop here; M-P1 to M-P5 would test an ordinary
-window.
-
-| # | Do | Pass when |
-| --- | --- | --- |
-| M-P1 | In Terminal run `sleep 6; osascript -e 'tell application "System Events" to get name of first process whose frontmost is true'`; switch to the app within the 6 seconds, type `;rlate` and a space, and leave the form up until Terminal prints | Terminal prints the app's name (`TextEdit`), not `iamb-desktop`; the menu bar shows the app's menus the whole time; the app's document window keeps its active title bar. Repeat with the palette's shortcut instead of `;rlate ` |
-| M-P2 | With the form up, type `abc` | `abc` appears in **First name**, nothing appears in the app's document, and the document's caret does not blink while the panel has the keyboard. With the palette up, `abc` goes into the query in the same way |
-| M-P3 | Fill in the form and press Enter; then open it again and press Esc; then open the palette, pick a snippet with Enter, and open it again and press Esc | Each time the panel disappears and the app's document has the keyboard again at once, the caret where it was (typing goes into the document without a click); Enter typed the text, Esc typed and deleted nothing. The app was never deactivated: its window did not flash inactive and back |
-| M-P4 | With the form up, click into the app's document, then click back into the panel's field | The click into the document gives it the keyboard (the panel stays, F5); the click back gives the panel the keyboard without the app's menus leaving the menu bar |
-| M-P5 | Put the app in full screen (Control-Command-F) and type `;rlate ` | The form appears over the full-screen app on its Space, takes the keys, and Enter types into the app; the app stays in full screen |
-
-Record pass or fail of M-P1 to M-P5 with the macOS version and the apps' versions. A failure of
-M-P1 or M-P3 is a failure of the panel, whatever the matrix says: note it in the results file.
+until the non-activating panel exists (`apps/desktop/README.md`, "The macOS panel"), P1's
+menu-bar check fails by design; record it as a known limitation and check the rest.
 
 ## Delivering the result
 

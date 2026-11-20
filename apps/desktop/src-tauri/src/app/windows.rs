@@ -24,18 +24,15 @@
 //! - **Windows**: the panel takes the foreground. The service granted the UI host the right
 //!   to (`allow_foreground`) when it sent the request; the target app's title bar turns
 //!   inactive until the panel hides and the focus is handed back (`restore_focus`).
-//! - **macOS**: the panel is a non-activating panel (an `NSPanel` with the non-activating
-//!   style mask), so the target app stays the active one. Tauri has no such window, and
-//!   converting its `NSWindow` needs `unsafe` Objective-C calls, which this crate forbids
-//!   (`unsafe_code = "forbid"` in the workspace lints), so [`prewarm`] has
-//!   `iamb_platform_macos::make_non_activating_panel` (feature `panel`) convert each panel
-//!   right after creating it, on the main thread, before it is ever shown. [`show_panel`] then
-//!   only shows it: that orders the panel front and makes it the key window without
-//!   activating Iamb, where Tauri's `set_focus` would activate the app. If a conversion
-//!   fails (logged), that panel stays an ordinary window of the accessory app and is shown
-//!   with `set_focus` as before: showing it activates Iamb and the hand-back re-activates the
-//!   target app. The flow, the `PanelFocus` messages and the hand-back are the same either
-//!   way.
+//! - **macOS**: the panel is meant to be a non-activating panel (an `NSPanel` with the
+//!   non-activating style mask), so the target app stays the active one. Tauri has no such
+//!   window, and converting its `NSWindow` needs `unsafe` Objective-C calls, which this crate
+//!   forbids (`unsafe_code = "forbid"` in the workspace lints); the conversion belongs in
+//!   `iamb-platform-macos` (the function it needs is described in `apps/desktop/README.md`,
+//!   "The macOS panel"). Until it exists the panel is
+//!   an ordinary window of the accessory app: showing it activates Iamb (the target app's menu
+//!   bar gives way to none), and the hand-back re-activates the target app. The flow, the
+//!   `PanelFocus` messages and the hand-back are the same either way.
 //! - **Linux** (development only): an ordinary window; nothing is handed back.
 //!
 //! # Opening the library cold
@@ -95,8 +92,6 @@ fn page() -> WebviewUrl {
 /// later main-thread task that logs its failure) the form.
 pub fn prewarm(app: &AppHandle, log: &Arc<Logger>) -> tauri::Result<()> {
     let palette = panel(app, PALETTE, PALETTE_WIDTH, 420.0).build()?;
-    #[cfg(target_os = "macos")]
-    non_activating(&palette, log);
     panel_events(&palette);
     #[cfg(target_os = "linux")]
     {
@@ -115,54 +110,11 @@ pub fn prewarm(app: &AppHandle, log: &Arc<Logger>) -> tauri::Result<()> {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        #[cfg(not(target_os = "macos"))]
         let _ = log;
         let form = panel(app, FORM, FORM_WIDTH, PANEL_DEFAULT_HEIGHT).build()?;
-        #[cfg(target_os = "macos")]
-        non_activating(&form, log);
         panel_events(&form);
     }
     Ok(())
-}
-
-/// The panels that became non-activating panels (macOS): [`show_panel`] gives them the
-/// keyboard without `set_focus` (module docs).
-#[cfg(target_os = "macos")]
-static NON_ACTIVATING: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
-
-/// Turns the new panel `window` into a non-activating panel (module docs). Main thread (the
-/// setup hook, where [`prewarm`] runs), before the window is first shown.
-#[cfg(target_os = "macos")]
-fn non_activating(window: &WebviewWindow, log: &Logger) {
-    match iamb_platform_macos::make_non_activating_panel(window) {
-        Ok(()) => NON_ACTIVATING
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(window.label().to_owned()),
-        Err(e) => log.error(format_args!(
-            "the {} window stays an ordinary window, which activates Iamb: {e}",
-            window.label()
-        )),
-    }
-}
-
-/// Whether [`show_panel`] must give the panel `label` the keyboard with `set_focus`: always,
-/// except for a macOS panel that became non-activating, which showing alone makes key
-/// (module docs).
-fn takes_focus_with_set_focus(label: &str) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        !NON_ACTIVATING
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .iter()
-            .any(|l| l == label)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = label;
-        true
-    }
 }
 
 /// A hidden, undecorated panel window.
@@ -320,11 +272,7 @@ pub fn show_panel(
         window.set_position(PhysicalPosition::new(frame.x, frame.y))?;
     }
     window.show()?;
-    if takes_focus_with_set_focus(label) {
-        window.set_focus()
-    } else {
-        Ok(())
-    }
+    window.set_focus()
 }
 
 /// How long a panel stays shown, out of sight, for its first paint ([`prepaint_panel`]).

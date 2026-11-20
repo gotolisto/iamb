@@ -37,9 +37,7 @@ tauri = { version = "=2.12.5", features = ["tray-icon"] }
 iamb-platform-windows = { path = "../../../crates/iamb-platform-windows" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-# The same, and on macOS `panel` for `make_non_activating_panel`, which turns the form and the palette into
-# non-activating panels (`src/app/windows.rs`, ADR-0017). Only this crate enables it.
-iamb-platform-macos = { path = "../../../crates/iamb-platform-macos", features = ["panel"] }
+iamb-platform-macos = { path = "../../../crates/iamb-platform-macos" }
 
 # Linux (development only): the library window shares the pre-warmed panels' web process
 # (`src/app/windows.rs`). The same version Tauri itself uses.

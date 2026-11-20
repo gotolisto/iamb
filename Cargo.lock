@@ -1764,7 +1764,6 @@ dependencies = [
  "objc2-foundation",
  "objc2-security",
  "objc2-service-management",
- "raw-window-handle",
 ]
 
 [[package]]
