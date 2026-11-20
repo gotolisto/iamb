@@ -235,4 +235,3 @@ How it measures and what it gave is in `docs/test-strategy.md` §8.
 - The non-activating panel on macOS, once `iamb-platform-macos` has a function that works
   (a first attempt was reverted: converting a window after it exists did not stop activation on
   macOS CI).
-- The accessibility pass (3.11).

@@ -17,7 +17,7 @@ export function EmptyState({
       <span className="empty-mark">
         <Icon name="iamb" />
       </span>
-      <h3 className="empty-title">{title}</h3>
+      <h2 className="empty-title">{title}</h2>
       {children && <p className="empty-text">{children}</p>}
       {actions && <div className="empty-actions">{actions}</div>}
     </div>

@@ -44,7 +44,7 @@ Tauri dependencies would slow every leg.
   set it.
 - `desktop` (Linux, Windows, macOS, not fail-fast): the UI host. The front end in
   `apps/desktop` (`pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm test` with vitest,
-  `pnpm build`), then `cargo build`, `cargo clippy -- -D warnings` and `cargo test` for
+  `pnpm build`), on Linux the keyboard-only accessibility run (`node scripts/keyboard-run.mjs`, `docs/accessibility-run.md`), then `cargo build`, `cargo clippy -- -D warnings` and `cargo test` for
   `-p iamb-desktop --all-targets --features tauri/custom-protocol` (the feature embeds the built
   front end, as a release build does; using it for every step builds the crate once). The Linux
   leg first installs `libwebkit2gtk-4.1-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`,

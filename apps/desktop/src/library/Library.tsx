@@ -292,6 +292,25 @@ export function Library({ env }: { env: LibraryEnv }) {
 
   const focusList = () => requestAnimationFrame(() => listEl.current?.focus());
 
+  // Focus is never lost (spec §5.6): the editor goes when Settings, Library health or the log
+  // open from a shortcut, and the keyboard would be left on nothing. It goes to the view's title
+  // (or back to the list when the list returns); a view opened from the sidebar keeps the focus
+  // on the button that opened it.
+  const viewTitle = useRef<HTMLHeadingElement>(null);
+  const firstView = useRef(true);
+  useEffect(() => {
+    if (firstView.current) {
+      firstView.current = false;
+      return;
+    }
+    const frame = requestAnimationFrame(() => {
+      const now = document.activeElement;
+      if (now && now !== document.body) return;
+      (viewTitle.current ?? listEl.current)?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [view.kind]);
+
   const openDraft = useCallback(
     (seed: DraftSeed) => {
       guard(() => {
@@ -638,12 +657,14 @@ export function Library({ env }: { env: LibraryEnv }) {
   );
 
   // ---- Panes and shortcuts ------------------------------------------------------------------
-  const focusPane = (n: 0 | 1 | 2) => {
-    const name = ["sidebar", "list", "editor"][n];
+  const focusPane = (n: 0 | 1 | 2 | 3) => {
+    const name = ["sidebar", "list", "editor", "toast"][n];
     const pane = document.querySelector<HTMLElement>(`[data-pane="${name}"]`);
     if (!pane) return;
     const target =
-      n === 0
+      n === 3
+        ? pane.querySelector<HTMLElement>("button")
+        : n === 0
         ? (pane.querySelector<HTMLElement>("[data-nav-focus]") ?? pane.querySelector<HTMLElement>('[tabindex="0"], button'))
         : n === 1
           ? pane.querySelector<HTMLElement>('[role="listbox"]')
@@ -651,11 +672,15 @@ export function Library({ env }: { env: LibraryEnv }) {
     target?.focus();
   };
 
+  // F6 visits the panes, and the toast too while it offers an action (Undo), which a keyboard
+  // user would otherwise have to Tab to through the whole editor within 10 seconds.
   const cyclePane = (back: boolean) => {
-    const names = ["sidebar", "list", "editor"];
+    const names = ["sidebar", "list", "editor", "toast"];
+    const there = names.map((n) => document.querySelector(`[data-pane="${n}"]`) !== null);
+    const count = there[3] ? 4 : 3;
     const at = names.findIndex((n) => document.querySelector(`[data-pane="${n}"]`)?.contains(document.activeElement));
-    const next = (((at < 0 ? 0 : at) + (back ? -1 : 1)) % 3 + 3) % 3;
-    focusPane(next as 0 | 1 | 2);
+    const next = (((at < 0 ? 0 : at) + (back ? -1 : 1)) % count + count) % count;
+    focusPane(next as 0 | 1 | 2 | 3);
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
@@ -806,8 +831,8 @@ export function Library({ env }: { env: LibraryEnv }) {
   const rightArea = (() => {
     if (view.kind === "settings" || view.kind === "diagnostics" || view.kind === "health") {
       return (
-        <section className="pane view-pane" aria-label={view.kind === "settings" ? "Settings" : view.kind === "health" ? "Library health" : "Why didn’t it expand?"}>
-          <h1 className="view-title">
+        <main className="pane view-pane" aria-label={view.kind === "settings" ? "Settings" : view.kind === "health" ? "Library health" : "Why didn’t it expand?"}>
+          <h1 className="view-title" ref={viewTitle} tabIndex={-1}>
             {view.kind === "settings" ? "Settings" : view.kind === "health" ? "Library health" : "Why didn’t it expand?"}
           </h1>
           {view.kind === "health" ? (
@@ -852,11 +877,12 @@ export function Library({ env }: { env: LibraryEnv }) {
               onOpenSettings={(section) => changeView({ kind: "settings", section })}
             />
           )}
-        </section>
+        </main>
       );
     }
     return (
-      <>
+      <main className="library-main">
+        <h1 className="visually-hidden">{listLabel}</h1>
         <ListPane
           listLabel={listLabel}
           filterLabel={filterLabel}
@@ -916,7 +942,7 @@ export function Library({ env }: { env: LibraryEnv }) {
         ) : selection.ids.size > 1 ? (
           <section className="pane editor-pane center" aria-label="Snippet" data-pane="editor">
             <div className="empty">
-              <h3 className="empty-title">{selection.ids.size} snippets selected</h3>
+              <h2 className="empty-title">{selection.ids.size} snippets selected</h2>
               <div className="empty-actions">
                 <button type="button" className="button" onClick={() => void toggleEnabled([...selection.ids])}>
                   Turn off
@@ -932,7 +958,7 @@ export function Library({ env }: { env: LibraryEnv }) {
             <p className="help">Select a snippet, or press {shortcutLabel({ key: "N" }, mac)} to make one.</p>
           </section>
         )}
-      </>
+      </main>
     );
   })();
 
@@ -979,7 +1005,7 @@ export function Library({ env }: { env: LibraryEnv }) {
       </div>
 
       <MenuHost menu={menu} onClose={() => setMenu(null)} />
-      <Toast toast={toast} onDismiss={dismissToast} />
+      <Toast toast={toast} onDismiss={dismissToast} fallback={focusList} />
 
       {leave && (
         <LeaveDialog

@@ -7,6 +7,8 @@ export interface MenuItem {
   shortcut?: string;
   danger?: boolean;
   disabled?: boolean;
+  /** The shortcut as `aria-keyshortcuts` writes it, when it is not the one shown (spec §5.6). */
+  keys?: string;
 }
 
 interface MenuProps {
@@ -16,6 +18,11 @@ interface MenuProps {
   y: number;
   label: string;
   onClose: () => void;
+}
+
+/** `aria-keyshortcuts` for a shortcut as the menu writes it ("Ctrl+D", "⌘D"). */
+function shortcutKeys(shown: string): string {
+  return shown.replace("Ctrl", "Control").replace("⌘", "Meta+").replace("⇧", "Shift+");
 }
 
 /** A menu of the design system (§4.11): arrows move, Enter chooses, Esc closes. */
@@ -75,6 +82,7 @@ export function Menu({ items, x, y, label, onClose }: MenuProps) {
           role="menuitem"
           className={item.danger ? "menu-item danger" : "menu-item"}
           disabled={item.disabled}
+          aria-keyshortcuts={item.keys ?? (item.shortcut ? shortcutKeys(item.shortcut) : undefined)}
           onClick={() => {
             onClose();
             item.onSelect();

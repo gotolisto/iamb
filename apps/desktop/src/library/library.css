@@ -21,6 +21,14 @@
   min-height: 0;
 }
 
+/* The list and the editor: the window's main landmark (it holds no more than the two panes). */
+.library-root .library-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
 .library-root .pane {
   min-width: 0;
   min-height: 0;
@@ -563,17 +571,38 @@
   background: var(--color-bg-hover);
 }
 
+/* A window narrower than 880 px (it can be 640 px wide, and 200% zoom in 1280 px leaves 640 px
+   * of CSS): nothing scrolls sideways (1.4.4, 1.4.10), so the list gives way to the editor. */
+@media (max-width: 879px) {
+  .library-root {
+    min-width: 0;
+  }
+
+  .library-root .list-pane {
+    width: clamp(180px, 36vw, var(--size-list));
+  }
+}
+
 @media (max-width: 1039px) {
   .library-root .sidebar {
     width: 52px;
     align-items: stretch;
   }
 
+  /* Hidden from the eye, not from assistive technology: the collapsed buttons keep their names. */
   .library-root .sidebar .nav-label,
-.library-root .sidebar .count,
-.library-root .sidebar .overline,
-.library-root .sidebar .status-line span:not(.dot),
-.library-root .sidebar .twisty {
+  .library-root .sidebar .status-line span:not(.dot) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .library-root .sidebar .count,
+  .library-root .sidebar .overline,
+  .library-root .sidebar .twisty {
     display: none;
   }
 

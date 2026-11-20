@@ -557,7 +557,7 @@ export function PaletteView({
           </div>
           {!typed && open.lastForm && items.length <= 1 && <p className="pl-hint">{copy.hint}</p>}
         </div>
-        <div className="pl-pv" aria-label={copy.preview}>
+        <div className="pl-pv" role="group" aria-label={copy.preview}>
           {previewText(preview)}
         </div>
         <div className="pl-ft">

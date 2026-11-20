@@ -878,7 +878,6 @@ export function TemplateField(props: TemplateFieldProps) {
           aria-invalid={message ? true : undefined}
           aria-readonly={readOnly ? true : undefined}
           aria-haspopup={readOnly ? undefined : "listbox"}
-          aria-expanded={readOnly ? undefined : menuOpen}
           aria-controls={menuOpen ? ids.menu : undefined}
           aria-activedescendant={menuOpen ? `${ids.menu}-${active}` : undefined}
           aria-keyshortcuts={isMac() ? "Meta+Shift+P" : "Control+Shift+P"}

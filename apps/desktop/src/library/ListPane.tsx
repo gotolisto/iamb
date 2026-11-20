@@ -447,8 +447,8 @@ function menuFor(props: ListPaneProps, id: string, ids: string[], x: number, y: 
     y,
     label,
     items: [
-      ...(many ? [] : [{ label: "Open", onSelect: () => props.onOpen(id) }]),
-      { label: turnOff ? "Turn off" : "Turn on", onSelect: () => props.onToggle(ids) },
+      ...(many ? [] : [{ label: "Open", keys: "Enter", onSelect: () => props.onOpen(id) }]),
+      { label: turnOff ? "Turn off" : "Turn on", keys: "Space", onSelect: () => props.onToggle(ids) },
       ...(many
         ? []
         : [
@@ -458,7 +458,7 @@ function menuFor(props: ListPaneProps, id: string, ids: string[], x: number, y: 
               onSelect: () => props.onDuplicate(id),
             },
           ]),
-      { label: "Delete", danger: true, onSelect: () => props.onDelete(ids) },
+      { label: "Delete", danger: true, keys: props.mac ? "Meta+Backspace" : "Delete", onSelect: () => props.onDelete(ids) },
     ],
   };
 }

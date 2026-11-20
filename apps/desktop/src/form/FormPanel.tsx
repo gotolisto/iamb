@@ -212,7 +212,17 @@ export function focusFirstField(root: ParentNode | null): void {
   if (first instanceof HTMLTextAreaElement) first.select();
 }
 
-function Buttons({ os, keys, onCancel }: { os: Os; keys: Keys; onCancel: () => void }) {
+function Buttons({
+  os,
+  keys,
+  onCancel,
+  onInsert,
+}: {
+  os: Os;
+  keys: Keys;
+  onCancel: () => void;
+  onInsert: () => void;
+}) {
   const cancel = (
     <button
       key="cancel"
@@ -227,9 +237,10 @@ function Buttons({ os, keys, onCancel }: { os: Os; keys: Keys; onCancel: () => v
   const insert = (
     <button
       key="insert"
-      type="submit"
+      type="button"
       className="ff-btn ff-primary"
       aria-keyshortcuts={keys.aria.insert}
+      onClick={onInsert}
     >
       {copy.insert} <kbd aria-hidden="true">{keys.insert}</kbd>
     </button>
@@ -244,7 +255,7 @@ export function FormPanel(props: FormPanelProps) {
     props;
   const keys = keysFor(os);
 
-  const onKeyDown = (e: KeyboardEvent<HTMLFormElement>) => {
+  const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     const mod = os === "mac" ? e.metaKey : e.ctrlKey;
     const target = e.target as HTMLElement;
     if (e.key === "Escape") {
@@ -289,19 +300,15 @@ export function FormPanel(props: FormPanelProps) {
   }
 
   return (
-    <form
+    // A `div`, not a `form`: `dialog` is not a role a form element may have. Enter and the Insert
+    // button call `onInsert` themselves.
+    <div
       className="ff"
       role="dialog"
       aria-labelledby="ff-title"
       aria-describedby="ff-description"
       data-os={os}
-      noValidate
-      autoComplete="off"
       onKeyDown={onKeyDown}
-      onSubmit={(e) => {
-        e.preventDefault();
-        onInsert();
-      }}
     >
       <header className="ff-hd">
         <Mark />
@@ -336,9 +343,9 @@ export function FormPanel(props: FormPanelProps) {
       </div>
       <footer className="ff-ft">
         <span className="ff-hint">{hint}</span>
-        <Buttons os={os} keys={keys} onCancel={onCancel} />
+        <Buttons os={os} keys={keys} onCancel={onCancel} onInsert={onInsert} />
       </footer>
-    </form>
+    </div>
   );
 }
 

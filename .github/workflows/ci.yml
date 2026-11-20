@@ -180,6 +180,17 @@ jobs:
         run: |
           npm install --no-save --no-package-lock playwright@1.63.0
           node browser-paste.mjs
+      # Accessibility, keyboard only (task 3.11, docs/accessibility-run.md): the built front end in
+      # the runner's Chrome over a mocked command layer, walked with the keyboard in the light and
+      # dark themes, with reduced motion and with forced colours; the focus ring is checked at
+      # every step and axe-core (contrast included) must find nothing critical or serious.
+      - name: Keyboard-only run (headless browser)
+        if: runner.os == 'Linux'
+        working-directory: apps/desktop
+        run: |
+          mkdir -p "$RUNNER_TEMP/pw"
+          (cd "$RUNNER_TEMP/pw" && npm install --no-save --no-package-lock playwright@1.63.0)
+          PLAYWRIGHT_MODULE="$RUNNER_TEMP/pw/node_modules/playwright" node scripts/keyboard-run.mjs
       # `tauri/custom-protocol` embeds the built front end as a release does. The tests do not
       # need it; one feature set for every step builds the crate once.
       - name: Build

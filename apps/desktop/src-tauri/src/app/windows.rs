@@ -342,6 +342,9 @@ fn library_builder(app: &AppHandle) -> WebviewWindowBuilder<'_, tauri::Wry, AppH
         .title("Iamb")
         .inner_size(960.0, 640.0)
         .min_inner_size(640.0, 400.0)
+        // Zoom in, out and reset: Ctrl and + - 0 (Windows: the web view's own; macOS and Linux:
+        // the command key; specification §5.2). The window holds at 200% (§8, 1.4.4).
+        .zoom_hotkeys_enabled(true)
         .center()
 }
 

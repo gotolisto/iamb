@@ -256,6 +256,13 @@
   outline: 0;
 }
 
+/* The query field has no border of its own, so the ring goes round its row (2.4.7). An outline,
+ * not a shadow, so that it survives forced colours. */
+.pl-q:focus-within {
+  outline: var(--size-focus-ring) solid var(--color-border-focus);
+  outline-offset: calc(var(--size-focus-ring) * -1);
+}
+
 /* Contrast themes and "Increase contrast" (design system §5). */
 @media (forced-colors: active) {
   .pl-row.on,

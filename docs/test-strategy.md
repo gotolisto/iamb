@@ -919,3 +919,52 @@ Not covered: usage recorded on a real platform (the mock's end-to-end test in
 `iamb-service/tests/end_to_end.rs` records through the same store thread), and the reading of
 "never used" for libraries made before the counts were reset by a build that did not record the
 reset (they count from creation).
+
+### 8.10 Accessibility and polish (task 3.11)
+
+KPI: 0 critical accessibility issues, against WCAG 2.1 AA (`docs/ux/spec.md` §8). Three layers.
+
+- **axe-core in the component tests** (`apps/desktop/src/a11y.test.tsx`, helper `src/a11y.ts`).
+  `axe-core` 4.13.0 (MPL-2.0; a dev dependency, 2026-08-05) was chosen over `vitest-axe` and
+  `jest-axe` because those are thin wrappers that pin their own copy of it; calling `axe.run`
+  directly needs no matcher plumbing. It runs over 38 states: the library (list, no filter match,
+  empty, service not running, editor plain with messages and options, formatted, preview, the
+  unsaved-changes dialog, the new folder and new tag dialogs, a menu, the toast), Library health
+  (clean, broken), the seven Settings sections and the service-down state, "Why didn't it expand?"
+  (entries, empty), the form (every field type, remembered answers, the "could not get back"
+  banner), the palette (nothing typed, recent, results, no match) and every onboarding step. The
+  bar in jsdom is zero violations of any impact. Rules that need layout or style sheets
+  (`color-contrast`, `target-size`, `scrollable-region-focusable`, the page-level `region`,
+  `landmark-one-main`, `page-has-heading-one`) cannot answer in jsdom and run in layer 3. A
+  check of 2.5.3 Label in name (`scripts/label-in-name.mjs`: a control with an `aria-label` and
+  visible text must be named starting with that text) runs in both layers, because axe's own
+  rule for it is experimental and stricter than the commitment. A canary test checks that the
+  harness fails on a bad page.
+  Counts before the fixes (jsdom): critical 1 in each of the 6 states that hold the template
+  editor (`aria-expanded` on a `role="textbox"`), serious 1 in each of the 4 palette states
+  (`aria-label` on a plain `div`), minor 1 in each of the 3 form states (`role="dialog"` on a
+  `form`); the other 28 states 0. After: 0 in every impact in all 38 states.
+- **Style sheets** (`src/styles/a11y.test.ts`): no colour value outside `tokens.css` (hex,
+  functions, named colours; the test is shown to see one), dark by the system and dark chosen in
+  Settings carry the same values, `base.css` zeroes every duration under
+  `prefers-reduced-motion`, only transforms and opacity are transitioned and with the duration
+  tokens, every window's sheet has a `forced-colors` block, and no rule removes the focus ring
+  without another one around it.
+- **The keyboard-only run** (`apps/desktop/scripts/keyboard-run.mjs`, mock
+  `keyboard-mock.mjs`; `docs/accessibility-run.md`): the built front end in Chromium, keyboard
+  only, in four settings (light, dark, reduced motion, forced colours). After each of 45 steps
+  per setting it checks that something has the focus, that it is on screen and has a ring (2.4.7),
+  runs axe-core with contrast and Label in name, and fails the step on critical or serious.
+  Result here (2026-11-20): 4 settings x 45 steps, critical 0, serious 0, moderate 4 (the same
+  one in each setting: `region`, a context menu is a popup outside the landmarks; a landmark
+  around every popup would lengthen a screen reader's landmark list for no gain), minor 0.
+  First run, before the fixes: critical 5 (the collapsed sidebar's buttons had no names at 640
+  px), serious 0 once the experimental rule was left out, moderate 49 steps (no `main`, no `h1`,
+  a skipped heading level, the menu), and these failures: no ring on the palette's query field,
+  focus lost to the page after Ctrl+, from the editor and after Undo, Undo unreachable in time,
+  the window 880 px wide at 200% zoom.
+  Run it with `PLAYWRIGHT_MODULE=<playwright> IAMB_CHROME_PATH=<chrome> node scripts/keyboard-run.mjs`
+  after `pnpm build`; CI runs it in the desktop job on Linux.
+- **Not covered here**: real screen readers (NVDA, Narrator, VoiceOver), the focus handed to and
+  taken back from the non-activating panels, Increase contrast on macOS, real 200% zoom and the
+  zoom keys, and the native title bar; `docs/accessibility-run.md` lists the steps for a person.
