@@ -28,6 +28,24 @@ describe("the template commands", () => {
     ]);
   });
 
+  it("try the form with the fields, and answer its values or null", async () => {
+    const calls: Array<{ command: TemplateCommand; args: Record<string, unknown> }> = [];
+    let answer: unknown = { Name: "Ada" };
+    const service = createTemplateService((command, args) => {
+      calls.push({ command, args });
+      return Promise.resolve(answer);
+    });
+    const fields = [{ name: "Name", kind: "text" as const, options: [], default: "" }];
+    expect(await service.tryForm?.(fields, "Greeting", "hi")).toEqual({ Name: "Ada" });
+    expect(calls).toEqual([
+      { command: "template_try_form", args: { fields, label: "Greeting", abbreviation: "hi" } },
+    ]);
+    answer = null;
+    expect(await service.tryForm?.(fields, "", "hi")).toBeNull();
+    answer = { Name: 3 };
+    await expect(service.tryForm?.(fields, "", "hi")).rejects.toMatchObject({ code: "unexpected_response" });
+  });
+
   it("refuse an answer of the wrong shape", async () => {
     const service = createTemplateService(() => Promise.resolve({ tokens: "nope" }));
     await expect(service.parse("x")).rejects.toMatchObject({ code: "unexpected_response" });

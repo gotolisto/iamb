@@ -290,6 +290,10 @@ mod windows {
             await_front(look, RESTORE_FOCUS_TIMEOUT, RESTORE_POLL)
         }
 
+        fn window_exists(&self, token: &FocusToken) -> bool {
+            os::is_window_of(token.window(), token.pid())
+        }
+
         fn allow_foreground(&self, pid: u32) -> Result<()> {
             if os::allow_set_foreground(pid).is_ok() {
                 return Ok(());

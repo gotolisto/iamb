@@ -1009,6 +1009,12 @@ pub enum RequestBody {
     // ---- Forms ------------------------------------------------------------------------------
     /// The UI host shows the form of `session` (within 2 s of `FormRequested`, or the expansion
     /// is abandoned). → [`ResponseBody::Done`]
+    ///
+    /// Sent again while the form stays open, it renews the form's lease
+    /// ([`FORM_LEASE`](crate::FORM_LEASE); every 10 seconds is enough): a form whose UI host
+    /// stops renewing it is cancelled by the service, with the diagnostic `form_expired`, so
+    /// that a form the UI host no longer shows cannot keep typed abbreviations refused with
+    /// `form_open`. An acknowledgement for a session that is not open changes nothing.
     FormAck {
         /// The session.
         session: u64,

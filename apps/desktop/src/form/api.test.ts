@@ -17,6 +17,7 @@ describe("the form panel's commands", () => {
     await api.painted(2, 1234.5);
     await api.submit(2, { Size: "S" });
     await api.cancel(2);
+    await api.abandon(2, { Size: "M" });
     expect(form?.label).toBe("Back soon");
     expect(calls).toEqual([
       { command: "form_ready", args: undefined },
@@ -25,6 +26,7 @@ describe("the form panel's commands", () => {
       { command: "form_painted", args: { session: 2, paintedAtMs: 1234.5 } },
       { command: "form_submit", args: { session: 2, values: { Size: "S" } } },
       { command: "form_cancel", args: { session: 2 } },
+      { command: "form_abandon", args: { session: 2, values: { Size: "M" } } },
     ]);
     // Every form command is registered, and reachable from this API.
     expect(new Set(calls.map((c) => c.command))).toEqual(
@@ -50,7 +52,7 @@ describe("payloads written by the Rust side (contract.fixtures.json, form)", () 
     expect(fixtures.form.open.lastValues).toEqual({ Name: "Ada" });
     expect(isFormOpen(fixtures.form.openWithoutValues)).toBe(true);
     expect(fixtures.form.openWithoutValues.app).toBe("Mail");
-    expect(fixtures.form.events).toHaveLength(3);
+    expect(fixtures.form.events).toHaveLength(4);
     for (const event of fixtures.form.events) expect(isFormEvent(event)).toBe(true);
     expect(isFocusLost(fixtures.form.focusLost)).toBe(true);
     expect(fixtures.form.focusLost.code).toBe(FOCUS_LOST);

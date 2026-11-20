@@ -183,6 +183,7 @@ pub fn start(
             .and_then(|ui| ui.form.last_submitted())
     });
     cfg.follows_connection = !measuring;
+    cfg.on_request = super::notify_request(app);
     Ok(PalettePanel {
         controller: PaletteController::start(cfg)?,
         data: PaletteData::default(),

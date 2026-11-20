@@ -238,6 +238,7 @@ function formHarness(form: FormOpen) {
     painted: vi.fn(() => Promise.resolve()),
     submit: vi.fn((_s: number, _v: Record<string, string>) => Promise.resolve()),
     cancel: vi.fn(() => Promise.resolve()),
+    abandon: vi.fn((_s: number, _v: Record<string, string>) => Promise.resolve()),
   };
   render(
     <FormView

@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager, State, WebviewWindow};
 
 use super::Ui;
 use crate::contract::CommandError;
@@ -29,14 +29,24 @@ async fn blocking<T: Send + 'static>(
 
 /// Every setting.
 #[tauri::command]
-pub async fn settings_get(ui: State<'_, Arc<Ui>>) -> Res<BTreeMap<String, String>> {
+pub async fn settings_get(
+    ui: State<'_, Arc<Ui>>,
+    window: WebviewWindow,
+) -> Res<BTreeMap<String, String>> {
+    super::commands::caller(&window, &super::commands::LIBRARY_CALLERS)?;
     blocking(&ui, settings::settings).await
 }
 
 /// Sets a setting, or removes it when `value` is absent. The tray icon follows
 /// `ui.tray_icon` at once.
 #[tauri::command]
-pub async fn settings_put(ui: State<'_, Arc<Ui>>, key: String, value: Option<String>) -> Res<()> {
+pub async fn settings_put(
+    ui: State<'_, Arc<Ui>>,
+    window: WebviewWindow,
+    key: String,
+    value: Option<String>,
+) -> Res<()> {
+    super::commands::caller(&window, &super::commands::LIBRARY_CALLERS)?;
     let tray_key = key == TRAY_KEY;
     let shown = value.as_deref() != Some("off");
     blocking(&ui, move |b| {
@@ -51,7 +61,11 @@ pub async fn settings_put(ui: State<'_, Arc<Ui>>, key: String, value: Option<Str
 
 /// The apps where Iamb does not expand.
 #[tauri::command]
-pub async fn settings_list_exclusions(ui: State<'_, Arc<Ui>>) -> Res<Vec<ExclusionView>> {
+pub async fn settings_list_exclusions(
+    ui: State<'_, Arc<Ui>>,
+    window: WebviewWindow,
+) -> Res<Vec<ExclusionView>> {
+    super::commands::caller(&window, &super::commands::LIBRARY_CALLERS)?;
     blocking(&ui, settings::exclusions).await
 }
 
@@ -59,10 +73,12 @@ pub async fn settings_list_exclusions(ui: State<'_, Arc<Ui>>) -> Res<Vec<Exclusi
 #[tauri::command]
 pub async fn settings_put_exclusion(
     ui: State<'_, Arc<Ui>>,
+    window: WebviewWindow,
     app_id: String,
     display_name: String,
     excluded: bool,
 ) -> Res<Vec<ExclusionView>> {
+    super::commands::caller(&window, &super::commands::LIBRARY_CALLERS)?;
     blocking(&ui, move |b| {
         settings::put_exclusion(b, &app_id, &display_name, excluded)
     })
@@ -71,13 +87,22 @@ pub async fn settings_put_exclusion(
 
 /// The diagnostics ring, newest first.
 #[tauri::command]
-pub async fn diagnostics_recent(ui: State<'_, Arc<Ui>>) -> Res<Vec<DiagnosticView>> {
+pub async fn diagnostics_recent(
+    ui: State<'_, Arc<Ui>>,
+    window: WebviewWindow,
+) -> Res<Vec<DiagnosticView>> {
+    super::commands::caller(&window, &super::commands::LIBRARY_CALLERS)?;
     blocking(&ui, settings::diagnostics).await
 }
 
 /// What typing `typed` in an app would do (nothing is typed, nothing is stored).
 #[tauri::command]
-pub async fn diagnostics_test(ui: State<'_, Arc<Ui>>, typed: String) -> Res<TestView> {
+pub async fn diagnostics_test(
+    ui: State<'_, Arc<Ui>>,
+    window: WebviewWindow,
+    typed: String,
+) -> Res<TestView> {
+    super::commands::caller(&window, &super::commands::LIBRARY_CALLERS)?;
     blocking(&ui, move |b| settings::test_abbreviation(b, &typed)).await
 }
 

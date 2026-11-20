@@ -303,7 +303,14 @@ fn focus_follows_the_windows() {
     assert!(app.own);
     assert_eq!(app.app, AppId("iamb-desktop".to_owned()));
 
+    assert!(os.window_exists(&own));
+    assert!(
+        !os.window_exists(&FocusToken::from_raw(own.pid() + 1, own.window())),
+        "the window of another process"
+    );
     os.close_window(own);
+    assert!(!os.window_exists(&own), "closed");
+    assert!(os.window_exists(&editor));
     assert_eq!(os.focused_app(), Err(PlatformError::NoFocus));
     assert_eq!(os.focus(own), Err(PlatformError::FocusLost));
     assert_eq!(os.text(own), None);

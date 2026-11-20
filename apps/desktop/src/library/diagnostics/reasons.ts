@@ -140,6 +140,16 @@ const REASONS: Record<string, Reason> = {
     title: () => "A fill-in form was closed",
     detail: () => "Iamb's window process stopped while the form was open. Nothing was typed. Type the abbreviation again.",
   },
+  // Not in the specification's table (the Phase 3 UI review's finding 1): a form whose window
+  // was closed, or whose app quit, ends instead of waiting for ever.
+  form_target_gone: {
+    title: (c) => `${quoted(c)} was not inserted: its window was closed`,
+    detail: () => "Your answers are kept for 30 minutes. Fill in the form again where the text should go.",
+  },
+  form_expired: {
+    title: () => "A fill-in form was closed",
+    detail: () => "Iamb's window process stopped answering while the form was open. Nothing was typed. Type the abbreviation again.",
+  },
   no_last_form: fixed("There is no earlier form to fill in again", "Answers are kept for 30 minutes."),
 
   unknown_snippet: fixed("The snippet no longer exists"),

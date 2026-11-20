@@ -20,12 +20,14 @@ use iamb_desktop::bridge::{Bridge, BridgeConfig, BridgeSink};
 use iamb_desktop::contract::{ConnectionState, StatusView, UiEvent};
 use iamb_desktop::form::{FormConfig, FormController, FormEvent, PanelHost};
 use iamb_desktop::log::Logger;
+use iamb_desktop::notice::{Notice, NoticeHost, Notices};
 use iamb_desktop::palette::{
     LibraryRequest, NO_PALETTE, PaletteConfig, PaletteController, PaletteEvent, PaletteHost, Pick,
 };
 use iamb_desktop::palette_data::PaletteData;
 use iamb_desktop::timing::wall_ms;
 use iamb_ipc::{EventBody, RequestBody, ResponseBody, Role};
+use iamb_platform::mock::MockWindow;
 use iamb_platform::{Chord, FocusInspector, PeerPolicy};
 
 const CHORD: &str = "Ctrl+Shift+Space";
@@ -191,11 +193,57 @@ impl FormPanel {
     }
 }
 
+/// The notice window, recorded.
+#[derive(Default)]
+struct NoticeWindow {
+    shown: Mutex<Vec<Notice>>,
+    changed: Condvar,
+}
+
+impl NoticeHost for NoticeWindow {
+    fn show(&self, notice: &Notice) -> Result<(), String> {
+        self.shown
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(notice.clone());
+        self.changed.notify_all();
+        Ok(())
+    }
+
+    fn hide(&self) {}
+}
+
+impl NoticeWindow {
+    /// Waits up to `T` for the `n`th notice.
+    fn wait(&self, n: usize) -> Notice {
+        let deadline = Instant::now() + T;
+        let mut shown = self.shown.lock().unwrap_or_else(PoisonError::into_inner);
+        while shown.len() < n {
+            let left = deadline.saturating_duration_since(Instant::now());
+            assert!(!left.is_zero(), "no notice was shown");
+            shown = self
+                .changed
+                .wait_timeout(shown, left)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
+        shown[n - 1].clone()
+    }
+
+    fn count(&self) -> usize {
+        self.shown
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
+    }
+}
+
 /// The bridge's sink in the app: service events go to both flows (`app::Sink`).
 #[derive(Default)]
 struct Sink {
     palette: OnceLock<Arc<PaletteController>>,
     form: OnceLock<Arc<FormController>>,
+    notices: OnceLock<Arc<Notices>>,
     data: PaletteData,
     connected: Mutex<bool>,
     changed: Condvar,
@@ -228,6 +276,9 @@ impl BridgeSink for Sink {
         }
         if let Some(palette) = self.palette.get() {
             palette.service_event(event);
+        }
+        if let Some(notices) = self.notices.get() {
+            notices.service_event(event);
         }
         if matches!(event, EventBody::LibraryChanged { .. }) {
             self.data.invalidate();
@@ -262,6 +313,7 @@ struct Host {
     panel: Arc<PalettePanel>,
     form_panel: Arc<FormPanel>,
     sink: Arc<Sink>,
+    notice_window: Arc<NoticeWindow>,
 }
 
 impl Host {
@@ -282,6 +334,18 @@ impl Host {
         let sink_dyn: Arc<dyn BridgeSink> = sink.clone();
         let bridge = Bridge::start(cfg, sink_dyn).expect("bridge starts");
         let focus: Arc<dyn FocusInspector> = Arc::new(service.os.clone());
+        let notice_window = Arc::new(NoticeWindow::default());
+        let notices = Arc::new(
+            Notices::start(
+                Arc::new(bridge.clone()),
+                notice_window.clone(),
+                Arc::clone(&logger),
+            )
+            .expect("notices start"),
+        );
+        let told = Arc::clone(&notices);
+        let on_request: iamb_desktop::form::OnRequest =
+            Arc::new(move |asked, snippet| told.expect(asked, snippet));
         let form_panel = Arc::new(FormPanel::default());
         let mut form_cfg = FormConfig::new(
             Arc::new(bridge.clone()),
@@ -290,6 +354,7 @@ impl Host {
             Arc::clone(&logger),
         );
         form_cfg.layout_wait = Duration::ZERO;
+        form_cfg.on_request = Arc::clone(&on_request);
         let form = Arc::new(FormController::start(form_cfg).expect("form starts"));
         let panel = Arc::new(PalettePanel::default());
         let mut cfg =
@@ -298,10 +363,12 @@ impl Host {
         cfg.form_open = Arc::new(move || watched.is_open());
         let asked = Arc::clone(&form);
         cfg.last_form = Arc::new(move || asked.last_submitted());
+        cfg.on_request = on_request;
         adjust(&mut cfg);
         let palette = Arc::new(PaletteController::start(cfg).expect("palette starts"));
         let _ = sink.form.set(Arc::clone(&form));
         let _ = sink.palette.set(Arc::clone(&palette));
+        let _ = sink.notices.set(notices);
         sink.wait_connected();
         Self {
             bridge,
@@ -310,11 +377,15 @@ impl Host {
             panel,
             form_panel,
             sink,
+            notice_window,
         }
     }
 
     /// The UI host goes away (its connection ends, as when the process is killed).
     fn stop(&self) {
+        if let Some(notices) = self.sink.notices.get() {
+            notices.stop();
+        }
         self.palette.stop();
         self.form.stop();
         self.bridge.stop();
@@ -614,6 +685,94 @@ fn the_tray_opens_it_for_the_app_in_front_and_a_pick_types_there() {
         .pick(session, Pick::Insert(id(2)))
         .expect("picked");
     wait_text(&service, "on my way");
+    host.stop();
+}
+
+/// The tray menu opens: on Windows it brings Iamb's own (hidden) window to the front first
+/// (the Phase 3 UI review's finding 4). The pointer reached the icon before that.
+fn open_tray_menu(service: &Service, host: &Host) {
+    host.palette.tray_pointer(true);
+    let menu = service
+        .os
+        .open_window(MockWindow::new("iamb-desktop", std::process::id()).own());
+    service.os.focus(menu).expect("open");
+    service.worker().sync();
+}
+
+#[test]
+fn the_tray_menu_taking_the_foreground_does_not_change_where_a_pick_types() {
+    let service = Service::start(Endpoint::Mock);
+    let host = Host::start(&service);
+    open_tray_menu(&service, &host);
+    assert_eq!(host.palette.tray_target(), Some(service.editor));
+    host.palette.open_from_tray();
+    let session = host.panel.wait_shown(0);
+    assert!(
+        !host.palette.current().expect("open").own_window,
+        "the palette is for the editor, not for Iamb's own window"
+    );
+    host.palette
+        .pick(session, Pick::Insert(id(2)))
+        .expect("picked");
+    wait_text(&service, "on my way");
+    host.stop();
+}
+
+#[test]
+fn the_tray_s_fill_in_again_goes_to_the_window_that_was_in_front() {
+    let service = Service::start(Endpoint::Mock);
+    let host = Host::start(&service);
+    service.type_text("hi ");
+    let form = host.form_panel.wait_shown(0);
+    host.form
+        .submit(form, values("Name", "Ada"))
+        .expect("submitted");
+    wait_text(&service, "Hello Ada! ");
+    open_tray_menu(&service, &host);
+    let before = host.form_panel.events();
+    host.form
+        .reopen_last_for(host.palette.tray_target())
+        .expect("asked");
+    let again = host.form_panel.wait_shown(before);
+    assert_eq!(
+        host.form
+            .current()
+            .expect("open")
+            .last_values
+            .map(iamb_ipc::Secret::into_inner),
+        Some(values("Name", "Ada"))
+    );
+    assert!(!diagnostic_codes(&service).contains(&"refused_own_window".to_owned()));
+    host.form.cancel(again).expect("cancelled");
+    host.stop();
+}
+
+#[test]
+fn a_palette_whose_window_is_gone_or_that_the_system_closes_closes() {
+    let service = Service::start(Endpoint::Mock);
+    let host = Host::start(&service);
+    host.register_shortcut();
+    // Closed by the system (Alt+F4): as Esc.
+    let session = host.open(&service);
+    host.palette.close_requested();
+    host.panel.wait("closed", |s| {
+        !s.visible && s.events.contains(&PaletteEvent::Closed { session })
+    });
+    assert!(host.palette.current().is_none());
+    // Its window goes while it stepped aside: closed too.
+    let mail = service
+        .os
+        .open_window(MockWindow::new("org.example.mail", 300));
+    service.os.focus(mail).expect("open");
+    service.worker().sync();
+    let session = host.open(&service);
+    service.os.focus(service.editor).expect("open");
+    host.palette.keyboard(false);
+    service.os.close_window(mail);
+    host.panel.wait("closed", |s| {
+        !s.visible && s.events.contains(&PaletteEvent::Closed { session })
+    });
+    assert!(host.palette.current().is_none());
     host.stop();
 }
 
@@ -958,5 +1117,61 @@ fn search_through_the_bridge_at_10000_snippets() {
     // Debug build: about ten times the release build's figure; the bound is for a hang or a
     // quadratic mistake, not for the KPI.
     assert!(p95 < 600.0, "p95 {p95:.1} ms");
+    host.stop();
+}
+
+#[test]
+fn a_refused_pick_shows_a_notice_and_one_that_types_does_not() {
+    let service = Service::start(Endpoint::Mock);
+    let host = Host::start(&service);
+    host.register_shortcut();
+    // A pick that types: no notice.
+    let session = host.open(&service);
+    host.palette
+        .pick(session, Pick::Insert(id(2)))
+        .expect("picked");
+    wait_text(&service, "on my way");
+    // A pick into a password field: refused, and said so (spec §4.11).
+    service
+        .os
+        .set_security(service.editor, iamb_platform::FieldSecurity::Secure);
+    service.worker().sync();
+    let session = host.open(&service);
+    host.palette
+        .pick(session, Pick::Insert(id(1)))
+        .expect("sent");
+    let notice = host.notice_window.wait(1);
+    assert_eq!(notice.code, "refused_secure_field");
+    assert_eq!(notice.label, "label brb");
+    assert!(!notice.form);
+    assert_eq!(
+        host.notice_window.count(),
+        1,
+        "one notice, for the refused pick"
+    );
+    assert_eq!(service.text(), "on my way", "nothing was typed");
+    host.stop();
+}
+
+#[test]
+fn a_refused_form_insert_shows_a_notice_with_the_shortcut() {
+    let service = Service::start(Endpoint::Mock);
+    let host = Host::start(&service);
+    host.register_shortcut();
+    service.type_text("hi ");
+    let session = host.form_panel.wait_shown(0);
+    // The field turns into a password field before Insert.
+    service
+        .os
+        .set_security(service.editor, iamb_platform::FieldSecurity::Secure);
+    service.worker().sync();
+    host.form
+        .submit(session, values("Name", "Ada"))
+        .expect("sent");
+    let notice = host.notice_window.wait(1);
+    assert_eq!(notice.code, "refused_secure_field");
+    assert_eq!(notice.label, "label hi");
+    assert!(notice.form, "the answers are kept: the sentence says so");
+    assert_eq!(notice.shortcut.as_deref(), Some(CHORD));
     host.stop();
 }

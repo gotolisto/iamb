@@ -100,10 +100,34 @@ pub fn sniff(bytes: &[u8]) -> Option<&'static str> {
     }
 }
 
-/// Whether attachments of this media type are images (embedded in the HTML when pasted).
+/// The image types an attachment may have (embedded in the HTML when pasted).
+pub const IMAGE_TYPES: [&str; 4] = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+
+/// The media types an attachment may have (offered as a file when it is all a snippet holds),
+/// with the file extension each is offered with.
+pub const MEDIA_TYPES: [(&str, &str); 4] = [
+    ("application/pdf", "pdf"),
+    ("video/mp4", "mp4"),
+    ("audio/mpeg", "mp3"),
+    ("audio/wav", "wav"),
+];
+
+/// Whether attachments of this media type are images (embedded in the HTML when pasted): one of
+/// [`IMAGE_TYPES`], compared whole (a prefix such as `image/` is not enough: the Phase 3 UI
+/// review's finding 7).
 #[must_use]
 pub fn is_image(mime: &str) -> bool {
-    mime.starts_with("image/")
+    IMAGE_TYPES.contains(&mime)
+}
+
+/// The file extension a media file of type `mime` is offered with: one of [`MEDIA_TYPES`],
+/// compared whole; `None` for any other type (nothing is offered then).
+#[must_use]
+pub fn extension_for(mime: &str) -> Option<&'static str> {
+    MEDIA_TYPES
+        .iter()
+        .find(|(m, _)| *m == mime)
+        .map(|(_, ext)| *ext)
 }
 
 /// The size limit for a media type.

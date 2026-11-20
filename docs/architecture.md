@@ -306,6 +306,19 @@ The process that holds the focus is the one that gives it back
    window is focused, and only then sends `FormSubmit`. The engine emits `DeleteBack` and the
    rendered actions. On cancel the UI host returns focus and nothing else changes.
 
+A form session always ends (the Phase 3 UI review's finding 1). While one is open the engine
+drops every typed match with `form_open`, so a session nobody can answer would stop all
+expansion. Besides submit, cancel, the 2-second acknowledgement and the UI host's disconnection:
+the UI host renews an acknowledged form with `FormAck` every 10 seconds, whether or not its
+panel is on screen, and the service cancels a form whose lease (`FORM_LEASE`, 60 seconds) runs
+out (`form_expired`), as the `PanelFocus` lease bounds a panel's hold; a form submit for a window
+that no longer exists, or a parked submit that is dropped (its window never got the focus, or a
+newer request replaced it), ends the session without typing and keeps its values for
+`ReopenLastForm`, as a refused submit does (`form_target_gone`, `request_focus_timeout`,
+`request_cancelled`). In the UI host, a panel the system closes is cancelled as Esc cancels it,
+and a form whose window is gone (closed, or its application quit) ends with its answers kept:
+the panel hands them in with `FormSubmit` and the service, seeing the window gone, types nothing.
+
 The search palette uses the same mechanism: the hotkey reaches the listener thread, the service
 captures a focus token and sends `PaletteRequested { focus }`; choosing a snippet returns focus and
 then sends `ExpandSnippet { id, focus }`.
@@ -551,12 +564,12 @@ left at the cargo name). On Linux the endpoint names no executable and the role 
 
 | Group | Requests | Events |
 | --- | --- | --- |
-| Library | `ListFolders`, `ListSnippets(query)`, `ListSnippetSummaries(query, offset, limit)`, `GetSnippet`, `PutSnippet(snippet, tags)`, `DeleteSnippet`, `CheckAbbreviation(abbreviation, trigger, snippet)`, `PutFolder`, `DeleteFolder`, `PutTag`, `ListTags`, `DeleteTag`, `Search(text)`, `Import(path, format)`, `Export(path, format)`, `Health`, `ListPendingReviews`, `ApproveSnippet(id, rev)`, `PutAttachment(path, file_name, folder)` | `LibraryChanged(revision, changed rows)` |
+| Library | `ListFolders`, `ListSnippets(query)`, `ListSnippetSummaries(query, offset, limit)`, `GetSnippet`, `PutSnippet(snippet, tags)`, `DeleteSnippet`, `CheckAbbreviation(abbreviation, trigger, snippet)`, `PutFolder`, `DeleteFolder`, `PutTag`, `ListTags`, `DeleteTag`, `Search(text)`, `Import(path, format)`, `Export(path, format)`, `Health`, `RecentSnippets(limit)`, `ListPendingReviews`, `ApproveSnippet(id, rev)`, `PutAttachment(path, file_name, folder)` | `LibraryChanged(revision, changed rows)` |
 | Engine control | `GetStatus`, `SetPaused`, `ExpandSnippet(id, focus)`, `DryRun(typed)`, `GetPermissions`, `OpenPermissionSettings(kind)`, `SetTestField(window)` | `StatusChanged`, `PaletteRequested(focus)` |
 | Forms | `FormAck(session)`, `FormSubmit(session, values)`, `FormCancel(session)`, `ReopenLastForm`, `PanelFocus(panel, shown)` | `FormRequested(session, spec, focus, last_values)` |
 | Templates | `ParseTemplate(source)`, `RenderPreview(source, values, rich)` | — |
 | Diagnostics | `RecentDiagnostics` | `DiagnosticAdded` |
-| Settings | `GetSettings`, `PutSetting`, `ListExclusions`, `PutExclusion` | `SettingsChanged` |
+| Settings | `GetSettings`, `PutSetting`, `ListExclusions`, `PutExclusion`, `ResetUsage` | `SettingsChanged` |
 | Sync | `OutboxRead(limit)`, `OutboxAck(ids)`, `ApplyRemote(batch)`, `PurgeFolder(id)`, `AttachmentAvailable(profile, sha256)`, `MissingAttachments`, `SetSyncStatus`, `SetEntitlements` | `OutboxChanged` |
 
 Names across the layers: the engine action `ShowForm` becomes the event `FormRequested`; the

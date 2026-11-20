@@ -57,6 +57,10 @@ pub use server::{ConnectionWriter, HELLO_TIMEOUT, ServerConnection};
 /// ([`RequestBody::PanelFocus`]).
 pub const PANEL_FOCUS_LEASE: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// How long an acknowledged fill-in form stays open without another `FormAck`
+/// ([`RequestBody::FormAck`]).
+pub const FORM_LEASE: std::time::Duration = std::time::Duration::from_mins(1);
+
 /// The build version, sent in `hello` and `welcome`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

@@ -93,7 +93,12 @@ export interface TemplatePreview {
 }
 
 /** The commands this module calls (also listed in `COMMANDS` of `ipc.ts`). */
-export const TEMPLATE_COMMANDS = ["template_parse", "template_preview", "template_add_attachment"] as const;
+export const TEMPLATE_COMMANDS = [
+  "template_parse",
+  "template_preview",
+  "template_add_attachment",
+  "template_try_form",
+] as const;
 
 export type TemplateCommand = (typeof TEMPLATE_COMMANDS)[number];
 
@@ -123,6 +128,12 @@ export interface TemplateService {
   preview(source: string, values?: Record<string, string>, rich?: boolean): Promise<TemplatePreview>;
   /** Keeps an image for a snippet in `folderId`'s profile (formatted snippets only). */
   addAttachment?(folderId: string, name: string, bytes: Uint8Array): Promise<AddedAttachment>;
+  /**
+   * "Try the form": the real fill-in form with `fields` over the library window. Resolves with
+   * the answers Insert handed in (the preview's test values), or null when it was cancelled;
+   * nothing is typed anywhere.
+   */
+  tryForm?(fields: FieldView[], label: string, abbreviation: string): Promise<Record<string, string> | null>;
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
@@ -247,6 +258,12 @@ export function createTemplateService(invoke: TemplateInvoke, invokeRaw?: Templa
       const answer = await invoke("template_preview", args);
       if (!isTemplatePreview(answer)) throw unexpected;
       return answer;
+    },
+    async tryForm(fields, label, abbreviation) {
+      const answer = await invoke("template_try_form", { fields, label, abbreviation });
+      if (answer === null) return null;
+      if (!isObject(answer) || !Object.values(answer).every((v) => typeof v === "string")) throw unexpected;
+      return answer as Record<string, string>;
     },
   };
   if (invokeRaw) {

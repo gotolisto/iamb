@@ -131,6 +131,9 @@ pub struct WorkerConfig {
     /// How long one `PanelFocus { shown: true }` holds: normally
     /// [`PANEL_FOCUS_LEASE`](iamb_ipc::PANEL_FOCUS_LEASE).
     pub panel_focus_lease: Duration,
+    /// How long an acknowledged form stays open without another `FormAck`: normally
+    /// [`FORM_LEASE`](iamb_ipc::FORM_LEASE).
+    pub form_lease: Duration,
 }
 
 impl WorkerConfig {
@@ -155,6 +158,7 @@ impl WorkerConfig {
             clock: Arc::new(crate::clock::local_now),
             logger: Arc::new(Logger::disabled()),
             panel_focus_lease: iamb_ipc::PANEL_FOCUS_LEASE,
+            form_lease: iamb_ipc::FORM_LEASE,
         }
     }
 }
@@ -588,6 +592,7 @@ impl Worker {
             clock,
             logger,
             panel_focus_lease,
+            form_lease,
         } = config;
         logger.info(format_args!(
             "worker {} starting, pid {}",
@@ -676,6 +681,7 @@ impl Worker {
                 heartbeat,
                 heartbeat_interval,
                 panel_focus_lease,
+                form_lease,
             );
             spawn("engine", &mut threads, move || state.run(&engine_rx))?;
         }

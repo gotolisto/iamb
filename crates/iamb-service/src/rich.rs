@@ -133,15 +133,10 @@ pub fn resolve_content(
             }
             mime => {
                 out.push_str(tag.alt);
-                if lone {
-                    let fallback = match mime {
-                        Some("application/pdf") => "document.pdf",
-                        Some("video/mp4") => "video.mp4",
-                        Some("audio/mpeg") => "audio.mp3",
-                        Some("audio/wav") => "audio.wav",
-                        _ => "attachment",
-                    };
-                    let name = attachments::clean_file_name(&unescape_html(tag.alt), fallback);
+                // Only an accepted media type is offered, and its name ends in that type's
+                // extension, never in one the alt text chose (`offered_name`).
+                if lone && let Some(ext) = mime.and_then(attachments::extension_for) {
+                    let name = offered_name(&unescape_html(tag.alt), ext);
                     if let Some(path) = offer(&tag.sha, &name, &bytes) {
                         files.push(path);
                     }
@@ -156,6 +151,62 @@ pub fn resolve_content(
         html: Some(out),
         files,
     })
+}
+
+/// The longest base name an offered file gets, in characters.
+const MAX_OFFERED_STEM_CHARS: usize = 100;
+
+/// The name a lone media file is offered under (the Phase 3 UI review's finding 7): a base name
+/// made from its alt text, then `.` and `ext`, the extension of the type its bytes were sniffed
+/// as. The alt text is the author's: from someone else's library (an import, a shared folder) it
+/// could say `Invoice.cmd` over bytes that start like a PDF, and a file named so would run when
+/// opened. So an extension the alt text ends with is dropped when it is `ext` itself, and
+/// every character that is not a letter, a digit, a space, `-`, `_`, `(` or `)` becomes `_`
+/// (dots and path separators included); the base is at most [`MAX_OFFERED_STEM_CHARS`]
+/// characters, a Windows device name (`CON`, `COM1`, …) gets a `_`, and an empty base becomes
+/// the type's kind ("document", "video", "audio").
+fn offered_name(alt: &str, ext: &str) -> String {
+    let alt = alt.trim();
+    let stem = alt
+        .len()
+        .checked_sub(ext.len() + 1)
+        .filter(|&at| {
+            alt.is_char_boundary(at)
+                && alt[at..].starts_with('.')
+                && alt[at + 1..].eq_ignore_ascii_case(ext)
+        })
+        .map_or(alt, |at| &alt[..at]);
+    let cleaned: String = stem
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '(' | ')') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let mut base: String = cleaned
+        .trim_matches(|c: char| c == '_' || c.is_whitespace())
+        .chars()
+        .take(MAX_OFFERED_STEM_CHARS)
+        .collect();
+    if base.is_empty() {
+        base.push_str(match ext {
+            "pdf" => "document",
+            "mp4" => "video",
+            _ => "audio",
+        });
+    }
+    let device = base.to_ascii_uppercase();
+    let reserved = matches!(device.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (device.len() == 4
+            && (device.starts_with("COM") || device.starts_with("LPT"))
+            && device.as_bytes()[3].is_ascii_digit());
+    if reserved {
+        base.push('_');
+    }
+    format!("{base}.{ext}")
 }
 
 /// Replaces every `Paste` step's content with the resolved one (module docs), reading the
@@ -290,6 +341,91 @@ mod tests {
         .expect("resolves");
         assert_eq!(out.html.as_deref(), Some("<p>See list.pdf</p>"));
         assert!(out.files.is_empty());
+    }
+
+    /// The name a lone media file `bytes` is offered under, when its alt text is `alt`.
+    fn offered_name(bytes: &[u8], alt: &str) -> Option<String> {
+        let sha = sha_of(bytes);
+        let html = format!("<p><img src=\"attachment:{sha}\" alt=\"{alt}\"></p>");
+        let content = ClipboardContent::rich("x", html);
+        let mut offered = None;
+        resolve_content(
+            &content,
+            &mut |_| Some(bytes.to_vec()),
+            &mut |_, name, _| {
+                offered = Some(name.to_owned());
+                Some(PathBuf::from(name))
+            },
+        )
+        .expect("resolves");
+        offered
+    }
+
+    #[test]
+    fn an_offered_file_s_extension_is_its_type_s_never_the_alt_text_s() {
+        // The Phase 3 UI review's finding 7: bytes that pass for a PDF, followed by commands.
+        let pdf = b"%PDF-1.7\r\ncalc.exe\r\n".to_vec();
+        assert_eq!(
+            offered_name(&pdf, "Invoice.cmd").as_deref(),
+            Some("Invoice_cmd.pdf")
+        );
+        assert_eq!(
+            offered_name(&pdf, "Invoice.HTA").as_deref(),
+            Some("Invoice_HTA.pdf")
+        );
+        assert_eq!(
+            offered_name(&pdf, "Invoice.PDF").as_deref(),
+            Some("Invoice.pdf")
+        );
+        assert_eq!(
+            offered_name(&pdf, "a.pdf.exe").as_deref(),
+            Some("a_pdf_exe.pdf")
+        );
+        // Path separators and anything else outside a plain name are replaced.
+        assert_eq!(
+            offered_name(&pdf, "..\\..\\Startup/run.bat").as_deref(),
+            Some("Startup_run_bat.pdf")
+        );
+        assert_eq!(
+            offered_name(&pdf, "a:b*c?d").as_deref(),
+            Some("a_b_c_d.pdf")
+        );
+        assert_eq!(offered_name(&pdf, "../..").as_deref(), Some("document.pdf"));
+        assert_eq!(offered_name(&pdf, "").as_deref(), Some("document.pdf"));
+        assert_eq!(
+            offered_name(&pdf, "CON").as_deref(),
+            Some("CON_.pdf"),
+            "a device name"
+        );
+        assert_eq!(
+            offered_name(&pdf, "Preisliste März").as_deref(),
+            Some("Preisliste März.pdf")
+        );
+        let long = "x".repeat(400);
+        let name = offered_name(&pdf, &long).expect("offered");
+        assert!(
+            name.chars().count() <= 104 && name == format!("{}.pdf", "x".repeat(100)),
+            "{name}"
+        );
+        assert_eq!(
+            offered_name(b"ID3\x04 tune", "song.wav").as_deref(),
+            Some("song_wav.mp3")
+        );
+        assert_eq!(
+            offered_name(b"\0\0\0\x18ftypmp42", "clip").as_deref(),
+            Some("clip.mp4")
+        );
+    }
+
+    #[test]
+    fn only_the_accepted_types_count_as_images_or_media() {
+        // Exact types, not prefixes: a type the store never sniffs is neither.
+        assert!(attachments::is_image("image/png"));
+        assert!(!attachments::is_image("image/svg+xml"));
+        assert!(!attachments::is_image("image/"));
+        assert_eq!(attachments::extension_for("application/pdf"), Some("pdf"));
+        assert_eq!(attachments::extension_for("application/pdfx"), None);
+        assert_eq!(attachments::extension_for("text/html"), None);
     }
 
     #[test]

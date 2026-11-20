@@ -12,10 +12,13 @@ import { Library } from "./Library";
 import { settingsApi } from "./settings";
 import { useAppliedTheme } from "./settings/useAppliedTheme";
 import { isMac } from "./model";
+import { guardUnload } from "../reload";
 
 const guardClose: LibraryEnv["guardClose"] = (blocked, onBlocked) => {
   let stop: (() => void) | undefined;
   let removed = false;
+  // A reload the keys did not catch (src/reload.ts) asks too.
+  const stopUnload = guardUnload(window, blocked);
   getCurrentWindow()
     .onCloseRequested((event) => {
       if (blocked()) {
@@ -23,6 +26,28 @@ const guardClose: LibraryEnv["guardClose"] = (blocked, onBlocked) => {
         onBlocked();
       }
     })
+    .then(
+      (unlisten) => {
+        if (removed) unlisten();
+        else stop = unlisten;
+      },
+      () => {},
+    );
+  return () => {
+    removed = true;
+    stop?.();
+    stopUnload();
+  };
+};
+
+/** The tray's "Quit Iamb" while this window is open (src-tauri/src/app/tray.rs). */
+const QUIT_EVENT = "iamb:quit-requested";
+
+const onQuitRequested: LibraryEnv["onQuitRequested"] = (handler) => {
+  let stop: (() => void) | undefined;
+  let removed = false;
+  getCurrentWindow()
+    .listen(QUIT_EVENT, () => handler())
     .then(
       (unlisten) => {
         if (removed) unlisten();
@@ -70,6 +95,8 @@ export function LibraryView() {
       mac: isMac(),
       settings: settingsApi,
       palette: paletteLink,
+      onQuitRequested,
+      quit: () => api.quit(),
     }),
     [status.connection, status.service?.paused],
   );

@@ -12,6 +12,7 @@ mod library_commands;
 mod measure;
 mod measure_form;
 mod measure_palette;
+mod notice_window;
 mod onboarding_commands;
 mod palette_panel;
 mod settings_commands;
@@ -59,6 +60,8 @@ pub struct Ui {
     /// The search palette's flow, rows and hand-over to the library (`crate::palette`,
     /// `palette_panel`).
     pub palette: palette_panel::PalettePanel,
+    /// The notice for a refused pick or insert (`crate::notice`, `notice_window`).
+    pub notices: crate::notice::Notices,
     /// The UI host's log.
     pub log: Arc<Logger>,
     tray: OnceLock<tray::Tray>,
@@ -78,6 +81,16 @@ impl Ui {
             tray.set_visible(visible);
         }
     }
+}
+
+/// Tells the notices (`crate::notice`) of each explicit request the form or the palette sends.
+fn notify_request(app: &AppHandle) -> crate::form::OnRequest {
+    let app = app.clone();
+    Arc::new(move |asked, snippet| {
+        if let Some(ui) = app.try_state::<Arc<Ui>>() {
+            ui.notices.expect(asked, snippet);
+        }
+    })
 }
 
 /// Sends the bridge's reports to the tray and the front end.
@@ -110,6 +123,7 @@ impl BridgeSink for Sink {
         if let Some(ui) = self.app.try_state::<Arc<Ui>>() {
             ui.form.service_event(event);
             palette_panel::service_event(&ui, event);
+            ui.notices.service_event(event);
         }
     }
 }
@@ -140,6 +154,7 @@ fn setup(
         }),
     )?;
     let form = form_panel::start(&handle, &bridge, options.measure_form_runs.is_some(), log)?;
+    let notices = notice_window::start(&handle, &bridge, log)?;
     let palette = palette_panel::start(
         &handle,
         &bridge,
@@ -152,6 +167,7 @@ fn setup(
         timer: OpenTimer::default(),
         form,
         palette,
+        notices,
         log: Arc::clone(log),
         tray: OnceLock::new(),
     });
@@ -206,6 +222,7 @@ pub fn run(dirs: DataDirs, options: &Options, log: &Arc<Logger>) -> tauri::Resul
             commands::get_snippet,
             commands::report_first_paint,
             commands::dismiss,
+            commands::app_quit,
             library_commands::library_list_folders,
             library_commands::library_list_tags,
             library_commands::library_list_summaries,
@@ -223,6 +240,7 @@ pub fn run(dirs: DataDirs, options: &Options, log: &Arc<Logger>) -> tauri::Resul
             template_commands::template_parse,
             template_commands::template_preview,
             template_commands::template_add_attachment,
+            template_commands::template_try_form,
             settings_commands::settings_get,
             settings_commands::settings_put,
             settings_commands::settings_list_exclusions,
@@ -235,6 +253,7 @@ pub fn run(dirs: DataDirs, options: &Options, log: &Arc<Logger>) -> tauri::Resul
             form_panel::form_painted,
             form_panel::form_submit,
             form_panel::form_cancel,
+            form_panel::form_abandon,
             palette_panel::palette_ready,
             palette_panel::palette_current,
             palette_panel::palette_painted,
@@ -244,6 +263,7 @@ pub fn run(dirs: DataDirs, options: &Options, log: &Arc<Logger>) -> tauri::Resul
             palette_panel::palette_pick,
             palette_panel::palette_open,
             palette_panel::library_take_request,
+            notice_window::notice_current,
             onboarding_commands::onboarding_permissions,
             onboarding_commands::onboarding_open_permission_settings,
             onboarding_commands::onboarding_test_field,
@@ -266,6 +286,7 @@ pub fn run(dirs: DataDirs, options: &Options, log: &Arc<Logger>) -> tauri::Resul
             if let Some(ui) = app.try_state::<Arc<Ui>>() {
                 ui.form.stop();
                 ui.palette.controller.stop();
+                ui.notices.stop();
                 ui.bridge.stop();
             }
             run_log.info(format_args!("ui host exits"));

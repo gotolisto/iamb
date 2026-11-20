@@ -263,6 +263,9 @@ async function walkLibrary(browser, mode) {
   await w.until("card", "the focus back in the editor after Esc", () => document.activeElement?.getAttribute("role") === "textbox" || !!document.activeElement?.closest("[role='dialog'],[role='group'],.tpl-card"));
   await w.check("after the card");
 
+  // The preview has answered for the field (it offers "Try the form", a stop in the tab order
+  // right after the editor), so the order does not change between the two key presses below.
+  await w.until("preview", "the preview of the field", () => !!document.querySelector(".tpl-fields"));
   // Tab leaves the editor: it never inserts a tab (§5.3, WCAG 2.1.2).
   const before = await page.evaluate(() => document.querySelector('[role="textbox"][contenteditable="true"]')?.textContent ?? "");
   await w.key("Tab");

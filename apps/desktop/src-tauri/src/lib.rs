@@ -14,6 +14,7 @@
 //!   submit or cancel), independent of Tauri.
 //! - [`palette`]: the search palette's flow (`PaletteRequested`, `PanelFocus`, show, pick, hand the
 //!   focus back, `ExpandSnippet`), independent of Tauri; [`palette_data`]: its rows.
+//! - [`notice`]: the notice for a pick or an insert the service refused, independent of Tauri.
 //! - [`crash`], [`log`], [`paths`]: crash handling without heap contents, the log file, and the
 //!   data root, as in the service (architecture §3.3, §8).
 //! - [`timing`]: the cold-open measurement.
@@ -25,6 +26,7 @@ pub mod crash;
 pub mod form;
 pub mod library;
 pub mod log;
+pub mod notice;
 pub mod onboarding;
 pub mod palette;
 pub mod palette_data;

@@ -99,6 +99,7 @@ export const COMMANDS = [
   "get_snippet",
   "report_first_paint",
   "dismiss",
+  "app_quit",
   "library_list_folders",
   "library_list_tags",
   "library_list_summaries",
@@ -116,12 +117,14 @@ export const COMMANDS = [
   "template_parse",
   "template_preview",
   "template_add_attachment",
+  "template_try_form",
   "form_ready",
   "form_current",
   "form_laid_out",
   "form_painted",
   "form_submit",
   "form_cancel",
+  "form_abandon",
   "settings_get",
   "settings_put",
   "settings_list_exclusions",
@@ -145,6 +148,7 @@ export const COMMANDS = [
   "palette_pick",
   "palette_open",
   "library_take_request",
+  "notice_current",
 ] as const;
 
 export type CommandName = (typeof COMMANDS)[number];
@@ -162,6 +166,8 @@ export function createApi(invoke: Invoke) {
     getSnippet: (id: string) => invoke<SnippetDetail>("get_snippet", { id }),
     reportFirstPaint: (marks: PaintMarks) => invoke<void>("report_first_paint", { ...marks }),
     dismiss: () => invoke<void>("dismiss"),
+    /** Ends Iamb: "Quit Iamb", once the library window asked about unsaved edits. */
+    quit: () => invoke<void>("app_quit"),
   };
 }
 

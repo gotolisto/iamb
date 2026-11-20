@@ -59,6 +59,10 @@
       },
       {
         "session": 2,
+        "type": "target_gone"
+      },
+      {
+        "session": 2,
         "type": "closed"
       }
     ],

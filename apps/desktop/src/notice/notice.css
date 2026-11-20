@@ -1,0 +1,29 @@
+/*
+ * The notice over other apps (design system §4.9): `bg.inverse`, a title and one sentence. Every
+ * value is a design token from tokens.css; styles.test.ts fails on a token that does not exist.
+ * The window is the notice. Nothing animates (duration.instant).
+ */
+
+.nt-root {
+  height: 100%;
+}
+
+.nt {
+  box-sizing: border-box;
+  height: 100%;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-bg-inverse);
+  color: var(--color-text-on-inverse);
+  border-radius: var(--radius-md);
+  font: var(--type-body);
+  overflow: hidden;
+}
+
+.nt-title {
+  margin: 0 0 var(--space-1);
+  font: var(--type-body-strong);
+}
+
+.nt-sentence {
+  margin: 0;
+}

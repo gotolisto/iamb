@@ -1321,6 +1321,13 @@ impl FocusInspector for MockPlatform {
         self.focus(*token)
     }
 
+    fn window_exists(&self, token: &FocusToken) -> bool {
+        self.desk()
+            .windows
+            .get(&token.window())
+            .is_some_and(|w| w.spec.pid == token.pid())
+    }
+
     fn allow_foreground(&self, pid: u32) -> Result<()> {
         self.desk().allowed_foreground.push(pid);
         Ok(())

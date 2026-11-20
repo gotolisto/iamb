@@ -44,6 +44,7 @@ pub const COMMANDS: &[&str] = &[
     "get_snippet",
     "report_first_paint",
     "dismiss",
+    "app_quit",
     // The library's commands (`app/library_commands.rs`, task 3.3).
     "library_list_folders",
     "library_list_tags",
@@ -65,6 +66,7 @@ pub const COMMANDS: &[&str] = &[
     "template_preview",
     // Formatted snippets (`app/template_commands.rs`, task 3.8).
     "template_add_attachment",
+    "template_try_form",
     // The fill-in form's commands (`app/form_panel.rs`, task 3.5).
     "form_ready",
     "form_current",
@@ -72,6 +74,7 @@ pub const COMMANDS: &[&str] = &[
     "form_painted",
     "form_submit",
     "form_cancel",
+    "form_abandon",
     // Settings and diagnostics (`app/settings_commands.rs`, task 3.9).
     "settings_get",
     "settings_put",
@@ -98,6 +101,8 @@ pub const COMMANDS: &[&str] = &[
     "palette_pick",
     "palette_open",
     "library_take_request",
+    // The notice for a refused pick or insert (`app/notice_window.rs`).
+    "notice_current",
 ];
 
 /// The requests the bridge sends, by wire name (the `type` of each).

@@ -260,6 +260,20 @@ export function Library({ env }: { env: LibraryEnv }) {
     );
   }, [env, api]);
 
+  // "Quit Iamb" from the tray asks about unsaved edits as the close does (the Phase 3 UI
+  // review's finding 17).
+  useEffect(() => {
+    if (!env.onQuitRequested) return;
+    return env.onQuitRequested(() =>
+      guard(() => {
+        closing.current = true;
+        void env.quit?.().catch(() => {
+          closing.current = false;
+        });
+      }),
+    );
+  }, [env, guard]);
+
   // ---- Choosing what the editor shows -----------------------------------------------------
   const changeSelection = useCallback(
     (next: Selection) => {
@@ -457,25 +471,53 @@ export function Library({ env }: { env: LibraryEnv }) {
       if (ids.length === 0) return;
       const set = new Set(ids);
       const next = neighbourOf(set);
-      let full: Snippet[] = [];
-      try {
-        // What Undo needs: the whole row, with its tags.
-        full = (await Promise.all(ids.map((id) => api.getSnippet(id).catch(() => null)))).filter(
-          (s): s is Snippet => s !== null,
-        );
-        await Promise.all(full.map((s) => api.deleteSnippet(s.id)));
-      } catch (e) {
-        showToast([{ text: describeFailure(e, "delete_snippet").text }]);
+      // What Undo needs: the whole row, with its tags. A row that cannot be read is not deleted
+      // (there would be nothing to undo with) and counts as failed.
+      const read = await Promise.allSettled(ids.map((id) => api.getSnippet(id)));
+      const toDelete = read.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+      // Each delete on its own: one that fails must not hide the others, which are done
+      // (the Phase 3 UI review's finding 6).
+      const results = await Promise.allSettled(toDelete.map((s) => api.deleteSnippet(s.id)));
+      const full = toDelete.filter((_, i) => results[i]?.status === "fulfilled");
+      const failures: Array<{ id: string; reason: unknown }> = [];
+      read.forEach((r, i) => {
+        if (r.status === "rejected") failures.push({ id: ids[i] ?? "", reason: r.reason });
+      });
+      results.forEach((r, i) => {
+        const s = toDelete[i];
+        if (r.status === "rejected" && s) failures.push({ id: s.id, reason: r.reason });
+      });
+      const titleOf = (id: string): string => {
+        const row = data.rowsById.get(id);
+        return row ? rowTitle(row) : "";
+      };
+      const failed =
+        failures.length === 0
+          ? ""
+          : `${
+              failures.length === 1 && failures[0] && titleOf(failures[0].id)
+                ? `“${titleOf(failures[0].id)}” could not be deleted`
+                : `${failures.length} ${failures.length === 1 ? "snippet" : "snippets"} could not be deleted`
+            }: ${describeFailure(failures[0]?.reason, "delete_snippet").text}`;
+      if (full.length === 0) {
+        if (failures.length > 0) showToast([{ text: describeFailure(failures[0]?.reason, "delete_snippet").text }]);
         return;
       }
-      if (full.length === 0) return;
       const label = full.length === 1 && full[0] ? rowTitle({ label: full[0].label, firstLine: full[0].body, abbreviation: full[0].abbreviation }) : "";
       setDraft(null);
-      setSelection(next ? single(next) : NO_SELECTION);
-      setEditorKey(next ? `snippet-${next}` : "none");
+      // What could not be deleted stays selected, so that the user sees what is left.
+      const left = failures.map((f) => f.id).filter((id) => data.rowsById.has(id));
+      if (left.length > 0) {
+        setSelection({ ids: new Set(left), active: left[0] ?? null, anchor: left[0] ?? null });
+        setEditorKey(left.length === 1 ? `snippet-${left[0]}` : "none");
+      } else {
+        setSelection(next ? single(next) : NO_SELECTION);
+        setEditorKey(next ? `snippet-${next}` : "none");
+      }
       focusList();
+      const deleted = full.length === 1 ? `Deleted “${label}”.` : `Deleted ${full.length} snippets.`;
       showToast(
-        [{ text: full.length === 1 ? `Deleted “${label}”.` : `Deleted ${full.length} snippets.` }],
+        [{ text: failed ? `${deleted} ${failed}` : deleted }],
         {
           label: "Undo",
           run: () => {

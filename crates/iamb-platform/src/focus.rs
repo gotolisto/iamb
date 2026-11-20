@@ -217,6 +217,19 @@ pub trait FocusInspector: Send + Sync {
     /// focus; [`Timeout`](crate::PlatformError::Timeout) when the OS does not confirm in time.
     fn restore_focus(&self, token: &FocusToken) -> Result<()>;
 
+    /// Whether the token's window still exists and belongs to the token's process. The UI host
+    /// asks while a fill-in form or the palette waits for its window, so that a window that was
+    /// closed (or whose application quit) ends the panel instead of leaving it waiting for
+    /// ever; the service asks before it parks a form submit for that window (the Phase 3 UI
+    /// review's finding 1). Cheap: one question to the window system, no accessibility query.
+    ///
+    /// The default answers `true`: it is for a test double that wraps another inspector and
+    /// cannot tell. The Windows, macOS and mock inspectors answer for the window.
+    fn window_exists(&self, token: &FocusToken) -> bool {
+        let _ = token;
+        true
+    }
+
     /// Lets process `pid` take the foreground: the service grants this to the UI host on
     /// Windows before it asks for a form or the palette (§4.5 step 3). On macOS the panels do
     /// not activate, so this does nothing and succeeds.

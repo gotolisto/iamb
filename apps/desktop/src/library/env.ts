@@ -31,4 +31,12 @@ export interface LibraryEnv {
   template?: TemplateService | undefined;
   /** The search palette: requests it leaves for this window, and ⌘K (task 3.6). */
   palette?: PaletteLink | undefined;
+  /**
+   * Calls `handler` when "Quit Iamb" was chosen in the tray menu while this window is open: the
+   * window asks about unsaved edits first, as its close does, then calls `quit`. Returns the
+   * function that stops listening.
+   */
+  onQuitRequested?: ((handler: () => void) => () => void) | undefined;
+  /** Ends Iamb (after `onQuitRequested`). */
+  quit?: (() => Promise<void>) | undefined;
 }

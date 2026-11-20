@@ -49,7 +49,21 @@
 //!
 //! As the form's does (`crate::form`): a click into the app behind it sends `PanelFocus
 //! { shown: false }` at once and the panel stays; while another application than the token's is
-//! in front it steps aside, and it comes back with its application.
+//! in front it steps aside, and it comes back with its application. A palette whose window is
+//! gone (closed, or its application quit) closes as Esc closes it, and so does a palette whose
+//! window the system closes (Alt+F4; [`PaletteController::close_requested`]).
+//!
+//! # The tray menu takes the foreground (the Phase 3 UI review's finding 4)
+//!
+//! On Windows the tray crate brings its own hidden window to the foreground before it shows
+//! the menu, so when "Search snippets…" or "Fill in the last form again…" is chosen, the
+//! window in front is Iamb's own, not the one the user was typing in. The tray therefore tells
+//! the controller when the pointer reaches the icon ([`PaletteController::tray_pointer`], on
+//! the icon's pointer events, which come before the menu): the window in front then, if it is
+//! another process's, is remembered for [`TRAY_CAPTURE_TTL`]. The menu's items use the window
+//! in front when they run if that is another process's (macOS, whose menu bar does not change
+//! the front application), and the remembered one otherwise
+//! ([`PaletteController::tray_target`]).
 //!
 //! # Privacy (architecture §8, spec §9)
 //!
@@ -85,6 +99,10 @@ pub const PALETTE_EVENT: &str = "iamb:palette";
 
 /// The error code of a pick or a close for a palette that is not open.
 pub const NO_PALETTE: &str = "no_palette";
+
+/// How long the window in front when the pointer reached the tray icon stays the tray menu's
+/// target (module docs).
+pub const TRAY_CAPTURE_TTL: Duration = Duration::from_mins(1);
 
 /// What the Rust side tells the palette panel, on [`PALETTE_EVENT`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -212,6 +230,8 @@ pub struct PaletteConfig {
     /// Whether the end of the connection to the service closes an open palette; normally true
     /// (false for the measurement, which has no service).
     pub follows_connection: bool,
+    /// Told of each pick just before it is sent (`crate::notice`); nothing by default.
+    pub on_request: crate::form::OnRequest,
 }
 
 impl PaletteConfig {
@@ -235,6 +255,7 @@ impl PaletteConfig {
             follow_every: FOLLOW_EVERY,
             keyboard_settle: KEYBOARD_SETTLE,
             follows_connection: true,
+            on_request: Arc::new(|_, _| {}),
         }
     }
 }
@@ -263,7 +284,11 @@ enum Msg {
     Keyboard(bool),
     ConnectionLost,
     Prepaint,
+    CloseRequested,
 }
+
+/// The window in front when the pointer last reached the tray icon, and when (module docs).
+type TrayCapture = Arc<Mutex<Option<(Instant, FocusToken)>>>;
 
 /// The open palette.
 struct Open {
@@ -289,6 +314,9 @@ pub struct PaletteController {
     timer: Arc<FormTimer>,
     prepainted: Arc<AtomicBool>,
     thread: Mutex<Option<JoinHandle<()>>>,
+    focus: Option<Arc<dyn FocusInspector>>,
+    own_pid: u32,
+    tray: TrayCapture,
 }
 
 impl std::fmt::Debug for PaletteController {
@@ -314,7 +342,11 @@ impl PaletteController {
         let current = Arc::new(Mutex::new(None));
         let timer = Arc::new(FormTimer::default());
         let prepainted = Arc::new(AtomicBool::new(false));
+        let focus = cfg.focus.clone();
+        let own_pid = cfg.own_pid;
+        let tray: TrayCapture = Arc::new(Mutex::new(None));
         let mut flow = Flow {
+            tray: Arc::clone(&tray),
             cfg,
             rx,
             backlog: VecDeque::new(),
@@ -333,6 +365,9 @@ impl PaletteController {
             timer,
             prepainted,
             thread: Mutex::new(Some(thread)),
+            focus,
+            own_pid,
+            tray,
         })
     }
 
@@ -371,8 +406,42 @@ impl PaletteController {
         });
     }
 
-    /// The tray's "Search snippets…": opens the palette for the application in front now.
-    /// Never blocks.
+    /// The pointer is over the tray icon, before its menu takes the foreground: the window in
+    /// front now, if it is another process's, is the menu's target (module docs). `entered` is
+    /// the pointer's arrival on the icon, which always counts; a later move over it counts only
+    /// when nothing fresh was noted, since a press on the icon may already have brought the
+    /// taskbar to the front. Asks the window system one cheap question.
+    pub fn tray_pointer(&self, entered: bool) {
+        let Some(focus) = &self.focus else {
+            return;
+        };
+        let mut tray = lock(&self.tray);
+        if !entered && tray.is_some_and(|(at, _)| at.elapsed() < TRAY_CAPTURE_TTL) {
+            return;
+        }
+        if let Ok(front) = focus.focus_token()
+            && front.pid() != self.own_pid
+        {
+            *tray = Some((Instant::now(), front));
+        }
+    }
+
+    /// The window the tray menu's items are for (module docs): the one in front now when it is
+    /// another process's, else the one in front when the pointer last reached the icon, within
+    /// [`TRAY_CAPTURE_TTL`]; `None` when neither (no platform layer, or only Iamb's windows).
+    #[must_use]
+    pub fn tray_target(&self) -> Option<FocusToken> {
+        tray_target(self.focus.as_deref(), self.own_pid, &self.tray)
+    }
+
+    /// The system asked to close the panel's window (Alt+F4): the open palette closes as Esc
+    /// closes it. Never blocks.
+    pub fn close_requested(&self) {
+        self.send(Msg::CloseRequested);
+    }
+
+    /// The tray's "Search snippets…": opens the palette for the window the menu is for
+    /// ([`tray_target`](Self::tray_target)). Never blocks.
     pub fn open_from_tray(&self) {
         self.send(Msg::FromTray {
             at: Instant::now(),
@@ -468,9 +537,26 @@ impl Drop for PaletteController {
     }
 }
 
+/// See [`PaletteController::tray_target`].
+fn tray_target(
+    focus: Option<&dyn FocusInspector>,
+    own_pid: u32,
+    tray: &Mutex<Option<(Instant, FocusToken)>>,
+) -> Option<FocusToken> {
+    let front = focus?.focus_token().ok();
+    if let Some(front) = front.filter(|t| t.pid() != own_pid) {
+        return Some(front);
+    }
+    lock(tray)
+        .filter(|(at, _)| at.elapsed() < TRAY_CAPTURE_TTL)
+        .map(|(_, token)| token)
+        .or(front)
+}
+
 /// The thread's state.
 struct Flow {
     cfg: PaletteConfig,
+    tray: TrayCapture,
     rx: Receiver<Msg>,
     backlog: VecDeque<Msg>,
     open: Option<Open>,
@@ -544,12 +630,17 @@ impl Flow {
                 wall_ms,
             } => self.requested(token, local, at, wall_ms),
             Msg::FromTray { at, wall_ms } => {
-                let token = self
-                    .cfg
-                    .focus
-                    .as_ref()
-                    .and_then(|focus| focus.focus_token().ok());
+                let token = tray_target(self.cfg.focus.as_deref(), self.cfg.own_pid, &self.tray);
                 self.requested(token, false, at, wall_ms);
+            }
+            Msg::CloseRequested => {
+                if let Some(open) = self.open.take() {
+                    self.log().info(format_args!(
+                        "palette {}: the system closed the panel",
+                        open.session
+                    ));
+                    self.dismiss(&open);
+                }
             }
             Msg::Pick {
                 session,
@@ -755,6 +846,12 @@ impl Flow {
                 "palette {session}: PanelFocus(false) was not answered"
             ));
         }
+        match &request {
+            RequestBody::ExpandSnippet { id, .. } => {
+                (self.cfg.on_request)(crate::notice::Asked::Insert, Some(*id));
+            }
+            _ => (self.cfg.on_request)(crate::notice::Asked::Reopen, None),
+        }
         let answer = self.call(request);
         self.finish(session);
         match answer {
@@ -872,20 +969,32 @@ impl Flow {
         }
         if self.following(&open) && open.followed.elapsed() >= self.cfg.follow_every {
             open.followed = Instant::now();
-            self.follow(&mut open);
+            if !self.follow(&mut open) {
+                return;
+            }
         }
         self.open = Some(open);
     }
 
-    fn follow(&self, open: &mut Open) {
-        let (Some(focus), Some(token)) = (&self.cfg.focus, open.token) else {
-            return;
+    /// Follows the front application; `false` when the palette's window is gone and the
+    /// palette closed.
+    fn follow(&mut self, open: &mut Open) -> bool {
+        let (Some(focus), Some(token)) = (self.cfg.focus.clone(), open.token) else {
+            return true;
         };
+        if token.pid() != self.cfg.own_pid && !focus.window_exists(&token) {
+            self.log().info(format_args!(
+                "palette {}: the window it is for is gone; closed",
+                open.session
+            ));
+            self.dismiss(open);
+            return false;
+        }
         let Ok(front) = focus.focus_token() else {
-            return;
+            return true;
         };
         if front.pid() == self.cfg.own_pid {
-            return;
+            return true;
         }
         if front.pid() == token.pid() {
             if open.away {
@@ -904,6 +1013,7 @@ impl Flow {
             open.visible = false;
             open.away = true;
         }
+        true
     }
 }
 

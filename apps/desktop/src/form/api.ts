@@ -16,6 +16,9 @@ export const FORM_EVENT = "iamb:form";
 /** The code of an Insert whose focus could not be given back (`form::FOCUS_LOST`). */
 export const FOCUS_LOST = "focus_lost";
 
+/** The code of an Insert whose window is gone: the form ended, its answers kept (`form::TARGET_GONE`). */
+export const TARGET_GONE = "target_gone";
+
 /** A form to fill in (`FormOpen` in src-tauri/src/form.rs). */
 export interface FormOpen {
   session: number;
@@ -34,6 +37,7 @@ export interface FormOpen {
 export type FormEvent =
   | { type: "open"; session: number }
   | { type: "shown"; session: number }
+  | { type: "target_gone"; session: number }
   | { type: "closed"; session: number };
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
@@ -71,7 +75,7 @@ export function isFormOpen(v: unknown): v is FormOpen {
 export function isFormEvent(v: unknown): v is FormEvent {
   return (
     isObject(v) &&
-    (v.type === "open" || v.type === "shown" || v.type === "closed") &&
+    (v.type === "open" || v.type === "shown" || v.type === "target_gone" || v.type === "closed") &&
     typeof v.session === "number"
   );
 }
@@ -89,6 +93,8 @@ export interface FormApi {
   submit: (session: number, values: Record<string, string>) => Promise<void>;
   /** Cancel. */
   cancel: (session: number) => Promise<void>;
+  /** The answers of a form whose window is gone: kept for "Fill in … again", and the form ends. */
+  abandon: (session: number, values: Record<string, string>) => Promise<void>;
 }
 
 /** The form's commands over `invoke` (Tauri's, or a fake in tests). */
@@ -103,6 +109,7 @@ export function createFormApi(invoke: Invoke): FormApi {
     painted: (session, paintedAtMs) => invoke<void>("form_painted", { session, paintedAtMs }),
     submit: (session, values) => invoke<void>("form_submit", { session, values }),
     cancel: (session) => invoke<void>("form_cancel", { session }),
+    abandon: (session, values) => invoke<void>("form_abandon", { session, values }),
   };
 }
 

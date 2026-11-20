@@ -5,8 +5,18 @@
 //! | `library` | On demand, by the tray's "Open library" | Destroyed |
 //! | `form` | At start, hidden (pre-warmed for the 150 ms target) | Hidden |
 //! | `palette` | At start, hidden (pre-warmed for the 100 ms target) | Hidden |
+//! | `notice` | On the first notice (`crate::notice`), then kept hidden | Hidden |
 //!
-//! All three load the same page; the front end picks its view by the window's label.
+//! All load the same page; the front end picks its view by the window's label. (The onboarding
+//! window is `app::onboarding_commands`'.)
+//!
+//! # The notice
+//!
+//! A refused palette pick or form Insert is said in a notice (spec §4.11, design system §4.9):
+//! a small undecorated, always-on-top window without a taskbar button that can never take the
+//! keyboard ([`show_notice`]), in a corner of the display the user is working on (top right on
+//! macOS, bottom right elsewhere). It is made on the first notice rather than at start: most
+//! runs never need one, and a notice may come a moment late.
 //!
 //! # The panels (the fill-in form, task 3.5; the search palette, task 3.6, uses them too)
 //!
@@ -64,6 +74,13 @@ pub const LIBRARY: &str = "library";
 pub const FORM: &str = "form";
 /// The search palette's label.
 pub const PALETTE: &str = "palette";
+/// The notice's label.
+pub const NOTICE: &str = "notice";
+
+/// The notice's size, in logical pixels: a title and one sentence of up to three lines.
+pub const NOTICE_SIZE: (f64, f64) = (360.0, 104.0);
+/// The notice's distance from the edges of the work area, in logical pixels.
+const NOTICE_MARGIN: f64 = 16.0;
 
 /// The fill-in form's width, in logical pixels (design tokens, `size.form-panel`).
 pub const FORM_WIDTH: f64 = 440.0;
@@ -158,15 +175,22 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-/// A panel's window events: closing hides it (the panels must stay created), and a change of
-/// the keyboard goes to the panel's owner (module docs). Runs on the main thread; the owner's
-/// handler only queues a message.
+/// A panel's window events: a close request (Alt+F4, the window manager's close command) is
+/// the panel's Esc, which its owner carries out (the window itself stays created, hidden: the
+/// Phase 3 UI review's finding 1), and a change of the keyboard goes to the panel's owner
+/// (module docs). Runs on the main thread; the owner's handler only queues a message.
 fn panel_events(window: &WebviewWindow) {
     let handle = window.clone();
     window.on_window_event(move |event| match event {
         WindowEvent::CloseRequested { api, .. } => {
             api.prevent_close();
-            let _ = handle.hide();
+            match handle.app_handle().try_state::<Arc<super::Ui>>() {
+                Some(ui) if handle.label() == FORM => ui.form.close_requested(),
+                Some(ui) if handle.label() == PALETTE => ui.palette.controller.close_requested(),
+                _ => {
+                    let _ = handle.hide();
+                }
+            }
         }
         WindowEvent::Focused(has) => {
             if handle.label() == FORM
@@ -296,6 +320,89 @@ pub fn prepaint_panel(app: &AppHandle, label: &str) {
     let _ = window.set_focusable(true);
 }
 
+/// Where the notice goes on a display whose work area starts at `origin` and is `area`
+/// physical pixels large at `scale`: its top-left corner, in physical pixels (module docs).
+#[must_use]
+pub fn notice_position(origin: (i32, i32), area: (u32, u32), scale: f64, top: bool) -> (i32, i32) {
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+    let (w, h) = NOTICE_SIZE;
+    let right = f64::from(area.0) - (w + NOTICE_MARGIN) * scale;
+    let y = if top {
+        NOTICE_MARGIN * scale
+    } else {
+        f64::from(area.1) - (h + NOTICE_MARGIN) * scale
+    };
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "pixel coordinates of a display: small and finite"
+    )]
+    (
+        origin.0 + right.max(0.0).round() as i32,
+        origin.1 + y.max(0.0).round() as i32,
+    )
+}
+
+fn notice_builder(app: &AppHandle) -> WebviewWindowBuilder<'_, tauri::Wry, AppHandle> {
+    WebviewWindowBuilder::new(app, NOTICE, page())
+        .title("Iamb")
+        .visible(false)
+        .focused(false)
+        .focusable(false)
+        .decorations(false)
+        .resizable(false)
+        .skip_taskbar(true)
+        .always_on_top(true)
+        .visible_on_all_workspaces(true)
+        .inner_size(NOTICE_SIZE.0, NOTICE_SIZE.1)
+}
+
+/// Shows the notice window in its corner without giving it the keyboard, making it first if
+/// needed (module docs). Call it off the main thread, as [`open_library`].
+///
+/// # Errors
+///
+/// When the window cannot be made or shown.
+pub fn show_notice(app: &AppHandle) -> tauri::Result<()> {
+    let window = if let Some(window) = app.get_webview_window(NOTICE) {
+        window
+    } else {
+        #[cfg(target_os = "linux")]
+        {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let handle = app.clone();
+            app.run_on_main_thread(move || {
+                let _ = tx.send(related(notice_builder(&handle)).build());
+            })?;
+            rx.recv()
+                .map_err(|_| tauri::Error::FailedToReceiveMessage)??
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            notice_builder(app).build()?
+        }
+    };
+    let monitor = app
+        .cursor_position()
+        .ok()
+        .and_then(|p| app.monitor_from_point(p.x, p.y).ok().flatten())
+        .or_else(|| app.primary_monitor().ok().flatten());
+    if let Some(monitor) = monitor {
+        let area = monitor.work_area();
+        let (x, y) = notice_position(
+            (area.position.x, area.position.y),
+            (area.size.width, area.size.height),
+            monitor.scale_factor(),
+            cfg!(target_os = "macos"),
+        );
+        window.set_position(PhysicalPosition::new(x, y))?;
+    }
+    window.show()
+}
+
 /// Hides the panel `label`, if it exists.
 pub fn hide_panel(app: &AppHandle, label: &str) {
     if let Some(window) = app.get_webview_window(label) {
@@ -388,6 +495,22 @@ mod tests {
         assert_eq!(f.height, 360, "the default before the content reported");
         let f = panel_frame((0, 0), (1000, 1000), f64::NAN, FORM_WIDTH, Some(f64::NAN));
         assert_eq!((f.width, f.height), (440, 360), "nonsense falls back");
+    }
+
+    #[test]
+    fn a_notice_sits_in_a_corner_of_the_work_area() {
+        // 1920 x 1040 work area at 1x (a taskbar below), origin at 0.
+        assert_eq!(
+            notice_position((0, 0), (1920, 1040), 1.0, false),
+            (1920 - 376, 1040 - 120)
+        );
+        // macOS: top right, below the menu bar, at 2x.
+        assert_eq!(
+            notice_position((0, 50), (2880, 1750), 2.0, true),
+            (2880 - 752, 50 + 32)
+        );
+        // A display too small never puts it off the left or top edge.
+        assert_eq!(notice_position((-800, 0), (100, 50), 1.0, false), (-800, 0));
     }
 
     #[test]

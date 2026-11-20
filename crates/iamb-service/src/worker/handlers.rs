@@ -587,6 +587,42 @@ fn put_snippet(shared: &Shared, view: &View, snippet: Snippet, tags: Option<Vec<
     .map(|meta| ResponseBody::Saved { meta })
 }
 
+/// The bytes of the file a `PutAttachment` names, at most the media limit (the Phase 3 UI
+/// review's finding 10). Only a regular file is read: a FIFO or a device would pass a size check
+/// (its length is 0) and then block this thread, or never end. The kind is checked before the
+/// file is opened (opening a FIFO waits for a writer) and again on the open handle, and the
+/// read stops one byte past the limit whatever the length said.
+fn read_attachment_file(path: &std::path::Path) -> Result<Vec<u8>, ErrorBody> {
+    use std::io::Read;
+    let limit = iamb_store::attachments::MAX_MEDIA_BYTES;
+    let too_large = |size: u64| {
+        store_error(&StoreError::Attachment(
+            iamb_store::AttachmentError::TooLarge { size, limit },
+        ))
+    };
+    let unreadable = || err(ErrorCode::NotFound, "the file cannot be read");
+    let not_a_file = || err(ErrorCode::Invalid, "the attachment must be a regular file");
+    let meta = std::fs::metadata(path).map_err(|_| unreadable())?;
+    if !meta.is_file() {
+        return Err(not_a_file());
+    }
+    if meta.len() > limit {
+        return Err(too_large(meta.len()));
+    }
+    let file = std::fs::File::open(path).map_err(|_| unreadable())?;
+    if !file.metadata().map_err(|_| unreadable())?.is_file() {
+        return Err(not_a_file());
+    }
+    let mut bytes = Vec::new();
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| unreadable())?;
+    if bytes.len() as u64 > limit {
+        return Err(too_large(bytes.len() as u64));
+    }
+    Ok(bytes)
+}
+
 /// `PutAttachment` (task 3.8): reads the file here, on the client's reader thread, and writes
 /// it on the store thread.
 fn put_attachment(
@@ -613,21 +649,7 @@ fn put_attachment(
             "the attachment path must be absolute",
         ));
     }
-    let limit = iamb_store::attachments::MAX_MEDIA_BYTES;
-    match std::fs::metadata(path) {
-        Ok(meta) if meta.len() > limit => {
-            return Err(store_error(&StoreError::Attachment(
-                iamb_store::AttachmentError::TooLarge {
-                    size: meta.len(),
-                    limit,
-                },
-            )));
-        }
-        Ok(_) => {}
-        Err(_) => return Err(err(ErrorCode::NotFound, "the file cannot be read")),
-    }
-    let bytes =
-        std::fs::read(path).map_err(|_| err(ErrorCode::NotFound, "the file cannot be read"))?;
+    let bytes = read_attachment_file(path)?;
     write(shared, move |ctx| {
         let row = ctx
             .store

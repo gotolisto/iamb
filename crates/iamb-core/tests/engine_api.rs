@@ -256,6 +256,43 @@ fn engine_state_accessors() {
 }
 
 #[test]
+fn an_abandoned_form_closes_its_session_and_keeps_its_values() {
+    let snapshot = Snapshot::build(
+        [
+            snippet(1, "brb", "be right back"),
+            snippet(2, "dear", r#"Dear {field name="Name"},"#),
+        ],
+        EngineSettings::default(),
+    );
+    let env = FakeEnv::default();
+    let mut engine = Engine::new(snapshot);
+    engine.handle(Event::SecureState(SecureState::Normal), &env);
+    let shown = engine.handle(Event::ExpandRequest { snippet: id(2) }, &env);
+    let Some(Action::ShowForm { session, .. }) = shown.first() else {
+        panic!("no form");
+    };
+    let session = *session;
+    let values = || Sensitive::new([("Name", "Kim")].into_iter().collect::<FormValues>());
+    // Another session is not the open one: nothing changes.
+    let other = FormSessionId::from_raw(session.raw() + 1);
+    assert_eq!(engine.abandon_form(other, values()), None);
+    assert_eq!(engine.open_form(), Some(session));
+    // The open one ends, typing nothing, and its values are kept for a reopen.
+    assert_eq!(engine.abandon_form(session, values()), Some(id(2)));
+    assert_eq!(engine.open_form(), None);
+    assert!(engine.remembers_form_values(id(2)));
+    let mut out = Vec::new();
+    for ch in "brb ".chars() {
+        out.extend(engine.handle(Event::char(ch, 0), &env));
+    }
+    assert!(
+        matches!(out.last(), Some(Action::Expanded { .. })),
+        "typed matches expand again: {out:?}"
+    );
+    assert_eq!(engine.abandon_form(session, values()), None, "once");
+}
+
+#[test]
 fn custom_delimiters_and_sentinel_guard() {
     // NUL is a delimiter here, so no placeholder is pushed after an expansion.
     let settings = EngineSettings {

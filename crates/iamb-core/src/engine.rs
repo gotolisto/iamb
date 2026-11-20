@@ -141,7 +141,9 @@
 //! snippet: every `ShowForm` carries them as `last_values`, and `ReopenLastForm` shows the most
 //! recently submitted form again (as a palette expansion: nothing is deleted). The service
 //! expires them after 30 minutes without use, on screen lock and on sign-out with
-//! [`Engine::forget_form_values`].
+//! [`Engine::forget_form_values`]. A submit the service will never forward (its window is gone
+//! or never got the focus back) ends the session with [`Engine::abandon_form`], which types
+//! nothing and keeps the values, as a refused submit does.
 //!
 //! # Typing during injection (architecture §4.6, ADR-0019)
 //!
@@ -475,6 +477,22 @@ impl Engine {
         if matches!(self.held, Some((Held::Submit { .. }, _))) {
             self.held = None;
         }
+    }
+
+    /// Ends the open form session `session` without typing anything and keeps `values` for
+    /// `ReopenLastForm`, as a refused submit keeps them. The service calls this for a submit it
+    /// will never forward: its window is gone, or never got the focus back (the Phase 3 UI
+    /// review's finding 1; architecture §4.5). Returns the snippet of the session that ended;
+    /// `None`, and nothing changes, when `session` is not the open one.
+    pub fn abandon_form(
+        &mut self,
+        session: FormSessionId,
+        values: Sensitive<FormValues>,
+    ) -> Option<Id> {
+        let s = self.form.take_if(|s| s.id == session)?;
+        self.last_form = Some(s.snippet);
+        self.last_values.insert(s.snippet, values);
+        Some(s.snippet)
     }
 
     /// True while an explicit request waits for the focus verdict.

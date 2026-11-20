@@ -202,6 +202,58 @@ fn the_editor_adds_an_image_previews_it_and_saving_links_it() {
         Ok(other) => panic!("unexpected {other:?}"),
     }
 
+    // Only a regular file is read (the Phase 3 UI review's finding 10): a directory, and on
+    // Unix a FIFO (which would block the reading thread until someone writes to it), are
+    // refused with `invalid` at once.
+    match ui.call(RequestBody::PutAttachment {
+        path: drop_dir.path().to_path_buf(),
+        file_name: "dir".to_owned(),
+        folder,
+    }) {
+        Err(e) => assert_eq!(e.remote_code(), Some(iamb_ipc::ErrorCode::Invalid)),
+        Ok(other) => panic!("unexpected {other:?}"),
+    }
+    #[cfg(unix)]
+    {
+        let fifo = drop_dir.path().join("pipe.png");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo runs");
+        assert!(made.success());
+        // Unblocks a reader after 3 s, so that a service that reads it anyway cannot hang the
+        // test: it would answer late.
+        let writer = {
+            let fifo = fifo.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                let _ = std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&fifo)
+                    .and_then(|mut f| std::io::Write::write_all(&mut f, b"x"));
+            })
+        };
+        let asked = std::time::Instant::now();
+        match ui.call(RequestBody::PutAttachment {
+            path: fifo.clone(),
+            file_name: "pipe.png".to_owned(),
+            folder,
+        }) {
+            Err(e) => assert_eq!(e.remote_code(), Some(iamb_ipc::ErrorCode::Invalid)),
+            Ok(other) => panic!("unexpected {other:?}"),
+        }
+        assert!(
+            asked.elapsed() < std::time::Duration::from_secs(2),
+            "refused without reading: {:?}",
+            asked.elapsed()
+        );
+        // Let the writer finish: it waits for a reader, which this is.
+        let mut tail = Vec::new();
+        let _ = std::fs::File::open(&fifo)
+            .and_then(|mut f| std::io::Read::read_to_end(&mut f, &mut tail));
+        writer.join().expect("the writer ends");
+    }
+
     // The formatted preview shows the image from its file.
     let body = format!(
         "Hi {{field name=Name}} **bold** {}",

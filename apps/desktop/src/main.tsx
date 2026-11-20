@@ -3,6 +3,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { App } from "./App";
+import { blockReload } from "./reload";
 import "./styles/tokens.css";
 import "./styles/base.css";
 
@@ -17,6 +18,9 @@ function followTitle(label: string): void {
     childList: true,
   });
 }
+
+// F5 and Ctrl+R would reload the page and drop what was typed (src/reload.ts).
+blockReload(window);
 
 const root = document.getElementById("root");
 if (root) {

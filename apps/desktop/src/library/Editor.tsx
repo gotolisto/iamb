@@ -10,7 +10,7 @@ import {
 } from "react";
 
 import type { AbbreviationCheck, CaseMode, Folder, Saved, Snippet, Tag, Trigger } from "./api";
-import { TemplateField } from "./template";
+import { TemplateField, templateService } from "./template";
 import { hasFormatting } from "./template/markdown";
 import { ConfirmDialog } from "./Dialogs";
 import { describeFailure, type Failure } from "./errors";
@@ -30,6 +30,7 @@ import {
 import { TagInput } from "./TagInput";
 import type { LibraryData } from "./useLibraryData";
 import type { LibraryEnv } from "./env";
+import type { FieldView } from "../ipc";
 
 /** Exactly the specification's copy (flow 2, step 2). */
 export const CONTENT_PLACEHOLDER =
@@ -196,6 +197,8 @@ export function Editor(props: EditorProps) {
   const [menu, setMenu] = useState<OpenMenu | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [askPlain, setAskPlain] = useState(false);
+  /** The answers of "Try the form", the preview's test values (spec §4.3). */
+  const [previewValues, setPreviewValues] = useState<Record<string, string> | undefined>(undefined);
   const abbrInput = useRef<HTMLInputElement>(null);
   const root = useRef<HTMLFormElement>(null);
 
@@ -403,6 +406,20 @@ export function Editor(props: EditorProps) {
   }
 
   const update = (patch: Partial<Form>) => setForm((f) => (f ? { ...f, ...patch } : f));
+  const template = env.template ?? templateService;
+  // "Try the form": the real panel over this window; its answers become the preview's test
+  // values, typed nowhere (flow 2 step 5, flow 4's entry points).
+  const tryForm =
+    template.tryForm && form
+      ? (fields: FieldView[]) => {
+          void template.tryForm?.(fields, form.label, form.abbreviation).then(
+            (values) => {
+              if (values) setPreviewValues(values);
+            },
+            () => undefined,
+          );
+        }
+      : undefined;
   const folder: Folder | undefined = data.folders.find((x) => x.id === form.folderId);
   const prefix = folder?.defaults.abbreviationPrefix ?? "";
 
@@ -653,6 +670,8 @@ export function Editor(props: EditorProps) {
               imageFolder={form.kind === "rich" ? form.folderId : undefined}
               snippets={data.rows}
               service={env.template}
+              previewValues={previewValues}
+              onTryForm={tryForm}
               onChange={(body) => update({ body })}
             />
             {/* The template's error is shown once, by the field (spec section 6.1). */}

@@ -1,25 +1,31 @@
 //! The template editor's commands (task 3.4): `ParseTemplate` and `RenderPreview` through the
-//! bridge (`crate::template`). `apps/desktop/src/library/template/api.ts` is the typed
-//! TypeScript side.
+//! bridge (`crate::template`), and "Try the form" (`template_try_form`: the fill-in form panel
+//! over the library window, `crate::form`). `apps/desktop/src/library/template/api.ts` is the
+//! typed TypeScript side.
 //!
-//! Neither command logs: the source and the test values are library content and user input
-//! (architecture §8 rule 3).
+//! None logs: the source and the test values are library content and user input
+//! (architecture §8 rule 3). Each answers the library window only (`commands::caller`).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use iamb_core::model::Id;
-use tauri::State;
+use tauri::{State, WebviewWindow};
 
-use super::Ui;
-use crate::contract::CommandError;
+use super::{Ui, windows};
+use crate::contract::{CommandError, FieldView};
 use crate::template::{self, AttachmentView, ParsedView, PreviewView};
 
 type Res<T> = Result<T, CommandError>;
 
 /// The tokens of `source` and its first error, for the chips.
 #[tauri::command]
-pub async fn template_parse(ui: State<'_, Arc<Ui>>, source: String) -> Res<ParsedView> {
+pub async fn template_parse(
+    ui: State<'_, Arc<Ui>>,
+    window: WebviewWindow,
+    source: String,
+) -> Res<ParsedView> {
+    super::commands::caller(&window, &[windows::LIBRARY])?;
     let bridge = ui.bridge.clone();
     tauri::async_runtime::spawn_blocking(move || template::parse(&bridge, source))
         .await
@@ -31,10 +37,12 @@ pub async fn template_parse(ui: State<'_, Arc<Ui>>, source: String) -> Res<Parse
 #[tauri::command]
 pub async fn template_preview(
     ui: State<'_, Arc<Ui>>,
+    window: WebviewWindow,
     source: String,
     values: Option<BTreeMap<String, String>>,
     rich: Option<bool>,
 ) -> Res<PreviewView> {
+    super::commands::caller(&window, &[windows::LIBRARY])?;
     let bridge = ui.bridge.clone();
     let values = values.unwrap_or_default();
     let rich = rich.unwrap_or(false);
@@ -52,8 +60,10 @@ pub async fn template_preview(
 #[tauri::command]
 pub async fn template_add_attachment(
     ui: State<'_, Arc<Ui>>,
+    window: WebviewWindow,
     request: tauri::ipc::Request<'_>,
 ) -> Res<AttachmentView> {
+    super::commands::caller(&window, &[windows::LIBRARY])?;
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
         return Err(CommandError::new(
             "invalid",
@@ -80,4 +90,22 @@ pub async fn template_add_attachment(
     })
     .await
     .map_err(|_| CommandError::new("internal", "the request did not finish"))?
+}
+
+/// "Try the form" in the editor's preview (spec §4.3): the fill-in form panel with `fields`
+/// over the library window. Answers the values Insert handed in (the preview's test values), or
+/// none when the form was cancelled; nothing is typed anywhere. The library window only.
+#[tauri::command]
+pub async fn template_try_form(
+    ui: State<'_, Arc<Ui>>,
+    window: WebviewWindow,
+    fields: Vec<FieldView>,
+    label: String,
+    abbreviation: String,
+) -> Res<Option<BTreeMap<String, String>>> {
+    super::commands::caller(&window, &[windows::LIBRARY])?;
+    let ui: Arc<Ui> = Arc::clone(&ui);
+    tauri::async_runtime::spawn_blocking(move || ui.form.try_form(fields, label, abbreviation))
+        .await
+        .map_err(|_| CommandError::new("internal", "the request did not finish"))?
 }

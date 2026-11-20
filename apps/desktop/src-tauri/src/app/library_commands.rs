@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{State, WebviewWindow};
 
 use super::Ui;
 use crate::contract::CommandError;
@@ -29,13 +29,18 @@ async fn blocking<T: Send + 'static>(
 
 /// The personal profile's folders.
 #[tauri::command]
-pub async fn library_list_folders(ui: State<'_, Arc<Ui>>) -> Res<FoldersView> {
+pub async fn library_list_folders(
+    ui: State<'_, Arc<Ui>>,
+    window: WebviewWindow,
+) -> Res<FoldersView> {
+    super::commands::caller(&window, &super::commands::LIBRARY_CALLERS)?;
     blocking(&ui, library::folders).await
 }
 
 /// The tags with their counts.
 #[tauri::command]
-pub async fn library_list_tags(ui: State<'_, Arc<Ui>>) -> Res<Vec<TagView>> {
+pub async fn library_list_tags(ui: State<'_, Arc<Ui>>, window: WebviewWindow) -> Res<Vec<TagView>> {
+    super::commands::caller(&window, &super::commands::LIBRARY_CALLERS)?;
     blocking(&ui, library::tags).await
 }
 
@@ -43,27 +48,44 @@ pub async fn library_list_tags(ui: State<'_, Arc<Ui>>) -> Res<Vec<TagView>> {
 #[tauri::command]
 pub async fn library_list_summaries(
     ui: State<'_, Arc<Ui>>,
+    window: WebviewWindow,
     offset: u32,
     limit: u32,
 ) -> Res<SummaryPage> {
+    super::commands::caller(&window, &super::commands::LIBRARY_CALLERS)?;
     blocking(&ui, move |b| library::summaries(b, offset, limit)).await
 }
 
 /// One snippet with its tags and options.
 #[tauri::command]
-pub async fn library_get_snippet(ui: State<'_, Arc<Ui>>, id: String) -> Res<SnippetFull> {
+pub async fn library_get_snippet(
+    ui: State<'_, Arc<Ui>>,
+    window: WebviewWindow,
+    id: String,
+) -> Res<SnippetFull> {
+    super::commands::caller(&window, &super::commands::LIBRARY_CALLERS)?;
     blocking(&ui, move |b| library::snippet(b, &id)).await
 }
 
 /// Creates, replaces or restores (Undo) a snippet.
 #[tauri::command]
-pub async fn library_save_snippet(ui: State<'_, Arc<Ui>>, draft: SnippetDraft) -> Res<SavedView> {
+pub async fn library_save_snippet(
+    ui: State<'_, Arc<Ui>>,
+    window: WebviewWindow,
+    draft: SnippetDraft,
+) -> Res<SavedView> {
+    super::commands::caller(&window, &super::commands::LIBRARY_CALLERS)?;
     blocking(&ui, move |b| library::save_snippet(b, &draft)).await
 }
 
 /// Deletes a snippet.
 #[tauri::command]
-pub async fn library_delete_snippet(ui: State<'_, Arc<Ui>>, id: String) -> Res<()> {
+pub async fn library_delete_snippet(
+    ui: State<'_, Arc<Ui>>,
+    window: WebviewWindow,
+    id: String,
+) -> Res<()> {
+    super::commands::caller(&window, &super::commands::LIBRARY_CALLERS)?;
     blocking(&ui, move |b| library::delete_snippet_by_id(b, &id)).await
 }
 
@@ -71,33 +93,55 @@ pub async fn library_delete_snippet(ui: State<'_, Arc<Ui>>, id: String) -> Res<(
 #[tauri::command]
 pub async fn library_set_enabled(
     ui: State<'_, Arc<Ui>>,
+    window: WebviewWindow,
     id: String,
     enabled: bool,
 ) -> Res<SavedView> {
+    super::commands::caller(&window, &super::commands::LIBRARY_CALLERS)?;
     blocking(&ui, move |b| library::set_enabled(b, &id, enabled)).await
 }
 
 /// Creates or changes a folder.
 #[tauri::command]
-pub async fn library_save_folder(ui: State<'_, Arc<Ui>>, draft: FolderDraft) -> Res<SavedView> {
+pub async fn library_save_folder(
+    ui: State<'_, Arc<Ui>>,
+    window: WebviewWindow,
+    draft: FolderDraft,
+) -> Res<SavedView> {
+    super::commands::caller(&window, &super::commands::LIBRARY_CALLERS)?;
     blocking(&ui, move |b| library::save_folder(b, &draft)).await
 }
 
 /// Deletes a folder with its snippets.
 #[tauri::command]
-pub async fn library_delete_folder(ui: State<'_, Arc<Ui>>, id: String) -> Res<()> {
+pub async fn library_delete_folder(
+    ui: State<'_, Arc<Ui>>,
+    window: WebviewWindow,
+    id: String,
+) -> Res<()> {
+    super::commands::caller(&window, &super::commands::LIBRARY_CALLERS)?;
     blocking(&ui, move |b| library::delete_folder_by_id(b, &id)).await
 }
 
 /// Creates, renames or recolours a tag.
 #[tauri::command]
-pub async fn library_save_tag(ui: State<'_, Arc<Ui>>, draft: TagDraft) -> Res<SavedView> {
+pub async fn library_save_tag(
+    ui: State<'_, Arc<Ui>>,
+    window: WebviewWindow,
+    draft: TagDraft,
+) -> Res<SavedView> {
+    super::commands::caller(&window, &super::commands::LIBRARY_CALLERS)?;
     blocking(&ui, move |b| library::save_tag(b, &draft)).await
 }
 
 /// Deletes a tag everywhere.
 #[tauri::command]
-pub async fn library_delete_tag(ui: State<'_, Arc<Ui>>, id: String) -> Res<()> {
+pub async fn library_delete_tag(
+    ui: State<'_, Arc<Ui>>,
+    window: WebviewWindow,
+    id: String,
+) -> Res<()> {
+    super::commands::caller(&window, &super::commands::LIBRARY_CALLERS)?;
     blocking(&ui, move |b| library::delete_tag_by_id(b, &id)).await
 }
 
@@ -105,10 +149,12 @@ pub async fn library_delete_tag(ui: State<'_, Arc<Ui>>, id: String) -> Res<()> {
 #[tauri::command]
 pub async fn library_check_abbreviation(
     ui: State<'_, Arc<Ui>>,
+    window: WebviewWindow,
     abbreviation: String,
     trigger: String,
     snippet: Option<String>,
 ) -> Res<CheckView> {
+    super::commands::caller(&window, &super::commands::LIBRARY_CALLERS)?;
     blocking(&ui, move |b| {
         library::check(b, &abbreviation, &trigger, snippet.as_deref())
     })
@@ -117,12 +163,14 @@ pub async fn library_check_abbreviation(
 
 /// Library health: what will not expand, what is never reached, what is unused.
 #[tauri::command]
-pub async fn library_health(ui: State<'_, Arc<Ui>>) -> Res<HealthView> {
+pub async fn library_health(ui: State<'_, Arc<Ui>>, window: WebviewWindow) -> Res<HealthView> {
+    super::commands::caller(&window, &super::commands::LIBRARY_CALLERS)?;
     blocking(&ui, library::health).await
 }
 
 /// Forgets how often each snippet was used on this computer.
 #[tauri::command]
-pub async fn library_reset_usage(ui: State<'_, Arc<Ui>>) -> Res<()> {
+pub async fn library_reset_usage(ui: State<'_, Arc<Ui>>, window: WebviewWindow) -> Res<()> {
+    super::commands::caller(&window, &super::commands::LIBRARY_CALLERS)?;
     blocking(&ui, library::reset_usage).await
 }
