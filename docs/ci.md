@@ -16,7 +16,10 @@ Tauri dependencies would slow every leg.
 - `lint` (Linux): formatting, clippy with `-D warnings`, clippy of the two OS crates for their
   own targets (`iamb-platform-windows` for `x86_64-pc-windows-msvc`, `iamb-platform-macos` for
   `aarch64-apple-darwin`; see "Checking Windows and macOS code on Linux" below), the banned-term
-  check, and the template spec examples checked against the reference implementation.
+  check, the template spec examples checked against the reference implementation, and the sync
+  conflict scenarios of `docs/sync-design.md` §12 checked against their source
+  (`python3 spec/sync/render_scenarios.py --check`; the scenarios' structure and outcomes are
+  checked by `crates/iamb-testkit/tests/sync_scenarios.rs` in `test`).
 - `test` (Linux, Windows, macOS, not fail-fast): `cargo build` and `cargo test` for the whole
   workspace with `--locked`. Between the two, each leg builds the service on its own in
   release (`cargo build -p iamb-service --release`, check 4 of ADR-0008: no feature that

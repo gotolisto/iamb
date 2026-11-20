@@ -744,6 +744,17 @@ then" column is kept for a UI that meets an older service.
 | 17 | Account endpoint: create a group (`CreateProfile(kind, name)`), rename and delete it, decline an invitation, list and withdraw invitations that were sent, change a member's role, leave a group | **Blocks** "New group…", Decline, Withdraw |
 | 18 | For a pending review: the body approved before, the pending body, the author's display name and the time of the change (`ListPendingReviews` gives ids only) | **Blocks** the review dialog's author line and change view |
 | 19 | A diagnostic when a snippet held for review was typed | "Needs your review" in the log, with a Review button |
+| 20 | The list of changes that were not synced (`ListKeptChanges`, `CopyKeptChange`, `DismissKeptChange`): a change the server refused, because the folder became read-only, was unshared or was deleted long ago, is kept on this computer with its content ([`sync-design.md`](../sync-design.md) D5) | A refused change must not vanish; the user copies it into a snippet of their own or dismisses it |
+| 21 | A conflict with both versions, their authors, devices and times, and its two actions (`Conflicts`, `GetConflict`, `ResolveConflict` on the account endpoint; sync design C3, C20) | "Changed on another device" · [Show the other version] in the editor, and the list of conflicts |
+| 22 | A mark, with the reason, on a row the server cannot store yet (too large, over the plan's limit); the row keeps working on this computer (sync design D5) | So that "not synced" is never a surprise on the second computer |
+| 23 | Devices of the account and "sign out everywhere" (`Devices`, `RenameDevice`, `RevokeDevice`, `SignOutEverywhere`), and deleting the account | Settings → Account; the remedy for a lost computer (sync design §11.3) |
+
+Entries 20 to 23 come from the sync design (task 4.1), which also lists, per conflict scenario,
+what a device shows its user as a code (`conflict`, `kept`, `blocked`, `shared`, `revoked`,
+`duplicate`, `broken`, `review`, `adjusted`, `superseded`, `plan_limit`, `upgrade`,
+`invitation_invalid`, `refused`; [`sync-design.md`](../sync-design.md) §12). Task 4.5 gives each
+its words under the rules of §2 and §4.11: all of them appear in the library window, none as a
+notice over another application.
 
 Nothing else in the six flows needs a message that does not exist.
 

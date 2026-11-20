@@ -18,6 +18,7 @@ interactive desktop on macOS), so CI uses generous thresholds and never reports 
 | Fuzzing | `cargo-fuzz` (pinned nightly, the only nightly use) | `fuzz/` (its own workspace) target `template` (parse, resolve and render); later `rich_markdown`, `ipc_frame_decode`, `import_json` | Nightly, 10 min per target, toolchain pinned in `.github/workflows/nightly.yml`; corpus seeded from the spec examples and kept between nights | No crash, no hang over 1 s, no OOM over 512 MB |
 | Scripted typing sessions | `iamb-testkit::session` (scripted key stream, fake clock, expected actions) | `crates/iamb-testkit/sessions/*.toml` (run by `crates/iamb-core/tests/engine_sessions.rs`), later `crates/iamb-service/tests/` | CI, every PR | Must pass |
 | Mutation sample | `cargo-mutants` on `iamb-core::matcher` | Config in `crates/iamb-core/.cargo/mutants.toml` | Manual at tasks 1.2 and 1.9; weekly afterwards | ≥ 80% mutants caught; every missed mutant reviewed |
+| Sync conflict scenarios | TOML scenarios with a defined outcome each (`docs/sync-design.md` §12) | `spec/sync/scenarios.toml`; the format and its check in `iamb-testkit::sync_scenarios`, run by `crates/iamb-testkit/tests/sync_scenarios.rs`; replayed by the two-device simulation of task 4.4 | CI, 3 OSes, every PR | At least 30 scenarios; unique ids; every row stated for the server and every device; conflicts, history and rows agree; the design document writes out every scenario and defines every rule cited. From task 4.4: every scenario replays to its outcome |
 | IPC contract | `cargo test` with golden JSON | `crates/iamb-ipc/tests/contract/` (one golden file per message) | CI, every PR | Every message round-trips byte-for-byte; role and version rules tested |
 | Service vs. mock platform | `iamb-platform` mock + `iamb-testkit` | `crates/iamb-service/tests/` | CI, 3 OSes, every PR | Must pass |
 | UI host: bridge, message contract, crash isolation | `cargo test -p iamb-desktop` (a worker on the mock platform in the test process) | `apps/desktop/src-tauri/tests/` (§8) | CI job `desktop`, 3 OSes, every PR | Must pass |
@@ -467,7 +468,8 @@ own paint stamp).
 | 2.8 | Privacy review using the canary scan results |
 | 3.2, 3.5, 3.6 | UI cold open, form and palette timings |
 | 3.7 | Install-to-first-expansion sessions |
-| 4.2–4.4 | Server policy tests (`server/tests/`), sync convergence tests, two-device latency |
+| 4.1 | The sync conflict scenarios and their structural check (`spec/sync/scenarios.toml`, `iamb-testkit::sync_scenarios`) |
+| 4.2–4.4 | Server policy tests (`server/tests/`, the guarantees G1 to G20 of `sync-design.md` §11.5), sync convergence tests (the scenario replay and the 1,000-run simulation with the invariants I1 to I6 of `sync-design.md` §1), two-device latency |
 
 ## 8. UI host (task 3.2)
 
@@ -506,6 +508,18 @@ created related to the pre-warmed palette's web view and share its running conte
 (`src/app/windows.rs`). Windows (WebView2) and macOS (`WKWebView`) start content processes
 their own way; their numbers come from the `desktop` CI job on their runners (report only) and,
 for the KPI, from the lab, and decide whether they need an equivalent.
+
+**A fresh machine's first paint (CI).** On a machine where no window has painted before, Mesa's
+software renderer (llvmpipe, under Xvfb) compiles its shaders during the first paint and caches
+them in `~/.cache/mesa_shader_cache`. Measured here with the app on one busy core (2026-11-20):
+the first open took 1,700–2,800 ms with an empty cache directory and about 540 ms with a warm one;
+with only the shader cache kept it took about 610 ms, with only GStreamer's registry kept about
+1,500 ms, so the shaders are the cost. Every CI runner is such a fresh machine, and the Linux gate
+failed on it twice with a first open of 1.0–1.9 s while every later open took about 60 ms. The
+`desktop` job therefore launches the measurement once, untimed, before the gated run, so the gate
+measures opening the library and not the virtual display's one-time shader compilation. The
+Windows and macOS numbers (report only) and the lab's are taken on machines with a GPU driver and
+its own caches.
 
 ### 8.2 Idle memory of the UI host
 

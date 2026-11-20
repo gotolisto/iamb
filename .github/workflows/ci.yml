@@ -53,6 +53,10 @@ jobs:
         run: cargo xtask banned-terms
       - name: Template spec examples
         run: python3 spec/template/reference.py
+      # docs/sync-design.md §12 is rendered from spec/sync/scenarios.toml; the structure of the
+      # scenarios themselves is checked by `cargo test -p iamb-testkit --test sync_scenarios`.
+      - name: Sync scenarios written out
+        run: python3 spec/sync/render_scenarios.py --check
 
   test:
     name: test (${{ matrix.os }})
@@ -211,6 +215,10 @@ jobs:
           if [ "$RUNNER_OS" = Windows ]; then exe="$exe.exe"; fi
           data="$RUNNER_TEMP/iamb-cold-open"
           if [ "$RUNNER_OS" = Linux ]; then
+            # One untimed launch first: on a fresh runner Mesa's software renderer compiles its
+            # shaders during the first paint of the first window that paints (1-2 s, cached in
+            # ~/.cache/mesa_shader_cache), a cost of the virtual display only (§8.1).
+            xvfb-run -a "$exe" --data-dir "$RUNNER_TEMP/iamb-warm-up" --measure-open 1 > /dev/null || true
             xvfb-run -a "$exe" --data-dir "$data" --measure-open 10 --budget-ms 800
           else
             "$exe" --data-dir "$data" --measure-open 10

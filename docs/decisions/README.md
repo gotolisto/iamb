@@ -31,3 +31,6 @@ See the [architecture document](../architecture.md) for how they fit together.
 | [ADR-0024](0024-engine-protocol-after-phase-1.md) | Engine protocol details settled by the Phase 1 review |
 | [ADR-0025](0025-per-app-injection-settings.md) | One settings format for per-app injection overrides |
 | [ADR-0026](0026-enter-and-tab-not-default-delimiters.md) | Enter and Tab are not default delimiters |
+| [ADR-0027](0027-sync-protocol-and-conflict-rules.md) | Sync rules: the server's order, writes through functions, deletes as writes, nothing unsent is overwritten (proposed) |
+| [ADR-0028](0028-data-model-for-sync.md) | The data model for sync: no uniqueness on the server, derived share ids, server-written memberships, access entries, authorship of content (proposed) |
+| [ADR-0029](0029-server-readable-content.md) | Synced content is readable by the server in version 1; the server never interprets it (proposed) |
