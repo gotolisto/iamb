@@ -22,11 +22,11 @@ export function undefinedTokens(path) {
   return { used: used.size, missing: [...used].filter((t) => !defined.has(t)) };
 }
 
-/** The paths (relative to `src/`) of every style sheet there. */
+/** The paths (relative to `src/`, always with `/`, on Windows too) of every style sheet there. */
 export function stylesheets(dir = "") {
   const out = [];
   for (const entry of readdirSync(join(here, "../src", dir), { withFileTypes: true })) {
-    const path = join(dir, entry.name);
+    const path = dir ? `${dir}/${entry.name}` : entry.name;
     if (entry.isDirectory()) out.push(...stylesheets(path));
     else if (entry.name.endsWith(".css")) out.push(path);
   }
