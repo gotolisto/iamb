@@ -3,6 +3,10 @@
 Task 3.1 · Test: mock-ups reviewed by the owner and two friends · KPI: the owner approves all
 six flows
 
+**Status (2026-11-20):** the owner approved all six flows and kept every decision under "Needs
+your judgement" as specified. The review by two friends is still to happen; their notes can
+still change copy and details, not the approved flows.
+
 ## How to review
 
 1. Open [`mockups/index.html`](mockups/index.html) in a browser (it works offline). Each flow
