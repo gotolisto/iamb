@@ -162,9 +162,13 @@ export function Library({ env }: { env: LibraryEnv }) {
   }, [data.ready, data.folders, data.tags, view]);
   useEffect(() => {
     if (!data.ready || draft !== null || selection.ids.size === 0) return;
-    const gone = [...selection.ids].filter((id) => !data.rowsById.has(id));
+    // The snippet open in the editor stays selected when it goes: the editor says it no longer
+    // exists and its Close button clears the selection (specification §6.3).
+    const open = selection.ids.size === 1 ? selection.active : null;
+    const stays = (id: string) => id === open || data.rowsById.has(id);
+    const gone = [...selection.ids].filter((id) => !stays(id));
     if (gone.length === 0) return;
-    const keep = [...selection.ids].filter((id) => data.rowsById.has(id));
+    const keep = [...selection.ids].filter(stays);
     setSelection(keep.length > 0 ? { ids: new Set(keep), active: keep[0] ?? null, anchor: keep[0] ?? null } : NO_SELECTION);
   }, [data.ready, data.rowsById, draft, selection]);
 
@@ -276,10 +280,14 @@ export function Library({ env }: { env: LibraryEnv }) {
     });
   }, [data.folders, folder, openDraft, tag]);
 
+  const rowsById = useRef(data.rowsById);
+  rowsById.current = data.rowsById;
   const closeEditor = useCallback(() => {
     guard(() => {
       setDraft(null);
       setEditorKey("none");
+      // A snippet that went while it was open was kept selected until now.
+      setSelection((s) => (s.ids.size === 1 && s.active !== null && !rowsById.current.has(s.active) ? NO_SELECTION : s));
       focusList();
     });
   }, [guard]);
