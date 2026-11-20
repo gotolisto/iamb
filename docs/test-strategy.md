@@ -509,6 +509,18 @@ created related to the pre-warmed palette's web view and share its running conte
 their own way; their numbers come from the `desktop` CI job on their runners (report only) and,
 for the KPI, from the lab, and decide whether they need an equivalent.
 
+**A fresh machine's first paint (CI).** On a machine where no window has painted before, Mesa's
+software renderer (llvmpipe, under Xvfb) compiles its shaders during the first paint and caches
+them in `~/.cache/mesa_shader_cache`. Measured here with the app on one busy core (2026-11-20):
+the first open took 1,700–2,800 ms with an empty cache directory and about 540 ms with a warm one;
+with only the shader cache kept it took about 610 ms, with only GStreamer's registry kept about
+1,500 ms, so the shaders are the cost. Every CI runner is such a fresh machine, and the Linux gate
+failed on it twice with a first open of 1.0–1.9 s while every later open took about 60 ms. The
+`desktop` job therefore launches the measurement once, untimed, before the gated run, so the gate
+measures opening the library and not the virtual display's one-time shader compilation. The
+Windows and macOS numbers (report only) and the lab's are taken on machines with a GPU driver and
+its own caches.
+
 ### 8.2 Idle memory of the UI host
 
 ADR-0017 leaves the UI host's budget to this task. Measured here (Linux, Xvfb, release build,
