@@ -382,6 +382,48 @@ for the line `session event <name>`; then unlock or log in again.
 With a form snippet (a `{field}`), submit it once, lock and unlock, and type it again: the form
 opens empty. Record a missing line as a failure of the session watcher, with the OS version.
 
+## The fill-in form panel (task 3.5; finding 16 of the 2.8 review)
+
+The KPI "focus returns correctly across the matrix" and the macOS half of finding 16 (keys typed
+into a panel must not expand in the app behind it) can only be checked on the systems. The
+end-to-end tests cover the flow on the mock (`apps/desktop/src-tauri/tests/form.rs`).
+
+Setup, after the service is running against the compatibility data folder (steps 1 to 5 of your
+OS above):
+
+1. Add a form snippet (one line; on Windows use `^` for the line ends of the Command Prompt or
+   type it as one line):
+
+   ```sh
+   iamb --data-dir <folder> add ";rlate" --label "Late delivery" "Hi {field name=\"First name\"}, order {field name=\"Order number\"} is late.{field name=\"Add voucher\" type=toggle on=\" Code: \"}{field name=Notes type=area}{field name=Size type=choice options=\"S|M|L\"}"
+   ```
+
+2. Build the UI host with its front end (`apps/desktop/README.md`: `pnpm build` in
+   `apps/desktop`, then `cargo build --release -p iamb-desktop --features tauri/custom-protocol`)
+   and start it against the same folder: `target/release/iamb-desktop --data-dir <folder>`. Keep
+   its log open (`logs/desktop.log`).
+
+For each of the 20 apps of your OS, in a text field of the app:
+
+| # | Do | Pass when |
+| --- | --- | --- |
+| F1 | Type `;rlate` and a space | The panel appears at once in the upper third of the screen, 440 px wide, the cursor in **First name**. The log says `form N: first paint … ms after the request arrived`; note the number. macOS: the app keeps its name in the menu bar (Iamb does not become the active app). Windows: the app's title bar turns inactive |
+| F2 | In **First name**, type `;cpt1 ` (a fixture abbreviation) | Nothing expands in the panel or in the app behind it; the worker log has no match for `;cpt1` |
+| F3 | Fill in the fields with Tab, Space and the arrow keys only; press Enter | The panel disappears; the cursor is back in the app's field where it was; `;rlate ` is replaced by the finished text |
+| F4 | Type `;rlate ` again; press Esc | The panel disappears; the cursor is back in the field; `;rlate ` is still there; nothing was typed or deleted |
+| F5 | Type `;rlate `; click into the app's field behind the panel; type `;cpt1 ` there | The panel stays open; `;cpt1` does not expand (a form is open) and the worker log records `form_open`; the keys are the app's (they appear in its field) |
+| F6 | Click back into the panel's field and type | The keys go to the panel; nothing expands |
+| F7 | Switch to another app (⌘⇥ / Alt+Tab), then back | The panel steps aside while the other app is in front and comes back with the target app |
+| F8 | Leave the panel open for a minute, then type `;cpt1 ` into it | Nothing expands (the lease was renewed); the worker log has no `panel_focus_expired` |
+| F9 | Close the target window (or tab) with the form open; press Enter | The panel comes back with "Iamb could not get back to the app." and "Your answers are still here."; nothing is typed anywhere; Esc closes it |
+| F10 | Tray or menu-bar menu: "Fill in the last form again…" with the cursor in the field | The form opens with the last answers and "Your last answers. Start empty"; ⌘⌫ / Ctrl+Backspace empties it; Enter types the text without deleting anything |
+
+Record per app: F1 time, and pass or fail of F2 to F10, with the OS version and the app's
+version. A failure of F3 or F4 (the focus did not come back, or came back to another field)
+fails the KPI for that app unless it has an exception record, as for the matrix cells. On macOS,
+until the non-activating panel exists (`apps/desktop/README.md`, "The macOS panel"), F1's menu-bar
+check fails by design; record it as a known limitation and check the rest.
+
 ## Delivering the result
 
 1. Run `iamb-compat report --results compat-<os>.jsonl` for each OS.

@@ -195,6 +195,22 @@ jobs:
           else
             "$exe" --data-dir "$data" --measure-open 10
           fi
+      # The fill-in form KPI (docs/test-strategy.md §8.5): from `FormRequested` reaching the UI
+      # host to the panel's first paint. Linux under Xvfb is gated at 300 ms, twice the 150 ms
+      # target (§2.2); Windows and macOS report only.
+      - name: Fill-in form visible
+        if: ${{ !cancelled() }}
+        continue-on-error: ${{ runner.os != 'Linux' }}
+        timeout-minutes: 3
+        run: |
+          exe=target/debug/iamb-desktop
+          if [ "$RUNNER_OS" = Windows ]; then exe="$exe.exe"; fi
+          data="$RUNNER_TEMP/iamb-form-open"
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a "$exe" --data-dir "$data" --measure-form 10 --budget-ms 300
+          else
+            "$exe" --data-dir "$data" --measure-form 10
+          fi
 
   coverage:
     name: coverage

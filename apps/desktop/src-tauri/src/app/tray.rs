@@ -5,6 +5,7 @@
 //! ─────────────
 //! Open library
 //! Search
+//! Fill in the last form again…     (ReopenLastForm, task 3.5)
 //! ✓ Pause expansion                (disabled while the service is not connected)
 //! ─────────────
 //! Quit Iamb
@@ -25,6 +26,7 @@ use crate::contract::{ConnectionState, StatusView};
 const STATUS: &str = "status";
 const OPEN_LIBRARY: &str = "open_library";
 const SEARCH: &str = "search";
+const REOPEN_FORM: &str = "reopen_form";
 const PAUSE: &str = "pause";
 const QUIT: &str = "quit";
 
@@ -32,7 +34,7 @@ const QUIT: &str = "quit";
 pub struct Tray {
     status: MenuItem<Wry>,
     pause: CheckMenuItem<Wry>,
-    _icon: TrayIcon<Wry>,
+    icon: TrayIcon<Wry>,
 }
 
 /// The status line of the menu.
@@ -57,6 +59,13 @@ impl Tray {
         let status = MenuItem::with_id(app, STATUS, "Service: connecting…", false, None::<&str>)?;
         let open = MenuItem::with_id(app, OPEN_LIBRARY, "Open library", true, None::<&str>)?;
         let search = MenuItem::with_id(app, SEARCH, "Search", true, None::<&str>)?;
+        let reopen = MenuItem::with_id(
+            app,
+            REOPEN_FORM,
+            "Fill in the last form again…",
+            true,
+            None::<&str>,
+        )?;
         let pause =
             CheckMenuItem::with_id(app, PAUSE, "Pause expansion", false, false, None::<&str>)?;
         let quit = MenuItem::with_id(app, QUIT, "Quit Iamb", true, None::<&str>)?;
@@ -67,6 +76,7 @@ impl Tray {
                 &PredefinedMenuItem::separator(app)?,
                 &open,
                 &search,
+                &reopen,
                 &pause,
                 &PredefinedMenuItem::separator(app)?,
                 &quit,
@@ -84,8 +94,14 @@ impl Tray {
         Ok(Self {
             status,
             pause,
-            _icon: icon,
+            icon,
         })
+    }
+
+    /// Shows or hides the icon (Settings → General). The menu is still reachable from the
+    /// library window's status line while it is hidden.
+    pub fn set_visible(&self, visible: bool) {
+        let _ = self.icon.set_visible(visible);
     }
 
     /// Shows the bridge's state.
@@ -118,6 +134,19 @@ fn on_menu_event(app: &AppHandle, event: &MenuEvent) {
             if let Err(e) = windows::show_palette(app) {
                 ui.log.warn(format_args!("cannot show the palette: {e}"));
             }
+        }
+        REOPEN_FORM => {
+            // `ReopenLastForm` runs against the window that has the focus when it arrives
+            // (architecture §4.5); the service answers with a new `FormRequested`, or records
+            // `no_last_form` when nothing was submitted in the last 30 minutes.
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Err(e) = ui.form.reopen_last() {
+                    ui.log.warn(format_args!(
+                        "reopen_last_form from the tray failed: {}",
+                        e.code
+                    ));
+                }
+            });
         }
         PAUSE => {
             tauri::async_runtime::spawn_blocking(move || {

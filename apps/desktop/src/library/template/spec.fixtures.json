@@ -1,0 +1,8002 @@
+{
+  "examples": [
+    {
+      "error": null,
+      "id": "clipboard-01",
+      "template": "See {clipboard} for details.",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 4,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 15,
+          "kind": "clipboard",
+          "start": 4
+        },
+        {
+          "attributes": [],
+          "end": 28,
+          "kind": "text",
+          "start": 15
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "clipboard-02",
+      "template": "Link: {clipboard}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 6,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 17,
+          "kind": "clipboard",
+          "start": 6
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "clipboard-03",
+      "template": "[{clipboard}]",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 1,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 12,
+          "kind": "clipboard",
+          "start": 1
+        },
+        {
+          "attributes": [],
+          "end": 13,
+          "kind": "text",
+          "start": 12
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "clipboard-04",
+      "template": "[{clipboard trim=yes}]",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 1,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "trim",
+              "value": "yes"
+            }
+          ],
+          "end": 21,
+          "kind": "clipboard",
+          "start": 1
+        },
+        {
+          "attributes": [],
+          "end": 22,
+          "kind": "text",
+          "start": 21
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "clipboard-05",
+      "template": "{clipboard}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 11,
+          "kind": "clipboard",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "clipboard-06",
+      "template": "{clipboard}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 11,
+          "kind": "clipboard",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "clipboard-07",
+      "template": "<a href=\"{clipboard}\">{clipboard}</a>",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 9,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 20,
+          "kind": "clipboard",
+          "start": 9
+        },
+        {
+          "attributes": [],
+          "end": 22,
+          "kind": "text",
+          "start": 20
+        },
+        {
+          "attributes": [],
+          "end": 33,
+          "kind": "clipboard",
+          "start": 22
+        },
+        {
+          "attributes": [],
+          "end": 37,
+          "kind": "text",
+          "start": 33
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "clipboard-08",
+      "template": "{clipboard trim=\"no\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "trim",
+              "value": "no"
+            }
+          ],
+          "end": 21,
+          "kind": "clipboard",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_BAD_VALUE",
+        "end": 22,
+        "snippet": null,
+        "start": 16
+      },
+      "id": "clipboard-09",
+      "template": "{clipboard trim=maybe}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "trim",
+              "value": "maybe"
+            }
+          ],
+          "end": 22,
+          "kind": "clipboard",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_UNKNOWN_ATTR",
+        "end": 12,
+        "snippet": null,
+        "start": 11
+      },
+      "id": "clipboard-10",
+      "template": "{clipboard max=3}",
+      "tokens": []
+    },
+    {
+      "error": null,
+      "id": "cursor-01",
+      "template": "Hello {cursor}!",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 6,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 14,
+          "kind": "cursor",
+          "start": 6
+        },
+        {
+          "attributes": [],
+          "end": 15,
+          "kind": "text",
+          "start": 14
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "cursor-02",
+      "template": "Hi{cursor}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 2,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 10,
+          "kind": "cursor",
+          "start": 2
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "cursor-03",
+      "template": "{cursor}abc",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 8,
+          "kind": "cursor",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 11,
+          "kind": "text",
+          "start": 8
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "cursor-04",
+      "template": "a{cursor}b{cursor}c",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 1,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 9,
+          "kind": "cursor",
+          "start": 1
+        },
+        {
+          "attributes": [],
+          "end": 10,
+          "kind": "text",
+          "start": 9
+        },
+        {
+          "attributes": [],
+          "end": 18,
+          "kind": "cursor",
+          "start": 10
+        },
+        {
+          "attributes": [],
+          "end": 19,
+          "kind": "text",
+          "start": 18
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "cursor-05",
+      "template": "Dear {cursor},\n\nBest",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 5,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 13,
+          "kind": "cursor",
+          "start": 5
+        },
+        {
+          "attributes": [],
+          "end": 20,
+          "kind": "text",
+          "start": 13
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "cursor-06",
+      "template": "{cursor}👍",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 8,
+          "kind": "cursor",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 10,
+          "kind": "text",
+          "start": 8
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "cursor-07",
+      "template": "{cursor}🇪🇸!",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 8,
+          "kind": "cursor",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 13,
+          "kind": "text",
+          "start": 8
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_SNIPPET_NOT_FOUND",
+        "end": 21,
+        "snippet": null,
+        "start": 1
+      },
+      "id": "cursor-08",
+      "template": "[{snippet abbr=\";in\"}]",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 1,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "abbr",
+              "value": ";in"
+            }
+          ],
+          "end": 21,
+          "kind": "snippet",
+          "start": 1
+        },
+        {
+          "attributes": [],
+          "end": 22,
+          "kind": "text",
+          "start": 21
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "cursor-09",
+      "template": "a{if field=\"Flag\"}{cursor}{endif}b",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 1,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "Flag"
+            }
+          ],
+          "end": 18,
+          "kind": "if",
+          "start": 1
+        },
+        {
+          "attributes": [],
+          "end": 26,
+          "kind": "cursor",
+          "start": 18
+        },
+        {
+          "attributes": [],
+          "end": 33,
+          "kind": "endif",
+          "start": 26
+        },
+        {
+          "attributes": [],
+          "end": 34,
+          "kind": "text",
+          "start": 33
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "cursor-10",
+      "template": "a{key name=tab}b{cursor}c",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 1,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "tab"
+            }
+          ],
+          "end": 15,
+          "kind": "key",
+          "start": 1
+        },
+        {
+          "attributes": [],
+          "end": 16,
+          "kind": "text",
+          "start": 15
+        },
+        {
+          "attributes": [],
+          "end": 24,
+          "kind": "cursor",
+          "start": 16
+        },
+        {
+          "attributes": [],
+          "end": 25,
+          "kind": "text",
+          "start": 24
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "cursor-11",
+      "template": "a{cursor}b{wait ms=100}c",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 1,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 9,
+          "kind": "cursor",
+          "start": 1
+        },
+        {
+          "attributes": [],
+          "end": 10,
+          "kind": "text",
+          "start": 9
+        },
+        {
+          "attributes": [
+            {
+              "name": "ms",
+              "value": "100"
+            }
+          ],
+          "end": 23,
+          "kind": "wait",
+          "start": 10
+        },
+        {
+          "attributes": [],
+          "end": 24,
+          "kind": "text",
+          "start": 23
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "cursor-12",
+      "template": "{cursor}{field name=\"Name\"}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 8,
+          "kind": "cursor",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Name"
+            }
+          ],
+          "end": 27,
+          "kind": "field",
+          "start": 8
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "cursor-13",
+      "template": "a{cursor}b{key name=enter}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 1,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 9,
+          "kind": "cursor",
+          "start": 1
+        },
+        {
+          "attributes": [],
+          "end": 10,
+          "kind": "text",
+          "start": 9
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "enter"
+            }
+          ],
+          "end": 26,
+          "kind": "key",
+          "start": 10
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_UNKNOWN_ATTR",
+        "end": 9,
+        "snippet": null,
+        "start": 8
+      },
+      "id": "cursor-14",
+      "template": "{cursor pos=1}",
+      "tokens": []
+    },
+    {
+      "error": null,
+      "id": "date-01",
+      "template": "Today is {date}.",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 9,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 15,
+          "kind": "date",
+          "start": 9
+        },
+        {
+          "attributes": [],
+          "end": 16,
+          "kind": "text",
+          "start": 15
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "date-02",
+      "template": "{date fmt=\"%d/%m/%Y\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "fmt",
+              "value": "%d/%m/%Y"
+            }
+          ],
+          "end": 21,
+          "kind": "date",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "date-03",
+      "template": "{date fmt=\"%B %-d, %Y\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "fmt",
+              "value": "%B %-d, %Y"
+            }
+          ],
+          "end": 23,
+          "kind": "date",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "date-04",
+      "template": "{date fmt=\"%a %b %j %y\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "fmt",
+              "value": "%a %b %j %y"
+            }
+          ],
+          "end": 24,
+          "kind": "date",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "date-05",
+      "template": "{date shift=+1d}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "shift",
+              "value": "+1d"
+            }
+          ],
+          "end": 16,
+          "kind": "date",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "date-06",
+      "template": "{date shift=\"+3bd\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "shift",
+              "value": "+3bd"
+            }
+          ],
+          "end": 19,
+          "kind": "date",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "date-07",
+      "template": "{date shift=\"+1bd\" fmt=\"%A %Y-%m-%d\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "shift",
+              "value": "+1bd"
+            },
+            {
+              "name": "fmt",
+              "value": "%A %Y-%m-%d"
+            }
+          ],
+          "end": 37,
+          "kind": "date",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "date-08",
+      "template": "{date shift=\"-1bd\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "shift",
+              "value": "-1bd"
+            }
+          ],
+          "end": 19,
+          "kind": "date",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "date-09",
+      "template": "{date shift=\"+0bd\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "shift",
+              "value": "+0bd"
+            }
+          ],
+          "end": 19,
+          "kind": "date",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "date-10",
+      "template": "{date shift=\"+1mo\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "shift",
+              "value": "+1mo"
+            }
+          ],
+          "end": 19,
+          "kind": "date",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "date-11",
+      "template": "{date shift=\"+1mo\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "shift",
+              "value": "+1mo"
+            }
+          ],
+          "end": 19,
+          "kind": "date",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "date-12",
+      "template": "{date shift=\"+1y\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "shift",
+              "value": "+1y"
+            }
+          ],
+          "end": 18,
+          "kind": "date",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "date-13",
+      "template": "{date shift=\"+1d\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "shift",
+              "value": "+1d"
+            }
+          ],
+          "end": 18,
+          "kind": "date",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "date-14",
+      "template": "{date fmt=\"%Y-%m-%d\" shift=\"+1mo -18d\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "fmt",
+              "value": "%Y-%m-%d"
+            },
+            {
+              "name": "shift",
+              "value": "+1mo -18d"
+            }
+          ],
+          "end": 39,
+          "kind": "date",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "date-15",
+      "template": "{date shift=\"-2w\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "shift",
+              "value": "-2w"
+            }
+          ],
+          "end": 18,
+          "kind": "date",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "date-16",
+      "template": "{date fmt=\"%A %-d de %B\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "fmt",
+              "value": "%A %-d de %B"
+            }
+          ],
+          "end": 25,
+          "kind": "date",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "date-17",
+      "template": "{date fmt=\"%b\"} {date fmt=\"%a\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "fmt",
+              "value": "%b"
+            }
+          ],
+          "end": 15,
+          "kind": "date",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 16,
+          "kind": "text",
+          "start": 15
+        },
+        {
+          "attributes": [
+            {
+              "name": "fmt",
+              "value": "%a"
+            }
+          ],
+          "end": 31,
+          "kind": "date",
+          "start": 16
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "date-18",
+      "template": "{date fmt=\"%B\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "fmt",
+              "value": "%B"
+            }
+          ],
+          "end": 15,
+          "kind": "date",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "date-19",
+      "template": "{date}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 6,
+          "kind": "date",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "date-20",
+      "template": "{date fmt=\"100%% on %-m/%-d\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "fmt",
+              "value": "100%% on %-m/%-d"
+            }
+          ],
+          "end": 29,
+          "kind": "date",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_BAD_FORMAT",
+        "end": 15,
+        "snippet": null,
+        "start": 10
+      },
+      "id": "date-21",
+      "template": "{date fmt=\"%Q\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "fmt",
+              "value": "%Q"
+            }
+          ],
+          "end": 15,
+          "kind": "date",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_BAD_SHIFT",
+        "end": 18,
+        "snippet": null,
+        "start": 12
+      },
+      "id": "date-22",
+      "template": "{date shift=\"+1m\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "shift",
+              "value": "+1m"
+            }
+          ],
+          "end": 18,
+          "kind": "date",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_BAD_SHIFT",
+        "end": 23,
+        "snippet": null,
+        "start": 12
+      },
+      "id": "date-23",
+      "template": "{date shift=\"tomorrow\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "shift",
+              "value": "tomorrow"
+            }
+          ],
+          "end": 23,
+          "kind": "date",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "date-24",
+      "template": "{date shift=\"+9999y\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "shift",
+              "value": "+9999y"
+            }
+          ],
+          "end": 21,
+          "kind": "date",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_UNKNOWN_ATTR",
+        "end": 7,
+        "snippet": null,
+        "start": 6
+      },
+      "id": "date-25",
+      "template": "{date format=\"%Y\"}",
+      "tokens": []
+    },
+    {
+      "error": null,
+      "id": "field-01",
+      "template": "Hi {field name=\"Name\"},",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 3,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Name"
+            }
+          ],
+          "end": 22,
+          "kind": "field",
+          "start": 3
+        },
+        {
+          "attributes": [],
+          "end": 23,
+          "kind": "text",
+          "start": 22
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "field-02",
+      "template": "Meet in {field name=\"City\" default=\"Lisbon\"}.",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 8,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "City"
+            },
+            {
+              "name": "default",
+              "value": "Lisbon"
+            }
+          ],
+          "end": 44,
+          "kind": "field",
+          "start": 8
+        },
+        {
+          "attributes": [],
+          "end": 45,
+          "kind": "text",
+          "start": 44
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "field-03",
+      "template": "{field name=\"Name\"}, yes you, {field name=\"Name\"}!",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Name"
+            }
+          ],
+          "end": 19,
+          "kind": "field",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 30,
+          "kind": "text",
+          "start": 19
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Name"
+            }
+          ],
+          "end": 49,
+          "kind": "field",
+          "start": 30
+        },
+        {
+          "attributes": [],
+          "end": 50,
+          "kind": "text",
+          "start": 49
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "field-04",
+      "template": "Notes:\n{field name=\"Notes\" type=area}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 7,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Notes"
+            },
+            {
+              "name": "type",
+              "value": "area"
+            }
+          ],
+          "end": 37,
+          "kind": "field",
+          "start": 7
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "field-05",
+      "template": "Dear {field name=\"Title\" type=choice options=\"Mr|Ms|Mx\"} Lee",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 5,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Title"
+            },
+            {
+              "name": "type",
+              "value": "choice"
+            },
+            {
+              "name": "options",
+              "value": "Mr|Ms|Mx"
+            }
+          ],
+          "end": 56,
+          "kind": "field",
+          "start": 5
+        },
+        {
+          "attributes": [],
+          "end": 60,
+          "kind": "text",
+          "start": 56
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "field-06",
+      "template": "{field name=\"Plan\" type=choice options=\"Free|Pro|Team\" default=\"Pro\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Plan"
+            },
+            {
+              "name": "type",
+              "value": "choice"
+            },
+            {
+              "name": "options",
+              "value": "Free|Pro|Team"
+            },
+            {
+              "name": "default",
+              "value": "Pro"
+            }
+          ],
+          "end": 69,
+          "kind": "field",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "field-07",
+      "template": "Order{field name=\"Rush\" type=toggle on=\" (rush)\"} confirmed.",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 5,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Rush"
+            },
+            {
+              "name": "type",
+              "value": "toggle"
+            },
+            {
+              "name": "on",
+              "value": " (rush)"
+            }
+          ],
+          "end": 49,
+          "kind": "field",
+          "start": 5
+        },
+        {
+          "attributes": [],
+          "end": 60,
+          "kind": "text",
+          "start": 49
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "field-08",
+      "template": "Shipping: {field name=\"Express\" type=toggle on=\"express\" off=\"standard\"}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 10,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Express"
+            },
+            {
+              "name": "type",
+              "value": "toggle"
+            },
+            {
+              "name": "on",
+              "value": "express"
+            },
+            {
+              "name": "off",
+              "value": "standard"
+            }
+          ],
+          "end": 72,
+          "kind": "field",
+          "start": 10
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "field-09",
+      "template": "{field name=\"Cc me\" type=toggle default=yes on=\"cc\" off=\"no cc\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Cc me"
+            },
+            {
+              "name": "type",
+              "value": "toggle"
+            },
+            {
+              "name": "default",
+              "value": "yes"
+            },
+            {
+              "name": "on",
+              "value": "cc"
+            },
+            {
+              "name": "off",
+              "value": "no cc"
+            }
+          ],
+          "end": 64,
+          "kind": "field",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_SNIPPET_NOT_FOUND",
+        "end": 34,
+        "snippet": null,
+        "start": 16
+      },
+      "id": "field-10",
+      "template": "{field name=\"B\"}{snippet abbr=\"n\"}{field name=\"A\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "B"
+            }
+          ],
+          "end": 16,
+          "kind": "field",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "abbr",
+              "value": "n"
+            }
+          ],
+          "end": 34,
+          "kind": "snippet",
+          "start": 16
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "A"
+            }
+          ],
+          "end": 50,
+          "kind": "field",
+          "start": 34
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "field-11",
+      "template": "{field name=\"X\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "X"
+            }
+          ],
+          "end": 16,
+          "kind": "field",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "field-12",
+      "template": "{field name=\"Q\" default=\"say \\\"hi\\\" \\\\ bye\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Q"
+            },
+            {
+              "name": "default",
+              "value": "say \"hi\" \\ bye"
+            }
+          ],
+          "end": 44,
+          "kind": "field",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "field-13",
+      "template": "{field name=\"N\" default=\"first\"}/{field name=\"N\" default=\"second\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "N"
+            },
+            {
+              "name": "default",
+              "value": "first"
+            }
+          ],
+          "end": 32,
+          "kind": "field",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 33,
+          "kind": "text",
+          "start": 32
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "N"
+            },
+            {
+              "name": "default",
+              "value": "second"
+            }
+          ],
+          "end": 66,
+          "kind": "field",
+          "start": 33
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_MISSING_ATTR",
+        "end": 19,
+        "snippet": null,
+        "start": 0
+      },
+      "id": "field-14",
+      "template": "{field default=\"x\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "default",
+              "value": "x"
+            }
+          ],
+          "end": 19,
+          "kind": "field",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_BAD_VALUE",
+        "end": 15,
+        "snippet": null,
+        "start": 12
+      },
+      "id": "field-15",
+      "template": "{field name=\"\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": ""
+            }
+          ],
+          "end": 15,
+          "kind": "field",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_BAD_VALUE",
+        "end": 30,
+        "snippet": null,
+        "start": 23
+      },
+      "id": "field-16",
+      "template": "{field name=\"Age\" type=number}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Age"
+            },
+            {
+              "name": "type",
+              "value": "number"
+            }
+          ],
+          "end": 30,
+          "kind": "field",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_MISSING_ATTR",
+        "end": 31,
+        "snippet": null,
+        "start": 0
+      },
+      "id": "field-17",
+      "template": "{field name=\"Size\" type=choice}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Size"
+            },
+            {
+              "name": "type",
+              "value": "choice"
+            }
+          ],
+          "end": 31,
+          "kind": "field",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_BAD_VALUE",
+        "end": 60,
+        "snippet": null,
+        "start": 55
+      },
+      "id": "field-18",
+      "template": "{field name=\"Size\" type=choice options=\"S|M|L\" default=\"XL\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Size"
+            },
+            {
+              "name": "type",
+              "value": "choice"
+            },
+            {
+              "name": "options",
+              "value": "S|M|L"
+            },
+            {
+              "name": "default",
+              "value": "XL"
+            }
+          ],
+          "end": 60,
+          "kind": "field",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_BAD_VALUE",
+        "end": 47,
+        "snippet": null,
+        "start": 39
+      },
+      "id": "field-19",
+      "template": "{field name=\"Size\" type=choice options=\"S|M|S\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Size"
+            },
+            {
+              "name": "type",
+              "value": "choice"
+            },
+            {
+              "name": "options",
+              "value": "S|M|S"
+            }
+          ],
+          "end": 47,
+          "kind": "field",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_UNKNOWN_ATTR",
+        "end": 33,
+        "snippet": null,
+        "start": 19
+      },
+      "id": "field-20",
+      "template": "{field name=\"Size\" options=\"S|M\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Size"
+            },
+            {
+              "name": "options",
+              "value": "S|M"
+            }
+          ],
+          "end": 33,
+          "kind": "field",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_FIELD_CONFLICT",
+        "end": 51,
+        "snippet": null,
+        "start": 20
+      },
+      "id": "field-21",
+      "template": "{field name=\"When\"} {field name=\"When\" type=toggle}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "When"
+            }
+          ],
+          "end": 19,
+          "kind": "field",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 20,
+          "kind": "text",
+          "start": 19
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "When"
+            },
+            {
+              "name": "type",
+              "value": "toggle"
+            }
+          ],
+          "end": 51,
+          "kind": "field",
+          "start": 20
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "field-22",
+      "template": "{field name=f1}{field name=f2}{field name=f3}{field name=f4}{field name=f5}{field name=f6}{field name=f7}{field name=f8}{field name=f9}{field name=f10}{field name=f11}{field name=f12}{field name=f13}{field name=f14}{field name=f15}{field name=f16}{field name=f17}{field name=f18}{field name=f19}{field name=f20}{field name=f21}{field name=f22}{field name=f23}{field name=f24}{field name=f25}{field name=f26}{field name=f27}{field name=f28}{field name=f29}{field name=f30}{field name=f31}{field name=f32}{field name=f33}{field name=f34}{field name=f35}{field name=f36}{field name=f37}{field name=f38}{field name=f39}{field name=f40}{field name=f41}{field name=f42}{field name=f43}{field name=f44}{field name=f45}{field name=f46}{field name=f47}{field name=f48}{field name=f49}{field name=f50}{field name=f51}{field name=f52}{field name=f53}{field name=f54}{field name=f55}{field name=f56}{field name=f57}{field name=f58}{field name=f59}{field name=f60}{field name=f61}{field name=f62}{field name=f63}{field name=f64}{field name=f65}{field name=f66}{field name=f67}{field name=f68}{field name=f69}{field name=f70}{field name=f71}{field name=f72}{field name=f73}{field name=f74}{field name=f75}{field name=f76}{field name=f77}{field name=f78}{field name=f79}{field name=f80}{field name=f81}{field name=f82}{field name=f83}{field name=f84}{field name=f85}{field name=f86}{field name=f87}{field name=f88}{field name=f89}{field name=f90}{field name=f91}{field name=f92}{field name=f93}{field name=f94}{field name=f95}{field name=f96}{field name=f97}{field name=f98}{field name=f99}{field name=f1}{if field=T}x{endif}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f1"
+            }
+          ],
+          "end": 15,
+          "kind": "field",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f2"
+            }
+          ],
+          "end": 30,
+          "kind": "field",
+          "start": 15
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f3"
+            }
+          ],
+          "end": 45,
+          "kind": "field",
+          "start": 30
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f4"
+            }
+          ],
+          "end": 60,
+          "kind": "field",
+          "start": 45
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f5"
+            }
+          ],
+          "end": 75,
+          "kind": "field",
+          "start": 60
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f6"
+            }
+          ],
+          "end": 90,
+          "kind": "field",
+          "start": 75
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f7"
+            }
+          ],
+          "end": 105,
+          "kind": "field",
+          "start": 90
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f8"
+            }
+          ],
+          "end": 120,
+          "kind": "field",
+          "start": 105
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f9"
+            }
+          ],
+          "end": 135,
+          "kind": "field",
+          "start": 120
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f10"
+            }
+          ],
+          "end": 151,
+          "kind": "field",
+          "start": 135
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f11"
+            }
+          ],
+          "end": 167,
+          "kind": "field",
+          "start": 151
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f12"
+            }
+          ],
+          "end": 183,
+          "kind": "field",
+          "start": 167
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f13"
+            }
+          ],
+          "end": 199,
+          "kind": "field",
+          "start": 183
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f14"
+            }
+          ],
+          "end": 215,
+          "kind": "field",
+          "start": 199
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f15"
+            }
+          ],
+          "end": 231,
+          "kind": "field",
+          "start": 215
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f16"
+            }
+          ],
+          "end": 247,
+          "kind": "field",
+          "start": 231
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f17"
+            }
+          ],
+          "end": 263,
+          "kind": "field",
+          "start": 247
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f18"
+            }
+          ],
+          "end": 279,
+          "kind": "field",
+          "start": 263
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f19"
+            }
+          ],
+          "end": 295,
+          "kind": "field",
+          "start": 279
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f20"
+            }
+          ],
+          "end": 311,
+          "kind": "field",
+          "start": 295
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f21"
+            }
+          ],
+          "end": 327,
+          "kind": "field",
+          "start": 311
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f22"
+            }
+          ],
+          "end": 343,
+          "kind": "field",
+          "start": 327
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f23"
+            }
+          ],
+          "end": 359,
+          "kind": "field",
+          "start": 343
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f24"
+            }
+          ],
+          "end": 375,
+          "kind": "field",
+          "start": 359
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f25"
+            }
+          ],
+          "end": 391,
+          "kind": "field",
+          "start": 375
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f26"
+            }
+          ],
+          "end": 407,
+          "kind": "field",
+          "start": 391
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f27"
+            }
+          ],
+          "end": 423,
+          "kind": "field",
+          "start": 407
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f28"
+            }
+          ],
+          "end": 439,
+          "kind": "field",
+          "start": 423
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f29"
+            }
+          ],
+          "end": 455,
+          "kind": "field",
+          "start": 439
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f30"
+            }
+          ],
+          "end": 471,
+          "kind": "field",
+          "start": 455
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f31"
+            }
+          ],
+          "end": 487,
+          "kind": "field",
+          "start": 471
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f32"
+            }
+          ],
+          "end": 503,
+          "kind": "field",
+          "start": 487
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f33"
+            }
+          ],
+          "end": 519,
+          "kind": "field",
+          "start": 503
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f34"
+            }
+          ],
+          "end": 535,
+          "kind": "field",
+          "start": 519
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f35"
+            }
+          ],
+          "end": 551,
+          "kind": "field",
+          "start": 535
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f36"
+            }
+          ],
+          "end": 567,
+          "kind": "field",
+          "start": 551
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f37"
+            }
+          ],
+          "end": 583,
+          "kind": "field",
+          "start": 567
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f38"
+            }
+          ],
+          "end": 599,
+          "kind": "field",
+          "start": 583
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f39"
+            }
+          ],
+          "end": 615,
+          "kind": "field",
+          "start": 599
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f40"
+            }
+          ],
+          "end": 631,
+          "kind": "field",
+          "start": 615
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f41"
+            }
+          ],
+          "end": 647,
+          "kind": "field",
+          "start": 631
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f42"
+            }
+          ],
+          "end": 663,
+          "kind": "field",
+          "start": 647
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f43"
+            }
+          ],
+          "end": 679,
+          "kind": "field",
+          "start": 663
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f44"
+            }
+          ],
+          "end": 695,
+          "kind": "field",
+          "start": 679
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f45"
+            }
+          ],
+          "end": 711,
+          "kind": "field",
+          "start": 695
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f46"
+            }
+          ],
+          "end": 727,
+          "kind": "field",
+          "start": 711
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f47"
+            }
+          ],
+          "end": 743,
+          "kind": "field",
+          "start": 727
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f48"
+            }
+          ],
+          "end": 759,
+          "kind": "field",
+          "start": 743
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f49"
+            }
+          ],
+          "end": 775,
+          "kind": "field",
+          "start": 759
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f50"
+            }
+          ],
+          "end": 791,
+          "kind": "field",
+          "start": 775
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f51"
+            }
+          ],
+          "end": 807,
+          "kind": "field",
+          "start": 791
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f52"
+            }
+          ],
+          "end": 823,
+          "kind": "field",
+          "start": 807
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f53"
+            }
+          ],
+          "end": 839,
+          "kind": "field",
+          "start": 823
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f54"
+            }
+          ],
+          "end": 855,
+          "kind": "field",
+          "start": 839
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f55"
+            }
+          ],
+          "end": 871,
+          "kind": "field",
+          "start": 855
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f56"
+            }
+          ],
+          "end": 887,
+          "kind": "field",
+          "start": 871
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f57"
+            }
+          ],
+          "end": 903,
+          "kind": "field",
+          "start": 887
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f58"
+            }
+          ],
+          "end": 919,
+          "kind": "field",
+          "start": 903
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f59"
+            }
+          ],
+          "end": 935,
+          "kind": "field",
+          "start": 919
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f60"
+            }
+          ],
+          "end": 951,
+          "kind": "field",
+          "start": 935
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f61"
+            }
+          ],
+          "end": 967,
+          "kind": "field",
+          "start": 951
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f62"
+            }
+          ],
+          "end": 983,
+          "kind": "field",
+          "start": 967
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f63"
+            }
+          ],
+          "end": 999,
+          "kind": "field",
+          "start": 983
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f64"
+            }
+          ],
+          "end": 1015,
+          "kind": "field",
+          "start": 999
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f65"
+            }
+          ],
+          "end": 1031,
+          "kind": "field",
+          "start": 1015
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f66"
+            }
+          ],
+          "end": 1047,
+          "kind": "field",
+          "start": 1031
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f67"
+            }
+          ],
+          "end": 1063,
+          "kind": "field",
+          "start": 1047
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f68"
+            }
+          ],
+          "end": 1079,
+          "kind": "field",
+          "start": 1063
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f69"
+            }
+          ],
+          "end": 1095,
+          "kind": "field",
+          "start": 1079
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f70"
+            }
+          ],
+          "end": 1111,
+          "kind": "field",
+          "start": 1095
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f71"
+            }
+          ],
+          "end": 1127,
+          "kind": "field",
+          "start": 1111
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f72"
+            }
+          ],
+          "end": 1143,
+          "kind": "field",
+          "start": 1127
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f73"
+            }
+          ],
+          "end": 1159,
+          "kind": "field",
+          "start": 1143
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f74"
+            }
+          ],
+          "end": 1175,
+          "kind": "field",
+          "start": 1159
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f75"
+            }
+          ],
+          "end": 1191,
+          "kind": "field",
+          "start": 1175
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f76"
+            }
+          ],
+          "end": 1207,
+          "kind": "field",
+          "start": 1191
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f77"
+            }
+          ],
+          "end": 1223,
+          "kind": "field",
+          "start": 1207
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f78"
+            }
+          ],
+          "end": 1239,
+          "kind": "field",
+          "start": 1223
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f79"
+            }
+          ],
+          "end": 1255,
+          "kind": "field",
+          "start": 1239
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f80"
+            }
+          ],
+          "end": 1271,
+          "kind": "field",
+          "start": 1255
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f81"
+            }
+          ],
+          "end": 1287,
+          "kind": "field",
+          "start": 1271
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f82"
+            }
+          ],
+          "end": 1303,
+          "kind": "field",
+          "start": 1287
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f83"
+            }
+          ],
+          "end": 1319,
+          "kind": "field",
+          "start": 1303
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f84"
+            }
+          ],
+          "end": 1335,
+          "kind": "field",
+          "start": 1319
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f85"
+            }
+          ],
+          "end": 1351,
+          "kind": "field",
+          "start": 1335
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f86"
+            }
+          ],
+          "end": 1367,
+          "kind": "field",
+          "start": 1351
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f87"
+            }
+          ],
+          "end": 1383,
+          "kind": "field",
+          "start": 1367
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f88"
+            }
+          ],
+          "end": 1399,
+          "kind": "field",
+          "start": 1383
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f89"
+            }
+          ],
+          "end": 1415,
+          "kind": "field",
+          "start": 1399
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f90"
+            }
+          ],
+          "end": 1431,
+          "kind": "field",
+          "start": 1415
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f91"
+            }
+          ],
+          "end": 1447,
+          "kind": "field",
+          "start": 1431
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f92"
+            }
+          ],
+          "end": 1463,
+          "kind": "field",
+          "start": 1447
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f93"
+            }
+          ],
+          "end": 1479,
+          "kind": "field",
+          "start": 1463
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f94"
+            }
+          ],
+          "end": 1495,
+          "kind": "field",
+          "start": 1479
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f95"
+            }
+          ],
+          "end": 1511,
+          "kind": "field",
+          "start": 1495
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f96"
+            }
+          ],
+          "end": 1527,
+          "kind": "field",
+          "start": 1511
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f97"
+            }
+          ],
+          "end": 1543,
+          "kind": "field",
+          "start": 1527
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f98"
+            }
+          ],
+          "end": 1559,
+          "kind": "field",
+          "start": 1543
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f99"
+            }
+          ],
+          "end": 1575,
+          "kind": "field",
+          "start": 1559
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f1"
+            }
+          ],
+          "end": 1590,
+          "kind": "field",
+          "start": 1575
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "T"
+            }
+          ],
+          "end": 1602,
+          "kind": "if",
+          "start": 1590
+        },
+        {
+          "attributes": [],
+          "end": 1603,
+          "kind": "text",
+          "start": 1602
+        },
+        {
+          "attributes": [],
+          "end": 1610,
+          "kind": "endif",
+          "start": 1603
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_FORM_TOO_LARGE",
+        "end": 1609,
+        "snippet": null,
+        "start": 1592
+      },
+      "id": "field-23",
+      "template": "{field name=f1}{field name=f2}{field name=f3}{field name=f4}{field name=f5}{field name=f6}{field name=f7}{field name=f8}{field name=f9}{field name=f10}{field name=f11}{field name=f12}{field name=f13}{field name=f14}{field name=f15}{field name=f16}{field name=f17}{field name=f18}{field name=f19}{field name=f20}{field name=f21}{field name=f22}{field name=f23}{field name=f24}{field name=f25}{field name=f26}{field name=f27}{field name=f28}{field name=f29}{field name=f30}{field name=f31}{field name=f32}{field name=f33}{field name=f34}{field name=f35}{field name=f36}{field name=f37}{field name=f38}{field name=f39}{field name=f40}{field name=f41}{field name=f42}{field name=f43}{field name=f44}{field name=f45}{field name=f46}{field name=f47}{field name=f48}{field name=f49}{field name=f50}{field name=f51}{field name=f52}{field name=f53}{field name=f54}{field name=f55}{field name=f56}{field name=f57}{field name=f58}{field name=f59}{field name=f60}{field name=f61}{field name=f62}{field name=f63}{field name=f64}{field name=f65}{field name=f66}{field name=f67}{field name=f68}{field name=f69}{field name=f70}{field name=f71}{field name=f72}{field name=f73}{field name=f74}{field name=f75}{field name=f76}{field name=f77}{field name=f78}{field name=f79}{field name=f80}{field name=f81}{field name=f82}{field name=f83}{field name=f84}{field name=f85}{field name=f86}{field name=f87}{field name=f88}{field name=f89}{field name=f90}{field name=f91}{field name=f92}{field name=f93}{field name=f94}{field name=f95}{field name=f96}{field name=f97}{field name=f98}{field name=f99}{field name=f100}{field name=f101}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f1"
+            }
+          ],
+          "end": 15,
+          "kind": "field",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f2"
+            }
+          ],
+          "end": 30,
+          "kind": "field",
+          "start": 15
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f3"
+            }
+          ],
+          "end": 45,
+          "kind": "field",
+          "start": 30
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f4"
+            }
+          ],
+          "end": 60,
+          "kind": "field",
+          "start": 45
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f5"
+            }
+          ],
+          "end": 75,
+          "kind": "field",
+          "start": 60
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f6"
+            }
+          ],
+          "end": 90,
+          "kind": "field",
+          "start": 75
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f7"
+            }
+          ],
+          "end": 105,
+          "kind": "field",
+          "start": 90
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f8"
+            }
+          ],
+          "end": 120,
+          "kind": "field",
+          "start": 105
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f9"
+            }
+          ],
+          "end": 135,
+          "kind": "field",
+          "start": 120
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f10"
+            }
+          ],
+          "end": 151,
+          "kind": "field",
+          "start": 135
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f11"
+            }
+          ],
+          "end": 167,
+          "kind": "field",
+          "start": 151
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f12"
+            }
+          ],
+          "end": 183,
+          "kind": "field",
+          "start": 167
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f13"
+            }
+          ],
+          "end": 199,
+          "kind": "field",
+          "start": 183
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f14"
+            }
+          ],
+          "end": 215,
+          "kind": "field",
+          "start": 199
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f15"
+            }
+          ],
+          "end": 231,
+          "kind": "field",
+          "start": 215
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f16"
+            }
+          ],
+          "end": 247,
+          "kind": "field",
+          "start": 231
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f17"
+            }
+          ],
+          "end": 263,
+          "kind": "field",
+          "start": 247
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f18"
+            }
+          ],
+          "end": 279,
+          "kind": "field",
+          "start": 263
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f19"
+            }
+          ],
+          "end": 295,
+          "kind": "field",
+          "start": 279
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f20"
+            }
+          ],
+          "end": 311,
+          "kind": "field",
+          "start": 295
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f21"
+            }
+          ],
+          "end": 327,
+          "kind": "field",
+          "start": 311
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f22"
+            }
+          ],
+          "end": 343,
+          "kind": "field",
+          "start": 327
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f23"
+            }
+          ],
+          "end": 359,
+          "kind": "field",
+          "start": 343
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f24"
+            }
+          ],
+          "end": 375,
+          "kind": "field",
+          "start": 359
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f25"
+            }
+          ],
+          "end": 391,
+          "kind": "field",
+          "start": 375
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f26"
+            }
+          ],
+          "end": 407,
+          "kind": "field",
+          "start": 391
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f27"
+            }
+          ],
+          "end": 423,
+          "kind": "field",
+          "start": 407
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f28"
+            }
+          ],
+          "end": 439,
+          "kind": "field",
+          "start": 423
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f29"
+            }
+          ],
+          "end": 455,
+          "kind": "field",
+          "start": 439
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f30"
+            }
+          ],
+          "end": 471,
+          "kind": "field",
+          "start": 455
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f31"
+            }
+          ],
+          "end": 487,
+          "kind": "field",
+          "start": 471
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f32"
+            }
+          ],
+          "end": 503,
+          "kind": "field",
+          "start": 487
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f33"
+            }
+          ],
+          "end": 519,
+          "kind": "field",
+          "start": 503
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f34"
+            }
+          ],
+          "end": 535,
+          "kind": "field",
+          "start": 519
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f35"
+            }
+          ],
+          "end": 551,
+          "kind": "field",
+          "start": 535
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f36"
+            }
+          ],
+          "end": 567,
+          "kind": "field",
+          "start": 551
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f37"
+            }
+          ],
+          "end": 583,
+          "kind": "field",
+          "start": 567
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f38"
+            }
+          ],
+          "end": 599,
+          "kind": "field",
+          "start": 583
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f39"
+            }
+          ],
+          "end": 615,
+          "kind": "field",
+          "start": 599
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f40"
+            }
+          ],
+          "end": 631,
+          "kind": "field",
+          "start": 615
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f41"
+            }
+          ],
+          "end": 647,
+          "kind": "field",
+          "start": 631
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f42"
+            }
+          ],
+          "end": 663,
+          "kind": "field",
+          "start": 647
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f43"
+            }
+          ],
+          "end": 679,
+          "kind": "field",
+          "start": 663
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f44"
+            }
+          ],
+          "end": 695,
+          "kind": "field",
+          "start": 679
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f45"
+            }
+          ],
+          "end": 711,
+          "kind": "field",
+          "start": 695
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f46"
+            }
+          ],
+          "end": 727,
+          "kind": "field",
+          "start": 711
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f47"
+            }
+          ],
+          "end": 743,
+          "kind": "field",
+          "start": 727
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f48"
+            }
+          ],
+          "end": 759,
+          "kind": "field",
+          "start": 743
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f49"
+            }
+          ],
+          "end": 775,
+          "kind": "field",
+          "start": 759
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f50"
+            }
+          ],
+          "end": 791,
+          "kind": "field",
+          "start": 775
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f51"
+            }
+          ],
+          "end": 807,
+          "kind": "field",
+          "start": 791
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f52"
+            }
+          ],
+          "end": 823,
+          "kind": "field",
+          "start": 807
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f53"
+            }
+          ],
+          "end": 839,
+          "kind": "field",
+          "start": 823
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f54"
+            }
+          ],
+          "end": 855,
+          "kind": "field",
+          "start": 839
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f55"
+            }
+          ],
+          "end": 871,
+          "kind": "field",
+          "start": 855
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f56"
+            }
+          ],
+          "end": 887,
+          "kind": "field",
+          "start": 871
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f57"
+            }
+          ],
+          "end": 903,
+          "kind": "field",
+          "start": 887
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f58"
+            }
+          ],
+          "end": 919,
+          "kind": "field",
+          "start": 903
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f59"
+            }
+          ],
+          "end": 935,
+          "kind": "field",
+          "start": 919
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f60"
+            }
+          ],
+          "end": 951,
+          "kind": "field",
+          "start": 935
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f61"
+            }
+          ],
+          "end": 967,
+          "kind": "field",
+          "start": 951
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f62"
+            }
+          ],
+          "end": 983,
+          "kind": "field",
+          "start": 967
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f63"
+            }
+          ],
+          "end": 999,
+          "kind": "field",
+          "start": 983
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f64"
+            }
+          ],
+          "end": 1015,
+          "kind": "field",
+          "start": 999
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f65"
+            }
+          ],
+          "end": 1031,
+          "kind": "field",
+          "start": 1015
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f66"
+            }
+          ],
+          "end": 1047,
+          "kind": "field",
+          "start": 1031
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f67"
+            }
+          ],
+          "end": 1063,
+          "kind": "field",
+          "start": 1047
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f68"
+            }
+          ],
+          "end": 1079,
+          "kind": "field",
+          "start": 1063
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f69"
+            }
+          ],
+          "end": 1095,
+          "kind": "field",
+          "start": 1079
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f70"
+            }
+          ],
+          "end": 1111,
+          "kind": "field",
+          "start": 1095
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f71"
+            }
+          ],
+          "end": 1127,
+          "kind": "field",
+          "start": 1111
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f72"
+            }
+          ],
+          "end": 1143,
+          "kind": "field",
+          "start": 1127
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f73"
+            }
+          ],
+          "end": 1159,
+          "kind": "field",
+          "start": 1143
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f74"
+            }
+          ],
+          "end": 1175,
+          "kind": "field",
+          "start": 1159
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f75"
+            }
+          ],
+          "end": 1191,
+          "kind": "field",
+          "start": 1175
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f76"
+            }
+          ],
+          "end": 1207,
+          "kind": "field",
+          "start": 1191
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f77"
+            }
+          ],
+          "end": 1223,
+          "kind": "field",
+          "start": 1207
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f78"
+            }
+          ],
+          "end": 1239,
+          "kind": "field",
+          "start": 1223
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f79"
+            }
+          ],
+          "end": 1255,
+          "kind": "field",
+          "start": 1239
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f80"
+            }
+          ],
+          "end": 1271,
+          "kind": "field",
+          "start": 1255
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f81"
+            }
+          ],
+          "end": 1287,
+          "kind": "field",
+          "start": 1271
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f82"
+            }
+          ],
+          "end": 1303,
+          "kind": "field",
+          "start": 1287
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f83"
+            }
+          ],
+          "end": 1319,
+          "kind": "field",
+          "start": 1303
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f84"
+            }
+          ],
+          "end": 1335,
+          "kind": "field",
+          "start": 1319
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f85"
+            }
+          ],
+          "end": 1351,
+          "kind": "field",
+          "start": 1335
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f86"
+            }
+          ],
+          "end": 1367,
+          "kind": "field",
+          "start": 1351
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f87"
+            }
+          ],
+          "end": 1383,
+          "kind": "field",
+          "start": 1367
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f88"
+            }
+          ],
+          "end": 1399,
+          "kind": "field",
+          "start": 1383
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f89"
+            }
+          ],
+          "end": 1415,
+          "kind": "field",
+          "start": 1399
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f90"
+            }
+          ],
+          "end": 1431,
+          "kind": "field",
+          "start": 1415
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f91"
+            }
+          ],
+          "end": 1447,
+          "kind": "field",
+          "start": 1431
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f92"
+            }
+          ],
+          "end": 1463,
+          "kind": "field",
+          "start": 1447
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f93"
+            }
+          ],
+          "end": 1479,
+          "kind": "field",
+          "start": 1463
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f94"
+            }
+          ],
+          "end": 1495,
+          "kind": "field",
+          "start": 1479
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f95"
+            }
+          ],
+          "end": 1511,
+          "kind": "field",
+          "start": 1495
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f96"
+            }
+          ],
+          "end": 1527,
+          "kind": "field",
+          "start": 1511
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f97"
+            }
+          ],
+          "end": 1543,
+          "kind": "field",
+          "start": 1527
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f98"
+            }
+          ],
+          "end": 1559,
+          "kind": "field",
+          "start": 1543
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f99"
+            }
+          ],
+          "end": 1575,
+          "kind": "field",
+          "start": 1559
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f100"
+            }
+          ],
+          "end": 1592,
+          "kind": "field",
+          "start": 1575
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f101"
+            }
+          ],
+          "end": 1609,
+          "kind": "field",
+          "start": 1592
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_SNIPPET_NOT_FOUND",
+        "end": 970,
+        "snippet": null,
+        "start": 951
+      },
+      "id": "field-24",
+      "template": "{field name=f1}{field name=f2}{field name=f3}{field name=f4}{field name=f5}{field name=f6}{field name=f7}{field name=f8}{field name=f9}{field name=f10}{field name=f11}{field name=f12}{field name=f13}{field name=f14}{field name=f15}{field name=f16}{field name=f17}{field name=f18}{field name=f19}{field name=f20}{field name=f21}{field name=f22}{field name=f23}{field name=f24}{field name=f25}{field name=f26}{field name=f27}{field name=f28}{field name=f29}{field name=f30}{field name=f31}{field name=f32}{field name=f33}{field name=f34}{field name=f35}{field name=f36}{field name=f37}{field name=f38}{field name=f39}{field name=f40}{field name=f41}{field name=f42}{field name=f43}{field name=f44}{field name=f45}{field name=f46}{field name=f47}{field name=f48}{field name=f49}{field name=f50}{field name=f51}{field name=f52}{field name=f53}{field name=f54}{field name=f55}{field name=f56}{field name=f57}{field name=f58}{field name=f59}{field name=f60}{snippet abbr=more}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f1"
+            }
+          ],
+          "end": 15,
+          "kind": "field",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f2"
+            }
+          ],
+          "end": 30,
+          "kind": "field",
+          "start": 15
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f3"
+            }
+          ],
+          "end": 45,
+          "kind": "field",
+          "start": 30
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f4"
+            }
+          ],
+          "end": 60,
+          "kind": "field",
+          "start": 45
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f5"
+            }
+          ],
+          "end": 75,
+          "kind": "field",
+          "start": 60
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f6"
+            }
+          ],
+          "end": 90,
+          "kind": "field",
+          "start": 75
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f7"
+            }
+          ],
+          "end": 105,
+          "kind": "field",
+          "start": 90
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f8"
+            }
+          ],
+          "end": 120,
+          "kind": "field",
+          "start": 105
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f9"
+            }
+          ],
+          "end": 135,
+          "kind": "field",
+          "start": 120
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f10"
+            }
+          ],
+          "end": 151,
+          "kind": "field",
+          "start": 135
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f11"
+            }
+          ],
+          "end": 167,
+          "kind": "field",
+          "start": 151
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f12"
+            }
+          ],
+          "end": 183,
+          "kind": "field",
+          "start": 167
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f13"
+            }
+          ],
+          "end": 199,
+          "kind": "field",
+          "start": 183
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f14"
+            }
+          ],
+          "end": 215,
+          "kind": "field",
+          "start": 199
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f15"
+            }
+          ],
+          "end": 231,
+          "kind": "field",
+          "start": 215
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f16"
+            }
+          ],
+          "end": 247,
+          "kind": "field",
+          "start": 231
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f17"
+            }
+          ],
+          "end": 263,
+          "kind": "field",
+          "start": 247
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f18"
+            }
+          ],
+          "end": 279,
+          "kind": "field",
+          "start": 263
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f19"
+            }
+          ],
+          "end": 295,
+          "kind": "field",
+          "start": 279
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f20"
+            }
+          ],
+          "end": 311,
+          "kind": "field",
+          "start": 295
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f21"
+            }
+          ],
+          "end": 327,
+          "kind": "field",
+          "start": 311
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f22"
+            }
+          ],
+          "end": 343,
+          "kind": "field",
+          "start": 327
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f23"
+            }
+          ],
+          "end": 359,
+          "kind": "field",
+          "start": 343
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f24"
+            }
+          ],
+          "end": 375,
+          "kind": "field",
+          "start": 359
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f25"
+            }
+          ],
+          "end": 391,
+          "kind": "field",
+          "start": 375
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f26"
+            }
+          ],
+          "end": 407,
+          "kind": "field",
+          "start": 391
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f27"
+            }
+          ],
+          "end": 423,
+          "kind": "field",
+          "start": 407
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f28"
+            }
+          ],
+          "end": 439,
+          "kind": "field",
+          "start": 423
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f29"
+            }
+          ],
+          "end": 455,
+          "kind": "field",
+          "start": 439
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f30"
+            }
+          ],
+          "end": 471,
+          "kind": "field",
+          "start": 455
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f31"
+            }
+          ],
+          "end": 487,
+          "kind": "field",
+          "start": 471
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f32"
+            }
+          ],
+          "end": 503,
+          "kind": "field",
+          "start": 487
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f33"
+            }
+          ],
+          "end": 519,
+          "kind": "field",
+          "start": 503
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f34"
+            }
+          ],
+          "end": 535,
+          "kind": "field",
+          "start": 519
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f35"
+            }
+          ],
+          "end": 551,
+          "kind": "field",
+          "start": 535
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f36"
+            }
+          ],
+          "end": 567,
+          "kind": "field",
+          "start": 551
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f37"
+            }
+          ],
+          "end": 583,
+          "kind": "field",
+          "start": 567
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f38"
+            }
+          ],
+          "end": 599,
+          "kind": "field",
+          "start": 583
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f39"
+            }
+          ],
+          "end": 615,
+          "kind": "field",
+          "start": 599
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f40"
+            }
+          ],
+          "end": 631,
+          "kind": "field",
+          "start": 615
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f41"
+            }
+          ],
+          "end": 647,
+          "kind": "field",
+          "start": 631
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f42"
+            }
+          ],
+          "end": 663,
+          "kind": "field",
+          "start": 647
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f43"
+            }
+          ],
+          "end": 679,
+          "kind": "field",
+          "start": 663
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f44"
+            }
+          ],
+          "end": 695,
+          "kind": "field",
+          "start": 679
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f45"
+            }
+          ],
+          "end": 711,
+          "kind": "field",
+          "start": 695
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f46"
+            }
+          ],
+          "end": 727,
+          "kind": "field",
+          "start": 711
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f47"
+            }
+          ],
+          "end": 743,
+          "kind": "field",
+          "start": 727
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f48"
+            }
+          ],
+          "end": 759,
+          "kind": "field",
+          "start": 743
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f49"
+            }
+          ],
+          "end": 775,
+          "kind": "field",
+          "start": 759
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f50"
+            }
+          ],
+          "end": 791,
+          "kind": "field",
+          "start": 775
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f51"
+            }
+          ],
+          "end": 807,
+          "kind": "field",
+          "start": 791
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f52"
+            }
+          ],
+          "end": 823,
+          "kind": "field",
+          "start": 807
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f53"
+            }
+          ],
+          "end": 839,
+          "kind": "field",
+          "start": 823
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f54"
+            }
+          ],
+          "end": 855,
+          "kind": "field",
+          "start": 839
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f55"
+            }
+          ],
+          "end": 871,
+          "kind": "field",
+          "start": 855
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f56"
+            }
+          ],
+          "end": 887,
+          "kind": "field",
+          "start": 871
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f57"
+            }
+          ],
+          "end": 903,
+          "kind": "field",
+          "start": 887
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f58"
+            }
+          ],
+          "end": 919,
+          "kind": "field",
+          "start": 903
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f59"
+            }
+          ],
+          "end": 935,
+          "kind": "field",
+          "start": 919
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f60"
+            }
+          ],
+          "end": 951,
+          "kind": "field",
+          "start": 935
+        },
+        {
+          "attributes": [
+            {
+              "name": "abbr",
+              "value": "more"
+            }
+          ],
+          "end": 970,
+          "kind": "snippet",
+          "start": 951
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "field-25",
+      "template": "Size {field name=\"Size\" type=choice options=\"S|M|L\" default=\"M\"}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 5,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Size"
+            },
+            {
+              "name": "type",
+              "value": "choice"
+            },
+            {
+              "name": "options",
+              "value": "S|M|L"
+            },
+            {
+              "name": "default",
+              "value": "M"
+            }
+          ],
+          "end": 64,
+          "kind": "field",
+          "start": 5
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "field-26",
+      "template": "{field name=\"Rush\" type=toggle on=\"rush\" off=\"standard\"}/{field name=\"Gift\" type=toggle on=\"gift\" off=\"no gift\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Rush"
+            },
+            {
+              "name": "type",
+              "value": "toggle"
+            },
+            {
+              "name": "on",
+              "value": "rush"
+            },
+            {
+              "name": "off",
+              "value": "standard"
+            }
+          ],
+          "end": 56,
+          "kind": "field",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 57,
+          "kind": "text",
+          "start": 56
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Gift"
+            },
+            {
+              "name": "type",
+              "value": "toggle"
+            },
+            {
+              "name": "on",
+              "value": "gift"
+            },
+            {
+              "name": "off",
+              "value": "no gift"
+            }
+          ],
+          "end": 112,
+          "kind": "field",
+          "start": 57
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "field-27",
+      "template": "Re: {field name=\"Subject\"}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 4,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Subject"
+            }
+          ],
+          "end": 26,
+          "kind": "field",
+          "start": 4
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "if-01",
+      "template": "Hello.{if field=\"VIP\"} Thanks for being a VIP!{endif}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 6,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "VIP"
+            }
+          ],
+          "end": 22,
+          "kind": "if",
+          "start": 6
+        },
+        {
+          "attributes": [],
+          "end": 46,
+          "kind": "text",
+          "start": 22
+        },
+        {
+          "attributes": [],
+          "end": 53,
+          "kind": "endif",
+          "start": 46
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "if-02",
+      "template": "Hello.{if field=\"VIP\"} Thanks for being a VIP!{endif}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 6,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "VIP"
+            }
+          ],
+          "end": 22,
+          "kind": "if",
+          "start": 6
+        },
+        {
+          "attributes": [],
+          "end": 46,
+          "kind": "text",
+          "start": 22
+        },
+        {
+          "attributes": [],
+          "end": 53,
+          "kind": "endif",
+          "start": 46
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "if-03",
+      "template": "{if field=\"Formal\"}Dear Sir or Madam{else}Hi there{endif},",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "Formal"
+            }
+          ],
+          "end": 19,
+          "kind": "if",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 36,
+          "kind": "text",
+          "start": 19
+        },
+        {
+          "attributes": [],
+          "end": 42,
+          "kind": "else",
+          "start": 36
+        },
+        {
+          "attributes": [],
+          "end": 50,
+          "kind": "text",
+          "start": 42
+        },
+        {
+          "attributes": [],
+          "end": 57,
+          "kind": "endif",
+          "start": 50
+        },
+        {
+          "attributes": [],
+          "end": 58,
+          "kind": "text",
+          "start": 57
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "if-04",
+      "template": "Plan: {field name=\"Plan\" type=choice options=\"Free|Pro\"}.{if field=\"Plan\" is=\"Pro\"} Priority support included.{endif}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 6,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Plan"
+            },
+            {
+              "name": "type",
+              "value": "choice"
+            },
+            {
+              "name": "options",
+              "value": "Free|Pro"
+            }
+          ],
+          "end": 56,
+          "kind": "field",
+          "start": 6
+        },
+        {
+          "attributes": [],
+          "end": 57,
+          "kind": "text",
+          "start": 56
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "Plan"
+            },
+            {
+              "name": "is",
+              "value": "Pro"
+            }
+          ],
+          "end": 83,
+          "kind": "if",
+          "start": 57
+        },
+        {
+          "attributes": [],
+          "end": 110,
+          "kind": "text",
+          "start": 83
+        },
+        {
+          "attributes": [],
+          "end": 117,
+          "kind": "endif",
+          "start": 110
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "if-05",
+      "template": "{field name=\"Plan\" type=choice options=\"Free|Pro\"}{if field=\"Plan\" not=\"pro\"}!{endif}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Plan"
+            },
+            {
+              "name": "type",
+              "value": "choice"
+            },
+            {
+              "name": "options",
+              "value": "Free|Pro"
+            }
+          ],
+          "end": 50,
+          "kind": "field",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "Plan"
+            },
+            {
+              "name": "not",
+              "value": "pro"
+            }
+          ],
+          "end": 77,
+          "kind": "if",
+          "start": 50
+        },
+        {
+          "attributes": [],
+          "end": 78,
+          "kind": "text",
+          "start": 77
+        },
+        {
+          "attributes": [],
+          "end": 85,
+          "kind": "endif",
+          "start": 78
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "if-06",
+      "template": "{if field=\"Note\"}Note: {field name=\"Note\"}{else}No note.{endif}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "Note"
+            }
+          ],
+          "end": 17,
+          "kind": "if",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 23,
+          "kind": "text",
+          "start": 17
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Note"
+            }
+          ],
+          "end": 42,
+          "kind": "field",
+          "start": 23
+        },
+        {
+          "attributes": [],
+          "end": 48,
+          "kind": "else",
+          "start": 42
+        },
+        {
+          "attributes": [],
+          "end": 56,
+          "kind": "text",
+          "start": 48
+        },
+        {
+          "attributes": [],
+          "end": 63,
+          "kind": "endif",
+          "start": 56
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "if-07",
+      "template": "{if field=\"Note\"}Note: {field name=\"Note\"}{else}No note.{endif}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "Note"
+            }
+          ],
+          "end": 17,
+          "kind": "if",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 23,
+          "kind": "text",
+          "start": 17
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Note"
+            }
+          ],
+          "end": 42,
+          "kind": "field",
+          "start": 23
+        },
+        {
+          "attributes": [],
+          "end": 48,
+          "kind": "else",
+          "start": 42
+        },
+        {
+          "attributes": [],
+          "end": 56,
+          "kind": "text",
+          "start": 48
+        },
+        {
+          "attributes": [],
+          "end": 63,
+          "kind": "endif",
+          "start": 56
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "if-08",
+      "template": "{if field=\"A\"}a{if field=\"B\"}b{else}-{endif}{else}x{endif}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "A"
+            }
+          ],
+          "end": 14,
+          "kind": "if",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 15,
+          "kind": "text",
+          "start": 14
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "B"
+            }
+          ],
+          "end": 29,
+          "kind": "if",
+          "start": 15
+        },
+        {
+          "attributes": [],
+          "end": 30,
+          "kind": "text",
+          "start": 29
+        },
+        {
+          "attributes": [],
+          "end": 36,
+          "kind": "else",
+          "start": 30
+        },
+        {
+          "attributes": [],
+          "end": 37,
+          "kind": "text",
+          "start": 36
+        },
+        {
+          "attributes": [],
+          "end": 44,
+          "kind": "endif",
+          "start": 37
+        },
+        {
+          "attributes": [],
+          "end": 50,
+          "kind": "else",
+          "start": 44
+        },
+        {
+          "attributes": [],
+          "end": 51,
+          "kind": "text",
+          "start": 50
+        },
+        {
+          "attributes": [],
+          "end": 58,
+          "kind": "endif",
+          "start": 51
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "if-09",
+      "template": "{if field=\"Lang\" is=\"es\"}Hola{else}Hello{endif} ({field name=\"Lang\" type=choice options=\"en|es\"})",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "Lang"
+            },
+            {
+              "name": "is",
+              "value": "es"
+            }
+          ],
+          "end": 25,
+          "kind": "if",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 29,
+          "kind": "text",
+          "start": 25
+        },
+        {
+          "attributes": [],
+          "end": 35,
+          "kind": "else",
+          "start": 29
+        },
+        {
+          "attributes": [],
+          "end": 40,
+          "kind": "text",
+          "start": 35
+        },
+        {
+          "attributes": [],
+          "end": 47,
+          "kind": "endif",
+          "start": 40
+        },
+        {
+          "attributes": [],
+          "end": 49,
+          "kind": "text",
+          "start": 47
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Lang"
+            },
+            {
+              "name": "type",
+              "value": "choice"
+            },
+            {
+              "name": "options",
+              "value": "en|es"
+            }
+          ],
+          "end": 96,
+          "kind": "field",
+          "start": 49
+        },
+        {
+          "attributes": [],
+          "end": 97,
+          "kind": "text",
+          "start": 96
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "if-10",
+      "template": "{field name=\"Paid\" type=toggle on=\"paid\" off=\"unpaid\"}{if field=\"Paid\" is=\"no\"} - reminder sent{endif}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Paid"
+            },
+            {
+              "name": "type",
+              "value": "toggle"
+            },
+            {
+              "name": "on",
+              "value": "paid"
+            },
+            {
+              "name": "off",
+              "value": "unpaid"
+            }
+          ],
+          "end": 54,
+          "kind": "field",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "Paid"
+            },
+            {
+              "name": "is",
+              "value": "no"
+            }
+          ],
+          "end": 79,
+          "kind": "if",
+          "start": 54
+        },
+        {
+          "attributes": [],
+          "end": 95,
+          "kind": "text",
+          "start": 79
+        },
+        {
+          "attributes": [],
+          "end": 102,
+          "kind": "endif",
+          "start": 95
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "if-11",
+      "template": "{if field=\"Gift\"}Message: {field name=\"Message\"}{endif}Done",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "Gift"
+            }
+          ],
+          "end": 17,
+          "kind": "if",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 26,
+          "kind": "text",
+          "start": 17
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Message"
+            }
+          ],
+          "end": 48,
+          "kind": "field",
+          "start": 26
+        },
+        {
+          "attributes": [],
+          "end": 55,
+          "kind": "endif",
+          "start": 48
+        },
+        {
+          "attributes": [],
+          "end": 59,
+          "kind": "text",
+          "start": 55
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "if-12",
+      "template": "{if field=\"T\"}{if field=\"T\"}{if field=\"T\"}{if field=\"T\"}{if field=\"T\"}{if field=\"T\"}{if field=\"T\"}{if field=\"T\"}deep{endif}{endif}{endif}{endif}{endif}{endif}{endif}{endif}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "T"
+            }
+          ],
+          "end": 14,
+          "kind": "if",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "T"
+            }
+          ],
+          "end": 28,
+          "kind": "if",
+          "start": 14
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "T"
+            }
+          ],
+          "end": 42,
+          "kind": "if",
+          "start": 28
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "T"
+            }
+          ],
+          "end": 56,
+          "kind": "if",
+          "start": 42
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "T"
+            }
+          ],
+          "end": 70,
+          "kind": "if",
+          "start": 56
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "T"
+            }
+          ],
+          "end": 84,
+          "kind": "if",
+          "start": 70
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "T"
+            }
+          ],
+          "end": 98,
+          "kind": "if",
+          "start": 84
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "T"
+            }
+          ],
+          "end": 112,
+          "kind": "if",
+          "start": 98
+        },
+        {
+          "attributes": [],
+          "end": 116,
+          "kind": "text",
+          "start": 112
+        },
+        {
+          "attributes": [],
+          "end": 123,
+          "kind": "endif",
+          "start": 116
+        },
+        {
+          "attributes": [],
+          "end": 130,
+          "kind": "endif",
+          "start": 123
+        },
+        {
+          "attributes": [],
+          "end": 137,
+          "kind": "endif",
+          "start": 130
+        },
+        {
+          "attributes": [],
+          "end": 144,
+          "kind": "endif",
+          "start": 137
+        },
+        {
+          "attributes": [],
+          "end": 151,
+          "kind": "endif",
+          "start": 144
+        },
+        {
+          "attributes": [],
+          "end": 158,
+          "kind": "endif",
+          "start": 151
+        },
+        {
+          "attributes": [],
+          "end": 165,
+          "kind": "endif",
+          "start": 158
+        },
+        {
+          "attributes": [],
+          "end": 172,
+          "kind": "endif",
+          "start": 165
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_TOO_DEEP",
+        "end": 126,
+        "snippet": null,
+        "start": 112
+      },
+      "id": "if-13",
+      "template": "{if field=\"T\"}{if field=\"T\"}{if field=\"T\"}{if field=\"T\"}{if field=\"T\"}{if field=\"T\"}{if field=\"T\"}{if field=\"T\"}{if field=\"T\"}x{endif}{endif}{endif}{endif}{endif}{endif}{endif}{endif}{endif}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "T"
+            }
+          ],
+          "end": 14,
+          "kind": "if",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "T"
+            }
+          ],
+          "end": 28,
+          "kind": "if",
+          "start": 14
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "T"
+            }
+          ],
+          "end": 42,
+          "kind": "if",
+          "start": 28
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "T"
+            }
+          ],
+          "end": 56,
+          "kind": "if",
+          "start": 42
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "T"
+            }
+          ],
+          "end": 70,
+          "kind": "if",
+          "start": 56
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "T"
+            }
+          ],
+          "end": 84,
+          "kind": "if",
+          "start": 70
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "T"
+            }
+          ],
+          "end": 98,
+          "kind": "if",
+          "start": 84
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "T"
+            }
+          ],
+          "end": 112,
+          "kind": "if",
+          "start": 98
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "T"
+            }
+          ],
+          "end": 126,
+          "kind": "if",
+          "start": 112
+        },
+        {
+          "attributes": [],
+          "end": 127,
+          "kind": "text",
+          "start": 126
+        },
+        {
+          "attributes": [],
+          "end": 134,
+          "kind": "endif",
+          "start": 127
+        },
+        {
+          "attributes": [],
+          "end": 141,
+          "kind": "endif",
+          "start": 134
+        },
+        {
+          "attributes": [],
+          "end": 148,
+          "kind": "endif",
+          "start": 141
+        },
+        {
+          "attributes": [],
+          "end": 155,
+          "kind": "endif",
+          "start": 148
+        },
+        {
+          "attributes": [],
+          "end": 162,
+          "kind": "endif",
+          "start": 155
+        },
+        {
+          "attributes": [],
+          "end": 169,
+          "kind": "endif",
+          "start": 162
+        },
+        {
+          "attributes": [],
+          "end": 176,
+          "kind": "endif",
+          "start": 169
+        },
+        {
+          "attributes": [],
+          "end": 183,
+          "kind": "endif",
+          "start": 176
+        },
+        {
+          "attributes": [],
+          "end": 190,
+          "kind": "endif",
+          "start": 183
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_UNBALANCED_IF",
+        "end": 14,
+        "snippet": null,
+        "start": 0
+      },
+      "id": "if-14",
+      "template": "{if field=\"A\"}text",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "A"
+            }
+          ],
+          "end": 14,
+          "kind": "if",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 18,
+          "kind": "text",
+          "start": 14
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_UNBALANCED_IF",
+        "end": 7,
+        "snippet": null,
+        "start": 1
+      },
+      "id": "if-15",
+      "template": "a{else}b",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 1,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 7,
+          "kind": "else",
+          "start": 1
+        },
+        {
+          "attributes": [],
+          "end": 8,
+          "kind": "text",
+          "start": 7
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_UNBALANCED_IF",
+        "end": 8,
+        "snippet": null,
+        "start": 1
+      },
+      "id": "if-16",
+      "template": "a{endif}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 1,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 8,
+          "kind": "endif",
+          "start": 1
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_UNBALANCED_IF",
+        "end": 28,
+        "snippet": null,
+        "start": 22
+      },
+      "id": "if-17",
+      "template": "{if field=\"A\"}1{else}2{else}3{endif}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "A"
+            }
+          ],
+          "end": 14,
+          "kind": "if",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 15,
+          "kind": "text",
+          "start": 14
+        },
+        {
+          "attributes": [],
+          "end": 21,
+          "kind": "else",
+          "start": 15
+        },
+        {
+          "attributes": [],
+          "end": 22,
+          "kind": "text",
+          "start": 21
+        },
+        {
+          "attributes": [],
+          "end": 28,
+          "kind": "else",
+          "start": 22
+        },
+        {
+          "attributes": [],
+          "end": 29,
+          "kind": "text",
+          "start": 28
+        },
+        {
+          "attributes": [],
+          "end": 36,
+          "kind": "endif",
+          "start": 29
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_BAD_VALUE",
+        "end": 45,
+        "snippet": null,
+        "start": 41
+      },
+      "id": "if-18",
+      "template": "{field name=\"P\"}{if field=\"P\" is=\"a\" not=\"b\"}x{endif}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "P"
+            }
+          ],
+          "end": 16,
+          "kind": "field",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "P"
+            },
+            {
+              "name": "is",
+              "value": "a"
+            },
+            {
+              "name": "not",
+              "value": "b"
+            }
+          ],
+          "end": 45,
+          "kind": "if",
+          "start": 16
+        },
+        {
+          "attributes": [],
+          "end": 46,
+          "kind": "text",
+          "start": 45
+        },
+        {
+          "attributes": [],
+          "end": 53,
+          "kind": "endif",
+          "start": 46
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_FIELD_UNDEFINED",
+        "end": 26,
+        "snippet": null,
+        "start": 0
+      },
+      "id": "if-19",
+      "template": "{if field=\"Plan\" is=\"Pro\"}x{endif}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "Plan"
+            },
+            {
+              "name": "is",
+              "value": "Pro"
+            }
+          ],
+          "end": 26,
+          "kind": "if",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 27,
+          "kind": "text",
+          "start": 26
+        },
+        {
+          "attributes": [],
+          "end": 34,
+          "kind": "endif",
+          "start": 27
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_MISSING_ATTR",
+        "end": 4,
+        "snippet": null,
+        "start": 0
+      },
+      "id": "if-20",
+      "template": "{if}x{endif}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 4,
+          "kind": "if",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 5,
+          "kind": "text",
+          "start": 4
+        },
+        {
+          "attributes": [],
+          "end": 12,
+          "kind": "endif",
+          "start": 5
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "if-21",
+      "template": "{field name=\"Rush\" type=toggle}{if field=\"Rush\" is=no}standard{else}rush{endif}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Rush"
+            },
+            {
+              "name": "type",
+              "value": "toggle"
+            }
+          ],
+          "end": 31,
+          "kind": "field",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "Rush"
+            },
+            {
+              "name": "is",
+              "value": "no"
+            }
+          ],
+          "end": 54,
+          "kind": "if",
+          "start": 31
+        },
+        {
+          "attributes": [],
+          "end": 62,
+          "kind": "text",
+          "start": 54
+        },
+        {
+          "attributes": [],
+          "end": 68,
+          "kind": "else",
+          "start": 62
+        },
+        {
+          "attributes": [],
+          "end": 72,
+          "kind": "text",
+          "start": 68
+        },
+        {
+          "attributes": [],
+          "end": 79,
+          "kind": "endif",
+          "start": 72
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "key-01",
+      "template": "ls -la{key name=enter}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 6,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "enter"
+            }
+          ],
+          "end": 22,
+          "kind": "key",
+          "start": 6
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "key-02",
+      "template": "ana@example.org{key name=tab}Ana{key name=tab}Lee",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 15,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "tab"
+            }
+          ],
+          "end": 29,
+          "kind": "key",
+          "start": 15
+        },
+        {
+          "attributes": [],
+          "end": 32,
+          "kind": "text",
+          "start": 29
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "tab"
+            }
+          ],
+          "end": 46,
+          "kind": "key",
+          "start": 32
+        },
+        {
+          "attributes": [],
+          "end": 49,
+          "kind": "text",
+          "start": 46
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "key-03",
+      "template": "{key name=\"tab\" times=\"3\"}x",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "tab"
+            },
+            {
+              "name": "times",
+              "value": "3"
+            }
+          ],
+          "end": 26,
+          "kind": "key",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 27,
+          "kind": "text",
+          "start": 26
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "key-04",
+      "template": "x{key name=tab shift=yes}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 1,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "tab"
+            },
+            {
+              "name": "shift",
+              "value": "yes"
+            }
+          ],
+          "end": 25,
+          "kind": "key",
+          "start": 1
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "key-05",
+      "template": "{key name=down}{key name=down}{key name=enter}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "down"
+            }
+          ],
+          "end": 15,
+          "kind": "key",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "down"
+            }
+          ],
+          "end": 30,
+          "kind": "key",
+          "start": 15
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "enter"
+            }
+          ],
+          "end": 46,
+          "kind": "key",
+          "start": 30
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "key-06",
+      "template": "line one\nline two{key name=enter}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 17,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "enter"
+            }
+          ],
+          "end": 33,
+          "kind": "key",
+          "start": 17
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "key-07",
+      "template": "(){key name=left}{key name=pagedown times=50}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 2,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "left"
+            }
+          ],
+          "end": 17,
+          "kind": "key",
+          "start": 2
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "pagedown"
+            },
+            {
+              "name": "times",
+              "value": "50"
+            }
+          ],
+          "end": 45,
+          "kind": "key",
+          "start": 17
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_MISSING_ATTR",
+        "end": 5,
+        "snippet": null,
+        "start": 0
+      },
+      "id": "key-08",
+      "template": "{key}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 5,
+          "kind": "key",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_BAD_VALUE",
+        "end": 14,
+        "snippet": null,
+        "start": 10
+      },
+      "id": "key-09",
+      "template": "{key name=f13}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "f13"
+            }
+          ],
+          "end": 14,
+          "kind": "key",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_BAD_VALUE",
+        "end": 16,
+        "snippet": null,
+        "start": 10
+      },
+      "id": "key-10",
+      "template": "{key name=Enter}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Enter"
+            }
+          ],
+          "end": 16,
+          "kind": "key",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_BAD_VALUE",
+        "end": 22,
+        "snippet": null,
+        "start": 20
+      },
+      "id": "key-11",
+      "template": "{key name=tab times=0}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "tab"
+            },
+            {
+              "name": "times",
+              "value": "0"
+            }
+          ],
+          "end": 22,
+          "kind": "key",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_BAD_VALUE",
+        "end": 23,
+        "snippet": null,
+        "start": 20
+      },
+      "id": "key-12",
+      "template": "{key name=tab times=51}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "tab"
+            },
+            {
+              "name": "times",
+              "value": "51"
+            }
+          ],
+          "end": 23,
+          "kind": "key",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_UNKNOWN_ATTR",
+        "end": 17,
+        "snippet": null,
+        "start": 16
+      },
+      "id": "key-13",
+      "template": "{key name=enter ctrl=yes}",
+      "tokens": []
+    },
+    {
+      "error": {
+        "code": "E_BAD_VALUE",
+        "end": 25,
+        "snippet": null,
+        "start": 20
+      },
+      "id": "key-14",
+      "template": "{key name=tab shift=true}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "tab"
+            },
+            {
+              "name": "shift",
+              "value": "true"
+            }
+          ],
+          "end": 25,
+          "kind": "key",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_SNIPPET_NOT_FOUND",
+        "end": 29,
+        "snippet": null,
+        "start": 8
+      },
+      "id": "snippet-01",
+      "template": "Thanks!\n{snippet abbr=\";sig\"}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 8,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "abbr",
+              "value": ";sig"
+            }
+          ],
+          "end": 29,
+          "kind": "snippet",
+          "start": 8
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_SNIPPET_NOT_FOUND",
+        "end": 18,
+        "snippet": null,
+        "start": 0
+      },
+      "id": "snippet-02",
+      "template": "{snippet abbr=\"a\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "abbr",
+              "value": "a"
+            }
+          ],
+          "end": 18,
+          "kind": "snippet",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_SNIPPET_NOT_FOUND",
+        "end": 22,
+        "snippet": null,
+        "start": 0
+      },
+      "id": "snippet-03",
+      "template": "{snippet abbr=\"/a b}\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "abbr",
+              "value": "/a b}"
+            }
+          ],
+          "end": 22,
+          "kind": "snippet",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_SNIPPET_NOT_FOUND",
+        "end": 18,
+        "snippet": null,
+        "start": 0
+      },
+      "id": "snippet-04",
+      "template": "{snippet abbr=\"x\"}-{snippet abbr=\"x\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "abbr",
+              "value": "x"
+            }
+          ],
+          "end": 18,
+          "kind": "snippet",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 19,
+          "kind": "text",
+          "start": 18
+        },
+        {
+          "attributes": [
+            {
+              "name": "abbr",
+              "value": "x"
+            }
+          ],
+          "end": 37,
+          "kind": "snippet",
+          "start": 19
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_SNIPPET_NOT_FOUND",
+        "end": 18,
+        "snippet": null,
+        "start": 0
+      },
+      "id": "snippet-05",
+      "template": "{snippet abbr=\"b\"}{snippet abbr=\"c\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "abbr",
+              "value": "b"
+            }
+          ],
+          "end": 18,
+          "kind": "snippet",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "abbr",
+              "value": "c"
+            }
+          ],
+          "end": 36,
+          "kind": "snippet",
+          "start": 18
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_SNIPPET_NOT_FOUND",
+        "end": 28,
+        "snippet": null,
+        "start": 5
+      },
+      "id": "snippet-06",
+      "template": "Sent {snippet abbr=\";today\"}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 5,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "abbr",
+              "value": ";today"
+            }
+          ],
+          "end": 28,
+          "kind": "snippet",
+          "start": 5
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_SNIPPET_NOT_FOUND",
+        "end": 45,
+        "snippet": null,
+        "start": 24
+      },
+      "id": "snippet-07",
+      "template": "Hi {field name=\"Name\"}. {snippet abbr=\";bye\"}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 3,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Name"
+            }
+          ],
+          "end": 22,
+          "kind": "field",
+          "start": 3
+        },
+        {
+          "attributes": [],
+          "end": 24,
+          "kind": "text",
+          "start": 22
+        },
+        {
+          "attributes": [
+            {
+              "name": "abbr",
+              "value": ";bye"
+            }
+          ],
+          "end": 45,
+          "kind": "snippet",
+          "start": 24
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_SNIPPET_NOT_FOUND",
+        "end": 19,
+        "snippet": null,
+        "start": 0
+      },
+      "id": "snippet-08",
+      "template": "{snippet abbr=\"s1\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "abbr",
+              "value": "s1"
+            }
+          ],
+          "end": 19,
+          "kind": "snippet",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_SNIPPET_NOT_FOUND",
+        "end": 19,
+        "snippet": null,
+        "start": 0
+      },
+      "id": "snippet-09",
+      "template": "{snippet abbr=\"s1\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "abbr",
+              "value": "s1"
+            }
+          ],
+          "end": 19,
+          "kind": "snippet",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_SNIPPET_NOT_FOUND",
+        "end": 25,
+        "snippet": null,
+        "start": 0
+      },
+      "id": "snippet-10",
+      "template": "{snippet abbr=\";missing\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "abbr",
+              "value": ";missing"
+            }
+          ],
+          "end": 25,
+          "kind": "snippet",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_SNIPPET_NOT_FOUND",
+        "end": 21,
+        "snippet": null,
+        "start": 0
+      },
+      "id": "snippet-11",
+      "template": "{snippet abbr=\";Sig\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "abbr",
+              "value": ";Sig"
+            }
+          ],
+          "end": 21,
+          "kind": "snippet",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_SNIPPET_NOT_FOUND",
+        "end": 18,
+        "snippet": null,
+        "start": 0
+      },
+      "id": "snippet-12",
+      "template": "{snippet abbr=\"a\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "abbr",
+              "value": "a"
+            }
+          ],
+          "end": 18,
+          "kind": "snippet",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_SNIPPET_NOT_FOUND",
+        "end": 18,
+        "snippet": null,
+        "start": 0
+      },
+      "id": "snippet-13",
+      "template": "{snippet abbr=\"a\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "abbr",
+              "value": "a"
+            }
+          ],
+          "end": 18,
+          "kind": "snippet",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_SNIPPET_NOT_FOUND",
+        "end": 18,
+        "snippet": null,
+        "start": 0
+      },
+      "id": "snippet-14",
+      "template": "{snippet abbr=\"a\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "abbr",
+              "value": "a"
+            }
+          ],
+          "end": 18,
+          "kind": "snippet",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_MISSING_ATTR",
+        "end": 9,
+        "snippet": null,
+        "start": 0
+      },
+      "id": "snippet-15",
+      "template": "{snippet}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 9,
+          "kind": "snippet",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_SNIPPET_NOT_FOUND",
+        "end": 30,
+        "snippet": null,
+        "start": 10
+      },
+      "id": "snippet-16",
+      "template": "ok so far {snippet abbr=\"bad\"}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 10,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "abbr",
+              "value": "bad"
+            }
+          ],
+          "end": 30,
+          "kind": "snippet",
+          "start": 10
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "syntax-01",
+      "template": "Kind regards,\nAna Lee",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 21,
+          "kind": "text",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "syntax-02",
+      "template": "",
+      "tokens": []
+    },
+    {
+      "error": null,
+      "id": "syntax-03",
+      "template": "{\"name\": \"x\", \"tags\": [{}], \"n\": {\"a\": 1}}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 42,
+          "kind": "text",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "syntax-04",
+      "template": "Hello {name}, your {thing} is {ready}.",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 38,
+          "kind": "text",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "syntax-05",
+      "template": "{Date} {DATE} {dates} {date:x} { date} {date-x}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 47,
+          "kind": "text",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "syntax-06",
+      "template": "Type {lbrace}date} to get {date}.",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 5,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 13,
+          "kind": "lbrace",
+          "start": 5
+        },
+        {
+          "attributes": [],
+          "end": 26,
+          "kind": "text",
+          "start": 13
+        },
+        {
+          "attributes": [],
+          "end": 32,
+          "kind": "date",
+          "start": 26
+        },
+        {
+          "attributes": [],
+          "end": 33,
+          "kind": "text",
+          "start": 32
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "syntax-07",
+      "template": "a { b } c }{ d",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 14,
+          "kind": "text",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "syntax-08",
+      "template": "one\r\ntwo\rthree",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 14,
+          "kind": "text",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "syntax-09",
+      "template": "{date\n  fmt=\"%Y\"\n  shift=\"+1y\"\n}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "fmt",
+              "value": "%Y"
+            },
+            {
+              "name": "shift",
+              "value": "+1y"
+            }
+          ],
+          "end": 32,
+          "kind": "date",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "syntax-10",
+      "template": "{date fmt=\"%H\\\\%M \\:%S \\\"q\\\"\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "fmt",
+              "value": "%H\\%M \\:%S \"q\""
+            }
+          ],
+          "end": 30,
+          "kind": "date",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "syntax-11",
+      "template": "Señor {field name=\"Apellido\"}: ¡gracias! 🎉",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 6,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Apellido"
+            }
+          ],
+          "end": 29,
+          "kind": "field",
+          "start": 6
+        },
+        {
+          "attributes": [],
+          "end": 43,
+          "kind": "text",
+          "start": 29
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_SNIPPET_NOT_FOUND",
+        "end": 147,
+        "snippet": null,
+        "start": 126
+      },
+      "id": "syntax-12",
+      "template": "Hi {field name=\"Name\"},\n\n{if field=\"Late\"}Sorry for the delay. {endif}Your order ships {date fmt=\"%A\" shift=\"+2bd\"}.\n{cursor}\n{snippet abbr=\";sig\"}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 3,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Name"
+            }
+          ],
+          "end": 22,
+          "kind": "field",
+          "start": 3
+        },
+        {
+          "attributes": [],
+          "end": 25,
+          "kind": "text",
+          "start": 22
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "Late"
+            }
+          ],
+          "end": 42,
+          "kind": "if",
+          "start": 25
+        },
+        {
+          "attributes": [],
+          "end": 63,
+          "kind": "text",
+          "start": 42
+        },
+        {
+          "attributes": [],
+          "end": 70,
+          "kind": "endif",
+          "start": 63
+        },
+        {
+          "attributes": [],
+          "end": 87,
+          "kind": "text",
+          "start": 70
+        },
+        {
+          "attributes": [
+            {
+              "name": "fmt",
+              "value": "%A"
+            },
+            {
+              "name": "shift",
+              "value": "+2bd"
+            }
+          ],
+          "end": 115,
+          "kind": "date",
+          "start": 87
+        },
+        {
+          "attributes": [],
+          "end": 117,
+          "kind": "text",
+          "start": 115
+        },
+        {
+          "attributes": [],
+          "end": 125,
+          "kind": "cursor",
+          "start": 117
+        },
+        {
+          "attributes": [],
+          "end": 126,
+          "kind": "text",
+          "start": 125
+        },
+        {
+          "attributes": [
+            {
+              "name": "abbr",
+              "value": ";sig"
+            }
+          ],
+          "end": 147,
+          "kind": "snippet",
+          "start": 126
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_UNCLOSED_MACRO",
+        "end": 29,
+        "snippet": null,
+        "start": 16
+      },
+      "id": "syntax-13",
+      "template": "Today {date fmt=\"%Y} and more",
+      "tokens": []
+    },
+    {
+      "error": {
+        "code": "E_UNCLOSED_MACRO",
+        "end": 11,
+        "snippet": null,
+        "start": 6
+      },
+      "id": "syntax-14",
+      "template": "Today {date",
+      "tokens": []
+    },
+    {
+      "error": {
+        "code": "E_BAD_SYNTAX",
+        "end": 10,
+        "snippet": null,
+        "start": 9
+      },
+      "id": "syntax-15",
+      "template": "{date fmt}",
+      "tokens": []
+    },
+    {
+      "error": {
+        "code": "E_BAD_SYNTAX",
+        "end": 10,
+        "snippet": null,
+        "start": 9
+      },
+      "id": "syntax-16",
+      "template": "{date fmt = \"%Y\"}",
+      "tokens": []
+    },
+    {
+      "error": {
+        "code": "E_BAD_SYNTAX",
+        "end": 15,
+        "snippet": null,
+        "start": 14
+      },
+      "id": "syntax-17",
+      "template": "{date fmt=\"%Y\"shift=\"+1d\"}",
+      "tokens": []
+    },
+    {
+      "error": {
+        "code": "E_MISSING_ATTR",
+        "end": 17,
+        "snippet": null,
+        "start": 12
+      },
+      "id": "syntax-18",
+      "template": "const v = `${key}`;",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 12,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 17,
+          "kind": "key",
+          "start": 12
+        },
+        {
+          "attributes": [],
+          "end": 19,
+          "kind": "text",
+          "start": 17
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_UNKNOWN_ATTR",
+        "end": 9,
+        "snippet": null,
+        "start": 8
+      },
+      "id": "syntax-19",
+      "template": "{lbrace x=1}",
+      "tokens": []
+    },
+    {
+      "error": null,
+      "id": "time-01",
+      "template": "It is {time}.",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 6,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 12,
+          "kind": "time",
+          "start": 6
+        },
+        {
+          "attributes": [],
+          "end": 13,
+          "kind": "text",
+          "start": 12
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "time-02",
+      "template": "{time fmt=\"%-I:%M %p\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "fmt",
+              "value": "%-I:%M %p"
+            }
+          ],
+          "end": 22,
+          "kind": "time",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "time-03",
+      "template": "{time fmt=\"%H:%M:%S\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "fmt",
+              "value": "%H:%M:%S"
+            }
+          ],
+          "end": 21,
+          "kind": "time",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "time-04",
+      "template": "{time shift=\"+2h\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "shift",
+              "value": "+2h"
+            }
+          ],
+          "end": 18,
+          "kind": "time",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "time-05",
+      "template": "{time shift=\"+30min\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "shift",
+              "value": "+30min"
+            }
+          ],
+          "end": 21,
+          "kind": "time",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "time-06",
+      "template": "{time fmt=\"%H:%M:%S\" shift=\"+90s\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "fmt",
+              "value": "%H:%M:%S"
+            },
+            {
+              "name": "shift",
+              "value": "+90s"
+            }
+          ],
+          "end": 34,
+          "kind": "time",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "time-07",
+      "template": "{time fmt=\"%Y-%m-%d %H:%M\" shift=\"+15min\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "fmt",
+              "value": "%Y-%m-%d %H:%M"
+            },
+            {
+              "name": "shift",
+              "value": "+15min"
+            }
+          ],
+          "end": 42,
+          "kind": "time",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "time-08",
+      "template": "{time fmt=\"%I:%M %p\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "fmt",
+              "value": "%I:%M %p"
+            }
+          ],
+          "end": 21,
+          "kind": "time",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "time-09",
+      "template": "{time fmt=\"%-I %p\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "fmt",
+              "value": "%-I %p"
+            }
+          ],
+          "end": 19,
+          "kind": "time",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "time-10",
+      "template": "{time}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 6,
+          "kind": "time",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "time-11",
+      "template": "{time shift=\"-1d\" fmt=\"%A %-H:%M\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "shift",
+              "value": "-1d"
+            },
+            {
+              "name": "fmt",
+              "value": "%A %-H:%M"
+            }
+          ],
+          "end": 34,
+          "kind": "time",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "time-12",
+      "template": "{date} {time} / {time fmt=\"%S\"}{time fmt=\"%S\"}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 6,
+          "kind": "date",
+          "start": 0
+        },
+        {
+          "attributes": [],
+          "end": 7,
+          "kind": "text",
+          "start": 6
+        },
+        {
+          "attributes": [],
+          "end": 13,
+          "kind": "time",
+          "start": 7
+        },
+        {
+          "attributes": [],
+          "end": 16,
+          "kind": "text",
+          "start": 13
+        },
+        {
+          "attributes": [
+            {
+              "name": "fmt",
+              "value": "%S"
+            }
+          ],
+          "end": 31,
+          "kind": "time",
+          "start": 16
+        },
+        {
+          "attributes": [
+            {
+              "name": "fmt",
+              "value": "%S"
+            }
+          ],
+          "end": 46,
+          "kind": "time",
+          "start": 31
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_BAD_SHIFT",
+        "end": 17,
+        "snippet": null,
+        "start": 12
+      },
+      "id": "time-13",
+      "template": "{time shift=\"+5\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "shift",
+              "value": "+5"
+            }
+          ],
+          "end": 17,
+          "kind": "time",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_BAD_FORMAT",
+        "end": 17,
+        "snippet": null,
+        "start": 10
+      },
+      "id": "time-14",
+      "template": "{time fmt=\"%H:%\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "fmt",
+              "value": "%H:%"
+            }
+          ],
+          "end": 17,
+          "kind": "time",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_BAD_VALUE",
+        "end": 13,
+        "snippet": null,
+        "start": 10
+      },
+      "id": "time-15",
+      "template": "{time fmt=\"\"}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "fmt",
+              "value": ""
+            }
+          ],
+          "end": 13,
+          "kind": "time",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_DUPLICATE_ATTR",
+        "end": 19,
+        "snippet": null,
+        "start": 18
+      },
+      "id": "time-16",
+      "template": "{time shift=\"+1h\" shift=\"+2h\"}",
+      "tokens": []
+    },
+    {
+      "error": null,
+      "id": "wait-01",
+      "template": "a{wait ms=200}b",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 1,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "ms",
+              "value": "200"
+            }
+          ],
+          "end": 14,
+          "kind": "wait",
+          "start": 1
+        },
+        {
+          "attributes": [],
+          "end": 15,
+          "kind": "text",
+          "start": 14
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "wait-02",
+      "template": "query{key name=enter}{wait ms=\"1500\"}next",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 5,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "enter"
+            }
+          ],
+          "end": 21,
+          "kind": "key",
+          "start": 5
+        },
+        {
+          "attributes": [
+            {
+              "name": "ms",
+              "value": "1500"
+            }
+          ],
+          "end": 37,
+          "kind": "wait",
+          "start": 21
+        },
+        {
+          "attributes": [],
+          "end": 41,
+          "kind": "text",
+          "start": 37
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "wait-03",
+      "template": "{wait ms=1}{wait ms=10000}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "ms",
+              "value": "1"
+            }
+          ],
+          "end": 11,
+          "kind": "wait",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "ms",
+              "value": "10000"
+            }
+          ],
+          "end": 26,
+          "kind": "wait",
+          "start": 11
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "wait-04",
+      "template": "{wait ms=10000}{wait ms=10000}{wait ms=10000}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "ms",
+              "value": "10000"
+            }
+          ],
+          "end": 15,
+          "kind": "wait",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "ms",
+              "value": "10000"
+            }
+          ],
+          "end": 30,
+          "kind": "wait",
+          "start": 15
+        },
+        {
+          "attributes": [
+            {
+              "name": "ms",
+              "value": "10000"
+            }
+          ],
+          "end": 45,
+          "kind": "wait",
+          "start": 30
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "wait-05",
+      "template": "{wait ms=10000}{wait ms=10000}{wait ms=10000}{if field=\"Slow\"}{wait ms=5000}{endif}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "ms",
+              "value": "10000"
+            }
+          ],
+          "end": 15,
+          "kind": "wait",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "ms",
+              "value": "10000"
+            }
+          ],
+          "end": 30,
+          "kind": "wait",
+          "start": 15
+        },
+        {
+          "attributes": [
+            {
+              "name": "ms",
+              "value": "10000"
+            }
+          ],
+          "end": 45,
+          "kind": "wait",
+          "start": 30
+        },
+        {
+          "attributes": [
+            {
+              "name": "field",
+              "value": "Slow"
+            }
+          ],
+          "end": 62,
+          "kind": "if",
+          "start": 45
+        },
+        {
+          "attributes": [
+            {
+              "name": "ms",
+              "value": "5000"
+            }
+          ],
+          "end": 76,
+          "kind": "wait",
+          "start": 62
+        },
+        {
+          "attributes": [],
+          "end": 83,
+          "kind": "endif",
+          "start": 76
+        }
+      ]
+    },
+    {
+      "error": null,
+      "id": "wait-06",
+      "template": "{wait ms=10000}{wait ms=10000}{wait ms=10000}{wait ms=1}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "ms",
+              "value": "10000"
+            }
+          ],
+          "end": 15,
+          "kind": "wait",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "ms",
+              "value": "10000"
+            }
+          ],
+          "end": 30,
+          "kind": "wait",
+          "start": 15
+        },
+        {
+          "attributes": [
+            {
+              "name": "ms",
+              "value": "10000"
+            }
+          ],
+          "end": 45,
+          "kind": "wait",
+          "start": 30
+        },
+        {
+          "attributes": [
+            {
+              "name": "ms",
+              "value": "1"
+            }
+          ],
+          "end": 56,
+          "kind": "wait",
+          "start": 45
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_BAD_VALUE",
+        "end": 11,
+        "snippet": null,
+        "start": 9
+      },
+      "id": "wait-07",
+      "template": "{wait ms=0}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "ms",
+              "value": "0"
+            }
+          ],
+          "end": 11,
+          "kind": "wait",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_BAD_VALUE",
+        "end": 15,
+        "snippet": null,
+        "start": 9
+      },
+      "id": "wait-08",
+      "template": "{wait ms=10001}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "ms",
+              "value": "10001"
+            }
+          ],
+          "end": 15,
+          "kind": "wait",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_BAD_VALUE",
+        "end": 13,
+        "snippet": null,
+        "start": 9
+      },
+      "id": "wait-09",
+      "template": "{wait ms=1.5}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "ms",
+              "value": "1.5"
+            }
+          ],
+          "end": 13,
+          "kind": "wait",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_BAD_VALUE",
+        "end": 12,
+        "snippet": null,
+        "start": 9
+      },
+      "id": "wait-10",
+      "template": "{wait ms=-5}",
+      "tokens": [
+        {
+          "attributes": [
+            {
+              "name": "ms",
+              "value": "-5"
+            }
+          ],
+          "end": 12,
+          "kind": "wait",
+          "start": 0
+        }
+      ]
+    },
+    {
+      "error": {
+        "code": "E_MISSING_ATTR",
+        "end": 6,
+        "snippet": null,
+        "start": 0
+      },
+      "id": "wait-11",
+      "template": "{wait}",
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 6,
+          "kind": "wait",
+          "start": 0
+        }
+      ]
+    }
+  ]
+}

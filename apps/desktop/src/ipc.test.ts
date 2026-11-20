@@ -45,8 +45,21 @@ describe("commands", () => {
       },
       { command: "dismiss", args: undefined },
     ]);
-    // Every registered command is reachable from the API.
-    expect(new Set(calls.map((c) => c.command))).toEqual(new Set(COMMANDS));
+    // Every registered command is reachable from the API (the library's from its own,
+    // library/api.test.ts; the template editor's from library/template/api.test.ts; the form
+    // panel's from form/api.test.ts; Settings and the log's from library/settings/api.test.ts).
+    expect(new Set(calls.map((c) => c.command))).toEqual(
+      new Set(
+        COMMANDS.filter(
+          (c) =>
+            !c.startsWith("template_") &&
+            !c.startsWith("library_") &&
+            !c.startsWith("form_") &&
+            !c.startsWith("settings_") &&
+            !c.startsWith("diagnostics_"),
+        ),
+      ),
+    );
   });
 
   it("name the two events the Rust side emits", () => {

@@ -16,9 +16,9 @@
 //! | --- | --- |
 //! | `status_changed` | `iamb:status` |
 //! | `library_changed` | `library_changed` |
-//! | `form_requested` | `form_requested` (session, snippet, fields; the focus token stays in Rust, which hands focus back, and last values are not forwarded until the form exists, task 3.5) |
+//! | `form_requested` | `form_requested` (session, snippet, fields; never the remembered values or the focus token). The form panel itself is fed by `crate::form` on its own event, `iamb:form`, sent to the `form` window only, with the values (task 3.5) |
 //! | `palette_requested` | `palette_requested` (the focus token stays in Rust) |
-//! | `diagnostic_added` | `diagnostic_added` (code and snippet) |
+//! | `diagnostic_added` | `diagnostic_added` (code, snippet, app and time) |
 //! | `settings_changed` | `settings_changed` |
 //!
 //! `outbox_changed` belongs to the sync group, which the `ui` role does not hear.
@@ -28,15 +28,15 @@
 
 use iamb_core::model::{Id, Snippet, SnippetKind, Trigger};
 use iamb_ipc::{
-    ErrorBody, EventBody, RequestBody, ResponseBody, ServiceStatus, SnippetQuery, WireDiagnostic,
-    WireField,
+    ChangedRows, ErrorBody, EventBody, RequestBody, ResponseBody, ServiceStatus, SnippetQuery,
+    WireDiagnostic, WireField,
 };
 use serde::{Deserialize, Serialize};
 
 /// The Tauri commands the front end may call, by name: the list in `app/mod.rs`'s
 /// `generate_handler!` and `COMMANDS` in `apps/desktop/src/ipc.ts` (`tests/front_end_contract.rs`
 /// compares the three).
-pub const COMMANDS: [&str; 7] = [
+pub const COMMANDS: &[&str] = &[
     "status",
     "refresh_status",
     "set_paused",
@@ -44,6 +44,36 @@ pub const COMMANDS: [&str; 7] = [
     "get_snippet",
     "report_first_paint",
     "dismiss",
+    // The library's commands (`app/library_commands.rs`, task 3.3).
+    "library_list_folders",
+    "library_list_tags",
+    "library_list_summaries",
+    "library_get_snippet",
+    "library_save_snippet",
+    "library_delete_snippet",
+    "library_set_enabled",
+    "library_save_folder",
+    "library_delete_folder",
+    "library_save_tag",
+    "library_delete_tag",
+    "library_check_abbreviation",
+    // The template editor's commands (`app/template_commands.rs`, task 3.4).
+    "template_parse",
+    "template_preview",
+    // The fill-in form's commands (`app/form_panel.rs`, task 3.5).
+    "form_ready",
+    "form_current",
+    "form_laid_out",
+    "form_painted",
+    "form_submit",
+    "form_cancel",
+    // Settings and diagnostics (`app/settings_commands.rs`, task 3.9).
+    "settings_get",
+    "settings_put",
+    "settings_list_exclusions",
+    "settings_put_exclusion",
+    "diagnostics_recent",
+    "diagnostics_test",
 ];
 
 /// The requests the bridge sends, by wire name (the `type` of each).
@@ -248,6 +278,28 @@ impl From<&WireField> for FieldView {
     }
 }
 
+/// The rows a library change touched (`iamb_ipc::ChangedRows`, as ids in text).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChangedView {
+    /// Snippets written, deleted or restored.
+    pub snippets: Vec<String>,
+    /// Folders written or deleted.
+    pub folders: Vec<String>,
+    /// Tags written or deleted.
+    pub tags: Vec<String>,
+}
+
+impl From<&ChangedRows> for ChangedView {
+    fn from(c: &ChangedRows) -> Self {
+        let ids = |v: &[Id]| v.iter().map(ToString::to_string).collect();
+        Self {
+            snippets: ids(&c.snippets),
+            folders: ids(&c.folders),
+            tags: ids(&c.tags),
+        }
+    }
+}
+
 /// A service event, as the front end hears it on `iamb:event`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -256,6 +308,9 @@ pub enum UiEvent {
     LibraryChanged {
         /// The new library revision.
         revision: u64,
+        /// The rows the change touched; `None` when it may have touched any (an import), so
+        /// the library reloads.
+        changed: Option<ChangedView>,
     },
     /// A fill-in form is wanted.
     FormRequested {
@@ -274,6 +329,10 @@ pub enum UiEvent {
         code: String,
         /// The snippet it names, if any.
         snippet: Option<String>,
+        /// The app it happened in, if the service named one.
+        app: Option<String>,
+        /// When it was recorded (UTC milliseconds).
+        at: i64,
     },
     /// Settings or exclusions changed.
     SettingsChanged {},
@@ -295,8 +354,9 @@ pub enum Forward {
 pub fn forward(event: &EventBody) -> Forward {
     match event {
         EventBody::StatusChanged { status } => Forward::Status(status.clone()),
-        EventBody::LibraryChanged { revision, .. } => Forward::Ui(UiEvent::LibraryChanged {
+        EventBody::LibraryChanged { revision, changed } => Forward::Ui(UiEvent::LibraryChanged {
             revision: *revision,
+            changed: changed.as_ref().map(ChangedView::from),
         }),
         EventBody::FormRequested {
             session,
@@ -320,6 +380,8 @@ fn diagnostic(entry: &WireDiagnostic) -> UiEvent {
     UiEvent::DiagnosticAdded {
         code: entry.code.clone(),
         snippet: entry.snippet.map(|id| id.to_string()),
+        app: entry.app.clone(),
+        at: entry.at.0,
     }
 }
 

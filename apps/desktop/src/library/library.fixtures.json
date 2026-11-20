@@ -1,0 +1,78 @@
+{
+  "check": {
+    "conflict": "04040404-0404-0404-0404-040404040404",
+    "hiddenBy": [],
+    "hides": [
+      "05050505-0505-0505-0505-050505050505"
+    ]
+  },
+  "folders": {
+    "folders": [
+      {
+        "defaults": {
+          "abbreviationPrefix": null,
+          "caseMode": null,
+          "trigger": null
+        },
+        "id": "02020202-0202-0202-0202-020202020202",
+        "name": "Snippets",
+        "parentId": null,
+        "position": 0
+      }
+    ],
+    "profile": "09090909-0909-0909-0909-090909090909"
+  },
+  "page": {
+    "next": 201,
+    "revision": 4,
+    "summaries": [
+      {
+        "abbreviation": "brb",
+        "broken": null,
+        "enabled": true,
+        "firstLine": "be right back",
+        "folderId": "02020202-0202-0202-0202-020202020202",
+        "id": "01010101-0101-0101-0101-010101010101",
+        "kind": "plain",
+        "label": "Back soon",
+        "tags": [
+          "03030303-0303-0303-0303-030303030303"
+        ],
+        "trigger": "delimiter",
+        "updatedAt": 1763400000000
+      }
+    ],
+    "total": 250
+  },
+  "saved": {
+    "id": "01010101-0101-0101-0101-010101010101",
+    "rev": 0,
+    "updatedAt": 1763400000000
+  },
+  "snippet": {
+    "abbreviation": "brb",
+    "body": "be right back",
+    "caseMode": "insensitive",
+    "createdAt": 1763400000000,
+    "enabled": true,
+    "folderId": "02020202-0202-0202-0202-020202020202",
+    "id": "01010101-0101-0101-0101-010101010101",
+    "kind": "plain",
+    "label": "Back soon",
+    "rev": 0,
+    "tags": [
+      "03030303-0303-0303-0303-030303030303"
+    ],
+    "trigger": "delimiter",
+    "updatedAt": 1763400000000,
+    "wordStart": true
+  },
+  "tags": [
+    {
+      "color": "blue",
+      "id": "03030303-0303-0303-0303-030303030303",
+      "name": "work",
+      "snippets": 12
+    }
+  ]
+}

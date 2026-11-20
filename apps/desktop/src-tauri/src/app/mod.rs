@@ -7,7 +7,12 @@
 //! session ending) does.
 
 mod commands;
+mod form_panel;
+mod library_commands;
 mod measure;
+mod measure_form;
+mod settings_commands;
+mod template_commands;
 pub mod tray;
 pub mod windows;
 
@@ -26,8 +31,12 @@ use crate::timing::OpenTimer;
 pub struct Options {
     /// `--measure-open RUNS`: time this many opens of the library window, print, exit.
     pub measure_runs: Option<usize>,
-    /// `--budget-ms MS`: with `--measure-open`, exit with status 1 when an open took longer.
+    /// `--budget-ms MS`: with `--measure-open` or `--measure-form`, exit with status 1 when an
+    /// open took longer.
     pub budget_ms: Option<f64>,
+    /// `--measure-form RUNS`: time this many fill-in forms from the request to the panel's
+    /// first paint, print, exit (`measure_form`).
+    pub measure_form_runs: Option<usize>,
     /// `--open-library`: open the library window at start (development, and desktops without
     /// a tray).
     pub open_library: bool,
@@ -39,6 +48,8 @@ pub struct Ui {
     pub bridge: Bridge,
     /// The cold-open timer of the library window.
     pub timer: OpenTimer,
+    /// The fill-in form's flow (`crate::form`, `form_panel`).
+    pub form: crate::form::FormController,
     /// The UI host's log.
     pub log: Arc<Logger>,
     tray: OnceLock<tray::Tray>,
@@ -49,6 +60,13 @@ impl Ui {
     pub fn show_status(&self, view: &StatusView) {
         if let Some(tray) = self.tray.get() {
             tray.show(view);
+        }
+    }
+
+    /// Shows or hides the tray icon (`ui.tray_icon`, task 3.9), if there is one.
+    pub fn show_tray(&self, visible: bool) {
+        if let Some(tray) = self.tray.get() {
+            tray.set_visible(visible);
         }
     }
 }
@@ -62,12 +80,23 @@ impl BridgeSink for Sink {
     fn status(&self, view: &StatusView) {
         if let Some(ui) = self.app.try_state::<Arc<Ui>>() {
             ui.show_status(view);
+            let connected = view.connection == crate::contract::ConnectionState::Connected;
+            if !connected {
+                ui.form.connection_lost();
+            }
+            settings_commands::connection_changed(&self.app, connected);
         }
         let _ = self.app.emit(STATUS_EVENT, view);
     }
 
     fn event(&self, event: &UiEvent) {
         let _ = self.app.emit(UI_EVENT, event);
+    }
+
+    fn service_event(&self, event: &iamb_ipc::EventBody) {
+        if let Some(ui) = self.app.try_state::<Arc<Ui>>() {
+            ui.form.service_event(event);
+        }
     }
 }
 
@@ -96,9 +125,11 @@ fn setup(
             app: handle.clone(),
         }),
     )?;
+    let form = form_panel::start(&handle, &bridge, options.measure_form_runs.is_some(), log)?;
     let ui = Arc::new(Ui {
         bridge,
         timer: OpenTimer::default(),
+        form,
         log: Arc::clone(log),
         tray: OnceLock::new(),
     });
@@ -114,6 +145,8 @@ fn setup(
     app.manage(Arc::clone(&ui));
     if let Some(runs) = options.measure_runs {
         measure::spawn(handle, runs, options.budget_ms);
+    } else if let Some(runs) = options.measure_form_runs {
+        measure_form::spawn(handle, runs, options.budget_ms);
     } else if options.open_library {
         let ui = Arc::clone(&ui);
         tauri::async_runtime::spawn_blocking(move || {
@@ -144,6 +177,32 @@ pub fn run(dirs: DataDirs, options: &Options, log: &Arc<Logger>) -> tauri::Resul
             commands::get_snippet,
             commands::report_first_paint,
             commands::dismiss,
+            library_commands::library_list_folders,
+            library_commands::library_list_tags,
+            library_commands::library_list_summaries,
+            library_commands::library_get_snippet,
+            library_commands::library_save_snippet,
+            library_commands::library_delete_snippet,
+            library_commands::library_set_enabled,
+            library_commands::library_save_folder,
+            library_commands::library_delete_folder,
+            library_commands::library_save_tag,
+            library_commands::library_delete_tag,
+            library_commands::library_check_abbreviation,
+            template_commands::template_parse,
+            template_commands::template_preview,
+            settings_commands::settings_get,
+            settings_commands::settings_put,
+            settings_commands::settings_list_exclusions,
+            settings_commands::settings_put_exclusion,
+            settings_commands::diagnostics_recent,
+            settings_commands::diagnostics_test,
+            form_panel::form_ready,
+            form_panel::form_current,
+            form_panel::form_laid_out,
+            form_panel::form_painted,
+            form_panel::form_submit,
+            form_panel::form_cancel,
         ])
         .setup(move |app| setup(app, &dirs, &setup_log, &setup_options).map_err(Into::into))
         .build(tauri::generate_context!())?;
@@ -156,6 +215,7 @@ pub fn run(dirs: DataDirs, options: &Options, log: &Arc<Logger>) -> tauri::Resul
         } => api.prevent_exit(),
         RunEvent::Exit => {
             if let Some(ui) = app.try_state::<Arc<Ui>>() {
+                ui.form.stop();
                 ui.bridge.stop();
             }
             run_log.info(format_args!("ui host exits"));

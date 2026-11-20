@@ -77,11 +77,18 @@ pub struct Service {
     pub editor: FocusToken,
     pub endpoint: Endpoint,
     pub worker: Option<Worker>,
+    /// How long one `PanelFocus { shown: true }` holds in the worker; its default when `None`.
+    pub panel_focus_lease: Option<Duration>,
 }
 
 impl Service {
     /// A machine with a focused editor and a running worker over [`LIBRARY`].
     pub fn start(endpoint: Endpoint) -> Self {
+        Self::start_with_lease(endpoint, None)
+    }
+
+    /// [`start`](Self::start), with the worker's `PanelFocus` lease set to `lease`.
+    pub fn start_with_lease(endpoint: Endpoint, lease: Option<Duration>) -> Self {
         let dir = TempDir::new().expect("temp dir");
         seed(dir.path());
         let os = MockPlatform::new();
@@ -93,6 +100,7 @@ impl Service {
             editor,
             endpoint,
             worker: None,
+            panel_focus_lease: lease,
         };
         service.restart();
         service
@@ -111,6 +119,9 @@ impl Service {
         let mut config = WorkerConfig::new(dirs.clone(), Arc::new(self.os.clone()), endpoint);
         config.policy = PeerPolicy::SameUser;
         config.logger = Arc::new(ServiceLogger::open(&dirs.logs(), "worker"));
+        if let Some(lease) = self.panel_focus_lease {
+            config.panel_focus_lease = lease;
+        }
         let worker = Worker::start(config).expect("worker starts");
         worker.settle();
         self.worker = Some(worker);

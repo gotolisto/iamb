@@ -1,0 +1,79 @@
+import { useEffect } from "react";
+
+import { describeFailure } from "../errors";
+import { Choice, Row, Switch } from "./controls";
+import type { SectionProps } from "./section";
+import { type Theme, applyTheme, themeOf } from "./theme";
+import { useMessages } from "./useMessages";
+
+const THEMES: { value: Theme; label: string }[] = [
+  { value: "system", label: "Follow the system" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+];
+
+/** General: pause, the tray icon and the appearance (specification §4.7). */
+export function GeneralSection({ env, data, mac, offline }: SectionProps) {
+  const { messages, fail } = useMessages();
+  const values = data.values ?? {};
+  const theme = themeOf(values["ui.theme"]);
+  const trayShown = values["ui.tray_icon"] !== "off";
+
+  useEffect(() => applyTheme(theme), [theme]);
+
+  return (
+    <>
+      <Row
+        label="Expand snippets as I type"
+        help="Turn this off to pause Iamb everywhere. The menu has the same switch."
+        message={messages.pause ?? null}
+      >
+        {(ids) => (
+          <Switch
+            on={!env.paused}
+            labelledBy={ids.label}
+            describedBy={ids.describedBy}
+            disabled={offline}
+            onChange={(on) => {
+              fail("pause", null);
+              env.api.setPaused(!on).catch((e: unknown) => fail("pause", describeFailure(e, "set_paused")));
+            }}
+          />
+        )}
+      </Row>
+      <Row
+        label={`Show the Iamb icon in the ${mac ? "menu bar" : "notification area"}`}
+        help={`Iamb keeps running without it. Open it from the ${mac ? "Dock" : "Start menu"}.`}
+        message={messages.tray ?? null}
+      >
+        {(ids) => (
+          <Switch
+            on={trayShown}
+            labelledBy={ids.label}
+            describedBy={ids.describedBy}
+            disabled={offline}
+            onChange={(on) => {
+              void data.save("ui.tray_icon", on ? null : "off").then((f) => fail("tray", f));
+            }}
+          />
+        )}
+      </Row>
+      <Row label="Appearance" message={messages.theme ?? null}>
+        {(ids) => (
+          <Choice
+            label={ids.label}
+            value={theme}
+            options={THEMES}
+            onChange={(next) => {
+              applyTheme(next);
+              void data.save("ui.theme", next === "system" ? null : next).then((f) => {
+                fail("theme", f);
+                if (f) applyTheme(theme);
+              });
+            }}
+          />
+        )}
+      </Row>
+    </>
+  );
+}

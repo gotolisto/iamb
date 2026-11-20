@@ -67,7 +67,8 @@ fn findings_left_to_later_tasks_say_where_they_are_tracked() {
     for (finding, task) in [
         ("| 11,", "Phase 5"),
         ("| 13,", "Task 3.5"),
-        ("| 16,", "Tasks 3.5 and 3.6"),
+        // The form panel's part is done (task 3.5); the palette's is left.
+        ("| 16,", "Task 3.6"),
     ] {
         let row = table
             .lines()

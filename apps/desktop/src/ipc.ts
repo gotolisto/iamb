@@ -49,11 +49,25 @@ export interface FieldView {
   default: string;
 }
 
+/** The rows a library change touched (`ChangedView` in src-tauri/src/contract.rs). */
+export interface ChangedRows {
+  snippets: string[];
+  folders: string[];
+  tags: string[];
+}
+
 export type UiEvent =
-  | { type: "library_changed"; revision: number }
+  | { type: "library_changed"; revision: number; changed: ChangedRows | null }
   | { type: "form_requested"; session: number; snippet: string; fields: FieldView[] }
   | { type: "palette_requested" }
-  | { type: "diagnostic_added"; code: string; snippet: string | null }
+  | {
+      type: "diagnostic_added";
+      code: string;
+      snippet: string | null;
+      app: string | null;
+      /** UTC milliseconds. */
+      at: number;
+    }
   | { type: "settings_changed" };
 
 /** The cold-open marks of a window's first paint, in epoch milliseconds (src-tauri/src/timing.rs). */
@@ -85,6 +99,32 @@ export const COMMANDS = [
   "get_snippet",
   "report_first_paint",
   "dismiss",
+  "library_list_folders",
+  "library_list_tags",
+  "library_list_summaries",
+  "library_get_snippet",
+  "library_save_snippet",
+  "library_delete_snippet",
+  "library_set_enabled",
+  "library_save_folder",
+  "library_delete_folder",
+  "library_save_tag",
+  "library_delete_tag",
+  "library_check_abbreviation",
+  "template_parse",
+  "template_preview",
+  "form_ready",
+  "form_current",
+  "form_laid_out",
+  "form_painted",
+  "form_submit",
+  "form_cancel",
+  "settings_get",
+  "settings_put",
+  "settings_list_exclusions",
+  "settings_put_exclusion",
+  "diagnostics_recent",
+  "diagnostics_test",
 ] as const;
 
 export type CommandName = (typeof COMMANDS)[number];
@@ -108,7 +148,8 @@ export function createApi(invoke: Invoke) {
 export type Api = ReturnType<typeof createApi>;
 
 /** The commands of the running app. */
-export const api: Api = createApi((command, args) => tauriInvoke(command, args));
+export const invoke: Invoke = (command, args) => tauriInvoke(command, args);
+export const api: Api = createApi(invoke);
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
@@ -151,11 +192,18 @@ function isField(v: unknown): v is FieldView {
   );
 }
 
+const isStrings = (v: unknown): v is string[] =>
+  Array.isArray(v) && v.every((s) => typeof s === "string");
+
+function isChangedRows(v: unknown): v is ChangedRows {
+  return isObject(v) && isStrings(v.snippets) && isStrings(v.folders) && isStrings(v.tags);
+}
+
 export function isUiEvent(v: unknown): v is UiEvent {
   if (!isObject(v)) return false;
   switch (v.type) {
     case "library_changed":
-      return typeof v.revision === "number";
+      return typeof v.revision === "number" && (v.changed === null || isChangedRows(v.changed));
     case "form_requested":
       return (
         typeof v.session === "number" &&
@@ -167,7 +215,12 @@ export function isUiEvent(v: unknown): v is UiEvent {
     case "settings_changed":
       return true;
     case "diagnostic_added":
-      return typeof v.code === "string" && (v.snippet === null || typeof v.snippet === "string");
+      return (
+        typeof v.code === "string" &&
+        (v.snippet === null || typeof v.snippet === "string") &&
+        (v.app === null || typeof v.app === "string") &&
+        typeof v.at === "number"
+      );
     default:
       return false;
   }

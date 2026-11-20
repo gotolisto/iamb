@@ -9,7 +9,7 @@ commands of the Rust side.
 
 | Path | What |
 | --- | --- |
-| `src/` | The front end (Vite, React, TypeScript). `ipc.ts` is the typed API over the Tauri commands and events; `library/`, `form/`, `palette/` the three views (placeholders until tasks 3.3, 3.5, 3.6); `styles/tokens.css` the design tokens, generated from `docs/ux/tokens.json` by `pnpm tokens` (`scripts/tokens.mjs`, the same rules as the mock-ups' builder); `styles/base.css` uses only those. |
+| `src/` | The front end (Vite, React, TypeScript). `ipc.ts` is the typed API over the Tauri commands and events; `library/` the library window (task 3.3: sidebar, virtualised snippet list, editor; see below), `form/` the fill-in form panel (task 3.5; see below), `palette/` the search palette (a placeholder until task 3.6); `styles/tokens.css` the design tokens, generated from `docs/ux/tokens.json` by `pnpm tokens` (`scripts/tokens.mjs`, the same rules as the mock-ups' builder); `styles/base.css` uses only those. |
 | `src-tauri/` | The `iamb-desktop` crate: `src/bridge/` (the connection to the service, reconnecting with backoff), `src/contract.rs` (what the front end sees and how it maps onto `iamb-ipc`), `src/app/` (tray, windows, commands), `src/crash.rs` and `src/log.rs` (as in the service, architecture §8). |
 | `src-tauri/tests/` | Bridge, message contract and crash-isolation tests against a worker on the mock platform. |
 | `icon-source/icon.svg` | The source of `src-tauri/icons/` (a placeholder mark); regenerate with `pnpm tauri icon icon-source/icon.svg -o src-tauri/icons` and keep only the desktop files. |
@@ -59,6 +59,81 @@ The UI host writes `logs/desktop.log` in the data directory: connection changes,
 events and timings, never typed text, form values or message bodies (architecture §8). It takes
 `run/desktop.lock`, so a second UI host for the same data directory exits at once.
 
+## The library window
+
+`src/library/` (task 3.3). `Library.tsx` holds the window's state and shortcuts; `useLibraryData.ts`
+keeps folders, tags and every snippet's summary in memory (pages of 1,000, read again for what a
+`LibraryChanged` names); `VirtualList.tsx` draws only the rows in view (48 px rows, 10,000
+snippets); `Editor.tsx` is the snippet editor with explicit save. Its content field is the
+template editor (task 3.4, `src/library/template/`: `TemplateField.tsx` with chips for fields and
+macros, checked by the service's `template_parse` and previewed with `template_preview`). `api.ts`
+mirrors `src-tauri/src/library.rs` (the `library_*` commands). Tests: `src/library/*.test.ts(x)`
+against `testkit.tsx` (a fake service), `src-tauri/tests/library.rs` against a real worker.
+
+Settings and "Why didn't it expand?" (task 3.9) are views of the same window:
+`src/library/settings/` (one file per section) and `src/library/diagnostics/` (`reasons.ts` holds
+the sentence for each diagnostic code; `codes.test.ts` fails when a code has none). They speak to
+the service through `src-tauri/src/settings.rs` (the `settings_*` and `diagnostics_*` commands).
+`src-tauri/tests/settings.rs` holds one persistence test per setting and a test that fails when a
+setting the service reads has none.
+
+    # scroll measurement with 10,000 snippets (needs Playwright; see docs/test-strategy.md §8.4)
+    pnpm build && NODE_PATH=/path/to/node_modules node scripts/scroll-kpi.mjs
+
+## The fill-in form panel
+
+`src/form/` and `src-tauri/src/form.rs` (task 3.5). `form.rs` is the flow, independent of
+Tauri: on `FormRequested` it answers `FormAck`, reads the snippet's header, lets the hidden panel
+render, sends `PanelFocus { form, shown: true }` and waits for its answer, then shows the panel
+and renews the lease every 10 s; Insert hides the panel, hands the focus back (`restore_focus`),
+sends `PanelFocus { shown: false }` and then `FormSubmit`; Cancel does the same with
+`FormCancel`. `src-tauri/src/app/form_panel.rs` is the window side and the `form_*` commands
+(they answer the `form` window only); `src-tauri/src/app/windows.rs` has the panel helpers the
+palette reuses (`show_panel`, `hide_panel`, `panel_frame`). `src/form/FormPanel.tsx` draws the
+fields, `FormView.tsx` holds the answers for the panel's lifetime only, `model.ts` has the rules
+and the copy. The tray's "Fill in the last form again…" sends `ReopenLastForm`. Tests:
+`src/form/*.test.ts(x)`, `src-tauri/tests/form.rs` (the bridge and a real worker on the mock
+platform).
+
+    # the 150 ms measurement (docs/test-strategy.md §8.5)
+    xvfb-run -a target/release/iamb-desktop --data-dir "$(mktemp -d)" --measure-form 20 --budget-ms 150
+
+### The macOS panel (needs a function in `iamb-platform-macos`)
+
+On macOS the form (and the palette, task 3.6) must be a non-activating panel, so that the app
+being typed into stays the active app (spec §4.4, §7; ADR-0017). Tauri 2 has no such window, and
+turning its `NSWindow` into an `NSPanel` takes Objective-C calls that are `unsafe`, which this
+crate cannot make (`unsafe_code = "forbid"` in the workspace lints, which it inherits). Until the
+function below exists the panel is an ordinary window of the accessory app: showing it activates
+Iamb and the hand-back activates the target app again. The flow, `PanelFocus` and the
+hand-back do not change.
+
+The function, in `iamb-platform-macos` (which already allows audited `unsafe` and depends on
+`objc2` and `objc2-app-kit`):
+
+```rust
+/// Turns `window` (a Tauri window, through `raw-window-handle`) into a non-activating panel.
+/// Main thread only (`MainThreadMarker`); idempotent.
+pub fn make_non_activating_panel(
+    window: &impl raw_window_handle::HasWindowHandle,
+) -> Result<(), PlatformError>;
+```
+
+It takes the `NSView` of the `AppKit` handle and its `window`, changes the window's class to a
+subclass of `NSPanel` registered once at run time whose `canBecomeKeyWindow` answers `YES`
+(`NSPanel` adds no instance variables, so `object_setClass` is sound), adds
+`NSWindowStyleMask::NonactivatingPanel` to the style mask, sets `becomesKeyOnlyIfNeeded` to `NO`,
+`floatingPanel` to `YES`, `hidesOnDeactivate` to `NO` and the collection behaviour
+`CanJoinAllSpaces | FullScreenAuxiliary`. It needs `raw-window-handle` (already in the build
+through Tauri) and the `NSPanel` feature of `objc2-app-kit`. A main-loop test in the crate
+creates a window, converts it and checks the class, the mask and that `NSApp` did not become
+active when the panel was made key.
+
+The desktop crate then calls it for `form` and `palette` right after they are created in
+`windows::prewarm` (on the main thread), and `windows::show_panel` stops calling `set_focus` on
+macOS (Tauri's `set_focus` activates the app; `show` alone orders the panel front and makes it
+key, which a non-activating panel does without activating Iamb).
+
 ## Checks
 
     pnpm typecheck
@@ -85,7 +160,6 @@ How it measures and what it gave is in `docs/test-strategy.md` §8.
 
 - The supervisor starts and restarts the UI host at login (architecture §3.2); until then start
   it yourself as above.
-- The fill-in form (3.5) and the palette (3.6): their content, the non-activating panels on
-  macOS, the foreground grant on Windows, and the focus hand-back.
-- The library (3.3), the template editor (3.4), onboarding (3.7), settings (3.9), and the look
-  of the design system (3.1).
+- The palette (3.6): its content, on the form's panel helpers (`windows::show_panel`).
+- The non-activating panel on macOS, once `iamb-platform-macos` has the function above.
+- Onboarding (3.7), rich text (3.8), library health (3.10) and the accessibility pass (3.11).
