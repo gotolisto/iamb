@@ -147,6 +147,11 @@ interface EditorProps {
   onSaved: (saved: Saved, form: { abbreviation: string; trigger: Trigger }, wasNew: boolean) => void;
   /** Cancel, Esc, "Close": back to the list. The window decides whether to ask first. */
   onClose: () => void;
+  /**
+   * "Close" on the notice that the snippet no longer exists: the window drops it from the
+   * selection, whether or not its list has caught up with the deletion yet.
+   */
+  onGone: () => void;
   onDelete: (snippet: Snippet) => void;
   onDuplicate: (snippet: Snippet) => void;
   onShowSnippet: (id: string) => void;
@@ -219,7 +224,7 @@ export function Editor(props: EditorProps) {
         setMeta({ updatedAt: s.updatedAt });
       },
       (e: unknown) => {
-        if (live) setNotice(goneNotice(describeFailure(e, "get_snippet"), props.onClose));
+        if (live) setNotice(goneNotice(describeFailure(e, "get_snippet"), props.onGone));
       },
     );
     return () => {
@@ -250,7 +255,7 @@ export function Editor(props: EditorProps) {
         }
       },
       (e: unknown) => {
-        if (live) setNotice(goneNotice(describeFailure(e, "get_snippet"), props.onClose));
+        if (live) setNotice(goneNotice(describeFailure(e, "get_snippet"), props.onGone));
       },
     );
     return () => {
@@ -354,7 +359,7 @@ export function Editor(props: EditorProps) {
           .checkAbbreviation(f.abbreviation, f.trigger, rowId.current ?? undefined)
           .then(setCheck, () => {});
       } else if (failure.kind === "gone") {
-        setNotice(goneNotice(failure, props.onClose));
+        setNotice(goneNotice(failure, props.onGone));
       } else {
         setNotice({
           tone: "danger",

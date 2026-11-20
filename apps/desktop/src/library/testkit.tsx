@@ -138,6 +138,7 @@ export function createFake(options: FakeOptions = {}) {
   const listeners = new Set<(e: UiEvent) => void>();
   const calls: string[] = [];
   let down: string | null = null;
+  let listDelayMs = 0;
 
   const addFolder = (p: Partial<Folder> & { name: string }): Folder => {
     const f: Folder = {
@@ -265,6 +266,7 @@ export function createFake(options: FakeOptions = {}) {
     },
     listSummaries: async (offset, limit) => {
       calls.push(`listSummaries ${offset}`);
+      if (listDelayMs > 0) await new Promise((r) => setTimeout(r, listDelayMs));
       guardUp();
       const all = [...live.values()];
       const page = all.slice(offset, offset + limit).map(summary);
@@ -407,6 +409,10 @@ export function createFake(options: FakeOptions = {}) {
     /** The service goes down (`code` is what commands fail with) or comes back (null). */
     setDown(code: string | null) {
       down = code;
+    },
+    /** The snippet list answers this much later (a slow machine: other reads overtake it). */
+    setListDelay(ms: number) {
+      listDelayMs = ms;
     },
     /** The snippet was used on this computer. */
     setUsage(id: string, uses: number, lastUsed: number | null) {

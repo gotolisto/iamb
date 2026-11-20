@@ -340,8 +340,6 @@ export function Library({ env }: { env: LibraryEnv }) {
     });
   }, [data.folders, folder, openDraft, tag]);
 
-  const rowsById = useRef(data.rowsById);
-  rowsById.current = data.rowsById;
   /** "New snippet labelled “…”" from the search palette: a draft with that label. */
   const newLabelled = useCallback(
     (label: string) => {
@@ -368,11 +366,18 @@ export function Library({ env }: { env: LibraryEnv }) {
     guard(() => {
       setDraft(null);
       setEditorKey("none");
-      // A snippet that went while it was open was kept selected until now.
-      setSelection((s) => (s.ids.size === 1 && s.active !== null && !rowsById.current.has(s.active) ? NO_SELECTION : s));
       focusList();
     });
   }, [guard]);
+
+  // The open snippet no longer exists (the editor learnt it from the service): it was kept
+  // selected so that the editor could say so, and goes now. Nothing is left to save.
+  const dropGone = useCallback(() => {
+    setDraft(null);
+    setEditorKey("none");
+    setSelection((s) => (s.ids.size === 1 ? NO_SELECTION : s));
+    focusList();
+  }, []);
 
   const duplicate = useCallback(
     (s: Snippet) => {
@@ -934,6 +939,7 @@ export function Library({ env }: { env: LibraryEnv }) {
             mac={mac}
             onSaved={onSaved}
             onClose={closeEditor}
+            onGone={dropGone}
             onDelete={deleteFromEditor}
             onDuplicate={duplicate}
             onShowSnippet={showSnippet}

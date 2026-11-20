@@ -266,6 +266,23 @@ describe("changes made elsewhere", () => {
     expect(await screen.findByText(/Select a snippet, or press/)).toBeTruthy();
   });
 
+  it("closes a snippet deleted elsewhere even before the list has caught up", async () => {
+    const user = userEvent.setup();
+    const { fake } = await renderLibrary(fakeWith());
+    const row = await screen.findByRole("option", { name: /^Late delivery/ });
+    await user.click(row);
+    await screen.findByLabelText("Content");
+    // The list's own read of the change is slow, so Close comes while the row is still listed.
+    fake.setListDelay(400);
+    await fake.api.deleteSnippet(row.id.replace("row-", ""));
+    expect(
+      await screen.findByText("This snippet no longer exists. It may have been deleted on another device."),
+    ).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(await screen.findByText(/Select a snippet, or press/)).toBeTruthy();
+    expect(screen.queryByText(/This snippet no longer exists/)).toBeNull();
+  });
+
   it("keeps the draft when the service stops, and saves after it is back", async () => {
     const user = userEvent.setup();
     const fake = fakeWith();
