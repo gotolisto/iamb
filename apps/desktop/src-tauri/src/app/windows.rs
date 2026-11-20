@@ -328,7 +328,7 @@ pub fn show_panel(
 }
 
 /// How long a panel stays shown, out of sight, for its first paint ([`prepaint_panel`]).
-const PREPAINT_HOLD: std::time::Duration = std::time::Duration::from_millis(500);
+pub(super) const PREPAINT_HOLD: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Shows the panel `label` once, out of sight and unable to take the keyboard, long enough to
 /// paint, then hides it. A web view that was never shown pays for setting up its drawing on

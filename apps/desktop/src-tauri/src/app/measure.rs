@@ -1,7 +1,7 @@
 //! `--measure-open RUNS`: the cold-open harness (see `timing` for what is measured).
 //!
-//! After start-up has settled (the pre-warmed panels have loaded: they are part of start-up,
-//! not of opening the library), it performs the tray's "Open library" action `RUNS` times,
+//! After start-up has settled (the pre-warmed panels have loaded and painted once while hidden:
+//! they are part of start-up, not of opening the library), it performs the tray's "Open library" action `RUNS` times,
 //! waits for each first paint, destroys the window, and prints one line per open and a summary
 //! to standard output, then exits: status 0, or 1 when an open was not painted within 10 s or
 //! any open took longer than `--budget-ms` (every open is cold: the window is destroyed in
@@ -42,6 +42,19 @@ fn measure(app: &AppHandle, runs: usize, budget_ms: Option<f64>) -> i32 {
         say("cold-open: the app did not start");
         return 1;
     };
+    // The pre-warmed panels paint once while hidden when their pages have loaded
+    // (`windows::prepaint_panel`); on a slow machine that comes after `SETTLE`, and a panel's
+    // first paint during the first open would be counted as the library's. Wait for both to
+    // have started, then for their hold to end.
+    let deadline = Instant::now() + PAINT_LIMIT;
+    while !(ui.form.prepainted() && ui.palette.controller.prepainted()) && Instant::now() < deadline
+    {
+        thread::sleep(Duration::from_millis(20));
+    }
+    if !(ui.form.prepainted() && ui.palette.controller.prepainted()) {
+        say("cold-open: the panels did not paint while hidden; measuring anyway");
+    }
+    thread::sleep(windows::PREPAINT_HOLD + Duration::from_millis(200));
     let mut results: Vec<Measurement> = Vec::new();
     for run in 1..=runs {
         if let Err(e) = windows::open_library(app, &ui.timer) {
