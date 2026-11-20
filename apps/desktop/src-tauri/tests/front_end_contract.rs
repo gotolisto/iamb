@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use iamb_desktop::contract::{
     self, COMMANDS, CommandError, ConnectionState, Forward, STATUS_EVENT, StatusView, UI_EVENT,
 };
+use iamb_desktop::{form, template};
 use iamb_ipc::{EventBody, Wire};
 use serde_json::{Value, json};
 
@@ -49,18 +50,29 @@ fn quoted_list(text: &str, marker: &str) -> Vec<String> {
 #[test]
 fn the_command_lists_agree() {
     let ts = read(&app_dir().join("../src/ipc.ts"));
+    // As sets: tasks add their commands to each list independently.
+    let sorted = |mut v: Vec<String>| {
+        v.sort();
+        v
+    };
+    let expected = sorted(COMMANDS.iter().map(|c| (*c).to_owned()).collect());
     assert_eq!(
-        quoted_list(&ts, "export const COMMANDS"),
-        COMMANDS,
+        sorted(quoted_list(&ts, "export const COMMANDS")),
+        expected,
         "ipc.ts"
     );
 
     let app = read(&app_dir().join("src/app/mod.rs"));
+    // Handlers are `module::name`; the command's name is the part after the last `::`.
     let handlers: Vec<String> = quoted_list(&app, "generate_handler!")
         .into_iter()
-        .map(|h| h.trim_start_matches("commands::").to_owned())
+        .map(|h| h.rsplit("::").next().unwrap_or_default().to_owned())
         .collect();
-    assert_eq!(handlers, COMMANDS, "generate_handler! in src/app/mod.rs");
+    assert_eq!(
+        sorted(handlers),
+        expected,
+        "generate_handler! in src/app/mod.rs"
+    );
 
     for event in [STATUS_EVENT, UI_EVENT] {
         assert!(ts.contains(&format!("\"{event}\"")), "ipc.ts names {event}");
@@ -99,12 +111,62 @@ fn samples() -> Value {
         Wire::Response(r) => r.into_result().expect_err("error").into(),
         _ => panic!("not a response"),
     };
+    // The template editor's answers (task 3.4).
+    let parsed = match golden("response_template_tokens") {
+        Wire::Response(r) => template::parsed_from(r.into_result().expect("ok")).expect("tokens"),
+        _ => panic!("not a response"),
+    };
+    let preview = match golden("response_preview") {
+        Wire::Response(r) => template::preview_from(r.into_result().expect("ok")).expect("preview"),
+        _ => panic!("not a response"),
+    };
     json!({
         "statuses": statuses,
         "events": events,
         "snippets": snippets,
         "snippet": snippet,
         "error": error,
+        "template": { "parsed": parsed, "preview": preview },
+        "form": form_samples(),
+    })
+}
+
+/// The fill-in form panel's payloads (task 3.5): the form `form_current` answers, built from the
+/// golden `FormRequested` and the golden snippet's header, its events, and the error of an
+/// Insert whose focus could not be given back.
+fn form_samples() -> Value {
+    let Wire::Event(EventBody::FormRequested {
+        session,
+        snippet,
+        spec,
+        last_values,
+        ..
+    }) = golden("event_form_requested")
+    else {
+        panic!("not a form request")
+    };
+    let header = match golden("response_snippet") {
+        Wire::Response(r) => form::header_from(&r.into_result().expect("ok")).expect("header"),
+        _ => panic!("not a response"),
+    };
+    let open = form::form_open(session, snippet, &spec, last_values.as_ref(), &header, None);
+    let named = form::form_open(
+        session,
+        snippet,
+        &spec,
+        None,
+        &header,
+        Some("Mail".to_owned()),
+    );
+    json!({
+        "open": open,
+        "openWithoutValues": named,
+        "events": [
+            form::FormEvent::Open { session },
+            form::FormEvent::Shown { session },
+            form::FormEvent::Closed { session },
+        ],
+        "focusLost": form::focus_lost(),
     })
 }
 

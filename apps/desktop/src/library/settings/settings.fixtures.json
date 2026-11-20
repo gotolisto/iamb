@@ -1,0 +1,27 @@
+{
+  "diagnostics": [
+    {
+      "app": null,
+      "at": 1763400000500,
+      "code": "injection_cancelled",
+      "snippet": "01010101-0101-0101-0101-010101010101"
+    }
+  ],
+  "exclusions": [
+    {
+      "appId": "org.example.bank",
+      "createdAt": 1763400000000,
+      "displayName": "Bank"
+    }
+  ],
+  "settings": {
+    "locale": "de"
+  },
+  "test": {
+    "abbreviation": ";rty",
+    "error": null,
+    "label": "Thanks for your order",
+    "outcome": "expands",
+    "snippet": "01010101-0101-0101-0101-010101010101"
+  }
+}

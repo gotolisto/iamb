@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use iamb_core::model::Id;
 use iamb_desktop::bridge::connection::hello;
 use iamb_desktop::contract::{
-    self, CommandError, EVENTS, FieldView, Forward, REQUESTS, ServiceView, UiEvent,
+    self, ChangedView, CommandError, EVENTS, FieldView, Forward, REQUESTS, ServiceView, UiEvent,
 };
 use iamb_ipc::{ErrorCode, EventBody, PROTOCOL_VERSION, Request, RequestBody, Role, Wire};
 use serde_json::Value;
@@ -173,7 +173,14 @@ fn every_event_the_ui_role_hears_is_forwarded_as_promised() {
     }
     assert_eq!(
         contract::forward(&event("library_changed")),
-        Forward::Ui(UiEvent::LibraryChanged { revision: 4 })
+        Forward::Ui(UiEvent::LibraryChanged {
+            revision: 4,
+            changed: Some(ChangedView {
+                snippets: vec![id(1).to_string()],
+                folders: vec![],
+                tags: vec![id(3).to_string()],
+            }),
+        })
     );
     assert_eq!(
         contract::forward(&event("form_requested")),
@@ -197,6 +204,8 @@ fn every_event_the_ui_role_hears_is_forwarded_as_promised() {
         Forward::Ui(UiEvent::DiagnosticAdded {
             code: "injection_cancelled".to_owned(),
             snippet: Some(id(1).to_string()),
+            app: None,
+            at: 1_763_400_000_500,
         })
     );
     assert_eq!(

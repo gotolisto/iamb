@@ -1,13 +1,14 @@
 //! `iamb-desktop`: the UI host.
 //!
 //! ```text
-//! iamb-desktop [--data-dir PATH] [--open-library] [--measure-open RUNS [--budget-ms MS]]
+//! iamb-desktop [--data-dir PATH] [--open-library]
+//!              [--measure-open RUNS | --measure-form RUNS] [--budget-ms MS]
 //! ```
 //!
 //! Started hidden at login by the service's supervisor (architecture §3.2). `--open-library`
 //! opens the library window at start (development, and desktops without a tray).
-//! `--measure-open` times the cold open of the library window and exits
-//! (`docs/test-strategy.md`).
+//! `--measure-open` times the cold open of the library window and exits; `--measure-form` times
+//! the fill-in form from the request to its first paint and exits (`docs/test-strategy.md` §8).
 //!
 //! Before anything else the process opts out of the operating system's crash dumps, and its
 //! panic hook writes a heap-free crash report and exits with status 70 (`iamb_desktop::crash`,
@@ -27,12 +28,13 @@ use iamb_desktop::crash;
 use iamb_desktop::log::Logger;
 use iamb_desktop::paths::DataDirs;
 
-const USAGE: &str =
-    "usage: iamb-desktop [--data-dir PATH] [--open-library] [--measure-open RUNS [--budget-ms MS]]";
+const USAGE: &str = "usage: iamb-desktop [--data-dir PATH] [--open-library] \
+     [--measure-open RUNS | --measure-form RUNS] [--budget-ms MS]";
 
 struct Args {
     data_dir: Option<PathBuf>,
     measure_runs: Option<usize>,
+    measure_form_runs: Option<usize>,
     budget_ms: Option<f64>,
     open_library: bool,
 }
@@ -41,6 +43,7 @@ fn parse(args: impl Iterator<Item = OsString>) -> Result<Option<Args>, String> {
     let mut out = Args {
         data_dir: None,
         measure_runs: None,
+        measure_form_runs: None,
         budget_ms: None,
         open_library: false,
     };
@@ -61,6 +64,14 @@ fn parse(args: impl Iterator<Item = OsString>) -> Result<Option<Args>, String> {
                     .filter(|n| *n > 0)
                     .ok_or("--measure-open needs a positive number of runs")?;
                 out.measure_runs = Some(runs);
+            }
+            Some("--measure-form") => {
+                let runs = value("--measure-form")?
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .ok_or("--measure-form needs a positive number of runs")?;
+                out.measure_form_runs = Some(runs);
             }
             Some("--budget-ms") => {
                 let ms = value("--budget-ms")?
@@ -127,6 +138,7 @@ fn main() -> ExitCode {
     };
     let options = Options {
         measure_runs: args.measure_runs,
+        measure_form_runs: args.measure_form_runs,
         budget_ms: args.budget_ms,
         open_library: args.open_library,
     };

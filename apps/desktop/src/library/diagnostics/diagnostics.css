@@ -1,0 +1,94 @@
+/* "Why didn't it expand?" (task 3.9). Tokens only. */
+
+.library-root .dx {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+  max-width: 720px;
+}
+
+.library-root .dx-test {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.library-root .dx-result {
+  min-height: var(--size-control-md);
+}
+
+.library-root .dx-result p {
+  margin: 0;
+}
+
+.library-root .dx-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.library-root .dx-log {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-surface);
+}
+
+.library-root .dx-entry {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  gap: var(--space-1) var(--space-3);
+  align-items: start;
+  padding: var(--space-3) var(--space-4);
+  border-top: var(--size-border) solid var(--color-border-subtle);
+}
+
+.library-root .dx-entry:first-child {
+  border-top: none;
+}
+
+.library-root .dx-entry time {
+  color: var(--color-text-secondary);
+  font: var(--type-caption);
+  font-variant-numeric: tabular-nums;
+  line-height: 20px;
+}
+
+.library-root .dx-what {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.library-root .dx-what b {
+  font-weight: var(--font-weight-medium);
+}
+
+.library-root .dx-what span {
+  color: var(--color-text-secondary);
+  font: var(--type-caption);
+}
+
+.library-root .dx-empty,
+.library-root .dx-foot {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+
+@media (max-width: 520px) {
+  .library-root .dx-entry {
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+  .library-root .dx-entry .button {
+    grid-column: 2;
+    justify-self: start;
+  }
+}

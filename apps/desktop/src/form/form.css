@@ -1,0 +1,270 @@
+/*
+ * The fill-in form panel (design system §4.13, §4.14; mock-up docs/ux/mockups/fill-in.html).
+ * Every value is a design token from tokens.css; styles.test.ts fails on a token that does not
+ * exist. The window is the panel: it is as wide as the panel and as high as its content, up to
+ * 70% of the display, and the body scrolls beyond that. Nothing animates (duration.instant).
+ */
+
+.ff-root {
+  height: 100%;
+}
+
+.ff {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  border: var(--size-border) solid var(--color-border-subtle);
+  font: var(--type-body);
+}
+
+.ff-hd {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: var(--size-border) solid var(--color-border-subtle);
+}
+
+.ff-icon {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ff-mark {
+  color: var(--color-accent-text);
+}
+
+.ff-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font: var(--type-body-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ff-abbr {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  max-width: 40%;
+  height: 20px;
+  padding: 0 var(--space-1);
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-subtle);
+  font: var(--type-code-small);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ff-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.ff-bd {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: var(--space-3);
+  min-height: 0;
+  padding: var(--space-4);
+  overflow-y: auto;
+}
+
+.ff-field {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.ff-field > label,
+.ff-label {
+  font: var(--type-body);
+  font-weight: var(--font-weight-medium);
+}
+
+.ff-input {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--size-control-lg);
+  padding: 0 var(--space-3);
+  border: var(--size-border) solid var(--color-border-control);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  font: var(--type-input);
+}
+
+/* Three lines, growing to eight, then it scrolls (the element's script sets its height). */
+.ff-area {
+  min-height: calc(3lh + var(--space-4));
+  max-height: calc(8lh + var(--space-4));
+  padding-block: var(--space-2);
+  overflow-y: auto;
+  resize: none;
+}
+
+.ff-options {
+  display: grid;
+  gap: var(--space-0-5);
+}
+
+.ff-radio,
+.ff-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--size-control-sm);
+}
+
+.ff-radio {
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+}
+
+.ff-radio.is-on {
+  background: var(--color-bg-selected);
+}
+
+.ff-radio input,
+.ff-check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex: none;
+  accent-color: var(--color-accent-solid);
+}
+
+.ff-banner {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-status-danger-bg);
+  color: var(--color-status-danger-text);
+}
+
+.ff-banner .ff-icon {
+  margin-top: var(--space-0-5);
+}
+
+.ff-ft {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: var(--size-border) solid var(--color-border-subtle);
+  background: var(--color-bg-app);
+}
+
+.ff-hint {
+  flex: 1 1 140px;
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font: var(--type-caption);
+}
+
+.ff-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+
+.ff-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--size-control-md);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-subtle);
+  color: var(--color-text-primary);
+  font: var(--type-body);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+.ff-btn:hover {
+  background: var(--color-bg-hover);
+}
+
+.ff-primary {
+  background: var(--color-accent-solid);
+  color: var(--color-text-on-accent);
+}
+
+.ff-primary:hover {
+  background: var(--color-accent-solid-hover);
+}
+
+.ff kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-subtle);
+  box-shadow: inset 0 calc(-1 * var(--size-border)) 0 var(--color-border-control);
+  color: var(--color-text-secondary);
+  font: var(--type-kbd);
+}
+
+.ff-primary kbd {
+  background: transparent;
+  box-shadow: inset 0 0 0 var(--size-border) currentColor;
+  color: inherit;
+}
+
+.ff-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-accent-text);
+  font: inherit;
+  text-decoration: underline;
+}
+
+.ff :focus-visible {
+  outline: var(--size-focus-ring) solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+
+.ff-input:focus-visible {
+  outline-offset: 1px;
+}
+
+/* Contrast themes and "Increase contrast" (design system §5). */
+@media (forced-colors: active) {
+  .ff-radio.is-on,
+  .ff-banner,
+  .ff-abbr {
+    outline: var(--size-border) solid CanvasText;
+  }
+
+  .ff :focus-visible {
+    outline-color: Highlight;
+  }
+}

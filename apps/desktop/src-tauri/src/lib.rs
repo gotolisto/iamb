@@ -10,6 +10,8 @@
 //! - [`contract`]: what the front end sees (commands and events) and how it maps onto
 //!   `iamb-ipc`'s messages.
 //! - [`app`]: the Tauri application (tray, windows, commands).
+//! - [`form`]: the fill-in form's flow (acknowledge, `PanelFocus`, show, hand the focus back,
+//!   submit or cancel), independent of Tauri.
 //! - [`crash`], [`log`], [`paths`]: crash handling without heap contents, the log file, and the
 //!   data root, as in the service (architecture §3.3, §8).
 //! - [`timing`]: the cold-open measurement.
@@ -18,8 +20,12 @@ pub mod app;
 pub mod bridge;
 pub mod contract;
 pub mod crash;
+pub mod form;
+pub mod library;
 pub mod log;
 pub mod paths;
+pub mod settings;
+pub mod template;
 pub mod timing;
 
 /// The build version, sent in the hello.

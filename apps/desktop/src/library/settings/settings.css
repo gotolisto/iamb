@@ -1,0 +1,270 @@
+/* Settings (task 3.9). Tokens only; the classes of library.css (button, input, switch, radio,
+   check, banner, field-message) are reused. */
+
+.library-root .settings {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: start;
+  min-height: 0;
+}
+
+.library-root .settings-nav ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.library-root .settings-nav .nav-item {
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: start;
+  font: var(--type-body);
+  color: inherit;
+}
+
+.library-root .settings-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-width: 640px;
+}
+
+.library-root .settings-heading {
+  margin: 0 0 var(--space-2);
+  font: var(--type-title);
+}
+
+.library-root .st-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: var(--space-1) var(--space-6);
+  align-items: start;
+  padding: var(--space-3) 0;
+  border-top: var(--size-border) solid var(--color-border-subtle);
+}
+
+.library-root .st-row:first-of-type {
+  border-top: none;
+}
+
+.library-root .st-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+}
+
+.library-root .st-control {
+  min-width: 0;
+}
+
+.library-root .st-message {
+  grid-column: 1 / -1;
+}
+
+.library-root .st-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.library-root .st-select {
+  width: auto;
+  min-width: 200px;
+  max-width: 100%;
+}
+
+.library-root .st-checks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.library-root .st-warning {
+  margin-top: var(--space-1);
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--color-status-warning-bg);
+}
+
+.library-root .st-custom {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.library-root .st-codes {
+  margin-top: var(--space-3);
+  font: var(--type-caption);
+  color: var(--color-text-secondary);
+}
+
+.library-root .st-codes dl {
+  display: grid;
+  gap: var(--space-0-5);
+  margin: var(--space-2) 0 0;
+}
+
+.library-root .st-codes dl > div {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: var(--space-2);
+}
+
+.library-root .st-codes dt,
+.library-root .st-codes dd {
+  margin: 0;
+}
+
+.library-root .st-recorder-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.library-root .st-recorder {
+  display: inline-flex;
+  align-items: center;
+  width: auto;
+  min-width: 200px;
+  text-align: start;
+  cursor: pointer;
+}
+
+.library-root .st-recorder.listening {
+  border-color: var(--color-border-focus);
+}
+
+.library-root .st-badges {
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+.library-root .st-apps,
+.library-root .st-overrides,
+.library-root .st-statements {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.library-root .st-statements {
+  gap: var(--space-2);
+  padding-bottom: var(--space-3);
+}
+
+.library-root .st-apps li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--size-control-lg);
+}
+
+.library-root .st-app-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.library-root .st-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: flex-end;
+}
+
+.library-root .st-add .field {
+  flex: 1 1 160px;
+}
+
+.library-root .st-override {
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-subtle);
+}
+
+.library-root .st-override-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.library-root .st-override-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+}
+
+.library-root .st-ov-help {
+  grid-column: 2;
+}
+
+.library-root .st-delay {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.library-root .st-delay .input {
+  width: 96px;
+}
+
+.library-root .st-about {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.library-root .st-about > div {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: var(--space-2);
+}
+
+.library-root .st-about dt {
+  color: var(--color-text-secondary);
+}
+
+.library-root .st-about dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .library-root .settings {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .library-root .settings-nav ul {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .library-root .settings-nav .nav-item {
+    width: auto;
+  }
+  .library-root .st-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .library-root .settings * {
+    transition: none;
+  }
+}

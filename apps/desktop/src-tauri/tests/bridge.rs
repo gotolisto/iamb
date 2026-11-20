@@ -112,7 +112,7 @@ fn service_events_reach_the_front_end() {
         tags: None,
     })
     .expect("saved");
-    seen.wait_event(|e| matches!(e, UiEvent::LibraryChanged { revision } if *revision >= 2));
+    seen.wait_event(|e| matches!(e, UiEvent::LibraryChanged { revision, .. } if *revision >= 2));
     // The service reports no status change for a library change; the front end asks again.
     let view = bridge.refresh_status().expect("status");
     assert_eq!(view.service.map(|s| s.snippets), Some(4));

@@ -51,7 +51,9 @@ Tauri dependencies would slow every leg.
   `libxdo-dev` and `xvfb`. Last, the cold-open measurement of the library window
   (`iamb-desktop --measure-open 10`, `docs/test-strategy.md` §8.1): on Linux under Xvfb it fails
   the job when an open takes more than 800 ms (twice the lab target of 400 ms, the CI rule of test strategy §2.2; one open on a shared runner was seen at 413 ms while the others took 41-66 ms); on Windows and macOS it only prints the numbers
-  (the step may fail without failing the job). The tests include the crash-isolation tests,
+  (the step may fail without failing the job). Then the fill-in form measurement (`iamb-desktop --measure-form 10`,
+  `docs/test-strategy.md` §8.5), from the request reaching the UI host to the panel's first
+  paint: gated at 300 ms on Linux under Xvfb (twice the 150 ms target), report only elsewhere. The tests include the crash-isolation tests,
   which run a worker on the mock platform in the test process (and, on Linux, kill a UI host
   child process).
 - `coverage` (Linux): `cargo llvm-cov` on `iamb-core`; fails below 85% line coverage.

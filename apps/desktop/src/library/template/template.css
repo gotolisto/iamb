@@ -1,0 +1,511 @@
+/*
+ * The template editor (design system §4.6 chip, §4.11 card and insert list, §4.15 field).
+ * Every value is a design token of tokens.css; template.test.ts fails on one that does not exist.
+ */
+
+.tpl-editor {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.tpl-icon {
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Toolbar */
+.tpl-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+.tpl-sep {
+  width: var(--size-border);
+  height: var(--space-4);
+  margin-inline: var(--space-1);
+  background: var(--color-border-subtle);
+}
+
+.tpl-more {
+  position: relative;
+}
+
+.tpl-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--size-control-sm);
+  padding: 0 var(--space-2);
+  border: var(--size-border) solid var(--color-border-control);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  font: var(--type-body);
+  font-weight: var(--font-weight-medium);
+  cursor: default;
+}
+
+.tpl-btn.tpl-quiet {
+  border-color: transparent;
+  background: transparent;
+}
+
+.tpl-btn:hover {
+  background: var(--color-bg-hover);
+}
+
+.tpl-btn.tpl-primary {
+  border-color: var(--color-accent-solid);
+  background: var(--color-accent-solid);
+  color: var(--color-text-on-accent);
+}
+
+.tpl-btn.tpl-primary:hover {
+  background: var(--color-accent-solid-hover);
+}
+
+.tpl-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-accent-text);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* The text box: 24 px lines so that chips do not change a line's height. */
+.tpl-wrap {
+  position: relative;
+  min-width: 0;
+}
+
+.tpl-text {
+  min-height: calc(var(--space-12) * 2 + var(--space-4));
+  padding: var(--space-2) var(--space-3);
+  border: var(--size-border) solid var(--color-border-control);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  font: var(--type-body);
+  line-height: var(--space-6);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  outline: none;
+}
+
+.tpl-text:focus-visible,
+.tpl-text:focus {
+  outline: var(--size-focus-ring) solid var(--color-border-focus);
+  outline-offset: 1px;
+}
+
+.tpl-text.is-error {
+  border-color: var(--color-status-danger-text);
+}
+
+.tpl-text[aria-readonly="true"] {
+  background: var(--color-bg-subtle);
+}
+
+.tpl-text[data-empty]::before {
+  content: attr(data-placeholder);
+  color: var(--color-text-secondary);
+  pointer-events: none;
+}
+
+.tpl-error-text {
+  text-decoration: underline wavy var(--color-status-danger-text);
+  text-underline-offset: 3px;
+}
+
+/* Chip (design system §4.6) */
+.tpl-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: var(--space-5);
+  margin-inline: 1px;
+  padding: 0 6px 0 var(--space-1);
+  vertical-align: middle;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-subtle);
+  color: var(--color-text-secondary);
+  font: var(--type-caption);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--space-5);
+  white-space: nowrap;
+  user-select: all;
+  cursor: default;
+}
+
+.tpl-chip .tpl-icon {
+  width: 13px;
+  height: 13px;
+}
+
+.tpl-chip.insert {
+  background: var(--color-macro-insert-bg);
+  color: var(--color-macro-insert-text);
+}
+
+.tpl-chip.ask {
+  background: var(--color-macro-ask-bg);
+  color: var(--color-macro-ask-text);
+}
+
+.tpl-chip.act {
+  background: var(--color-macro-act-bg);
+  color: var(--color-macro-act-text);
+}
+
+.tpl-chip.read {
+  background: var(--color-macro-read-bg);
+  color: var(--color-macro-read-text);
+}
+
+.tpl-chip.is-selected {
+  outline: var(--size-focus-ring) solid var(--color-border-focus);
+  outline-offset: 1px;
+}
+
+.tpl-chip.is-error {
+  box-shadow: inset 0 0 0 1.5px var(--color-status-danger-text);
+}
+
+/* Insert list and More menu (design system §4.11) */
+.tpl-menu {
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + var(--space-1));
+  left: var(--space-8);
+  display: grid;
+  width: 330px;
+  max-width: calc(100% - var(--space-8));
+  padding: var(--space-1);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-surface);
+  box-shadow: var(--shadow-popover);
+}
+
+.tpl-more-menu {
+  left: 0;
+  max-width: none;
+}
+
+.tpl-mi {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--size-control-md);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-primary);
+  font: var(--type-body);
+  text-align: left;
+}
+
+.tpl-mi .tpl-icon {
+  color: var(--color-text-secondary);
+}
+
+.tpl-mi.on,
+.tpl-mi:hover {
+  background: var(--color-bg-selected);
+}
+
+.tpl-mi small {
+  margin-left: auto;
+  color: var(--color-text-secondary);
+  font: var(--type-caption);
+}
+
+/* Chip card (design system §4.11) */
+.tpl-card-anchor {
+  position: absolute;
+  z-index: 3;
+  top: 100%;
+  left: 0;
+}
+
+.tpl-card {
+  display: grid;
+  gap: var(--space-3);
+  width: 280px;
+  max-width: 100%;
+  padding: var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-surface);
+  box-shadow: var(--shadow-popover);
+}
+
+.tpl-card h5 {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  margin: 0;
+  font: var(--type-body-strong);
+}
+
+.tpl-field {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.tpl-field > label,
+.tpl-field > legend {
+  padding: 0;
+  font: var(--type-body);
+  font-weight: var(--font-weight-medium);
+}
+
+.tpl-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+}
+
+.tpl-kinds > legend {
+  width: 100%;
+  margin-bottom: var(--space-1);
+}
+
+.tpl-input {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--size-control-md);
+  padding: 0 var(--space-2);
+  border: var(--size-border) solid var(--color-border-control);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  font: var(--type-body);
+}
+
+textarea.tpl-input {
+  padding-block: var(--space-1);
+  resize: vertical;
+}
+
+.tpl-mono {
+  font-family: var(--font-family-mono);
+}
+
+.tpl-shift {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: var(--space-2);
+}
+
+.tpl-check,
+.tpl-radio {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  font: var(--type-body);
+}
+
+.tpl-help {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font: var(--type-caption);
+}
+
+.tpl-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.tpl-grow {
+  flex: 1 1 auto;
+}
+
+.tpl-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Messages */
+.tpl-err {
+  display: flex;
+  gap: var(--space-1);
+  align-items: flex-start;
+  margin: 0;
+  color: var(--color-status-danger-text);
+  font: var(--type-caption);
+}
+
+.tpl-err .tpl-icon {
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+}
+
+.tpl-code {
+  font: var(--type-code-small);
+  color: var(--color-text-secondary);
+}
+
+/* Preview (design system §4.15: a quiet well, read-only and selectable) */
+.tpl-preview {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-subtle);
+}
+
+.tpl-preview:focus-visible {
+  outline: var(--size-focus-ring) solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+
+.tpl-preview-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.tpl-preview-head .tpl-ovl {
+  flex: 1;
+}
+
+.tpl-ovl {
+  color: var(--color-text-secondary);
+  font: var(--type-overline);
+  letter-spacing: var(--type-overline-tracking);
+  text-transform: uppercase;
+}
+
+.tpl-count,
+.tpl-muted {
+  color: var(--color-text-secondary);
+  font: var(--type-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.tpl-out {
+  margin: 0;
+  min-height: var(--space-5);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 22px;
+  user-select: text;
+}
+
+.tpl-tag {
+  display: inline-flex;
+  align-items: center;
+  height: var(--space-5);
+  padding: 0 6px;
+  vertical-align: middle;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-surface);
+  color: var(--color-text-secondary);
+  font: var(--type-caption);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+.tpl-kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: var(--space-5);
+  height: var(--space-5);
+  margin-inline: 1px;
+  padding: 0 5px;
+  vertical-align: middle;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-surface);
+  color: var(--color-text-secondary);
+  box-shadow: inset 0 -1px 0 var(--color-border-control);
+  font: var(--type-kbd);
+  white-space: nowrap;
+}
+
+.tpl-btn.tpl-primary .tpl-kbd {
+  background: transparent;
+  color: inherit;
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
+.tpl-wait {
+  color: var(--color-text-secondary);
+}
+
+.tpl-caret {
+  display: inline-block;
+  width: 1.5px;
+  height: 1.15em;
+  margin-inline: 1px;
+  vertical-align: text-bottom;
+  background: var(--color-text-primary);
+}
+
+.tpl-unavailable {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+
+.tpl-unavailable strong {
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.tpl-fields {
+  display: grid;
+  gap: var(--space-0-5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tpl-fields li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: baseline;
+}
+
+.tpl-field-name {
+  font-weight: var(--font-weight-medium);
+}
+
+@media (forced-colors: active) {
+  .tpl-chip,
+  .tpl-tag,
+  .tpl-kbd {
+    outline: 1px solid CanvasText;
+  }
+
+  .tpl-chip.is-selected {
+    outline: var(--size-focus-ring) solid Highlight;
+  }
+}
+
+/* A selected chip shows its focus ring, not the text selection's fill. */
+.tpl-chip.is-selected::selection,
+.tpl-chip.is-selected ::selection {
+  background: transparent;
+}

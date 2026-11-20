@@ -5,6 +5,15 @@
   },
   "events": [
     {
+      "changed": {
+        "folders": [],
+        "snippets": [
+          "01010101-0101-0101-0101-010101010101"
+        ],
+        "tags": [
+          "03030303-0303-0303-0303-030303030303"
+        ]
+      },
       "revision": 4,
       "type": "library_changed"
     },
@@ -28,6 +37,8 @@
       "type": "form_requested"
     },
     {
+      "app": null,
+      "at": 1763400000500,
       "code": "injection_cancelled",
       "snippet": "01010101-0101-0101-0101-010101010101",
       "type": "diagnostic_added"
@@ -36,6 +47,66 @@
       "type": "settings_changed"
     }
   ],
+  "form": {
+    "events": [
+      {
+        "session": 2,
+        "type": "open"
+      },
+      {
+        "session": 2,
+        "type": "shown"
+      },
+      {
+        "session": 2,
+        "type": "closed"
+      }
+    ],
+    "focusLost": {
+      "code": "focus_lost",
+      "message": "the window to return to is gone or would not take the focus"
+    },
+    "open": {
+      "abbreviation": "brb",
+      "app": null,
+      "fields": [
+        {
+          "default": "M",
+          "kind": "choice",
+          "name": "Size",
+          "options": [
+            "S",
+            "M"
+          ]
+        }
+      ],
+      "label": "Back soon",
+      "lastValues": {
+        "Name": "Ada"
+      },
+      "session": 2,
+      "snippet": "01010101-0101-0101-0101-010101010101"
+    },
+    "openWithoutValues": {
+      "abbreviation": "brb",
+      "app": "Mail",
+      "fields": [
+        {
+          "default": "M",
+          "kind": "choice",
+          "name": "Size",
+          "options": [
+            "S",
+            "M"
+          ]
+        }
+      ],
+      "label": "Back soon",
+      "lastValues": null,
+      "session": 2,
+      "snippet": "01010101-0101-0101-0101-010101010101"
+    }
+  },
   "snippet": {
     "abbreviation": "brb",
     "body": "be right back",
@@ -78,5 +149,82 @@
         "version": "0.0.0"
       }
     }
-  ]
+  ],
+  "template": {
+    "parsed": {
+      "error": {
+        "code": "E_UNKNOWN_ATTR",
+        "end": 20,
+        "snippet": null,
+        "start": 10
+      },
+      "tokens": [
+        {
+          "attributes": [],
+          "end": 3,
+          "kind": "text",
+          "start": 0
+        },
+        {
+          "attributes": [
+            {
+              "name": "name",
+              "value": "Name"
+            }
+          ],
+          "end": 20,
+          "kind": "field",
+          "start": 3
+        }
+      ]
+    },
+    "preview": {
+      "cursor": {
+        "offset": 7,
+        "part": 0
+      },
+      "error": null,
+      "fields": [
+        {
+          "default": "M",
+          "kind": "choice",
+          "name": "Size",
+          "options": [
+            "S",
+            "M"
+          ]
+        }
+      ],
+      "parts": [
+        {
+          "blanks": [
+            {
+              "end": 7,
+              "field": "Name",
+              "sample": true,
+              "start": 3
+            }
+          ],
+          "clipboard": [
+            [
+              9,
+              18
+            ]
+          ],
+          "part": "text",
+          "text": "Hi Name, Clipboard"
+        },
+        {
+          "key": "tab",
+          "part": "key",
+          "shift": false,
+          "times": 1
+        },
+        {
+          "ms": 500,
+          "part": "wait"
+        }
+      ]
+    }
+  }
 }

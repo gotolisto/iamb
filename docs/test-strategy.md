@@ -65,7 +65,9 @@ hardware, power plugged in, no other user apps running). Every lab number is rec
 | Hook callback < 1 ms p99 (2.1, 2.3) | In-process timing around the callback body (debug-only `latency-probe` feature), 100,000 keys during the scripted run; p99 | Lab only (hooks need a real desktop) | p99 < 1 ms |
 | Service restart < 2 s (2.6) | Kill worker → supervisor restarts → IPC `Health` answers and a probe expansion succeeds; 20 kills during soak; max | Lab; CI nightly report | max < 2 s |
 | UI cold open < 400 ms (3.2) | Library window (created on demand, so every open is cold): the tray's "Open library" action → the window's first paint, which the front end reports; `iamb-desktop --measure-open 20` with the UI host warm; the first open after the host started reported separately; max and median (§8) | Lab; CI every PR (Linux under Xvfb gated at 800 ms, twice the lab target as §2.2 sets for CI; Windows and macOS report only) | Lab max < 400 ms |
+| Fill-in form visible, the UI host's part (3.5) | `FormRequested` reaching the UI host → the form panel's first paint after it was shown, which the front end reports as the cold open does; `iamb-desktop --measure-form 20` after the hidden panel painted once; the first form after start reported separately; max and median (§8.5). The service's part (the match to `FormRequested` and the round trips `FormAck`, `GetSnippet`, `PanelFocus`) is timed in `tests/form.rs` | Lab; CI every PR (Linux under Xvfb gated at 300 ms, twice the target as §2.2 sets; Windows and macOS report only) | Lab max < 150 ms; the end-to-end KPI of §2.1 stays the lab's |
 | Palette results < 30 ms at 10,000 snippets (3.6) | Bench `store/search/10000` (query → ranked IDs) plus UI render timing in the palette; 500 queries from a fixed list; p95 | CI (store part); lab (end to end) | Lab p95 < 30 ms; CI store part p95 < 30 ms |
+| Library list scrolls at 60 frames per second with 10,000 snippets (3.3) | `apps/desktop/scripts/scroll-kpi.mjs`: the built front end in Chromium (Playwright) with a mocked command layer, 10,000 snippets, `requestAnimationFrame` gaps over 10 s of scrolling per driver; p95 and dropped frames (§8.4) | CI Linux (report); lab on each OS's web view | p95 frame time ≤ 16.8 ms and no frame over 25 ms at 1× CPU; lab on WebView2 and WKWebView |
 
 ## 3. Benchmark harness (`crates/iamb-bench`)
 
@@ -532,3 +534,135 @@ reset with the Windows and macOS lab numbers (private working set, `phys_footpri
   that dies after acknowledging a form leaves the form session open, and the engine drops every
   typed match while one is open, so expansion stays off until the worker restarts
   (`forms_and_expansion_recover_after_the_ui_host_died_with_a_form_open`).
+
+### 8.4 Library window (task 3.3)
+
+What runs where:
+
+- **Component tests** (`pnpm test`, vitest with jsdom and Testing Library; files `src/library/*.test.ts(x)`).
+  `testkit.tsx` is a fake service with the rules the interface relies on (abbreviations unique
+  without regard to case, Undo by writing a deleted id again, tag names unique, four folder
+  levels, `LibraryChanged` naming its rows). They cover the virtualised list (only a screenful
+  of rows exists for 10,000 snippets; the window moves on scroll and renders again only when the
+  first row changes), selection, keyboard movement and type-to-jump, the filter and its empty
+  states, the editor (create, edit, explicit save, the leave dialog's three buttons, the On
+  switch, options, tags), the abbreviation's messages with the specification's exact copy
+  (duplicate blocks saving, shadowing warns), changes made elsewhere, folders (create, nest to
+  the limit, rename, delete with its question) and tags (eight colours, unique names, delete),
+  and that the stylesheet uses only tokens that exist.
+- **Front-end and Rust contract**: `tests/library_contract.rs` runs the library's requests and
+  response mapping against `iamb-ipc`'s golden files and writes
+  `src/library/library.fixtures.json` (`IAMB_BLESS=1`), which `src/library/api.test.ts` runs
+  through the guards; `tests/front_end_contract.rs` compares the command lists as sets.
+- **End to end** (`tests/library.rs`): the library's operations through the bridge against a real
+  worker on the mock platform: create (a draft does not expand, a saved snippet does), edit
+  (the old abbreviation stops, tags are replaced), turn off and on, delete and Undo with the
+  deleted snippet's id, `LibraryChanged` with its changed rows, the abbreviation check
+  (conflict, hides, hidden by), folders to four levels, delete with cascade, tags (eight
+  colours, unique names, delete), and no snippet text in either log.
+
+#### Scroll measurement (KPI: 60 frames per second with 10,000 snippets)
+
+Method. `node scripts/scroll-kpi.mjs` serves `dist/` (`pnpm build`) and opens it in Chromium with
+`window.__TAURI_INTERNALS__.invoke` replaced by `scripts/tauri-mock.mjs`, which answers the
+`library_*` commands from a generated library of 10,000 snippets (8 tags, nested folders, some
+off, some broken). The real bundle, the real `api.ts` and the real list therefore run; only the
+service is missing. A `requestAnimationFrame` loop records the gap between callbacks (the frame
+time) for 10 s per driver; a frame over 25 ms is a dropped frame. Drivers: real wheel events
+(120 px 60 times a second, 150 rows a second, scrolled by the compositor); `scrollTop` moved
+from every frame at 6,000, 24,000 and 96,000 px/s (125, 500 and 2,000 rows a second; each frame
+costs the main thread a scroll event, a state update and the render of the rows that came into
+view); and the second driver at 24,000 px/s with the CPU slowed 4 and 6 times through the
+DevTools protocol (headroom). Playwright is not a dependency of the app: `NODE_PATH` or
+`PLAYWRIGHT_MODULE` points at an install.
+
+Result (Chromium 153, headless, software rendering, 4 vCPUs of an Intel Xeon at 2.1 GHz,
+1280 × 800, 28 rows in the page out of 10,000):
+
+| Driver | Frames | fps | p50 | p95 | p99 | max | Dropped (> 25 ms) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Wheel, 7,200 px/s | 598 | 60.0 | 16.7 ms | 16.8 ms | 16.8 ms | 16.8 ms | 0 |
+| `scrollTop`, 6,000 px/s | 599 | 60.0 | 16.7 ms | 16.8 ms | 16.8 ms | 16.8 ms | 0 |
+| `scrollTop`, 24,000 px/s | 599 | 60.0 | 16.7 ms | 16.8 ms | 16.8 ms | 16.8 ms | 0 |
+| `scrollTop`, 96,000 px/s | 598 | 59.9 | 16.7 ms | 16.8 ms | 16.8 ms | 33.4 ms | 1 of 598 |
+| 24,000 px/s, CPU × 4 | 551 | 55.3 | 16.7 ms | 33.3 ms | 33.4 ms | 33.4 ms | 47 of 551 (8.5%) |
+| 24,000 px/s, CPU × 6 | 425 | 42.7 | 16.7 ms | 33.4 ms | 50.0 ms | 50.1 ms | 161 of 425 |
+
+The target holds at the machine's own speed (p95 16.8 ms, the 60 Hz frame, no dropped frame at
+500 rows a second) and degrades only when the CPU is slowed 4 times or more. Caveats: the
+headless browser's frame clock is pinned to 60 Hz, so a result at 16.7 ms says the work fits in
+a frame, not by how much (the slowed runs are the measure of that); the web views of the
+product (WebView2, WKWebView) are not Chromium under Playwright, so the lab repeats the run on
+each OS's web view before the KPI is closed. The filter is not measured here: over 10,000 rows it
+takes under 16 ms on the main thread (`model.test.ts`, asserted), so the worker the
+specification asks for above 2,000 rows is not used.
+
+### 8.5 Fill-in form (task 3.5)
+
+What runs where:
+
+- **Component tests** (`pnpm test`; `src/form/*.test.ts(x)`): every field type drawn with its
+  control (one-line, several-line, a choice of up to six options as radio buttons and of seven
+  or more as a select, a toggle), labelled, with autocomplete and spell checking off; focus in
+  the first field with its content selected; Enter inserts from every field but a several-line
+  one, ⌘⏎ / Ctrl+Enter from anywhere, Esc cancels, Space flips a toggle, first letters jump in
+  a list; the buttons in each system's order; remembered answers pre-filled with "Your last
+  answers. Start empty", and ⌘⌫ / Ctrl+Backspace or the link starting empty (and leaving the key
+  to the text field when nothing was remembered); values corrected to fit their field as the
+  template language does (nothing is validated or required); the "could not get back" banner
+  with every answer kept; the answers forgotten when the form closes; the stylesheet uses only
+  tokens and never animates.
+- **Front-end and Rust contract**: the `form_*` commands in the three lists
+  (`tests/front_end_contract.rs`), and the form `form_current` answers, its events and the
+  `focus_lost` error, built from the golden `FormRequested` and written to
+  `src/contract.fixtures.json`, through the guards of `src/form/api.ts` (`api.test.ts`).
+- **End to end** (`tests/form.rs`): the real bridge and the form's flow against a real worker on
+  the mock platform, with a recorded panel in place of the window: requested → acknowledged →
+  shown → submitted, and the text lands in the mock's target window with the abbreviation
+  replaced; cancel changes nothing and frees the session at once; keys typed while the panel
+  holds the keyboard never reach the engine, and do again once it gives the keyboard back; a
+  panel that loses the keyboard (a click into the app behind) gives it back to the app and
+  takes it again; the `PanelFocus` lease renewed past its length; a focus that cannot be given
+  back sends nothing and brings the panel back; a request the UI host took after 2 s is
+  cancelled and never shown; `ReopenLastForm` brings the last answers; the UI host killed with
+  the form open (the service records `form_ui_host_gone`, expansion resumes, the next UI host
+  gets the next form); the service going away closes the form; no form value in either log.
+
+#### Visible in under 150 ms
+
+Method. The clock starts when `FormRequested` reaches the UI host (the bridge's reader thread
+stamps it, monotonic and wall clock) and stops at the panel's first paint after it was shown,
+which the front end reports with `form_painted` the way the cold open reports its paint (§8.1:
+`performance.timeOrigin + performance.now()` in a task queued from a `requestAnimationFrame`
+callback). In between: `FormAck`, `GetSnippet` for the header, the form handed to the hidden
+panel, which renders it and reports its height (waited for up to 80 ms), `PanelFocus` and its
+answer, then the window placed and shown. `iamb-desktop --measure-form RUNS [--budget-ms MS]`
+waits for start-up and for the hidden panel's one paint (the panel is shown out of sight once
+when its page reports it loaded, `form_ready`; without it the first form took about 400 ms
+under Xvfb), then hands the flow `RUNS` requests for a form of six fields, one of each kind and
+a choice of each size, every other one with remembered values, and cancels each. Its service
+answers at once; the round trips to a real worker are measured by
+`a_form_is_acknowledged_shown_and_its_text_lands_in_the_target_window` in `tests/form.rs`,
+which prints them.
+
+    xvfb-run -a iamb-desktop --data-dir "$(mktemp -d)" --measure-form 20 --budget-ms 150
+
+Result here (2026-11-20; the machine of §8.1, Xvfb with software rendering, a debug build
+loading the built front end from `vite preview` on the development URL, while other builds ran
+on the machine): 5 processes of 10 forms each, first form after start 98–116 ms (shown after
+37–52 ms), median of the later forms 16–21 ms, every later form under 40 ms; within 150 ms.
+Before the hidden panel's paint waited for its page, one process under heavy load took 600 ms
+for its first form. The round trips to a real worker on the mock platform took 0.6–1.1 ms
+(`FormAck`, `GetSnippet`, `PanelFocus`).
+
+What this does not measure: the trigger to `FormRequested` in the service (the engine share of
+§2.1, measured with the probe in the lab), and WebView2 and `WKWebView`, whose numbers come
+from the `desktop` CI job on their runners (report only) and, for the KPI, from the lab. On
+macOS the panel is not yet the non-activating panel (`apps/desktop/README.md`), which may change
+its show time.
+
+#### Focus returns correctly across the matrix
+
+Needs real machines: the steps are in `docs/compatibility-run.md`, "The fill-in form panel"
+(F1 to F10 in each of the 20 apps of each OS). On the mock, `tests/form.rs` checks that the
+hand-back (`restore_focus`) comes before `FormSubmit` and that a refused hand-back sends nothing.
