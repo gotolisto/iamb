@@ -603,6 +603,58 @@ fn usage_does_not_touch_snippets_or_outbox() -> TestResult {
 }
 
 #[test]
+fn resetting_usage_forgets_every_count_and_changes_nothing_else() -> TestResult {
+    let (mut store, mut ids, _p, f) = setup()?;
+    let (a, b) = (ids.next(), ids.next());
+    store.put_snippet(&snippet(a, f, "ua"), t(1))?;
+    store.put_snippet(&snippet(b, f, "ub"), t(1))?;
+    store.record_expansion(a, 4, t(5))?;
+    store.record_expansion(b, 4, t(6))?;
+    store.record_expansion(a, 4, t(7))?;
+    let rows = (store.get_snippet(a)?, store.get_snippet(b)?);
+    let outbox = store.outbox_read(100)?;
+    assert_eq!(store.usage_reset_at()?, None);
+
+    assert_eq!(store.reset_usage(t(20))?, 2);
+    assert_eq!(store.list_usage()?, Vec::new());
+    assert_eq!(store.usage(a)?, None);
+    assert_eq!(store.usage_reset_at()?, Some(t(20)));
+    // Not a sync change: the snippets and the outbox are as they were.
+    assert_eq!((store.get_snippet(a)?, store.get_snippet(b)?), rows);
+    assert_eq!(store.outbox_read(100)?, outbox);
+
+    // Counting starts again; a second reset says when, and has nothing to forget.
+    store.record_expansion(a, 1, t(30))?;
+    assert_eq!(store.usage(a)?.map(|u| u.count), Some(1));
+    assert_eq!(store.reset_usage(t(40))?, 1);
+    assert_eq!(store.reset_usage(t(41))?, 0);
+    assert_eq!(store.usage_reset_at()?, Some(t(41)));
+    Ok(())
+}
+
+#[test]
+fn the_most_recently_used_snippets_come_newest_first_without_deleted_ones() -> TestResult {
+    let (mut store, mut ids, _p, f) = setup()?;
+    let all: Vec<_> = (0..4).map(|_| ids.next()).collect();
+    for (n, id) in all.iter().enumerate() {
+        store.put_snippet(&snippet(*id, f, &format!("r{n}")), t(1))?;
+    }
+    store.record_expansion(all[0], 1, t(10))?;
+    store.record_expansion(all[1], 1, t(30))?;
+    store.record_expansion(all[2], 1, t(20))?;
+    // `all[3]` was never used; `all[1]` is deleted and drops out.
+    store.delete_snippet(all[1], t(40))?;
+    let recent: Vec<_> = store
+        .recent_usage(10)?
+        .iter()
+        .map(|u| u.snippet_id)
+        .collect();
+    assert_eq!(recent, vec![all[2], all[0]]);
+    assert_eq!(store.recent_usage(1)?.len(), 1);
+    Ok(())
+}
+
+#[test]
 fn settings_exclusions_and_device_state() -> TestResult {
     let (mut store, mut ids, _p, f) = setup()?;
     let outbox = store.outbox_len()?;

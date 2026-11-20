@@ -21,6 +21,7 @@ import {
   subtreeIds,
 } from "./model";
 import { Diagnostics } from "./diagnostics";
+import { HealthView, affectedCount, useHealth } from "./health";
 import { SettingsView } from "./settings";
 import { Sidebar, type View, sameView } from "./Sidebar";
 import { Toast, type ToastState } from "./Toasts";
@@ -66,7 +67,7 @@ function recall(): Remembered {
     if (raw) {
       const v = JSON.parse(raw) as Partial<Remembered>;
       return {
-        sort: v.sort === "changed" ? "changed" : "label",
+        sort: v.sort === "changed" || v.sort === "used" ? v.sort : "label",
         view: v.view && (v.view.kind === "folder" || v.view.kind === "tag") ? v.view : null,
         snippet: typeof v.snippet === "string" ? v.snippet : null,
       };
@@ -217,7 +218,16 @@ export function Library({ env }: { env: LibraryEnv }) {
   const scopeName = folder?.name ?? tag?.name ?? "All snippets";
   const filterLabel = folder || tag ? `Filter ${scopeName}` : "Filter snippets";
   const listLabel = folder || tag ? `Snippets in ${scopeName}` : "All snippets";
-  const broken = useMemo(() => data.rows.filter((r) => isTemplateError(r.broken)).length, [data.rows]);
+  const healthOpen = view.kind === "health";
+  const report = useHealth(env, data.change.n, healthOpen);
+  // The badge counts what library health lists; until it has answered, the broken rows.
+  const broken = useMemo(
+    () =>
+      report.health
+        ? affectedCount(report.health)
+        : data.rows.filter((r) => isTemplateError(r.broken)).length,
+    [report.health, data.rows],
+  );
 
   useEffect(() => {
     document.title =
@@ -801,15 +811,30 @@ export function Library({ env }: { env: LibraryEnv }) {
             {view.kind === "settings" ? "Settings" : view.kind === "health" ? "Library health" : "Why didn’t it expand?"}
           </h1>
           {view.kind === "health" ? (
-            broken === 0 ? (
-              <p>
-                Nothing to fix. All {data.rows.length} {data.rows.length === 1 ? "snippet" : "snippets"} can expand.
-              </p>
-            ) : (
-              <p>
-                {broken} {broken === 1 ? "snippet" : "snippets"} will not expand. They carry a Broken badge in the list.
-              </p>
-            )
+            <HealthView
+              health={report.health}
+              error={report.error}
+              rows={data.rowsById}
+              total={data.rows.length}
+              onRetry={report.reload}
+              onOpen={(id) => {
+                guard(() => {
+                  setView({ kind: "all" });
+                  setFilter("");
+                  setDraft(null);
+                  setSelection(single(id));
+                  setEditorKey(`snippet-${id}`);
+                });
+              }}
+              onTurnOff={(id) => {
+                void api
+                  .setEnabled(id, false)
+                  .then(() => data.reload({ rows: true }))
+                  .then(() => report.reload())
+                  .catch((e: unknown) => showToast([{ text: describeFailure(e, "put_snippet").text }]));
+              }}
+              onDelete={(id) => void deleteSnippets([id]).then(() => report.reload())}
+            />
           ) : view.kind === "settings" ? (
             <SettingsView env={env} section={view.section} />
           ) : (
@@ -858,6 +883,7 @@ export function Library({ env }: { env: LibraryEnv }) {
           filter={filter}
           onFilter={setFilter}
           sort={sort}
+          canSortByUse={data.rows.some((r) => r.uses !== null)}
           onSort={setSort}
           selection={draft ? NO_SELECTION : selection}
           onSelection={changeSelection}

@@ -32,12 +32,23 @@ export interface Answer {
 
 /**
  * The rows for what is typed: with nothing typed, "Fill in … again" when there is a form to
- * fill in again (usage is not reported yet, so no recently used rows); with a query, its hits,
- * or, when nothing matches, the one row that creates a snippet labelled with the query.
+ * fill in again, then the snippets used most recently on this computer (`recent`, at most
+ * {@link VISIBLE_ROWS} in all); with a query, its hits, or, when nothing matches, the one row
+ * that creates a snippet labelled with the query.
  */
-export function itemsFor(query: string, answer: Answer | null, lastForm: string | null): Item[] {
+export function itemsFor(
+  query: string,
+  answer: Answer | null,
+  lastForm: string | null,
+  recent: PaletteResults | null = null,
+): Item[] {
   const typed = query.trim();
-  if (typed === "") return lastForm ? [{ kind: "again", label: lastForm }] : [];
+  if (typed === "") {
+    const again: Item[] = lastForm ? [{ kind: "again", label: lastForm }] : [];
+    const room = VISIBLE_ROWS - again.length;
+    const used: Item[] = (recent?.hits ?? []).slice(0, room).map((hit) => ({ kind: "hit", hit }));
+    return [...again, ...used];
+  }
   if (!answer || answer.query.trim() !== typed) return [];
   if (answer.results.hits.length === 0) return [{ kind: "new", label: typed }];
   return answer.results.hits.map((hit) => ({ kind: "hit", hit }));

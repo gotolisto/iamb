@@ -24,12 +24,13 @@ use iamb_core::template::{FormValues, overwrite};
 use iamb_ipc::{
     ChangedRows, ConflictPolicy, ErrorBody, ErrorCode, ExcludedEntry, GrantState, HealthReport,
     RequestBody, ResponseBody, Role, SUMMARY_LINE_CHARS, SearchField, SearchHit, ShadowedEntry,
-    SnippetQuery, SnippetSummary, TAG_COLORS, TagEntry, TransferFormat, WireAction, WireAttachment,
-    WireDiagnostic, WireExclusion, WireValues,
+    SnippetQuery, SnippetSummary, TAG_COLORS, TagEntry, TransferFormat, UnusedEntry, WireAction,
+    WireAttachment, WireDiagnostic, WireExclusion, WireValues,
 };
 use iamb_platform::{Chord, INJECTION_SETTINGS_KEY};
+use iamb_store::health::{self, Why};
 use iamb_store::transfer::{self, Format, OnConflict, TransferError};
-use iamb_store::{AppExclusion, ListOptions, StoreError};
+use iamb_store::{AppExclusion, ListOptions, StoreError, Usage};
 
 use super::store::{StoreCtx, new_id};
 use super::{EngineMsg, Explicit, FocusMsg, PALETTE_HOTKEY, Shared};
@@ -169,7 +170,7 @@ pub(crate) fn handle(shared: &Arc<Shared>, _role: Role, body: RequestBody) -> An
             query,
             offset,
             limit,
-        } => summaries(&view, &query, offset, limit),
+        } => summaries(shared, &view, &query, offset, limit),
         RequestBody::CheckAbbreviation {
             abbreviation,
             trigger,
@@ -230,8 +231,21 @@ pub(crate) fn handle(shared: &Arc<Shared>, _role: Role, body: RequestBody) -> An
                 snippets: u64::try_from(s.snippets).unwrap_or(u64::MAX),
             })
         }
-        RequestBody::Health {} => Ok(ResponseBody::Health {
-            report: health(&view),
+        RequestBody::Health {} => health(shared, &view),
+        RequestBody::RecentSnippets { limit } => recent(shared, &view, limit),
+        RequestBody::ResetUsage {} => write(shared, |ctx| {
+            let n = ctx
+                .store
+                .reset_usage(clock::timestamp())
+                .map_err(|e| store_error(&e))?;
+            // Counts only: which snippets they were is the user's business (ADR-0015).
+            Ok(n)
+        })
+        .and_then(|n| {
+            shared
+                .logger
+                .info(format_args!("usage reset: {n} snippets had counts"));
+            done()
         }),
         // Only snippets written by other members need review, and other members' snippets
         // arrive with sync (task 4.4); until then there are none.
@@ -763,7 +777,13 @@ fn delete_tag(shared: &Shared, view: &View, id: Id) -> Answer {
 }
 
 /// One page of summaries (no bodies beyond the first line).
-fn summaries(view: &View, query: &SnippetQuery, offset: u32, limit: u32) -> Answer {
+fn summaries(
+    shared: &Shared,
+    view: &View,
+    query: &SnippetQuery,
+    offset: u32,
+    limit: u32,
+) -> Answer {
     if limit == 0 || limit > MAX_SUMMARIES {
         return Err(err(
             ErrorCode::Invalid,
@@ -777,6 +797,14 @@ fn summaries(view: &View, query: &SnippetQuery, offset: u32, limit: u32) -> Answ
         .map(|e| (e.snippet, &e.reason))
         .collect();
     let all: Vec<&Snippet> = matching(view, query).collect();
+    // Usage is device-local and is not part of the view (it changes at every expansion without
+    // a rebuild), so it is read from the store, once per page.
+    let usage: HashMap<Id, Usage> = write(shared, |ctx| {
+        ctx.store.list_usage().map_err(|e| store_error(&e))
+    })?
+    .into_iter()
+    .map(|u| (u.snippet_id, u))
+    .collect();
     let start = usize::try_from(offset).unwrap_or(usize::MAX).min(all.len());
     let end = start
         .saturating_add(usize::try_from(limit).unwrap_or(usize::MAX))
@@ -813,6 +841,8 @@ fn summaries(view: &View, query: &SnippetQuery, offset: u32, limit: u32) -> Answ
                 enabled: s.enabled,
                 tags: view.tags_of(s.meta.id).to_vec(),
                 broken,
+                uses: Some(usage.get(&s.meta.id).map_or(0, |u| u.count)),
+                last_used: usage.get(&s.meta.id).and_then(|u| u.last_used),
                 updated_at: s.meta.updated_at,
             }
         })
@@ -989,35 +1019,94 @@ fn search(view: &View, query: &str, limit: usize) -> Vec<SearchHit> {
         .collect()
 }
 
-fn health(view: &View) -> HealthReport {
-    HealthReport {
-        shadowed: view
-            .snapshot
-            .shadowed()
-            .into_iter()
-            .map(|s| ShadowedEntry {
-                by: s.by,
-                hidden: s.hidden,
-            })
-            .collect(),
-        excluded: view
-            .snapshot
-            .excluded()
-            .iter()
-            .map(|e| match &e.reason {
-                ExclusionReason::Duplicate { kept } => ExcludedEntry {
-                    snippet: e.snippet,
-                    reason: "duplicate".to_owned(),
-                    kept: Some(*kept),
-                },
-                ExclusionReason::Template(t) => ExcludedEntry {
-                    snippet: e.snippet,
-                    reason: t.code().to_owned(),
-                    kept: None,
-                },
-            })
-            .collect(),
+/// Library health (spec §4.9): the findings of [`iamb_store::health`] over the view and the
+/// device-local usage.
+fn health(shared: &Shared, view: &View) -> Answer {
+    let (usage, since) = write(shared, |ctx| {
+        let usage = ctx.store.list_usage().map_err(|e| store_error(&e))?;
+        let since = ctx.store.usage_reset_at().map_err(|e| store_error(&e))?;
+        Ok((usage, since))
+    })?;
+    let found = health::analyse(
+        &view.snapshot,
+        view.snippets(),
+        &usage,
+        since,
+        clock::timestamp(),
+    );
+    Ok(ResponseBody::Health {
+        report: HealthReport {
+            shadowed: found
+                .shadowed
+                .into_iter()
+                .map(|s| ShadowedEntry {
+                    by: s.by,
+                    hidden: s.hidden,
+                })
+                .collect(),
+            excluded: found
+                .excluded
+                .into_iter()
+                .map(|e| match e.why {
+                    Why::Duplicate { kept } => ExcludedEntry {
+                        snippet: e.snippet,
+                        reason: "duplicate".to_owned(),
+                        kept: Some(kept),
+                        reference: None,
+                        included: None,
+                    },
+                    Why::Template {
+                        code,
+                        reference,
+                        included,
+                    } => ExcludedEntry {
+                        snippet: e.snippet,
+                        reason: code.to_owned(),
+                        kept: None,
+                        reference,
+                        included,
+                    },
+                })
+                .collect(),
+            unused: found
+                .unused
+                .into_iter()
+                .map(|u| UnusedEntry {
+                    snippet: u.snippet,
+                    last_used: u.last_used,
+                })
+                .collect(),
+        },
+    })
+}
+
+/// The snippets used most recently, newest first (the palette with nothing typed).
+fn recent(shared: &Shared, view: &View, limit: u32) -> Answer {
+    if limit == 0 || limit > MAX_SUMMARIES {
+        return Err(err(
+            ErrorCode::Invalid,
+            format!("the limit must be 1 to {MAX_SUMMARIES}"),
+        ));
     }
+    // More than asked for: a snippet that left the personal library since is skipped.
+    let want = usize::try_from(limit).unwrap_or(usize::MAX);
+    let used = write(shared, move |ctx| {
+        ctx.store
+            .recent_usage(want.saturating_mul(2).saturating_add(8))
+            .map_err(|e| store_error(&e))
+    })?;
+    let hits = used
+        .into_iter()
+        .filter(|u| view.snapshot.snippet(u.snippet_id).is_some())
+        .take(want)
+        .map(|u| SearchHit {
+            snippet: u.snippet_id,
+            score: 0,
+            field: None,
+            ranges: Vec::new(),
+        })
+        .collect();
+    Ok(ResponseBody::SearchResults { hits })
 }
 
 struct DryEnv {

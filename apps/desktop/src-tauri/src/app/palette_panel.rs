@@ -9,6 +9,7 @@
 //! | `palette_current` | The open palette, for a panel whose page loaded after the request |
 //! | `palette_painted` | The panel painted after it was shown (the 100 ms measurement) |
 //! | `palette_search` | `Search`, with the rows of its hits |
+//! | `palette_recent` | `RecentSnippets`, with their rows |
 //! | `palette_preview` | What the selected snippet would type now (`GetSnippet`, `RenderPreview`) |
 //! | `palette_pick` | Insert, fill in again, hand to the library, or close (hides, hands the focus back first) |
 //! | `palette_open` | ⌘K / Ctrl+K in the library window: the palette over it |
@@ -277,6 +278,13 @@ pub async fn palette_search(
 ) -> Res<PaletteResults> {
     only_the_palette(&window)?;
     blocking(&ui, move |ui| ui.palette.data.search(&ui.bridge, &query)).await
+}
+
+/// The snippets used most recently on this computer, for the palette with nothing typed.
+#[tauri::command]
+pub async fn palette_recent(ui: State<'_, Arc<Ui>>, window: WebviewWindow) -> Res<PaletteResults> {
+    only_the_palette(&window)?;
+    blocking(&ui, move |ui| ui.palette.data.recent(&ui.bridge)).await
 }
 
 /// What snippet `id` would type now, for the strip under the list.

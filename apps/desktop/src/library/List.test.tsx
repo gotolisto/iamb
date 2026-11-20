@@ -229,6 +229,22 @@ describe("the snippet list", () => {
     expect(within(list).getAllByRole("option")[0]?.getAttribute("aria-label")).toMatch(/^Banana/);
   });
 
+  it("sorts by use on this computer, most used first", async () => {
+    const user = userEvent.setup();
+    const fake = createFake({
+      snippets: [
+        { abbreviation: ";a", label: "Apple", body: "." },
+        { abbreviation: ";b", label: "Banana", body: "." },
+      ],
+      usage: { 1: { uses: 12, lastUsed: 5 } },
+    });
+    await renderLibrary(fake);
+    const list = await screen.findByRole("listbox", { name: "All snippets" });
+    await within(list).findAllByRole("option");
+    await user.selectOptions(screen.getByLabelText("Sort by"), "Most used on this computer");
+    expect(within(list).getAllByRole("option")[0]?.getAttribute("aria-label")).toMatch(/^Banana/);
+  });
+
   it("remembers the sort and the selected snippet for the next time the window opens", async () => {
     const user = userEvent.setup();
     const fake = createFake({ snippets: [{ abbreviation: ";a", label: "Apple", body: "." }, { abbreviation: ";b", label: "Banana", body: "." }] });

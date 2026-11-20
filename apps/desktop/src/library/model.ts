@@ -239,7 +239,7 @@ export function sameTagName(a: string, b: string): boolean {
 
 // ---- The list: order and filter -------------------------------------------------------------
 
-export type SortMode = "label" | "changed";
+export type SortMode = "label" | "changed" | "used";
 
 export interface Indexed {
   row: Summary;
@@ -267,7 +267,14 @@ export function indexRows(rows: readonly Summary[], tags: readonly Tag[]): Index
 
 export function sortIndexed(items: Indexed[], mode: SortMode): Indexed[] {
   const copy = items.slice();
-  if (mode === "changed") {
+  if (mode === "used") {
+    copy.sort(
+      (a, b) =>
+        (b.row.uses ?? 0) - (a.row.uses ?? 0) ||
+        (b.row.lastUsed ?? 0) - (a.row.lastUsed ?? 0) ||
+        collator.compare(a.key, b.key),
+    );
+  } else if (mode === "changed") {
     copy.sort((a, b) => b.row.updatedAt - a.row.updatedAt || collator.compare(a.key, b.key));
   } else {
     copy.sort((a, b) => collator.compare(a.key, b.key) || a.row.id.localeCompare(b.row.id));
@@ -466,4 +473,28 @@ export function templateErrorSentence(code: string): string {
 /** Whether `broken` is a template error rather than a lost abbreviation clash. */
 export function isTemplateError(broken: string | null): broken is string {
   return broken !== null && broken.startsWith("E_");
+}
+
+// ---- Usage on this computer (ADR-0015, specification §4.3 and §9 rule 6) -----------------------
+
+/** "today", "yesterday", "3 days ago", or the date, for a time in the past. */
+export function sinceText(at: number, now: Date = new Date()): string {
+  const day = (d: Date) => Math.floor(new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / 86_400_000);
+  const days = day(now) - day(new Date(at));
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days} days ago`;
+  const d = new Date(at);
+  return `on ${d.toLocaleDateString("en-GB", { day: "numeric", month: "long", ...(d.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }) })}`;
+}
+
+/**
+ * The editor's footer fact, always labelled as local: "Used 31 times on this computer · last
+ * used yesterday". null when the service does not count.
+ */
+export function usageText(uses: number | null, lastUsed: number | null, now: Date = new Date()): string | null {
+  if (uses === null) return null;
+  if (uses === 0) return "Not used yet on this computer";
+  const times = uses === 1 ? "Used once" : `Used ${uses} times`;
+  return `${times} on this computer${lastUsed === null ? "" : ` · last used ${sinceText(lastUsed, now)}`}`;
 }

@@ -25,6 +25,7 @@ import {
   messageText,
   optionsSummary,
   shortcutLabel,
+  usageText,
 } from "./model";
 import { TagInput } from "./TagInput";
 import type { LibraryData } from "./useLibraryData";
@@ -199,6 +200,8 @@ export function Editor(props: EditorProps) {
 
   // ---- Loading the saved snippet -------------------------------------------------------------
   const id = target.kind === "snippet" ? target.id : null;
+  const usageRow = id ? data.rowsById.get(id) : undefined;
+  const usage = usageRow ? usageText(usageRow.uses, usageRow.lastUsed) : null;
   useEffect(() => {
     if (id === null) return;
     // A draft that was just saved is already what the row holds.
@@ -696,6 +699,7 @@ export function Editor(props: EditorProps) {
             >
               Options
             </button>
+            {usage && <span className="usage-fact"> · {usage}</span>}
           </p>
         </footer>
 

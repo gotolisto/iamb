@@ -21,6 +21,8 @@
 //! | `library_save_tag` | `ListFolders` (for the profile), `ListTags`, `PutTag` | `Saved` |
 //! | `library_delete_tag` | `DeleteTag` | `Done` |
 //! | `library_check_abbreviation` | `CheckAbbreviation` | `AbbreviationCheck` |
+//! | `library_health` | `Health` | `Health` |
+//! | `library_reset_usage` | `ResetUsage` | `Done` |
 //!
 //! **Undo** of a delete is `library_save_snippet` with the deleted snippet's id: the service
 //! restores the row with its usage and tags. The store keeps `created_at` and `rev` of an
@@ -54,6 +56,8 @@ pub const REQUESTS: &[&str] = &[
     "put_tag",
     "delete_tag",
     "check_abbreviation",
+    "health",
+    "reset_usage",
 ];
 
 /// The most summaries one page holds (the service's limit).
@@ -145,6 +149,10 @@ pub struct SummaryView {
     pub tags: Vec<String>,
     /// Why it does not expand although enabled: `duplicate` or an `E_…` code.
     pub broken: Option<String>,
+    /// How many times it expanded on this computer; `None` when the service does not count.
+    pub uses: Option<u64>,
+    /// When it last expanded on this computer (UTC milliseconds); `None` when it has not.
+    pub last_used: Option<i64>,
     /// When it last changed (UTC milliseconds).
     pub updated_at: i64,
 }
@@ -161,6 +169,54 @@ pub struct SummaryPage {
     pub summaries: Vec<SummaryView>,
     /// The offset of the next page; `None` on the last.
     pub next: Option<u32>,
+}
+
+/// An immediate abbreviation that hides a longer one ("Never reached").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShadowedView {
+    /// The immediate snippet.
+    pub by: String,
+    /// The snippet that cannot be typed to its end.
+    pub hidden: String,
+}
+
+/// A snippet that will not expand although it is on ("Will not expand").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExcludedView {
+    /// The snippet.
+    pub snippet: String,
+    /// `duplicate` or an `E_…` code.
+    pub reason: String,
+    /// For `duplicate`: the snippet that holds the abbreviation.
+    pub kept: Option<String>,
+    /// For a broken reference: the abbreviation the failing `{snippet}` names.
+    pub reference: Option<String>,
+    /// The abbreviation of the included snippet whose content holds the error.
+    pub included: Option<String>,
+}
+
+/// A snippet not used on this computer for 90 days.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnusedView {
+    /// The snippet.
+    pub snippet: String,
+    /// When it last expanded (UTC milliseconds); `None`: never since it was created.
+    pub last_used: Option<i64>,
+}
+
+/// Library health: one list per section of spec §4.9.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HealthView {
+    /// "Never reached".
+    pub shadowed: Vec<ShadowedView>,
+    /// "Will not expand".
+    pub excluded: Vec<ExcludedView>,
+    /// "Not used on this computer for 90 days".
+    pub unused: Vec<UnusedView>,
 }
 
 /// A whole snippet, for the editor.
@@ -395,6 +451,18 @@ pub fn list_summaries(offset: u32, limit: u32) -> RequestBody {
     }
 }
 
+/// `Health`.
+#[must_use]
+pub const fn health_request() -> RequestBody {
+    RequestBody::Health {}
+}
+
+/// `ResetUsage`.
+#[must_use]
+pub const fn reset_usage_request() -> RequestBody {
+    RequestBody::ResetUsage {}
+}
+
 /// `GetSnippet`.
 #[must_use]
 pub const fn get_snippet(id: Id) -> RequestBody {
@@ -546,6 +614,8 @@ pub fn summaries_from(response: ResponseBody) -> Result<SummaryPage, Unexpected>
                     enabled: s.enabled,
                     tags: texts(&s.tags),
                     broken: s.broken.clone(),
+                    uses: s.uses,
+                    last_used: s.last_used.map(|t| t.0),
                     updated_at: s.updated_at.0,
                 })
                 .collect(),
@@ -629,6 +699,46 @@ pub fn check_from(response: ResponseBody) -> Result<CheckView, Unexpected> {
     }
 }
 
+/// The report in a `Health` response.
+///
+/// # Errors
+///
+/// [`Unexpected`] for any other response.
+pub fn health_from(response: ResponseBody) -> Result<HealthView, Unexpected> {
+    match response {
+        ResponseBody::Health { report } => Ok(HealthView {
+            shadowed: report
+                .shadowed
+                .iter()
+                .map(|s| ShadowedView {
+                    by: s.by.to_string(),
+                    hidden: s.hidden.to_string(),
+                })
+                .collect(),
+            excluded: report
+                .excluded
+                .iter()
+                .map(|e| ExcludedView {
+                    snippet: e.snippet.to_string(),
+                    reason: e.reason.clone(),
+                    kept: e.kept.map(|k| k.to_string()),
+                    reference: e.reference.clone(),
+                    included: e.included.clone(),
+                })
+                .collect(),
+            unused: report
+                .unused
+                .iter()
+                .map(|u| UnusedView {
+                    snippet: u.snippet.to_string(),
+                    last_used: u.last_used.map(|t| t.0),
+                })
+                .collect(),
+        }),
+        other => Err(Unexpected { got: other.name() }),
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // The operations (what the commands run, and the end-to-end tests)
 // ---------------------------------------------------------------------------------------------
@@ -673,6 +783,24 @@ pub fn summaries(bridge: &Bridge, offset: u32, limit: u32) -> Res<SummaryPage> {
         bridge,
         list_summaries(offset, limit),
     )?)?)
+}
+
+/// Library health.
+///
+/// # Errors
+///
+/// The call's errors, or an unexpected response.
+pub fn health(bridge: &Bridge) -> Res<HealthView> {
+    Ok(health_from(call(bridge, health_request())?)?)
+}
+
+/// Forgets the usage counts of this computer.
+///
+/// # Errors
+///
+/// The call's errors, or an unexpected response.
+pub fn reset_usage(bridge: &Bridge) -> Res<()> {
+    Ok(done_from(call(bridge, reset_usage_request())?)?)
 }
 
 /// One snippet with its tags.

@@ -11,8 +11,8 @@ use tauri::State;
 use super::Ui;
 use crate::contract::CommandError;
 use crate::library::{
-    self, CheckView, FolderDraft, FoldersView, SavedView, SnippetDraft, SnippetFull, SummaryPage,
-    TagDraft, TagView,
+    self, CheckView, FolderDraft, FoldersView, HealthView, SavedView, SnippetDraft, SnippetFull,
+    SummaryPage, TagDraft, TagView,
 };
 
 type Res<T> = Result<T, CommandError>;
@@ -113,4 +113,16 @@ pub async fn library_check_abbreviation(
         library::check(b, &abbreviation, &trigger, snippet.as_deref())
     })
     .await
+}
+
+/// Library health: what will not expand, what is never reached, what is unused.
+#[tauri::command]
+pub async fn library_health(ui: State<'_, Arc<Ui>>) -> Res<HealthView> {
+    blocking(&ui, library::health).await
+}
+
+/// Forgets how often each snippet was used on this computer.
+#[tauri::command]
+pub async fn library_reset_usage(ui: State<'_, Arc<Ui>>) -> Res<()> {
+    blocking(&ui, library::reset_usage).await
 }

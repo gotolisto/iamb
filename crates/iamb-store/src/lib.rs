@@ -23,6 +23,7 @@ pub mod attachments;
 mod codec;
 mod entity;
 mod error;
+pub mod health;
 pub mod migrations;
 mod ops;
 pub mod transfer;
@@ -32,6 +33,9 @@ pub use entity::{Entity, EntityKind};
 pub use error::StoreError;
 
 use crate::codec::{id_at, opt_ts_at, ts_at, u64_at, u64_int};
+
+/// The setting that holds when the usage counts were last reset (milliseconds, as text).
+pub const USAGE_RESET_KEY: &str = "usage_reset_at";
 
 /// Folders nest at most this many levels (a top-level folder is level 1).
 pub const MAX_FOLDER_DEPTH: usize = 4;
@@ -683,6 +687,53 @@ impl Store {
             .prepare_cached("SELECT snippet_id, count, chars_saved, last_used_at FROM usage WHERE snippet_id = ?1")?
             .query_row([snippet_id.as_bytes()], usage_row)
             .optional()?)
+    }
+
+    /// Forgets every snippet's usage (Settings → Privacy) and remembers when, so that a snippet
+    /// is not called unused for the time before the counts began. Returns how many snippets had
+    /// usage. Touches neither the snippets nor the outbox.
+    ///
+    /// # Errors
+    ///
+    /// `SQLite` errors.
+    pub fn reset_usage(&mut self, at: Timestamp) -> Result<u64, StoreError> {
+        self.write(|w| {
+            let n = w.tx.execute("DELETE FROM usage", [])?;
+            w.tx.execute(
+                "INSERT INTO setting (key, value) VALUES (?1, ?2)
+                 ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                params![USAGE_RESET_KEY, at.0.to_string()],
+            )?;
+            Ok(u64::try_from(n).unwrap_or(u64::MAX))
+        })
+    }
+
+    /// When the usage counts were last reset on this computer; `None` if never.
+    ///
+    /// # Errors
+    ///
+    /// `SQLite` errors.
+    pub fn usage_reset_at(&self) -> Result<Option<Timestamp>, StoreError> {
+        Ok(self
+            .get_setting(USAGE_RESET_KEY)?
+            .and_then(|v| v.parse().ok())
+            .map(Timestamp))
+    }
+
+    /// The snippets used most recently, newest first, at most `limit`.
+    ///
+    /// # Errors
+    ///
+    /// `SQLite` errors.
+    pub fn recent_usage(&self, limit: usize) -> Result<Vec<Usage>, StoreError> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT u.snippet_id, u.count, u.chars_saved, u.last_used_at FROM usage u
+             JOIN snippet s ON s.id = u.snippet_id
+             WHERE u.last_used_at IS NOT NULL AND s.deleted_at IS NULL
+             ORDER BY u.last_used_at DESC, u.snippet_id LIMIT ?1",
+        )?;
+        let rows = stmt.query_map([i64::try_from(limit).unwrap_or(i64::MAX)], usage_row)?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
     /// Usage statistics of every snippet that was expanded at least once.

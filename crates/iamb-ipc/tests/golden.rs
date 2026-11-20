@@ -18,8 +18,8 @@ use iamb_ipc::{
     PendingReview, PermissionName, PreviewBlank, PreviewCursor, PreviewPart, RemoteRow, Request,
     RequestBody, Response, ResponseBody, Role, SearchField, SearchHit, Secret, ServiceStatus,
     ShadowedEntry, SnippetQuery, SnippetSummary, SyncStatus, TagEntry, TemplateAttribute,
-    TemplateErrorInfo, TemplateToken, TransferFormat, Welcome, Wire, WireAction, WireAttachment,
-    WireDiagnostic, WireExclusion, WireField, WireOutboxEntry,
+    TemplateErrorInfo, TemplateToken, TransferFormat, UnusedEntry, Welcome, Wire, WireAction,
+    WireAttachment, WireDiagnostic, WireExclusion, WireField, WireOutboxEntry,
 };
 
 fn id(n: u8) -> Id {
@@ -234,6 +234,8 @@ fn requests() -> Vec<RequestBody> {
             file_name: "logo.png".to_owned(),
             folder: id(2),
         },
+        RequestBody::RecentSnippets { limit: 8 },
+        RequestBody::ResetUsage {},
     ]
 }
 
@@ -275,10 +277,25 @@ fn responses() -> Vec<ResponseBody> {
                     by: id(4),
                     hidden: id(5),
                 }],
-                excluded: vec![ExcludedEntry {
-                    snippet: id(6),
-                    reason: "duplicate".to_owned(),
-                    kept: Some(id(1)),
+                excluded: vec![
+                    ExcludedEntry {
+                        snippet: id(6),
+                        reason: "duplicate".to_owned(),
+                        kept: Some(id(1)),
+                        reference: None,
+                        included: None,
+                    },
+                    ExcludedEntry {
+                        snippet: id(7),
+                        reason: "E_SNIPPET_NOT_FOUND".to_owned(),
+                        kept: None,
+                        reference: Some(";sig2".to_owned()),
+                        included: Some(";sig".to_owned()),
+                    },
+                ],
+                unused: vec![UnusedEntry {
+                    snippet: id(8),
+                    last_used: Some(Timestamp(1_755_000_000_000)),
                 }],
             },
         },
@@ -444,6 +461,8 @@ fn responses() -> Vec<ResponseBody> {
                 enabled: true,
                 tags: vec![id(3)],
                 broken: None,
+                uses: Some(31),
+                last_used: Some(Timestamp(1_763_390_000_000)),
                 updated_at: Timestamp(1_763_400_000_000),
             }],
             next: Some(201),

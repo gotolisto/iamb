@@ -18,6 +18,7 @@ function harness(open: PaletteOpen | null, os: Os = "win") {
   let current = open;
   let handler: ((e: PaletteEvent) => void) | undefined;
   const answers = new Map<string, PaletteResults>();
+  const recents: { value: PaletteResults } = { value: { total: 76, hits: [] } };
   const api = {
     ready: vi.fn(() => Promise.resolve()),
     current: vi.fn(() => Promise.resolve(current)),
@@ -25,6 +26,7 @@ function harness(open: PaletteOpen | null, os: Os = "win") {
     search: vi.fn((q: string) =>
       Promise.resolve(answers.get(q) ?? { total: 76, hits: [] }),
     ),
+    recent: vi.fn(() => Promise.resolve(recents.value)),
     preview: vi.fn((_id: string) => Promise.resolve(null)),
     pick: vi.fn((_s: number, _a: unknown) => Promise.resolve()),
   } satisfies PaletteApi;
@@ -41,6 +43,7 @@ function harness(open: PaletteOpen | null, os: Os = "win") {
     api,
     view,
     answers,
+    recents,
     setCurrent: (o: PaletteOpen | null) => {
       current = o;
     },
@@ -363,5 +366,50 @@ describe("a service that does not answer", () => {
       "x",
     );
     expect(await screen.findByText("Iamb is not running.")).toBeTruthy();
+  });
+});
+
+describe("the palette with nothing typed", () => {
+  it("lists the snippets used most recently on this computer, newest first", async () => {
+    const h = harness(openOf());
+    h.recents.value = {
+      total: 76,
+      hits: [
+        hit({ label: "Newest", abbreviation: ";n" }, { field: null }),
+        hit({ label: "Older", abbreviation: ";o" }, { field: null }),
+      ],
+    };
+    await screen.findByRole("dialog", { name: "Search snippets" });
+    const rows = await screen.findAllByRole("option");
+    expect(rows.map((r) => r.textContent)).toEqual([
+      expect.stringContaining("Newest"),
+      expect.stringContaining("Older"),
+    ]);
+    expect(screen.queryByText("Type to search by abbreviation, label, text or tag.")).toBeNull();
+    expect(h.api.recent).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows at most eight rows, after \"Fill in again\" when there is one", async () => {
+    const h = harness(openOf({ lastForm: "Return form" }));
+    h.recents.value = {
+      total: 76,
+      hits: Array.from({ length: 12 }, (_, i) => hit({ label: `Recent ${i}`, abbreviation: `;r${i}` }, { field: null })),
+    };
+    await screen.findByRole("dialog", { name: "Search snippets" });
+    await waitFor(() => expect(screen.getAllByRole("option")).toHaveLength(8));
+    expect(screen.getAllByRole("option")[0]?.textContent).toContain("Fill in “Return form” again");
+  });
+
+  it("keeps its hint when no snippet was used, or the service cannot say", async () => {
+    const h = harness(openOf());
+    h.api.recent.mockImplementation(() => Promise.reject(new Error("unknown_request")));
+    await screen.findByRole("dialog", { name: "Search snippets" });
+    expect(screen.getByText("Type to search by abbreviation, label, text or tag.")).toBeTruthy();
+  });
+
+  it("forgets the list when the palette closes", async () => {
+    const h = await opened();
+    await h.send({ type: "closed", session: 4 });
+    expect(screen.queryByRole("option")).toBeNull();
   });
 });

@@ -13,6 +13,7 @@ import {
   type PaletteApi,
   type PaletteEvent,
   type PaletteOpen,
+  type PaletteResults,
   type PickAction,
 } from "./api";
 import {
@@ -215,6 +216,8 @@ export function PaletteView({
   const [open, setOpen] = useState<PaletteOpen | null>(null);
   const [query, setQuery] = useState("");
   const [answer, setAnswer] = useState<Answer | null>(null);
+  // The snippets used most recently on this computer: what the list shows with nothing typed.
+  const [recent, setRecent] = useState<PaletteResults | null>(null);
   const [health, setHealth] = useState<Health>("ok");
   const [selected, setSelected] = useState(0);
   const [preview, setPreview] = useState<TemplatePreview | null>(null);
@@ -237,6 +240,7 @@ export function PaletteView({
     setOpen(null);
     setQuery("");
     setAnswer(null);
+    setRecent(null);
     setHealth("ok");
     setSelected(0);
     setPreview(null);
@@ -271,7 +275,16 @@ export function PaletteView({
     setSelected(0);
     setPreview(null);
     setNotice(null);
+    setRecent(null);
     setOpen(next);
+    const mine = next.session;
+    api.recent().then(
+      (r) => {
+        if (session.current === mine) setRecent(r);
+      },
+      // Without usage the palette shows its hint.
+      () => undefined,
+    );
   }, [api]);
 
   useEffect(() => {
@@ -360,8 +373,8 @@ export function PaletteView({
   };
 
   const items = useMemo(
-    () => itemsFor(query, answer, open?.lastForm ?? null),
-    [query, answer, open?.lastForm],
+    () => itemsFor(query, answer, open?.lastForm ?? null, recent),
+    [query, answer, open?.lastForm, recent],
   );
   const index = items.length ? Math.min(selected, items.length - 1) : 0;
   const item: Item | undefined = items[index];
@@ -520,7 +533,7 @@ export function PaletteView({
               {copy.noMatch(query.trim())}
             </div>
           )}
-          {!typed && !open.lastForm && <p className="pl-hint">{copy.hint}</p>}
+          {!typed && !open.lastForm && items.length === 0 && <p className="pl-hint">{copy.hint}</p>}
           <div
             id="pl-list"
             ref={listRef}
@@ -542,7 +555,7 @@ export function PaletteView({
               />
             ))}
           </div>
-          {!typed && open.lastForm && <p className="pl-hint">{copy.hint}</p>}
+          {!typed && open.lastForm && items.length <= 1 && <p className="pl-hint">{copy.hint}</p>}
         </div>
         <div className="pl-pv" aria-label={copy.preview}>
           {previewText(preview)}

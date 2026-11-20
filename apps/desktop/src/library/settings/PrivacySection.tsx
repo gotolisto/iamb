@@ -1,3 +1,7 @@
+import { useState } from "react";
+
+import { describeFailure } from "../errors";
+import { ConfirmDialog } from "../Dialogs";
 import { Row, Switch } from "./controls";
 import type { SectionProps } from "./section";
 import { useMessages } from "./useMessages";
@@ -10,8 +14,20 @@ export const PRIVACY_STATEMENTS = [
 ];
 
 /** Privacy: what Iamb keeps, and the crash-report switch. */
-export function PrivacySection({ data, offline }: SectionProps) {
+export const RESET_COPY = {
+  label: "Usage counts",
+  help: "How often and when each snippet was used, kept on this computer only. Resetting forgets it; your snippets do not change.",
+  button: "Reset usage counts…",
+  title: "Reset usage counts?",
+  body: "Iamb will forget how often and when each snippet was used on this computer. “Recently used”, “Most used on this computer” and the unused list in Library health start again from nothing. Your snippets are not changed.",
+  confirm: "Reset counts",
+  done: "Usage counts were reset.",
+} as const;
+
+export function PrivacySection({ env, data, offline, mac }: SectionProps) {
   const { messages, fail } = useMessages();
+  const [asking, setAsking] = useState(false);
+  const [reset, setReset] = useState<"idle" | "done">("idle");
   const on = data.values?.["ui.crash_reports"] === "on";
   return (
     <>
@@ -37,6 +53,42 @@ export function PrivacySection({ data, offline }: SectionProps) {
           />
         )}
       </Row>
+      <Row label={RESET_COPY.label} help={RESET_COPY.help} message={messages.usage ?? null}>
+        {() => (
+          <>
+            <button type="button" className="button" disabled={offline} onClick={() => setAsking(true)}>
+              {RESET_COPY.button}
+            </button>
+            {reset === "done" && (
+              <span className="help" role="status">
+                {RESET_COPY.done}
+              </span>
+            )}
+          </>
+        )}
+      </Row>
+      {asking && (
+        <ConfirmDialog
+          title={RESET_COPY.title}
+          body={RESET_COPY.body}
+          confirm={RESET_COPY.confirm}
+          mac={mac}
+          onCancel={() => setAsking(false)}
+          onConfirm={() => {
+            setAsking(false);
+            env.api.resetUsage().then(
+              () => {
+                setReset("done");
+                fail("usage", null);
+              },
+              (e: unknown) => {
+                setReset("idle");
+                fail("usage", describeFailure(e, "reset_usage"));
+              },
+            );
+          }}
+        />
+      )}
     </>
   );
 }

@@ -13,6 +13,7 @@ import type {
   AbbreviationCheck,
   Defaults,
   Folder,
+  Health,
   LibraryApi,
   Saved,
   Snippet,
@@ -104,6 +105,8 @@ export interface FakeOptions {
   folders?: Partial<Folder>[];
   snippets?: Partial<Snippet>[];
   tags?: Partial<Tag>[];
+  /** Usage on this computer by snippet index in `snippets`: uses and the time of the last. */
+  usage?: Record<number, { uses: number; lastUsed: number | null }>;
 }
 
 export function snippetOf(p: Partial<Snippet> & { abbreviation: string }, folderId: string): Snippet {
@@ -159,6 +162,13 @@ export function createFake(options: FakeOptions = {}) {
     live.set(sn.id, sn);
   }
 
+  const usage = new Map<string, { uses: number; lastUsed: number | null }>();
+  for (const [index, u] of Object.entries(options.usage ?? {})) {
+    const id = [...live.keys()][Number(index)];
+    if (id) usage.set(id, u);
+  }
+  const DAY = 86_400_000;
+
   const emit = (changed: { snippets?: string[]; folders?: string[]; tags?: string[] } | null) => {
     revision += 1;
     const event: UiEvent = {
@@ -197,8 +207,31 @@ export function createFake(options: FakeOptions = {}) {
     enabled: s.enabled,
     tags: s.tags,
     broken: brokenOf(s),
+    uses: usage.get(s.id)?.uses ?? 0,
+    lastUsed: usage.get(s.id)?.lastUsed ?? null,
     updatedAt: s.updatedAt,
   });
+
+  /** What the service's health would say, with the rules the interface relies on. */
+  const healthOf = (): Health => {
+    const all = [...live.values()];
+    const excluded = all
+      .filter((s) => s.enabled && brokenOf(s))
+      .map((s) => ({ snippet: s.id, reason: brokenOf(s) as string, kept: null, reference: null, included: null }));
+    const shadowed = all.flatMap((a) =>
+      a.enabled && a.trigger === "immediate"
+        ? all
+            .filter((b) => b.enabled && b.id !== a.id && fold(b.abbreviation).startsWith(fold(a.abbreviation)))
+            .map((b) => ({ by: a.id, hidden: b.id }))
+        : [],
+    );
+    const skip = new Set([...excluded.map((e) => e.snippet), ...shadowed.map((x) => x.hidden)]);
+    const unused = all
+      .filter((s) => s.enabled && !skip.has(s.id) && usage.has(s.id))
+      .filter((s) => (usage.get(s.id)?.lastUsed ?? 0) < Date.now() - 90 * DAY)
+      .map((s) => ({ snippet: s.id, lastUsed: usage.get(s.id)?.lastUsed ?? null }));
+    return { shadowed, excluded, unused };
+  };
 
   const check = (abbreviation: string, trigger: string, snippet?: string): AbbreviationCheck => {
     const others = [...live.values()].filter((s) => s.id !== snippet);
@@ -347,6 +380,16 @@ export function createFake(options: FakeOptions = {}) {
       guardUp();
       return check(abbreviation, trigger, snippet);
     },
+    health: async () => {
+      calls.push("health");
+      guardUp();
+      return healthOf();
+    },
+    resetUsage: async () => {
+      calls.push("resetUsage");
+      guardUp();
+      usage.clear();
+    },
     setPaused: async () => ({ connection: "connected", service: null }),
     dismiss: async () => {
       calls.push("dismiss");
@@ -365,6 +408,11 @@ export function createFake(options: FakeOptions = {}) {
     setDown(code: string | null) {
       down = code;
     },
+    /** The snippet was used on this computer. */
+    setUsage(id: string, uses: number, lastUsed: number | null) {
+      usage.set(id, { uses, lastUsed });
+    },
+    usage,
     /** A change made by someone else. */
     emit,
     listeners,

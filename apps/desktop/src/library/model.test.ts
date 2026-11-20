@@ -42,6 +42,8 @@ const row = (id: string, over: Partial<Summary> = {}): Summary => ({
   enabled: true,
   tags: [],
   broken: null,
+  uses: null,
+  lastUsed: null,
   updatedAt: 1,
   ...over,
 });
@@ -212,5 +214,31 @@ describe("the abbreviation", () => {
     ]);
     expect(abbreviationMessages(ctx("immediate", ";ty"), null)).toEqual([]);
     expect(messageText(abbreviationMessages(ctx("delimiter", ""), null)[0]!)).toBe("Type an abbreviation.");
+  });
+});
+
+describe("usage on this computer", () => {
+  const now = new Date(2026, 10, 20, 15, 0);
+  it("labels every count as local and dates the last use in words", async () => {
+    const { usageText, sinceText } = await import("./model");
+    expect(usageText(31, new Date(2026, 10, 19, 9).getTime(), now)).toBe(
+      "Used 31 times on this computer · last used yesterday",
+    );
+    expect(usageText(1, new Date(2026, 10, 20, 9).getTime(), now)).toBe("Used once on this computer · last used today");
+    expect(usageText(0, null, now)).toBe("Not used yet on this computer");
+    expect(usageText(null, null, now)).toBeNull();
+    expect(sinceText(new Date(2026, 10, 17, 9).getTime(), now)).toBe("3 days ago");
+    expect(sinceText(new Date(2026, 9, 2, 9).getTime(), now)).toBe("on 2 October");
+  });
+
+  it("sorts the most used first", async () => {
+    const { sortIndexed, indexRows } = await import("./model");
+    const rows = [
+      row("a", { label: "Alpha", uses: 2, lastUsed: 5 }),
+      row("b", { label: "Beta", uses: 9, lastUsed: 1 }),
+      row("c", { label: "Gamma", uses: 2, lastUsed: 8 }),
+    ];
+    const order = sortIndexed(indexRows(rows, []), "used").map((i) => i.row.id);
+    expect(order).toEqual(["b", "c", "a"]);
   });
 });

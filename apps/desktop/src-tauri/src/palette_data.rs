@@ -18,6 +18,7 @@
 //! | Command | Request sent | Answer |
 //! | --- | --- | --- |
 //! | `palette_search` | `Search` | [`PaletteResults`] |
+//! | `palette_recent` | `RecentSnippets` | [`PaletteResults`] |
 //! | `palette_preview` | `GetSnippet`, `RenderPreview` | [`PreviewView`] |
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -34,9 +35,14 @@ use crate::template::{self, PreviewView};
 /// How many hits one query asks for (flow 5, step 2).
 pub const HIT_LIMIT: u32 = 50;
 
+/// How many recently used snippets the palette lists with nothing typed: its eight rows
+/// (spec §4.5).
+pub const RECENT_LIMIT: u32 = 8;
+
 /// The requests this module sends, by wire name.
 pub const REQUESTS: &[&str] = &[
     "search",
+    "recent_snippets",
     "list_snippet_summaries",
     "list_folders",
     "list_tags",
@@ -87,7 +93,7 @@ pub struct PaletteHit {
 }
 
 /// The answer of `palette_search`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaletteResults {
     /// How many snippets there are in all ("4 of 76").
@@ -279,8 +285,7 @@ impl PaletteData {
         }
     }
 
-    /// Searches the library for `query` ("recently used" is not offered: the service does not
-    /// report usage yet, spec §11.2 entry 4).
+    /// Searches the library for `query` (with nothing typed the palette asks [`recent`](Self::recent) instead).
     ///
     /// # Errors
     ///
@@ -318,6 +323,54 @@ impl PaletteData {
                 .as_ref()
                 .and_then(|l| Self::hits_of(l, &hits, false).map(|h| (l.total, h)))
         };
+        let (total, hits) = rows.unwrap_or_default();
+        Ok(PaletteResults { total, hits })
+    }
+
+    /// The snippets used most recently on this computer, newest first, for the palette with
+    /// nothing typed (spec §4.5). A service that does not report usage (`unknown_request`)
+    /// gives an empty list, and the palette shows its hint.
+    ///
+    /// # Errors
+    ///
+    /// The calls' errors (`disconnected`, `timeout`, …) other than a service that does not know
+    /// the request.
+    pub fn recent(&self, bridge: &Bridge) -> Res<PaletteResults> {
+        let response = match bridge.call(RequestBody::RecentSnippets {
+            limit: RECENT_LIMIT,
+        }) {
+            Ok(r) => r,
+            Err(e) => {
+                let e = command(e);
+                if e.code == "unknown_request" {
+                    return Ok(PaletteResults::default());
+                }
+                return Err(e);
+            }
+        };
+        let ResponseBody::SearchResults { hits } = response else {
+            return Err(CommandError::new(
+                "unexpected_response",
+                "the service's answer to recent_snippets was not the one expected",
+            ));
+        };
+        self.refresh(bridge)?;
+        let rows = {
+            let state = self.lock();
+            state
+                .loaded
+                .as_ref()
+                .and_then(|l| Self::hits_of(l, &hits, true).map(|h| (l.total, h)))
+        };
+        let rows = rows.or_else(|| {
+            self.invalidate();
+            self.refresh(bridge).ok()?;
+            let state = self.lock();
+            state
+                .loaded
+                .as_ref()
+                .and_then(|l| Self::hits_of(l, &hits, false).map(|h| (l.total, h)))
+        });
         let (total, hits) = rows.unwrap_or_default();
         Ok(PaletteResults { total, hits })
     }

@@ -254,7 +254,7 @@ describe("the library window", () => {
     await renderLibrary(base());
     await screen.findAllByRole("option");
     await user.click(screen.getByRole("button", { name: /Library health/ }));
-    expect(screen.getByText("Nothing to fix. All 3 snippets can expand.")).toBeTruthy();
+    expect(await screen.findByText("Nothing to fix. All 3 snippets can expand.")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: /Why didn’t it expand\?/ }));
     expect(screen.getByRole("heading", { name: "Why didn’t it expand?" })).toBeTruthy();
     await user.keyboard("{Control>},{/Control}");
@@ -273,7 +273,8 @@ describe("the library window", () => {
     expect(row.textContent).toContain("Broken");
     expect(screen.getByRole("button", { name: /Library health/ }).textContent).toContain("1");
     fireEvent.click(screen.getByRole("button", { name: /Library health/ }));
-    expect(screen.getByText("1 snippet will not expand. They carry a Broken badge in the list.")).toBeTruthy();
+    expect(await screen.findByRole("region", { name: "Will not expand: error in the snippet" })).toBeTruthy();
+    expect(screen.getByText(/Something that starts with \{ is never closed/)).toBeTruthy();
   });
 
   it("warns when a saved snippet will not expand", async () => {

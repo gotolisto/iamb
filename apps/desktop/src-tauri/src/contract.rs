@@ -57,6 +57,9 @@ pub const COMMANDS: &[&str] = &[
     "library_save_tag",
     "library_delete_tag",
     "library_check_abbreviation",
+    // Library health and the usage reset (task 3.10).
+    "library_health",
+    "library_reset_usage",
     // The template editor's commands (`app/template_commands.rs`, task 3.4).
     "template_parse",
     "template_preview",
@@ -90,6 +93,7 @@ pub const COMMANDS: &[&str] = &[
     "palette_current",
     "palette_painted",
     "palette_search",
+    "palette_recent",
     "palette_preview",
     "palette_pick",
     "palette_open",

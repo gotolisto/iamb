@@ -285,3 +285,24 @@ describe("changes made elsewhere", () => {
     await waitFor(() => expect(fake.byAbbreviation(";rdraft")?.body).toBe("kept"));
   });
 });
+
+describe("the footer's usage line", () => {
+  it("says how often and when, and that it is counted on this computer", async () => {
+    const user = userEvent.setup();
+    const fake = fakeWith();
+    const used = fake.byAbbreviation(";rty");
+    expect(used).toBeTruthy();
+    if (used) fake.setUsage(used.id, 31, Date.now() - 86_400_000);
+    await renderLibrary(fake);
+    await user.click(await screen.findByRole("option", { name: /^Thanks for your order/ }));
+    const fact = await screen.findByText(/Used 31 times on this computer · last used yesterday/);
+    expect(fact.closest("footer")).toBeTruthy();
+  });
+
+  it("says a snippet was not used yet, and shows nothing for a service that does not count", async () => {
+    const user = userEvent.setup();
+    await renderLibrary(fakeWith());
+    await user.click(await screen.findByRole("option", { name: /^Late delivery/ }));
+    expect(await screen.findByText(/Not used yet on this computer/)).toBeTruthy();
+  });
+});

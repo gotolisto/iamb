@@ -148,6 +148,8 @@ export interface PaletteApi {
   painted: (session: number, paintedAtMs: number) => Promise<void>;
   /** The hits for `query`, with their rows. */
   search: (query: string) => Promise<PaletteResults>;
+  /** The snippets used most recently on this computer, newest first (nothing typed yet). */
+  recent: () => Promise<PaletteResults>;
   /** What snippet `id` would type now; null when it cannot be shown. */
   preview: (id: string) => Promise<TemplatePreview | null>;
   /** What the user did. Rejects with `FOCUS_LOST` when the focus could not be given back. */
@@ -167,6 +169,11 @@ export function createPaletteApi(invoke: Invoke): PaletteApi {
     painted: (session, paintedAtMs) => invoke<void>("palette_painted", { session, paintedAtMs }),
     search: async (query) => {
       const results = await invoke<unknown>("palette_search", { query });
+      if (!isPaletteResults(results)) throw unexpected;
+      return results;
+    },
+    recent: async () => {
+      const results = await invoke<unknown>("palette_recent");
       if (!isPaletteResults(results)) throw unexpected;
       return results;
     },

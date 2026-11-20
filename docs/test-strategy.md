@@ -871,3 +871,51 @@ Method, without them:
 What this does not cover: what each application's own paste filter keeps (the matrix), the
 system clipboards themselves (the platform crates' paste tests and the compatibility run), and
 pasting large images into slow applications (the paste wait of each app's strategy).
+
+### 8.9 Library health and usage statistics (task 3.10)
+
+**KPI: library health detects 100% of planted problems.** Method: a library is written with the
+problems put in on purpose, with the list of exactly what must be reported and as what, and the
+test fails on a miss and on a false alarm.
+
+- **Fixture libraries** (`crates/iamb-store/tests/fixtures/health/*.json`): one file per kind of
+  problem (`missing_reference`, `cycle`, `depth`, `template_error` with a snippet that includes a
+  broken one, `duplicate_abbreviation`, `shadowed`, `unused`, `unused_after_reset`) and
+  `mixed.json`, a library of 284 snippets as a business might keep one, with 27 planted problems
+  of every kind and decoys that must not be reported (a switched-off snippet with a broken
+  reference, a long-unused switched-off one, a reference to a switched-off snippet, one used 89
+  days ago, one made 20 days ago, a broken snippet that is also unused, reported once). Each file
+  has `now_day`, its snippets (abbreviation, content, trigger, on or off, creation day, last use)
+  and `expect`: one line per planted problem (`error <key> <CODE> ref=… in=…`,
+  `taken <key> kept=<key>`, `never_reached <key> by=<key>`, `unused <key> last_day=<n>|never`).
+- **The test** (`crates/iamb-store/tests/health.rs`) builds the engine's snapshot from each file,
+  runs `iamb_store::health::analyse`, writes what it reports in the same lines and compares the
+  two sets. It prints the detection rate of every file and the total (`cargo test -p iamb-store
+  --test health -- --nocapture`). Result here (2026-11-20): 46 of 46 planted problems detected
+  (100.0%), 0 false alarms; the sidebar count equals the snippets reported once.
+- **Timing**: `health_over_ten_thousand_snippets_is_fast` makes 10,000 snippets with about a
+  tenth in trouble (486 will not expand, 102 never reached, 986 unused) and times `analyse`:
+  about 40 ms in a debug build on the development machine (the bound is 1 s). The snapshot's
+  build, which happens once per library change already, takes about 160 ms in the same build;
+  the `Health` request adds the read of the usage rows (10,000 small rows) on the store thread.
+- **Usage**: `iamb-store/tests/crud.rs` (usage touches neither the snippet nor the outbox; a
+  reset forgets every count, notes when and changes no snippet or outbox row; the most recently
+  used come newest first and skip deleted snippets), `iamb-service/tests/usage_health.rs` (an
+  expansion counts once; the list answer carries `uses` and `last_used`; `RecentSnippets` is
+  newest first with no matched field; `ResetUsage` clears the counts, is refused to the
+  command-line tool and leaves the outbox as an unused library has it; health through the
+  endpoint names the missing snippet, the cycle, the shadowing and the unused snippets, and a
+  reset starts the 90 days again), `iamb-ipc/tests/golden` (the new messages and fields).
+- **The window** (Vitest): `src/library/health/Health.test.tsx` (the sections with the
+  specification's titles and none that is empty, each entry's line and buttons, opening, turning
+  off and deleting from an entry, the badge counting snippets once, the clean state, following a
+  change while open, the failure and its retry, the sentences), the editor footer's usage line
+  (`Editor.test.tsx`), "Most used on this computer" (`model.test.ts`), the recent list of the
+  palette (`palette/PaletteView.test.tsx`: newest first, eight rows with "Fill in … again", the hint
+  when there is nothing) and the reset in Settings (`settings/SettingsView.test.tsx`: it asks first,
+  forgets only when confirmed, says when the service does not answer).
+
+Not covered: usage recorded on a real platform (the mock's end-to-end test in
+`iamb-service/tests/end_to_end.rs` records through the same store thread), and the reading of
+"never used" for libraries made before the counts were reset by a build that did not record the
+reset (they count from creation).

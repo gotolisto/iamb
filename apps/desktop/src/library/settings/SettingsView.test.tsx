@@ -603,3 +603,32 @@ describe("Privacy and About", () => {
     expect(r.settings.puts).toEqual([]);
   });
 });
+
+describe("the usage reset", () => {
+  it("asks first, and forgets the counts only when confirmed", async () => {
+    const r = rig();
+    const user = await open(r, "Privacy");
+    r.library.setUsage("x", 3, 1);
+    await user.click(screen.getByRole("button", { name: "Reset usage counts…" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Reset usage counts?" });
+    expect(dialog.textContent).toContain("on this computer");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(r.library.calls).not.toContain("resetUsage");
+    expect(r.library.usage.size).toBe(1);
+
+    await user.click(screen.getByRole("button", { name: "Reset usage counts…" }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Reset counts" }));
+    expect(await screen.findByText("Usage counts were reset.")).toBeTruthy();
+    expect(r.library.usage.size).toBe(0);
+  });
+
+  it("says so when the service does not answer", async () => {
+    const r = rig();
+    const user = await open(r, "Privacy");
+    r.library.setDown("disconnected");
+    await user.click(screen.getByRole("button", { name: "Reset usage counts…" }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Reset counts" }));
+    expect(await screen.findByText(/Iamb is not running/)).toBeTruthy();
+    expect(screen.queryByText("Usage counts were reset.")).toBeNull();
+  });
+});

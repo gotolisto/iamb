@@ -58,7 +58,43 @@ export interface Summary {
   tags: string[];
   /** Why it does not expand although it is on: `duplicate` or an `E_…` code. */
   broken: string | null;
+  /** Times it expanded on this computer; null when the service does not count. */
+  uses: number | null;
+  /** When it last expanded on this computer (ms); null when it has not. */
+  lastUsed: number | null;
   updatedAt: number;
+}
+
+/** "Never reached": `by` expands immediately and fires before `hidden` can be typed. */
+export interface ShadowedEntry {
+  by: string;
+  hidden: string;
+}
+
+/** A snippet that will not expand although it is on. */
+export interface ExcludedEntry {
+  snippet: string;
+  /** `duplicate` or an `E_…` code. */
+  reason: string;
+  /** For `duplicate`: the snippet that holds the abbreviation. */
+  kept: string | null;
+  /** For a broken reference: the abbreviation the failing `{snippet}` names. */
+  reference: string | null;
+  /** The abbreviation of the included snippet whose content holds the error. */
+  included: string | null;
+}
+
+/** Not used on this computer for 90 days. */
+export interface UnusedEntry {
+  snippet: string;
+  /** null: never since it was created (or since the counts were reset). */
+  lastUsed: number | null;
+}
+
+export interface Health {
+  shadowed: ShadowedEntry[];
+  excluded: ExcludedEntry[];
+  unused: UnusedEntry[];
 }
 
 export interface SummaryPage {
@@ -148,6 +184,9 @@ export function createLibraryApi(invoke: Invoke) {
         trigger,
         snippet: snippet ?? null,
       }),
+    health: () => invoke<Health>("library_health"),
+    /** Forgets how often each snippet was used on this computer. */
+    resetUsage: () => invoke<void>("library_reset_usage"),
     /** Pause and the rest of the app's own commands, for the status line. */
     setPaused: (paused: boolean) => createBaseApi(invoke).setPaused(paused),
     dismiss: () => createBaseApi(invoke).dismiss(),
@@ -215,6 +254,8 @@ export function isSummary(v: unknown): v is Summary {
     isBool(v.enabled) &&
     isStrings(v.tags) &&
     isStrOrNull(v.broken) &&
+    (v.uses === null || isNum(v.uses)) &&
+    (v.lastUsed === null || isNum(v.lastUsed)) &&
     isNum(v.updatedAt)
   );
 }
@@ -257,5 +298,24 @@ export function isSaved(v: unknown): v is Saved {
 export function isAbbreviationCheck(v: unknown): v is AbbreviationCheck {
   return (
     isObject(v) && isStrOrNull(v.conflict) && isStrings(v.hides) && isStrings(v.hiddenBy)
+  );
+}
+
+export function isHealth(v: unknown): v is Health {
+  const list = (x: unknown, ok: (e: Record<string, unknown>) => boolean) =>
+    Array.isArray(x) && x.every((e) => isObject(e) && ok(e));
+  return (
+    isObject(v) &&
+    list(v.shadowed, (e) => isStr(e.by) && isStr(e.hidden)) &&
+    list(
+      v.excluded,
+      (e) =>
+        isStr(e.snippet) &&
+        isStr(e.reason) &&
+        isStrOrNull(e.kept) &&
+        isStrOrNull(e.reference) &&
+        isStrOrNull(e.included),
+    ) &&
+    list(v.unused, (e) => isStr(e.snippet) && (e.lastUsed === null || isNum(e.lastUsed)))
   );
 }

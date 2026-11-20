@@ -127,6 +127,13 @@ pub struct SnippetSummary {
     /// (`E_…`), as in [`HealthReport`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub broken: Option<String>,
+    /// How many times it expanded on this computer (device-local, ADR-0015; never synced).
+    /// Absent when the service does not count: a client must not read it as "never used".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uses: Option<u64>,
+    /// When it last expanded on this computer; absent when it has not since the count began.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used: Option<Timestamp>,
     /// When it last changed.
     pub updated_at: Timestamp,
 }
@@ -240,15 +247,40 @@ pub struct ExcludedEntry {
     /// For `duplicate`: the snippet that holds the abbreviation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kept: Option<Id>,
+    /// For a broken reference (`E_SNIPPET_NOT_FOUND`, `E_SNIPPET_CYCLE`, or `E_TOO_DEEP` found
+    /// at a `{snippet}`): the abbreviation the failing `{snippet}` names, as written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+    /// For a template error found in an included snippet: that snippet's abbreviation. Absent
+    /// when the mistake is in the snippet's own content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub included: Option<String>,
 }
 
-/// Library health (task 3.10 adds conflicts, broken references and unused snippets).
+/// A snippet nobody used on this computer for 90 days (device-local, ADR-0015).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnusedEntry {
+    /// The snippet.
+    pub snippet: Id,
+    /// When it last expanded; absent when it never did since it was created (or since the
+    /// counts were reset).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used: Option<Timestamp>,
+}
+
+/// Library health (spec §4.9): one list per kind of problem. Every list is empty when nothing
+/// is wrong; every addition after protocol 3 is optional.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HealthReport {
-    /// Immediate abbreviations that hide longer ones.
+    /// "Never reached": immediate abbreviations that hide longer ones.
     pub shadowed: Vec<ShadowedEntry>,
-    /// Duplicates and templates that do not parse.
+    /// "Will not expand": abbreviations taken by another snippet, templates that do not parse,
+    /// and broken references to other snippets (missing, cyclic, nested too deep).
     pub excluded: Vec<ExcludedEntry>,
+    /// "Not used on this computer for 90 days": enabled snippets that expand but were not used,
+    /// oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unused: Vec<UnusedEntry>,
 }
 
 /// A snippet revision written by someone else that waits for the user's approval (§8 rule 10).
@@ -906,6 +938,16 @@ pub enum RequestBody {
     },
     /// Library health. → [`ResponseBody::Health`]
     Health {},
+    /// The snippets used most recently on this computer, newest first (the palette with
+    /// nothing typed, §4.5): a hit has no matched field and no ranges. →
+    /// [`ResponseBody::SearchResults`]
+    RecentSnippets {
+        /// At most this many hits.
+        limit: u32,
+    },
+    /// Forgets every usage count and last-used time on this computer (Settings → Privacy).
+    /// Nothing is synced and no snippet changes. → [`ResponseBody::Done`]
+    ResetUsage {},
     /// Revisions waiting for review. → [`ResponseBody::PendingReviews`]
     ListPendingReviews {},
     /// Approves a revision. → [`ResponseBody::Done`]
@@ -1121,7 +1163,7 @@ pub enum RequestBody {
 
 impl RequestBody {
     /// Every request name, in declaration order (the golden tests cover each).
-    pub const NAMES: [&'static str; 46] = [
+    pub const NAMES: [&'static str; 48] = [
         "list_folders",
         "list_snippets",
         "get_snippet",
@@ -1168,6 +1210,8 @@ impl RequestBody {
         "set_sync_status",
         "set_entitlements",
         "put_attachment",
+        "recent_snippets",
+        "reset_usage",
     ];
 
     /// The request's name on the wire (its `type`), for logs.
@@ -1190,6 +1234,8 @@ impl RequestBody {
             Self::Import { .. } => "import",
             Self::Export { .. } => "export",
             Self::Health {} => "health",
+            Self::RecentSnippets { .. } => "recent_snippets",
+            Self::ResetUsage {} => "reset_usage",
             Self::ListPendingReviews {} => "list_pending_reviews",
             Self::ApproveSnippet { .. } => "approve_snippet",
             Self::GetStatus {} => "get_status",
@@ -1243,6 +1289,7 @@ impl RequestBody {
             | Self::Import { .. }
             | Self::Export { .. }
             | Self::Health {}
+            | Self::RecentSnippets { .. }
             | Self::ListPendingReviews {}
             | Self::ApproveSnippet { .. }
             | Self::PutAttachment { .. } => Group::Library,
@@ -1263,7 +1310,8 @@ impl RequestBody {
             Self::GetSettings {}
             | Self::PutSetting { .. }
             | Self::ListExclusions {}
-            | Self::PutExclusion { .. } => Group::Settings,
+            | Self::PutExclusion { .. }
+            | Self::ResetUsage {} => Group::Settings,
             Self::OutboxRead { .. }
             | Self::OutboxAck { .. }
             | Self::ApplyRemote { .. }

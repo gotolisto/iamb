@@ -242,4 +242,4 @@ How it measures and what it gave is in `docs/test-strategy.md` §8.
 
 - The supervisor starts and restarts the UI host at login (architecture §3.2); until then start
   it yourself as above.
-- Library health (3.10) and the accessibility pass (3.11).
+- The accessibility pass (3.11).
