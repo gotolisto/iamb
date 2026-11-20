@@ -1,0 +1,14 @@
+{
+  "id": 25,
+  "kind": "response",
+  "result": {
+    "attachment": {
+      "file_name": "logo.png",
+      "mime": "image/png",
+      "path": "/data/attachments/p/abab",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 1234
+    },
+    "type": "attachment"
+  }
+}

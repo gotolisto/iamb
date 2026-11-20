@@ -113,6 +113,7 @@ export const COMMANDS = [
   "library_check_abbreviation",
   "template_parse",
   "template_preview",
+  "template_add_attachment",
   "form_ready",
   "form_current",
   "form_laid_out",

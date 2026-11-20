@@ -1026,6 +1026,27 @@ impl MockPlatform {
         self.restore(saved)
     }
 
+    /// Whether a `Paste` step is typed as its plain text: the request's override or the
+    /// configured `method` of its application says `keys`.
+    fn types_pastes(&self, request: &InjectionRequest) -> bool {
+        if let Some(method) = request.overrides.text_method {
+            return method == TextMethod::Keys;
+        }
+        let desk = self.desk();
+        let Some(app) = &request.app else {
+            return false;
+        };
+        InjectionSettings::parse(&desk.injection_settings, desk.settings_dialect)
+            .ok()
+            .and_then(|settings| {
+                settings
+                    .app(&app.0, desk.settings_dialect)
+                    .and_then(|entry| entry.method)
+                    .or(settings.defaults.method)
+            })
+            == Some(crate::injection_settings::InjectionMethod::Keys)
+    }
+
     fn send_step(&self, request: &InjectionRequest, step: &InjectionStep) -> Result<()> {
         match step {
             InjectionStep::DeleteBack(n) => {
@@ -1042,10 +1063,18 @@ impl MockPlatform {
                     self.log(Injected::TypeText(text.clone()));
                 }
             }
-            InjectionStep::Paste(content) => {
-                self.paste(content)?;
-                self.log(Injected::Paste(content.clone()));
-            }
+            InjectionStep::Paste(content) => match &content.text {
+                // An application that must not be pasted into gets the plain text, as the
+                // OS injectors give it under their `keys` strategy.
+                Some(text) if self.types_pastes(request) => {
+                    self.output(text.chars().count(), |field| field.insert_str(text));
+                    self.log(Injected::TypeText(text.clone()));
+                }
+                _ => {
+                    self.paste(content)?;
+                    self.log(Injected::Paste(content.clone()));
+                }
+            },
             InjectionStep::PressKey { key, shift, times } => {
                 self.output(usize::from(*times), |field| {
                     field.press(*key, usize::from(*times));
@@ -1181,7 +1210,8 @@ impl MockPlatform {
 impl Injector for MockPlatform {
     /// Records `settings_json`, reads it with [`InjectionSettings::parse`] in the dialect of
     /// [`set_settings_dialect`](MockPlatform::set_settings_dialect), and keeps it when it is
-    /// valid. The mock's output does not depend on the settings.
+    /// valid. The mock's output depends on the settings in one way only: an application whose
+    /// `method` is `keys` gets a `Paste` step's plain text typed, as the OS injectors do.
     fn configure(&self, settings_json: &str) -> Result<()> {
         let mut desk = self.desk();
         desk.configured.push(settings_json.to_owned());

@@ -220,6 +220,7 @@ pub fn run(dirs: DataDirs, options: &Options, log: &Arc<Logger>) -> tauri::Resul
             library_commands::library_check_abbreviation,
             template_commands::template_parse,
             template_commands::template_preview,
+            template_commands::template_add_attachment,
             settings_commands::settings_get,
             settings_commands::settings_put,
             settings_commands::settings_list_exclusions,

@@ -52,6 +52,9 @@ pub enum StoreError {
     /// A value breaks a rule of the data model or cannot be decoded from the database.
     #[error("invalid data: {0}")]
     InvalidData(String),
+    /// Bytes refused as an attachment, or no place to keep them.
+    #[error("attachment refused: {0}")]
+    Attachment(#[from] crate::attachments::AttachmentError),
     /// File-system error while creating the data directory or the lock file.
     #[error("i/o error: {0}")]
     Io(#[from] std::io::Error),

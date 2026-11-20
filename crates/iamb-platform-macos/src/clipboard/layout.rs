@@ -18,7 +18,10 @@
 //! # What Iamb writes
 //!
 //! [`content_items`]: one item with plain text (`public.utf8-plain-text`) and HTML
-//! (`public.html`), when either is present, then one item per file (`public.file-url`). With
+//! (`public.html`, after [`HTML_CHARSET`]: Cocoa's HTML reader takes bytes without a declared
+//! character set for Windows Latin 1, which would garble every non-ASCII character a rich
+//! snippet pastes; browsers write the same declaration), when either is present, then one item
+//! per file (`public.file-url`). With
 //! `transient`, every item also carries the marker types of nspasteboard.org that clipboard
 //! managers and history tools honour: [`TRANSIENT_TYPE`] (do not record) and
 //! [`CONCEALED_TYPE`] (do not show), with empty data.
@@ -49,6 +52,9 @@ use iamb_platform::{ClipboardContent, ClipboardFlavour, ClipboardFormat, Clipboa
 pub(crate) const PLAIN_TEXT_TYPE: &str = "public.utf8-plain-text";
 /// An HTML fragment, UTF-8.
 pub(crate) const HTML_TYPE: &str = "public.html";
+
+/// What Iamb writes before the HTML of `public.html` (see the module docs).
+pub(crate) const HTML_CHARSET: &str = "<meta charset=\"utf-8\">";
 /// A file URL, UTF-8.
 pub(crate) const FILE_URL_TYPE: &str = "public.file-url";
 /// "Do not record this in a clipboard history" (nspasteboard.org).
@@ -210,9 +216,10 @@ pub(crate) fn content_items(content: &ClipboardContent, transient: bool) -> Vec<
             .push((PLAIN_TEXT_TYPE, Cow::Borrowed(text.as_bytes())));
     }
     if let Some(html) = &content.html {
-        first
-            .types
-            .push((HTML_TYPE, Cow::Borrowed(html.as_bytes())));
+        first.types.push((
+            HTML_TYPE,
+            Cow::Owned(format!("{HTML_CHARSET}{html}").into_bytes()),
+        ));
     }
     if !first.types.is_empty() {
         items.push(first);
@@ -418,7 +425,10 @@ mod tests {
         );
         assert_eq!(
             written[0].types[1],
-            (HTML_TYPE, Cow::Borrowed("<b>Café</b>".as_bytes()))
+            (
+                HTML_TYPE,
+                Cow::Owned::<[u8]>("<meta charset=\"utf-8\"><b>Café</b>".as_bytes().to_vec())
+            )
         );
         assert_eq!(
             written[1].types[0],

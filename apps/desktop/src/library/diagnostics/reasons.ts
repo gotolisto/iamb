@@ -114,6 +114,13 @@ const REASONS: Record<string, Reason> = {
   typed_during_injection: {
     title: (c) => `Keys you typed while ${quoted(c)} was being typed may be out of order`,
   },
+  // Task 3.8; not in the specification's table, which predates formatted snippets.
+  attachment_missing: {
+    title: (c) => `${quoted(c)} was typed without its formatting`,
+    detail: () =>
+      "An image or file it shows is not on this computer, so Iamb typed the plain text instead.",
+    action: "open_snippet",
+  },
 
   // Forms.
   form_open: {

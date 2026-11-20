@@ -22,6 +22,8 @@ workspace = true
 # `tests/no_network.rs` checks the sources and the resolved dependency names. No async runtime
 # (ADR-0009) and no logging framework: `src/log.rs` is a small in-house file logger.
 [dependencies]
+# The images of a rich snippet go on the clipboard as base64 data URIs (`rich`, task 3.8).
+base64 = "0.23.1"
 iamb-core = { path = "../iamb-core" }
 iamb-ipc = { path = "../iamb-ipc" }
 iamb-platform = { path = "../iamb-platform" }
@@ -34,4 +36,6 @@ iamb-platform-windows = { path = "../iamb-platform-windows" }
 iamb-platform-macos = { path = "../iamb-platform-macos" }
 
 [dev-dependencies]
+# The paste-fidelity fixtures' clipboard file (`tests/paste_fidelity.rs`).
+serde_json = "1.0.154"
 tempfile = "3.27.0"

@@ -1,0 +1,153 @@
+# Examples for rich snippets (template language §6, ADR-0018, task 3.8).
+#
+# Each example is one piece of Markdown (a run of rendered template text) with the HTML the
+# clipboard carries and the plain-text fallback. `crates/iamb-core/tests/rich_spec.rs` runs
+# them. `attachments` lists the attachments the HTML references, in order (default none).
+# The hostile examples at the end are part of the sanitising rules of architecture §8 rule 10.
+
+[[example]]
+name = "paragraph"
+markdown = "Thanks for your order."
+html = "<p>Thanks for your order.</p>"
+plain = "Thanks for your order."
+
+[[example]]
+name = "line breaks are kept"
+markdown = "Kim Lee\nOrders team"
+html = "<p>Kim Lee<br>\nOrders team</p>"
+plain = "Kim Lee\nOrders team"
+
+[[example]]
+name = "paragraphs"
+markdown = "First.\n\nSecond."
+html = "<p>First.</p>\n<p>Second.</p>"
+plain = "First.\n\nSecond."
+
+[[example]]
+name = "emphasis"
+markdown = "**bold**, *italic*, _also italic_, ~~struck~~"
+html = "<p><strong>bold</strong>, <em>italic</em>, <em>also italic</em>, <del>struck</del></p>"
+plain = "bold, italic, also italic, struck"
+
+[[example]]
+name = "heading"
+markdown = "## Opening hours\nMonday to Friday"
+html = "<h2>Opening hours</h2>\n<p>Monday to Friday</p>"
+plain = "Opening hours\n\nMonday to Friday"
+
+[[example]]
+name = "link"
+markdown = "See [our returns page](https://example.com/returns)."
+html = "<p>See <a href=\"https://example.com/returns\">our returns page</a>.</p>"
+plain = "See our returns page (https://example.com/returns)."
+
+[[example]]
+name = "mail link"
+markdown = "Write to [orders@example.com](mailto:orders@example.com)"
+html = "<p>Write to <a href=\"mailto:orders@example.com\">orders@example.com</a></p>"
+plain = "Write to orders@example.com"
+
+[[example]]
+name = "autolink"
+markdown = "<https://example.com>"
+html = "<p><a href=\"https://example.com\">https://example.com</a></p>"
+plain = "https://example.com"
+
+[[example]]
+name = "bullet list"
+markdown = "- one\n- two"
+html = "<ul>\n<li>one</li>\n<li>two</li>\n</ul>"
+plain = "- one\n- two"
+
+[[example]]
+name = "nested list"
+markdown = "1. Pack\n   - box\n   - tape\n2. Ship"
+html = "<ol>\n<li>Pack<ul>\n<li>box</li>\n<li>tape</li>\n</ul>\n</li>\n<li>Ship</li>\n</ol>"
+plain = "1. Pack\n   - box\n   - tape\n2. Ship"
+
+[[example]]
+name = "quote"
+markdown = "> Quoted\n> twice"
+html = "<blockquote>\n<p>Quoted<br>\ntwice</p>\n</blockquote>"
+plain = "> Quoted\n> twice"
+
+[[example]]
+name = "code"
+markdown = "Run `iamb status`."
+html = "<p>Run <code>iamb status</code>.</p>"
+plain = "Run iamb status."
+
+[[example]]
+name = "table"
+markdown = "| Size | Price |\n| --- | ---: |\n| S | 10 |"
+html = "<table>\n<thead><tr><th>Size</th><th style=\"text-align:right\">Price</th></tr></thead>\n<tr><td>S</td><td style=\"text-align:right\">10</td></tr>\n</table>"
+plain = "Size\tPrice\nS\t10"
+
+[[example]]
+name = "inline image"
+markdown = "Logo: ![Iamb](attachment:4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b)"
+html = "<p>Logo: <img src=\"attachment:4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b\" alt=\"Iamb\"></p>"
+plain = "Logo: Iamb"
+attachments = ["4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"]
+
+[[example]]
+name = "escaped field value"
+markdown = "Dear \\*Kim\\* \\[x\\]\\(y\\)"
+html = "<p>Dear *Kim* [x](y)</p>"
+plain = "Dear *Kim* [x](y)"
+
+# ---- Hostile input -----------------------------------------------------------------------------
+
+[[example]]
+name = "script tag is text"
+markdown = "<script>alert(1)</script>"
+html = "&lt;script&gt;alert(1)&lt;/script&gt;"
+plain = "<script>alert(1)</script>"
+
+[[example]]
+name = "event attribute is text"
+markdown = "a <img src=x onerror=alert(1)> b"
+html = "<p>a &lt;img src=x onerror=alert(1)&gt; b</p>"
+plain = "a <img src=x onerror=alert(1)> b"
+
+[[example]]
+name = "javascript link loses its link"
+markdown = "[click](javascript:alert(1))"
+html = "<p>click</p>"
+plain = "click"
+
+[[example]]
+name = "javascript link hidden by case and entities"
+markdown = "[click](JaVaScRiPt&#58;alert(1))"
+html = "<p>click</p>"
+plain = "click"
+
+[[example]]
+name = "data link loses its link"
+markdown = "[x](data:text/html;base64,PHNjcmlwdD4=)"
+html = "<p>x</p>"
+plain = "x"
+
+[[example]]
+name = "data image is not an image"
+markdown = "![pixel](data:image/png;base64,iVBORw0KGgo=)"
+html = "<p>pixel</p>"
+plain = "pixel"
+
+[[example]]
+name = "remote image is not fetched"
+markdown = "![pixel](https://tracker.example/p.gif)"
+html = "<p>pixel</p>"
+plain = "pixel"
+
+[[example]]
+name = "quote in a link breaks nothing"
+markdown = "[x](https://example.com/\"onmouseover=\"alert(1))"
+html = "<p><a href=\"https://example.com/&quot;onmouseover=&quot;alert(1)\">x</a></p>"
+plain = "x (https://example.com/\"onmouseover=\"alert(1))"
+
+[[example]]
+name = "html comment is text"
+markdown = "a <!-- hidden --> b"
+html = "<p>a &lt;!-- hidden --&gt; b</p>"
+plain = "a <!-- hidden --> b"

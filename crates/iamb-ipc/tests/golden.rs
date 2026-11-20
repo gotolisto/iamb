@@ -18,8 +18,8 @@ use iamb_ipc::{
     PendingReview, PermissionName, PreviewBlank, PreviewCursor, PreviewPart, RemoteRow, Request,
     RequestBody, Response, ResponseBody, Role, SearchField, SearchHit, Secret, ServiceStatus,
     ShadowedEntry, SnippetQuery, SnippetSummary, SyncStatus, TagEntry, TemplateAttribute,
-    TemplateErrorInfo, TemplateToken, TransferFormat, Welcome, Wire, WireAction, WireDiagnostic,
-    WireExclusion, WireField, WireOutboxEntry,
+    TemplateErrorInfo, TemplateToken, TransferFormat, Welcome, Wire, WireAction, WireAttachment,
+    WireDiagnostic, WireExclusion, WireField, WireOutboxEntry,
 };
 
 fn id(n: u8) -> Id {
@@ -194,6 +194,7 @@ fn requests() -> Vec<RequestBody> {
         RequestBody::RenderPreview {
             source: "Hi {field name=Name}".to_owned(),
             values: values(),
+            rich: false,
         },
         RequestBody::RecentDiagnostics {},
         RequestBody::GetSettings {},
@@ -227,6 +228,11 @@ fn requests() -> Vec<RequestBody> {
         },
         RequestBody::SetEntitlements {
             entitlements: BTreeMap::from([("shared_folders".to_owned(), "10".to_owned())]),
+        },
+        RequestBody::PutAttachment {
+            path: PathBuf::from("/tmp/iamb-drop/logo.png"),
+            file_name: "logo.png".to_owned(),
+            folder: id(2),
         },
     ]
 }
@@ -369,6 +375,20 @@ fn responses() -> Vec<ResponseBody> {
                     times: 1,
                 },
                 PreviewPart::Wait { ms: 500 },
+                PreviewPart::Formatted {
+                    html: format!(
+                        "<p><strong>Hi</strong> <img src=\"attachment:{}\" alt=\"logo\"></p>",
+                        sha()
+                    ),
+                    plain: "Hi logo".to_owned(),
+                    attachments: vec![WireAttachment {
+                        sha256: sha(),
+                        mime: "image/png".to_owned(),
+                        size: 1234,
+                        file_name: "logo.png".to_owned(),
+                        path: None,
+                    }],
+                },
             ],
             cursor: Some(PreviewCursor { part: 0, offset: 7 }),
             fields: vec![field()],
@@ -432,6 +452,15 @@ fn responses() -> Vec<ResponseBody> {
             conflict: Some(id(4)),
             hides: vec![id(5)],
             hidden_by: Vec::new(),
+        },
+        ResponseBody::Attachment {
+            attachment: WireAttachment {
+                sha256: sha(),
+                mime: "image/png".to_owned(),
+                size: 1234,
+                file_name: "logo.png".to_owned(),
+                path: Some(PathBuf::from("/data/attachments/p/abab")),
+            },
         },
     ]
 }

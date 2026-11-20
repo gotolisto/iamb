@@ -1,0 +1,47 @@
+[
+  {
+    "abbreviation": ";fx-head",
+    "html": "<h1>Order update</h1>\n<p>Your order has shipped.</p>",
+    "plain": "Order update\n\nYour order has shipped."
+  },
+  {
+    "abbreviation": ";fx-bold",
+    "html": "<p>Thanks for your order, <strong>Kim</strong>.</p>",
+    "plain": "Thanks for your order, Kim."
+  },
+  {
+    "abbreviation": ";fx-italic",
+    "html": "<p>We are <em>really</em> sorry about the delay.</p>",
+    "plain": "We are really sorry about the delay."
+  },
+  {
+    "abbreviation": ";fx-link",
+    "html": "<p>Track it on <a href=\"https://example.com/track\">our site</a> or write to <a href=\"mailto:orders@example.com\">orders@example.com</a>.</p>",
+    "plain": "Track it on our site (https://example.com/track) or write to orders@example.com."
+  },
+  {
+    "abbreviation": ";fx-list",
+    "html": "<p>Please bring:</p>\n<ul>\n<li>the box</li>\n<li>the tape</li>\n<li>the label</li>\n</ul>",
+    "plain": "Please bring:\n\n- the box\n- the tape\n- the label"
+  },
+  {
+    "abbreviation": ";fx-nested",
+    "html": "<ol>\n<li>Pack<ul>\n<li>the box</li>\n<li>the tape</li>\n</ul>\n</li>\n<li>Ship</li>\n<li>Confirm</li>\n</ol>",
+    "plain": "1. Pack\n   - the box\n   - the tape\n2. Ship\n3. Confirm"
+  },
+  {
+    "abbreviation": ";fx-image",
+    "html": "<p>Kim Lee<br>\nOrders team</p>\n<p><img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAANElEQVR42mP4T2PAMIwsYGhooCIatWBoWoCSNkYtGI3kUQtGLRi1YNSC0dJ0yFow2vjFAQCrsSuiIt+4QAAAAABJRU5ErkJggg==\" alt=\"Iamb logo\"></p>",
+    "plain": "Kim Lee\nOrders team\n\nIamb logo"
+  },
+  {
+    "abbreviation": ";fx-field",
+    "html": "<p>Dear <strong>Ada &lt;Lovelace&gt; &amp; *co*</strong>, your <em>blue mug</em> is ready.</p>",
+    "plain": "Dear Ada <Lovelace> & *co*, your blue mug is ready."
+  },
+  {
+    "abbreviation": ";fx-sig",
+    "html": "<p><strong>Kim Lee</strong> · <em>Orders team</em><br>\n<a href=\"https://example.com\">example.com</a> · <del>old number</del></p>\n<p><img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAANElEQVR42mP4T2PAMIwsYGhooCIatWBoWoCSNkYtGI3kUQtGLRi1YNSC0dJ0yFow2vjFAQCrsSuiIt+4QAAAAABJRU5ErkJggg==\" alt=\"Iamb logo\"></p>",
+    "plain": "Kim Lee · Orders team\nexample.com (https://example.com) · old number\n\nIamb logo"
+  }
+]

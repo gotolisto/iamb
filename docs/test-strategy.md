@@ -827,3 +827,47 @@ Needs real machines: the steps are in `docs/compatibility-run.md`, "The search p
 in each of the 20 apps of each OS). On the mock, `tests/palette.rs` checks that the hand-back
 (`restore_focus`) comes before `ExpandSnippet`, that a refused hand-back sends nothing, and that
 what is typed while the palette holds the keyboard reaches neither the engine nor the hand-off.
+
+### 8.8 Rich text snippets (task 3.8)
+
+KPI: at least 90% of paste-fidelity cases pass; plain-text fallback everywhere. The matrix
+(Gmail, Outlook, Word, Google Docs, Slack, Notes on the systems each runs on), the nine fixture
+snippets, what counts as a pass and the 90% rule are in [`docs/paste-fidelity.md`](paste-fidelity.md);
+running it needs real machines and real applications.
+
+Method, without them:
+
+- **Rendering and sanitising** (`iamb-core::rich`): the examples of `spec/rich/examples.toml`
+  (Markdown to the clipboard's HTML and plain text, hostile input included) in
+  `tests/rich_spec.rs`; property tests in `tests/rich_props.rs` (2,000 generated documents of
+  Markdown and HTML fragments: every tag and attribute allowed, links only `http`, `https` and
+  `mailto`, images only attachments, balanced, nesting within 32; escaped text renders as itself;
+  pathological inputs of 20,000 to 40,000 characters each render in under 2 s in a debug build).
+- **Templates in Markdown**: the typing sessions `072` and `119`–`121` of `iamb-testkit` (macro
+  output escaped, `{cursor}` ignored, keys splitting the pastes, plain and rich snippets inside each
+  other) and `rich_props.rs`.
+- **Attachments** (`iamb-store`): `tests/attachments.rs` (content addressing, private files, types
+  read from the bytes, size limits, damaged bytes read as missing, the snippet links, a JSON export
+  and import carrying the bytes, an import with a wrong hash writing nothing).
+- **The clipboard**: `iamb-service/tests/rich.rs` on the mock platform (a formatted snippet pastes
+  HTML with its image embedded and the user's clipboard comes back without a history entry; a
+  missing image and an application set to type key by key give plain text; the editor's
+  `PutAttachment`, formatted `RenderPreview` and the links written on save);
+  `tests/paste_fidelity.rs` (the fixture file current and importable, the clipboard content of each
+  fixture current in `docs/paste-fidelity/clipboard.json`); the `HTML Format` offsets
+  (`iamb-platform-windows`, `clipboard/html.rs`) and the macOS pasteboard item
+  (`iamb-platform-macos`, `clipboard/layout.rs`), pure code that runs on every OS.
+- **A browser's paste**: `docs/paste-fidelity/browser-paste.mjs` puts each fixture's clipboard
+  content on headless Google Chrome's clipboard and pastes it with the shortcut into a rich-text
+  editor and a plain text field (CI: `desktop` job on Linux). Result here (2026-11-20): 9 of 9
+  fixtures pass, formatted and plain.
+- **The editor**: `src/library/EditorFormatted.test.tsx` (the kind control, saving the kind, the
+  question before formatting would be lost), `src/library/template/Formatted.test.tsx` (the
+  formatting toolbar and its shortcuts, images from the picker, a paste and a drop, refusals, the
+  formatted preview and its links that do not navigate), `src/library/template/markdown.test.ts`;
+  in Rust, `src-tauri/tests/template_commands.rs` (the formatted preview with the image embedded
+  from its file, `template_add_attachment` through the bridge, no temporary file left).
+
+What this does not cover: what each application's own paste filter keeps (the matrix), the
+system clipboards themselves (the platform crates' paste tests and the compatibility run), and
+pasting large images into slow applications (the paste wait of each app's strategy).

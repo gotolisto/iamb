@@ -180,6 +180,15 @@ jobs:
           pnpm typecheck
           pnpm test
           pnpm build
+      # Paste fidelity (task 3.8, docs/paste-fidelity.md): every fixture's clipboard content, as
+      # `crates/iamb-service/tests/paste_fidelity.rs` keeps it current, pasted into a rich-text
+      # editor and a plain text field of the runner's Google Chrome, headless.
+      - name: Paste fidelity (headless browser round trip)
+        if: runner.os == 'Linux'
+        working-directory: docs/paste-fidelity
+        run: |
+          npm install --no-save --no-package-lock playwright@1.63.0
+          node browser-paste.mjs
       # `tauri/custom-protocol` embeds the built front end as a release does. The tests do not
       # need it; one feature set for every step builds the crate once.
       - name: Build

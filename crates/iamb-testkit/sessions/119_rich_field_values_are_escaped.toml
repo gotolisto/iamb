@@ -1,0 +1,17 @@
+description = "Text a field or the clipboard inserts into a rich snippet never becomes formatting"
+
+[env]
+clipboard = "<b>x</b>"
+
+[[snippet]]
+abbr = "rf"
+body = '**Hi {field name="Name"}**, {clipboard}'
+kind = "rich"
+
+[[step]]
+type = "rf "
+expect = [{ form = "rf", fields = ["Name"] }]
+
+[[step]]
+submit = { Name = "*Kim* [x](javascript:y)" }
+expect = [{ delete = 3 }, { paste = "Hi *Kim* [x](javascript:y), <b>x</b>", html = "<p><strong>Hi *Kim* [x](javascript:y)</strong>, &lt;b&gt;x&lt;/b&gt;</p>" }, { text = " " }, { expanded = "rf" }]

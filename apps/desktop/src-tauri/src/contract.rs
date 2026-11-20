@@ -60,6 +60,8 @@ pub const COMMANDS: &[&str] = &[
     // The template editor's commands (`app/template_commands.rs`, task 3.4).
     "template_parse",
     "template_preview",
+    // Formatted snippets (`app/template_commands.rs`, task 3.8).
+    "template_add_attachment",
     // The fill-in form's commands (`app/form_panel.rs`, task 3.5).
     "form_ready",
     "form_current",

@@ -1,0 +1,10 @@
+description = "A rich snippet pastes its Markdown as sanitised HTML with a plain-text version"
+
+[[snippet]]
+abbr = "md"
+body = "**bold** and _it_"
+kind = "rich"
+
+[[step]]
+type = "md "
+expect = [{ delete = 3 }, { paste = "bold and it", html = "<p><strong>bold</strong> and <em>it</em></p>" }, { text = " " }, { expanded = "md", chars_saved = 9 }]

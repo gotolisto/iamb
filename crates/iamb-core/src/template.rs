@@ -114,6 +114,13 @@ pub const MAX_RENDER_STEPS: usize = 300_000;
 pub trait SnippetSource {
     /// The template body of the snippet with exactly this abbreviation (case-sensitive), if any.
     fn body(&self, abbreviation: &str) -> Option<&str>;
+
+    /// Whether the snippet with exactly this abbreviation is rich (its literal text is
+    /// Markdown; template language §6). Plain unless a source says otherwise.
+    fn is_rich(&self, abbreviation: &str) -> bool {
+        let _ = abbreviation;
+        false
+    }
 }
 
 /// An empty library: every `{snippet}` is `E_SNIPPET_NOT_FOUND`.
@@ -443,6 +450,35 @@ impl Resolved {
         values: &FormValues,
     ) -> Result<Rendered, TemplateError> {
         render::render(self, ctx, values)
+    }
+
+    /// Renders a rich snippet's template (template language §6): the text actions hold
+    /// Markdown, in which everything a macro inserted, and the text of an included plain
+    /// snippet, is escaped ([`crate::rich::escape_markdown`]); an included rich snippet adds its
+    /// Markdown as written. `{cursor}` is ignored, so [`Rendered::cursor_back`] is `None` and
+    /// `E_CURSOR_BEFORE_KEY` cannot happen. Each text action is one piece of formatted content
+    /// for [`crate::rich::render`].
+    ///
+    /// # Errors
+    /// As [`render`](Self::render).
+    pub fn render_markdown(
+        &self,
+        ctx: &RenderContext<'_>,
+        values: &FormValues,
+    ) -> Result<Rendered, TemplateError> {
+        render::render_markdown(self, ctx, values)
+    }
+
+    /// As [`render_markdown`](Self::render_markdown), for the editor's preview.
+    ///
+    /// # Errors
+    /// As [`render`](Self::render).
+    pub fn render_preview_markdown(
+        &self,
+        ctx: &RenderContext<'_>,
+        values: &FormValues,
+    ) -> Result<Preview, TemplateError> {
+        render::render_preview_markdown(self, ctx, values)
     }
 
     /// As [`render`](Self::render), for the editor's preview: the same actions, plus where each

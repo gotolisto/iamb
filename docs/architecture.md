@@ -225,7 +225,7 @@ elevated one) keeps it suspended. Iamb fails closed.
 | --- | --- |
 | `DeleteBack(n)` | Press Backspace `n` times: one per `Char` event consumed by the abbreviation and delimiter |
 | `TypeText { text, verbatim }` | Insert plain text. `verbatim` marks ranges that came from field values or the clipboard |
-| `Paste { plain, markdown_html, attachments }` | Insert rich content through the clipboard, then restore the clipboard (emitted from task 3.8; until then rich snippets expand as plain templates) |
+| `Paste { plain, markdown_html, attachments }` | Insert rich content through the clipboard, then restore the clipboard. One per run of a rich snippet's rendered text between `key` and `wait` actions (task 3.8): `markdown_html` is the core's sanitised HTML (`iamb-core::rich`), whose images name attachments by hash, which the service resolves (§9); `plain` is the plain-text version, typed instead where the application must not be pasted into |
 | `PressKey { key, shift, times }` | Press a named key |
 | `MoveCaretBack(n)` | Press Left `n` times: one per extended grapheme cluster after the `{cursor}` position |
 | `Wait(ms)` | Pause before the next action |
@@ -551,10 +551,10 @@ left at the cargo name). On Linux the endpoint names no executable and the role 
 
 | Group | Requests | Events |
 | --- | --- | --- |
-| Library | `ListFolders`, `ListSnippets(query)`, `ListSnippetSummaries(query, offset, limit)`, `GetSnippet`, `PutSnippet(snippet, tags)`, `DeleteSnippet`, `CheckAbbreviation(abbreviation, trigger, snippet)`, `PutFolder`, `DeleteFolder`, `PutTag`, `ListTags`, `DeleteTag`, `Search(text)`, `Import(path, format)`, `Export(path, format)`, `Health`, `ListPendingReviews`, `ApproveSnippet(id, rev)` | `LibraryChanged(revision, changed rows)` |
+| Library | `ListFolders`, `ListSnippets(query)`, `ListSnippetSummaries(query, offset, limit)`, `GetSnippet`, `PutSnippet(snippet, tags)`, `DeleteSnippet`, `CheckAbbreviation(abbreviation, trigger, snippet)`, `PutFolder`, `DeleteFolder`, `PutTag`, `ListTags`, `DeleteTag`, `Search(text)`, `Import(path, format)`, `Export(path, format)`, `Health`, `ListPendingReviews`, `ApproveSnippet(id, rev)`, `PutAttachment(path, file_name, folder)` | `LibraryChanged(revision, changed rows)` |
 | Engine control | `GetStatus`, `SetPaused`, `ExpandSnippet(id, focus)`, `DryRun(typed)`, `GetPermissions`, `OpenPermissionSettings(kind)`, `SetTestField(window)` | `StatusChanged`, `PaletteRequested(focus)` |
 | Forms | `FormAck(session)`, `FormSubmit(session, values)`, `FormCancel(session)`, `ReopenLastForm`, `PanelFocus(panel, shown)` | `FormRequested(session, spec, focus, last_values)` |
-| Templates | `ParseTemplate(source)`, `RenderPreview(source, values)` | — |
+| Templates | `ParseTemplate(source)`, `RenderPreview(source, values, rich)` | — |
 | Diagnostics | `RecentDiagnostics` | `DiagnosticAdded` |
 | Settings | `GetSettings`, `PutSetting`, `ListExclusions`, `PutExclusion` | `SettingsChanged` |
 | Sync | `OutboxRead(limit)`, `OutboxAck(ids)`, `ApplyRemote(batch)`, `PurgeFolder(id)`, `AttachmentAvailable(profile, sha256)`, `MissingAttachments`, `SetSyncStatus`, `SetEntitlements` | `OutboxChanged` |
@@ -845,8 +845,13 @@ Task 4.1 specifies the conflict scenarios; the architecture fixes the frame
   go the other way under the same path scheme.
 - When a rich snippet is expanded, the service resolves `attachment:` references while it builds
   the clipboard content: HTML with images embedded as data URIs, plus plain text; a snippet that
-  is only one media file is also offered as a file. A missing attachment falls back to the
-  plain-text rendering with a `Diagnostic`.
+  is only one media file is also offered as a file (a copy named after it in `run/paste/`,
+  emptied when the worker starts). A missing attachment falls back to the
+  plain-text rendering with a `Diagnostic` (`attachment_missing`). Task 3.8 keeps the bytes in
+  `attachments/<profile id>/<sha256>` (`iamb-store::attachments`: types read from the bytes,
+  images up to 5 MiB, media up to 25 MiB, checked against the hash before use), links each rich
+  snippet to the attachments it references, and carries them in a JSON export; the editor adds
+  one with `PutAttachment` (`iamb_service::rich`; `docs/paste-fidelity.md`).
 - Plan features reach the device as `Entitlements` from the agent, stored by the service
   (`SetEntitlements`) and read by the UI.
 

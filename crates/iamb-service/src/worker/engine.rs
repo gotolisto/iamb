@@ -827,7 +827,28 @@ impl EngineThread {
                 _ => {}
             }
         }
-        for batch in batches {
+        for mut batch in batches {
+            // A rich snippet's images are read and embedded before the injector starts
+            // (task 3.8); a missing one makes its paste plain text.
+            if batch
+                .steps
+                .iter()
+                .any(|s| matches!(s, iamb_platform::InjectionStep::Paste(_)))
+            {
+                let view = self.shared.view.get();
+                let profile = view
+                    .snapshot
+                    .snippet(batch.snippet)
+                    .and_then(|s| view.folders.iter().find(|f| f.meta.id == s.folder_id))
+                    .map_or(view.profile, |f| f.profile_id);
+                let missing =
+                    crate::rich::prepare_steps(&mut batch.steps, &self.shared.data_root, profile);
+                if !missing.is_empty() {
+                    let mut d = coded("attachment_missing");
+                    d.snippet = Some(batch.snippet);
+                    self.shared.diagnostic(d);
+                }
+            }
             // Arm before the injector can run: it must find the hand-off capturing.
             self.handoff.arm(batch.expansion);
             self.usage.insert(

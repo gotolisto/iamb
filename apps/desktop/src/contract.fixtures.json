@@ -223,6 +223,11 @@
         {
           "ms": 500,
           "part": "wait"
+        },
+        {
+          "html": "<p><strong>Hi</strong> logo</p>",
+          "part": "formatted",
+          "plain": "Hi logo"
         }
       ]
     }

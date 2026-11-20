@@ -15,6 +15,9 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
+# Markdown for rich snippets (`rich`, task 3.8): a pull parser, pure (no I/O), MIT; the HTML
+# is written by `rich` itself, so the crate's own HTML writer is left out.
+pulldown-cmark = { version = "0.13.6", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 unicode-segmentation = "1.13.3"
 

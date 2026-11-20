@@ -39,7 +39,13 @@ describe("payloads written by the Rust side (contract.fixtures.json, template)",
   it("are accepted by the guards", () => {
     expect(isParsedTemplate(fixtures.template.parsed)).toBe(true);
     expect(isTemplatePreview(fixtures.template.preview)).toBe(true);
-    expect(fixtures.template.preview.parts.map((p) => p.part)).toEqual(["text", "key", "wait"]);
+    expect(fixtures.template.preview.parts.map((p) => p.part)).toEqual(["text", "key", "wait", "formatted"]);
+    // The golden attachment has no file on this machine: the image shows as its alt text.
+    expect(fixtures.template.preview.parts[3]).toEqual({
+      part: "formatted",
+      html: "<p><strong>Hi</strong> logo</p>",
+      plain: "Hi logo",
+    });
   });
 
   it("are rejected when their shape changes", () => {
@@ -50,6 +56,7 @@ describe("payloads written by the Rust side (contract.fixtures.json, template)",
     expect(isTemplatePreview({ ...preview, parts: [{ part: "text", text: "x" }] })).toBe(false);
     expect(isTemplatePreview({ ...preview, cursor: { part: -1, offset: 0 } })).toBe(false);
     expect(isTemplatePreview({ ...preview, fields: [{ name: "x" }] })).toBe(false);
+    expect(isTemplatePreview({ ...preview, parts: [{ part: "formatted", html: 1, plain: "" }] })).toBe(false);
   });
 });
 

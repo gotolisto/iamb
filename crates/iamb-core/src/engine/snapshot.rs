@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::datetime::{Format, Locale};
 use crate::matcher::{Delimiters, MatchEntry, Matcher, Shadowing};
-use crate::model::{Id, Snippet, fold_abbreviation};
+use crate::model::{Id, Snippet, SnippetKind, fold_abbreviation};
 use crate::template::{Compiler, Resolved, SnippetSource, TemplateError};
 
 /// The engine settings that are part of a snapshot (architecture §4.3: settings are not in the
@@ -94,8 +94,8 @@ struct Inner {
 ///   diagnostic with the resolve error and nothing else.
 /// - Every template is parsed and resolved once, here.
 ///
-/// Rich snippets (`SnippetKind::Rich`) are compiled and expanded as plain templates through
-/// `TypeText` until task 3.8 adds Markdown rendering and `Paste`.
+/// Rich snippets (`SnippetKind::Rich`) are compiled like plain ones; the engine renders their
+/// templates as Markdown and emits `Paste` (template language §6, task 3.8).
 #[derive(Clone)]
 pub struct Snapshot {
     inner: Arc<Inner>,
@@ -269,6 +269,10 @@ impl SnippetSource for Snapshot {
     fn body(&self, abbreviation: &str) -> Option<&str> {
         lookup_body(&self.inner.entries, &self.inner.by_fold_key, abbreviation)
     }
+
+    fn is_rich(&self, abbreviation: &str) -> bool {
+        lookup_rich(&self.inner.entries, &self.inner.by_fold_key, abbreviation)
+    }
 }
 
 impl fmt::Debug for Snapshot {
@@ -292,6 +296,21 @@ impl SnippetSource for RefSource<'_> {
     fn body(&self, abbreviation: &str) -> Option<&str> {
         lookup_body(self.entries, self.by_fold_key, abbreviation)
     }
+
+    fn is_rich(&self, abbreviation: &str) -> bool {
+        lookup_rich(self.entries, self.by_fold_key, abbreviation)
+    }
+}
+
+fn lookup_rich(
+    entries: &[Entry],
+    by_fold_key: &HashMap<String, usize>,
+    abbreviation: &str,
+) -> bool {
+    by_fold_key
+        .get(&fold_abbreviation(abbreviation))
+        .map(|&i| &entries[i].snippet)
+        .is_some_and(|s| s.abbreviation.as_str() == abbreviation && s.kind == SnippetKind::Rich)
 }
 
 fn lookup_body<'a>(

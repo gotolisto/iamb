@@ -121,7 +121,13 @@
 //! so it is matchable; architecture §4.4), and any render error, emit only a `Diagnostic` with
 //! the error code; the typed abbreviation stays on screen and in the buffer.
 //!
-//! Rich snippets are expanded as plain templates through `TypeText` until task 3.8.
+//! A rich snippet (template language §6, ADR-0018) renders its template as Markdown
+//! ([`Resolved::render_markdown`]) and each run of text between keys and waits becomes one
+//! [`Action::Paste`] with the sanitised HTML, the plain-text version and the attachments its
+//! images reference ([`crate::rich::render`]); an empty run pastes nothing. `{cursor}` is
+//! ignored, adaptive case does not apply to pasted content, and Markdown that renders to more
+//! than [`crate::rich::MAX_RENDERED_BYTES`] fails like a render error, with
+//! `E_OUTPUT_TOO_LARGE`. Characters saved count the plain-text version.
 //!
 //! # Forms (architecture §4.5, ADR-0013)
 //!
@@ -208,9 +214,12 @@ pub use snapshot::{EngineSettings, Exclusion, ExclusionReason, Snapshot};
 
 use crate::datetime::LocalDateTime;
 use crate::matcher::{CasePattern, KeyBuffer};
-use crate::model::Id;
+use crate::model::{Id, SnippetKind};
 use crate::sensitive::Sensitive;
-use crate::template::{FormValues, KeyName, RenderContext, RenderedAction, Resolved};
+use crate::template::{
+    ErrorKind, FormValues, KeyName, RenderContext, Rendered, RenderedAction, Resolved,
+    TemplateError,
+};
 
 /// How many expansions forgotten because of `Overflow` the engine remembers, so that their late
 /// injector answers are ignored silently (see the [module docs](self)). Only one expansion is
@@ -935,7 +944,32 @@ impl Engine {
             time_format: &settings.time_format,
             clipboard: capture.clipboard.as_ref().map(|c| c.expose().as_str()),
         };
-        let rendered = match resolved.render(&ctx, values) {
+        let rich = snapshot
+            .snippet(snippet)
+            .is_some_and(|s| s.kind == SnippetKind::Rich);
+        let rendered = if rich {
+            resolved
+                .render_markdown(&ctx, values)
+                .and_then(|r| paste_actions(r).map_err(TemplateError::new))
+        } else {
+            resolved.render(&ctx, values).map(|r| {
+                let actions = r
+                    .actions
+                    .into_iter()
+                    .map(|a| match a {
+                        RenderedAction::Text { text, verbatim } => {
+                            Action::TypeText { text, verbatim }
+                        }
+                        RenderedAction::Key { key, shift, times } => {
+                            Action::PressKey { key, shift, times }
+                        }
+                        RenderedAction::Wait { ms } => Action::Wait(ms),
+                    })
+                    .collect();
+                (actions, r.cursor_back)
+            })
+        };
+        let (mut body, cursor_back) = match rendered {
             Ok(r) => r,
             Err(e) => {
                 // Nothing was typed or deleted. A typed match still has its abbreviation in the
@@ -953,15 +987,6 @@ impl Engine {
             }
         };
 
-        let mut body: Vec<Action> = rendered
-            .actions
-            .into_iter()
-            .map(|a| match a {
-                RenderedAction::Text { text, verbatim } => Action::TypeText { text, verbatim },
-                RenderedAction::Key { key, shift, times } => Action::PressKey { key, shift, times },
-                RenderedAction::Wait { ms } => Action::Wait(ms),
-            })
-            .collect();
         output::apply_case(&mut body, origin.case);
         let chars_saved = output::typed_graphemes(&body).saturating_sub(origin.typed_chars);
 
@@ -970,7 +995,7 @@ impl Engine {
             out.push(Action::DeleteBack(origin.delete));
         }
         out.append(&mut body);
-        match rendered.cursor_back {
+        match cursor_back {
             None => match origin.delimiter {
                 Some(Retype::Char(c)) => out.push(Action::TypeText {
                     text: c.to_string(),
@@ -1027,6 +1052,29 @@ impl std::fmt::Debug for Engine {
 
 fn diagnostic(d: Diagnostic) -> Vec<Action> {
     vec![Action::Diagnostic(d)]
+}
+
+/// The actions of a rich snippet's rendered Markdown: each text run becomes one `Paste`.
+fn paste_actions(rendered: Rendered) -> Result<(Vec<Action>, Option<usize>), ErrorKind> {
+    let mut out = Vec::with_capacity(rendered.actions.len());
+    for action in rendered.actions {
+        out.push(match action {
+            RenderedAction::Text { text, .. } => {
+                let content = crate::rich::render(&text).map_err(|_| ErrorKind::OutputTooLarge)?;
+                if content.is_empty() {
+                    continue;
+                }
+                Action::Paste {
+                    plain: content.plain,
+                    markdown_html: content.html,
+                    attachments: content.attachments,
+                }
+            }
+            RenderedAction::Key { key, shift, times } => Action::PressKey { key, shift, times },
+            RenderedAction::Wait { ms } => Action::Wait(ms),
+        });
+    }
+    Ok((out, None))
 }
 
 fn unexpected(expansion: ExpansionId) -> Vec<Action> {

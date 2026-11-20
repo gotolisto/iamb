@@ -11,6 +11,8 @@ import {
 
 import type { AbbreviationCheck, CaseMode, Folder, Saved, Snippet, Tag, Trigger } from "./api";
 import { TemplateField } from "./template";
+import { hasFormatting } from "./template/markdown";
+import { ConfirmDialog } from "./Dialogs";
 import { describeFailure, type Failure } from "./errors";
 import { Icon } from "./Icon";
 import { Menu, type OpenMenu, below } from "./Menu";
@@ -31,6 +33,13 @@ import type { LibraryEnv } from "./env";
 /** Exactly the specification's copy (flow 2, step 2). */
 export const CONTENT_PLACEHOLDER =
   "The text Iamb types for you. Type { to insert a date, a fill-in field and more.";
+
+/** The question before a formatted snippet becomes plain text and would lose its formatting
+ * (specification §4.3, "Kinds"; the wording is ours: the specification gives none). */
+export const TO_PLAIN_TITLE = "Switch to plain text?";
+export const TO_PLAIN_BODY =
+  "The formatting would be lost. The text stays as it is, so marks such as ** and - are typed as written, and images become their names.";
+export const TO_PLAIN_CONFIRM = "Switch to plain text";
 
 /** What a new snippet starts with. */
 export interface DraftSeed {
@@ -180,6 +189,7 @@ export function Editor(props: EditorProps) {
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [menu, setMenu] = useState<OpenMenu | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [askPlain, setAskPlain] = useState(false);
   const abbrInput = useRef<HTMLInputElement>(null);
   const root = useRef<HTMLFormElement>(null);
 
@@ -406,6 +416,17 @@ export function Editor(props: EditorProps) {
       return { ...f, folderId, abbreviation };
     });
 
+  /** "Plain text / Formatted": going back to plain text asks first when formatting would be
+   * lost (specification §4.3). */
+  const chooseKind = (next: "plain" | "rich") => {
+    if (next === form.kind) return;
+    if (next === "plain" && hasFormatting(form.body)) {
+      setAskPlain(true);
+      return;
+    }
+    update({ kind: next });
+  };
+
   const toggleEnabled = (next: boolean) => {
     update({ enabled: next });
     if (rowId.current === null) return;
@@ -508,6 +529,24 @@ export function Editor(props: EditorProps) {
       >
         <header className="editor-head">
           <h2 className="editor-title">{title()}</h2>
+          <div className="seg" role="group" aria-label="Kind">
+            {(
+              [
+                ["plain", "Plain text"],
+                ["rich", "Formatted"],
+              ] as const
+            ).map(([k, label]) => (
+              <button
+                key={k}
+                type="button"
+                aria-pressed={form.kind === k}
+                disabled={!online && form.kind !== k}
+                onClick={() => chooseKind(k)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           {dirty && (
             <span className="not-saved" role="status">
               Not saved
@@ -603,6 +642,7 @@ export function Editor(props: EditorProps) {
               placeholder={CONTENT_PLACEHOLDER}
               describedBy={ids.contentMessages}
               kind={form.kind}
+              imageFolder={form.kind === "rich" ? form.folderId : undefined}
               snippets={data.rows}
               service={env.template}
               onChange={(body) => update({ body })}
@@ -708,6 +748,19 @@ export function Editor(props: EditorProps) {
       </form>
       {menu && (
         <Menu items={menu.items} x={menu.x} y={menu.y} label={menu.label} onClose={() => setMenu(null)} />
+      )}
+      {askPlain && (
+        <ConfirmDialog
+          title={TO_PLAIN_TITLE}
+          body={TO_PLAIN_BODY}
+          confirm={TO_PLAIN_CONFIRM}
+          mac={mac}
+          onConfirm={() => {
+            setAskPlain(false);
+            update({ kind: "plain" });
+          }}
+          onCancel={() => setAskPlain(false)}
+        />
       )}
     </section>
   );

@@ -24,8 +24,8 @@ use iamb_core::template::{FormValues, overwrite};
 use iamb_ipc::{
     ChangedRows, ConflictPolicy, ErrorBody, ErrorCode, ExcludedEntry, GrantState, HealthReport,
     RequestBody, ResponseBody, Role, SUMMARY_LINE_CHARS, SearchField, SearchHit, ShadowedEntry,
-    SnippetQuery, SnippetSummary, TAG_COLORS, TagEntry, TransferFormat, WireAction, WireDiagnostic,
-    WireExclusion, WireValues,
+    SnippetQuery, SnippetSummary, TAG_COLORS, TagEntry, TransferFormat, WireAction, WireAttachment,
+    WireDiagnostic, WireExclusion, WireValues,
 };
 use iamb_platform::{Chord, INJECTION_SETTINGS_KEY};
 use iamb_store::transfer::{self, Format, OnConflict, TransferError};
@@ -68,9 +68,9 @@ fn store_error(e: &StoreError) -> ErrorBody {
     match e {
         StoreError::AbbreviationConflict { .. } => err(ErrorCode::Conflict, e.to_string()),
         StoreError::NotFound { .. } => err(ErrorCode::NotFound, e.to_string()),
-        StoreError::FolderTooDeep { .. } | StoreError::InvalidData(_) => {
-            err(ErrorCode::Invalid, e.to_string())
-        }
+        StoreError::FolderTooDeep { .. }
+        | StoreError::InvalidData(_)
+        | StoreError::Attachment(_) => err(ErrorCode::Invalid, e.to_string()),
         _ => err(ErrorCode::Internal, e.to_string()),
     }
 }
@@ -238,6 +238,11 @@ pub(crate) fn handle(shared: &Arc<Shared>, _role: Role, body: RequestBody) -> An
         RequestBody::ListPendingReviews {} => Ok(ResponseBody::PendingReviews {
             reviews: Vec::new(),
         }),
+        RequestBody::PutAttachment {
+            path,
+            file_name,
+            folder,
+        } => put_attachment(shared, &view, &path, file_name, folder),
         RequestBody::ApproveSnippet { id, rev } => write(shared, move |ctx| {
             ctx.store
                 .put_approval(id, rev, clock::timestamp())
@@ -355,9 +360,22 @@ pub(crate) fn handle(shared: &Arc<Shared>, _role: Role, body: RequestBody) -> An
             let (tokens, error) = templates::parse(&view.snapshot, &source);
             Ok(ResponseBody::TemplateTokens { tokens, error })
         }
-        RequestBody::RenderPreview { source, values } => {
-            let answer =
-                templates::preview(&view.snapshot, &source, values.expose(), (shared.clock)());
+        RequestBody::RenderPreview {
+            source,
+            values,
+            rich,
+        } => {
+            let answer = if rich {
+                templates::preview_rich(
+                    &view.snapshot,
+                    &source,
+                    values.expose(),
+                    (shared.clock)(),
+                    &|sha| crate::rich::attachment_info(&shared.data_root, view.profile, sha),
+                )
+            } else {
+                templates::preview(&view.snapshot, &source, values.expose(), (shared.clock)())
+            };
             Ok(ResponseBody::Preview {
                 parts: answer.parts,
                 cursor: answer.cursor,
@@ -541,6 +559,8 @@ fn put_snippet(shared: &Shared, view: &View, snippet: Snippet, tags: Option<Vec<
                         )?;
                     }
                 }
+                // The attachments its Markdown references (task 3.8).
+                tx.sync_snippet_attachments(id, &mut new_id, now)?;
                 Ok(meta)
             })
             .map_err(|e| store_error(&e))?;
@@ -551,6 +571,64 @@ fn put_snippet(shared: &Shared, view: &View, snippet: Snippet, tags: Option<Vec<
         Ok(meta)
     })
     .map(|meta| ResponseBody::Saved { meta })
+}
+
+/// `PutAttachment` (task 3.8): reads the file here, on the client's reader thread, and writes
+/// it on the store thread.
+fn put_attachment(
+    shared: &Shared,
+    view: &View,
+    path: &std::path::Path,
+    file_name: String,
+    folder: Id,
+) -> Answer {
+    let Some(profile) = view
+        .folders
+        .iter()
+        .find(|f| f.meta.id == folder)
+        .map(|f| f.profile_id)
+    else {
+        return Err(err(
+            ErrorCode::Invalid,
+            "the folder is not a folder of the personal profile",
+        ));
+    };
+    if !path.is_absolute() {
+        return Err(err(
+            ErrorCode::Invalid,
+            "the attachment path must be absolute",
+        ));
+    }
+    let limit = iamb_store::attachments::MAX_MEDIA_BYTES;
+    match std::fs::metadata(path) {
+        Ok(meta) if meta.len() > limit => {
+            return Err(store_error(&StoreError::Attachment(
+                iamb_store::AttachmentError::TooLarge {
+                    size: meta.len(),
+                    limit,
+                },
+            )));
+        }
+        Ok(_) => {}
+        Err(_) => return Err(err(ErrorCode::NotFound, "the file cannot be read")),
+    }
+    let bytes =
+        std::fs::read(path).map_err(|_| err(ErrorCode::NotFound, "the file cannot be read"))?;
+    write(shared, move |ctx| {
+        let row = ctx
+            .store
+            .add_attachment(new_id(), profile, &bytes, &file_name, clock::timestamp())
+            .map_err(|e| store_error(&e))?;
+        let path = ctx.store.attachment_path(profile, &row.sha256);
+        Ok(WireAttachment {
+            sha256: row.sha256,
+            mime: row.mime,
+            size: row.size,
+            file_name: row.file_name,
+            path,
+        })
+    })
+    .map(|attachment| ResponseBody::Attachment { attachment })
 }
 
 fn put_folder(shared: &Shared, view: &View, folder: Folder) -> Answer {

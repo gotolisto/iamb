@@ -45,6 +45,19 @@
       {
         "ms": 500,
         "part": "wait"
+      },
+      {
+        "attachments": [
+          {
+            "file_name": "logo.png",
+            "mime": "image/png",
+            "sha256": "abababababababababababababababababababababababababababababababab",
+            "size": 1234
+          }
+        ],
+        "html": "<p><strong>Hi</strong> <img src=\"attachment:abababababababababababababababababababababababababababababababab\" alt=\"logo\"></p>",
+        "part": "formatted",
+        "plain": "Hi logo"
       }
     ],
     "type": "preview"

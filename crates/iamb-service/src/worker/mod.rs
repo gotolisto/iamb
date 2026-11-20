@@ -416,6 +416,8 @@ pub(crate) struct Shared {
     pub policy: PeerPolicy,
     pub exit: ExitSignal,
     pub clock: Arc<dyn Fn() -> LocalDateTime + Send + Sync>,
+    /// The data root: the attachments of rich snippets are read under it (`crate::rich`).
+    pub data_root: std::path::PathBuf,
     /// Set by the session watcher (screen lock, sign-out): the engine thread overwrites the
     /// remembered form values and the hand-off before it handles its next message. A flag and
     /// not only a message, so that a full engine queue cannot lose it.
@@ -644,8 +646,10 @@ impl Worker {
             policy,
             exit: ExitSignal::default(),
             clock,
+            data_root: dirs.root().to_path_buf(),
             forget_pending: AtomicBool::new(false),
         });
+        crate::rich::clear_offered_files(dirs.root());
 
         let handoff = Arc::new(TypedHandoff::new());
         let keys = Arc::new(keys::KeyQueue::new());

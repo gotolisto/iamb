@@ -42,7 +42,8 @@ pub use messages::{
     PreviewCursor, PreviewPart, RemoteRow, RequestBody, ResponseBody, SUMMARY_LINE_CHARS,
     SearchField, SearchHit, ServiceStatus, ShadowedEntry, SnippetQuery, SnippetSummary, SyncStatus,
     TAG_COLORS, TagEntry, TemplateAttribute, TemplateErrorInfo, TemplateToken, TransferFormat,
-    WireAction, WireDiagnostic, WireExclusion, WireField, WireOutboxEntry, WireValues, key_named,
+    WireAction, WireAttachment, WireDiagnostic, WireExclusion, WireField, WireOutboxEntry,
+    WireValues, key_named,
 };
 pub use protocol::{
     DecodeError, ErrorBody, ErrorCode, Group, Hello, PROTOCOL_VERSION, Request, Response, Role,

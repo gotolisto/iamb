@@ -137,6 +137,21 @@ mod tests {
     }
 
     #[test]
+    fn a_rich_snippet_fragment_keeps_its_bytes_between_the_offsets() {
+        // The shape the service builds for the paste-fidelity signature fixture
+        // (docs/paste-fidelity/clipboard.json): line breaks, non-ASCII, an embedded image.
+        let fragment = "<p><strong>Kim Lee</strong> · <em>Orders team</em><br>\n<a href=\"https://example.com\">example.com</a> · <del>old number</del></p>\n<p><img src=\"data:image/png;base64,iVBORw0KGgo=\" alt=\"Iamb logo\"></p>";
+        let data = encode(fragment);
+        let o = offsets(&data).expect("valid");
+        assert_eq!(super::fragment(&data), Some(fragment));
+        assert_eq!(o.end_fragment - o.start_fragment, fragment.len());
+        assert!(
+            fragment.len() > fragment.chars().count(),
+            "the middle dots are two bytes"
+        );
+    }
+
+    #[test]
     fn offsets_are_bytes_not_characters() {
         let data = encode("é");
         let o = offsets(&data).expect("valid");
