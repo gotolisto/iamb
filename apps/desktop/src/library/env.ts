@@ -2,6 +2,7 @@
 // tests and against the real commands in the window.
 
 import type { ConnectionState, UiEvent } from "../ipc";
+import type { PaletteLink } from "../palette/api";
 import type { LibraryApi } from "./api";
 import type { SettingsApi } from "./settings/api";
 import type { TemplateService } from "./template";
@@ -28,4 +29,6 @@ export interface LibraryEnv {
   settings?: SettingsApi | undefined;
   /** The template commands (`ParseTemplate`, `RenderPreview`); the app's own when absent. */
   template?: TemplateService | undefined;
+  /** The search palette: requests it leaves for this window, and ⌘K (task 3.6). */
+  palette?: PaletteLink | undefined;
 }

@@ -211,6 +211,22 @@ jobs:
           else
             "$exe" --data-dir "$data" --measure-form 10
           fi
+      # The search palette KPI (docs/test-strategy.md §8.7): from `PaletteRequested` reaching the UI
+      # host to the panel's first paint. Linux under Xvfb is gated at 200 ms, twice the 100 ms
+      # target (§2.2); Windows and macOS report only.
+      - name: Search palette visible
+        if: ${{ !cancelled() }}
+        continue-on-error: ${{ runner.os != 'Linux' }}
+        timeout-minutes: 3
+        run: |
+          exe=target/debug/iamb-desktop
+          if [ "$RUNNER_OS" = Windows ]; then exe="$exe.exe"; fi
+          data="$RUNNER_TEMP/iamb-palette-open"
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a "$exe" --data-dir "$data" --measure-palette 10 --budget-ms 200
+          else
+            "$exe" --data-dir "$data" --measure-palette 10
+          fi
 
   coverage:
     name: coverage

@@ -1,0 +1,274 @@
+/*
+ * The search palette (design system §4.14; mock-up docs/ux/mockups/search.html). Every value is
+ * a design token from tokens.css; styles.test.ts fails on a token that does not exist. The
+ * window is the panel: 620 px wide and 560 px high, which is a query row, eight rows of 48 px,
+ * the three-line preview and the footer; it keeps that height while the user types. Nothing
+ * animates (duration.instant).
+ */
+
+.pl-root {
+  height: 100%;
+}
+
+.pl {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  border: var(--size-border) solid var(--color-border-subtle);
+  font: var(--type-body);
+}
+
+.pl-q {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-3);
+  height: 48px;
+  padding: 0 var(--space-4);
+  border-bottom: var(--size-border) solid var(--color-border-subtle);
+  font: var(--type-input);
+}
+
+.pl-q .icon {
+  flex: none;
+  color: var(--color-text-secondary);
+}
+
+.pl-input {
+  flex: 1;
+  min-width: 0;
+  height: var(--size-control-lg);
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: var(--type-input);
+}
+
+.pl-input::placeholder {
+  color: var(--color-text-secondary);
+}
+
+.pl-count {
+  flex: none;
+  color: var(--color-text-secondary);
+  font: var(--type-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.pl-notice {
+  flex: none;
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-status-danger-bg);
+  color: var(--color-status-danger-text);
+  font: var(--type-caption);
+}
+
+.pl-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+}
+
+.pl-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-1);
+}
+
+.pl-list {
+  display: grid;
+  align-content: start;
+}
+
+.pl-list[data-dim] {
+  opacity: 0.55;
+}
+
+.pl-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px var(--space-3);
+  align-items: center;
+  align-content: center;
+  height: 48px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+}
+
+.pl-row.on {
+  background: var(--color-bg-selected);
+}
+
+.pl-nm {
+  overflow: hidden;
+  font-weight: var(--font-weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pl-nm .icon,
+.pl-ask .icon {
+  width: 14px;
+  height: 14px;
+  margin-right: 6px;
+  vertical-align: -2px;
+  color: var(--color-text-secondary);
+}
+
+.pl-end {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.pl-abbr {
+  font: var(--type-code-small);
+  color: var(--color-text-secondary);
+}
+
+.pl-sub {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font: var(--type-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pl mark {
+  border-radius: 2px;
+  background: var(--color-bg-highlight);
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.pl-badge {
+  display: inline-flex;
+  gap: var(--space-1);
+  align-items: center;
+  height: 20px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-subtle);
+  color: var(--color-text-secondary);
+  font: var(--type-caption);
+  white-space: nowrap;
+}
+
+.pl-badge .icon {
+  width: 12px;
+  height: 12px;
+}
+
+.pl-badge.warn {
+  background: var(--color-status-warning-bg);
+  color: var(--color-status-warning-text);
+}
+
+.pl-badge.bad {
+  background: var(--color-status-danger-bg);
+  color: var(--color-status-danger-text);
+}
+
+.pl-none,
+.pl-hint {
+  margin: 0;
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  color: var(--color-text-secondary);
+}
+
+.pl-pv {
+  flex: none;
+  display: -webkit-box;
+  height: calc(3lh + 2 * var(--space-3));
+  padding: var(--space-3) var(--space-4);
+  overflow: hidden;
+  border-top: var(--size-border) solid var(--color-border-subtle);
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.pl-ft {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  align-items: center;
+  padding: var(--space-2) var(--space-4);
+  border-top: var(--size-border) solid var(--color-border-subtle);
+  background: var(--color-bg-app);
+  color: var(--color-text-secondary);
+  font: var(--type-caption);
+}
+
+.pl-ft span {
+  display: inline-flex;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+.pl-ft .pl-sp {
+  flex: 1;
+}
+
+.pl kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-subtle);
+  box-shadow: inset 0 calc(-1 * var(--size-border)) 0 var(--color-border-control);
+  color: var(--color-text-secondary);
+  font: var(--type-kbd);
+}
+
+.pl-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.pl :focus-visible {
+  outline: var(--size-focus-ring) solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+
+.pl-input:focus-visible {
+  outline: 0;
+}
+
+/* Contrast themes and "Increase contrast" (design system §5). */
+@media (forced-colors: active) {
+  .pl-row.on,
+  .pl-badge {
+    outline: var(--size-border) solid CanvasText;
+  }
+
+  .pl mark {
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  .pl :focus-visible {
+    outline-color: Highlight;
+  }
+}

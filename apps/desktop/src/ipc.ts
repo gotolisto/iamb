@@ -125,6 +125,22 @@ export const COMMANDS = [
   "settings_put_exclusion",
   "diagnostics_recent",
   "diagnostics_test",
+  "onboarding_permissions",
+  "onboarding_open_permission_settings",
+  "onboarding_test_field",
+  "onboarding_restart_helper",
+  "onboarding_finish",
+  "onboarding_login_item",
+  "onboarding_open_library",
+  "onboarding_close",
+  "palette_ready",
+  "palette_current",
+  "palette_painted",
+  "palette_search",
+  "palette_preview",
+  "palette_pick",
+  "palette_open",
+  "library_take_request",
 ] as const;
 
 export type CommandName = (typeof COMMANDS)[number];

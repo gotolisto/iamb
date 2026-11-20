@@ -47,7 +47,8 @@ describe("commands", () => {
     ]);
     // Every registered command is reachable from the API (the library's from its own,
     // library/api.test.ts; the template editor's from library/template/api.test.ts; the form
-    // panel's from form/api.test.ts; Settings and the log's from library/settings/api.test.ts).
+    // panel's from form/api.test.ts; Settings and the log's from library/settings/api.test.ts; the onboarding window's from
+    // onboarding/api.test.ts; the palette's from palette/api.test.ts).
     expect(new Set(calls.map((c) => c.command))).toEqual(
       new Set(
         COMMANDS.filter(
@@ -56,7 +57,9 @@ describe("commands", () => {
             !c.startsWith("library_") &&
             !c.startsWith("form_") &&
             !c.startsWith("settings_") &&
-            !c.startsWith("diagnostics_"),
+            !c.startsWith("diagnostics_") &&
+            !c.startsWith("onboarding_") &&
+            !c.startsWith("palette_"),
         ),
       ),
     );

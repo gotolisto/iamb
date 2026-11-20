@@ -1,0 +1,464 @@
+/*
+ * The onboarding window (specification §4.6, flow 1; mock-up docs/ux/mockups/onboarding.html).
+ * Every value is a design token from tokens.css; styles.test.ts fails on a token that does not
+ * exist. Nothing animates (duration.instant). The window is 560 × 600 and does not resize.
+ */
+
+.ob-root {
+  height: 100%;
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  font: var(--type-body);
+}
+
+.ob {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  height: 100%;
+  padding: var(--space-6) var(--space-8);
+  overflow-y: auto;
+}
+
+.ob-step {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: 0;
+}
+
+.ob-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.ob-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--color-text-secondary);
+  font: var(--type-caption);
+}
+
+.ob-bar {
+  display: flex;
+  flex: 1;
+  gap: var(--space-1);
+}
+
+.ob-bar i {
+  flex: 1;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-subtle);
+}
+
+.ob-bar i.done {
+  background: var(--color-accent-solid);
+}
+
+.ob-stack {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ob-title {
+  margin: 0;
+  font: var(--type-display);
+  letter-spacing: var(--type-display-tracking);
+}
+
+.ob-lead {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font: var(--type-body);
+}
+
+.ob-help {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font: var(--type-caption);
+}
+
+.ob-tip {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+
+.ob .icon {
+  width: var(--size-icon-md);
+  height: var(--size-icon-md);
+  flex: none;
+}
+
+.ob-code {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-subtle);
+  color: var(--color-text-primary);
+  font: var(--type-code);
+}
+
+.ob-demo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-app);
+  border: var(--size-border) solid var(--color-border-subtle);
+}
+
+.ob-points {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ob-points li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.ob-points li .icon {
+  margin-top: var(--space-0-5);
+  color: var(--color-accent-text);
+}
+
+.ob-points li > div {
+  display: grid;
+  gap: var(--space-0-5);
+  min-width: 0;
+}
+
+.ob-points li > div > span {
+  color: var(--color-text-secondary);
+}
+
+/* ---- Permissions ---------------------------------------------------------------------------- */
+
+.ob-perm {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: var(--size-border) solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.ob-perm.ok {
+  border-color: var(--color-status-success-text);
+  background: var(--color-status-success-bg);
+}
+
+.ob-ic {
+  display: grid;
+  place-items: center;
+  width: var(--size-control-lg);
+  height: var(--size-control-lg);
+  flex: none;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-subtle);
+}
+
+.ob-perm.ok .ob-ic {
+  color: var(--color-status-success-text);
+}
+
+.ob-t {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: var(--space-0-5);
+}
+
+.ob-t > span {
+  color: var(--color-text-secondary);
+  font: var(--type-caption);
+}
+
+.ob-do {
+  display: grid;
+  justify-items: end;
+  gap: var(--space-1);
+}
+
+.ob-state {
+  color: var(--color-text-secondary);
+  font: var(--type-caption);
+}
+
+.ob-perm.ok .ob-state {
+  color: var(--color-status-success-text);
+}
+
+/* ---- Fields --------------------------------------------------------------------------------- */
+
+.ob-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 2fr);
+  align-items: end;
+  gap: var(--space-2);
+}
+
+.ob-arrow {
+  display: grid;
+  place-items: center;
+  height: var(--size-control-lg);
+  color: var(--color-text-secondary);
+}
+
+.ob-field {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.ob-field > label {
+  font-weight: var(--font-weight-medium);
+}
+
+.ob-input {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--size-control-lg);
+  padding: 0 var(--space-3);
+  border: var(--size-border) solid var(--color-border-control);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  font: var(--type-input);
+}
+
+.ob-input.mono {
+  font: var(--type-code);
+}
+
+.ob-test {
+  min-height: calc(3lh + var(--space-4));
+  padding-block: var(--space-2);
+  resize: none;
+}
+
+.ob-input[aria-invalid="true"] {
+  border-color: var(--color-status-danger-text);
+}
+
+.ob-problem {
+  margin: 0;
+  color: var(--color-status-danger-text);
+}
+
+.ob-recorder {
+  display: flex;
+  align-items: center;
+  width: auto;
+  margin-top: var(--space-1);
+  color: var(--color-text-secondary);
+  text-align: left;
+}
+
+/* ---- Switch and checkbox -------------------------------------------------------------------- */
+
+.ob-switch,
+.ob-check {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.ob-switch input,
+.ob-check input {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+}
+
+.ob-track {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  flex: none;
+  border-radius: var(--radius-full);
+  background: var(--color-border-control);
+}
+
+.ob-track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-surface);
+}
+
+.ob-switch input:checked + .ob-track {
+  background: var(--color-accent-solid);
+}
+
+.ob-switch input:checked + .ob-track::after {
+  left: 16px;
+}
+
+.ob-check input {
+  width: 16px;
+  height: 16px;
+  position: static;
+  opacity: 1;
+  accent-color: var(--color-accent-solid);
+}
+
+/* ---- Banners -------------------------------------------------------------------------------- */
+
+.ob-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+}
+
+.ob-banner .ob-txt {
+  flex: 1;
+  min-width: 0;
+}
+
+.ob-banner.ok {
+  background: var(--color-status-success-bg);
+  color: var(--color-status-success-text);
+}
+
+.ob-banner.warn {
+  background: var(--color-status-warning-bg);
+  color: var(--color-status-warning-text);
+}
+
+.ob-banner.bad {
+  background: var(--color-status-danger-bg);
+  color: var(--color-status-danger-text);
+}
+
+.ob-banner .ob-btn {
+  flex: none;
+}
+
+/* ---- Actions -------------------------------------------------------------------------------- */
+
+.ob-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: auto;
+}
+
+.ob-grow {
+  flex: 1;
+}
+
+.ob-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--size-control-md);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-subtle);
+  color: var(--color-text-primary);
+  font: var(--type-body);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+.ob-btn:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+}
+
+.ob-btn.ghost {
+  background: transparent;
+}
+
+.ob-btn:disabled {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-disabled);
+}
+
+.ob-primary {
+  min-height: var(--size-control-lg);
+  padding: 0 var(--space-4);
+  background: var(--color-accent-solid);
+  color: var(--color-text-on-accent);
+}
+
+.ob-primary:hover:not(:disabled) {
+  background: var(--color-accent-solid-hover);
+}
+
+.ob-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-accent-text);
+  font: inherit;
+  text-decoration: underline;
+}
+
+.ob kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-subtle);
+  box-shadow: inset 0 calc(-1 * var(--size-border)) 0 var(--color-border-control);
+  color: var(--color-text-secondary);
+  font: var(--type-kbd);
+}
+
+.ob-primary kbd {
+  background: transparent;
+  box-shadow: inset 0 0 0 var(--size-border) currentColor;
+  color: inherit;
+}
+
+.ob :focus-visible {
+  outline: var(--size-focus-ring) solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+
+.ob-input:focus-visible {
+  outline-offset: 1px;
+}
+
+/* Contrast themes and "Increase contrast" (design system §5). */
+@media (forced-colors: active) {
+  .ob-perm,
+  .ob-banner,
+  .ob-code {
+    outline: var(--size-border) solid CanvasText;
+  }
+
+  .ob-primary {
+    outline: var(--size-border) solid ButtonText;
+  }
+
+  .ob :focus-visible {
+    outline-color: Highlight;
+  }
+}

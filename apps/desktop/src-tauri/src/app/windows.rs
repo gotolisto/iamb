@@ -8,7 +8,7 @@
 //!
 //! All three load the same page; the front end picks its view by the window's label.
 //!
-//! # The panels (the fill-in form, task 3.5; the search palette reuses it, task 3.6)
+//! # The panels (the fill-in form, task 3.5; the search palette, task 3.6, uses them too)
 //!
 //! Both are undecorated, always-on-top windows without a taskbar button, created hidden and
 //! never destroyed. [`show_panel`] puts one in the upper third of the display the user is
@@ -69,6 +69,10 @@ pub const PALETTE: &str = "palette";
 pub const FORM_WIDTH: f64 = 440.0;
 /// The palette's width (`size.palette`).
 pub const PALETTE_WIDTH: f64 = 620.0;
+/// The palette's height: a query row, eight rows of 48 px, the three-line preview and the footer
+/// (design system §4.14: it keeps this height once there is a query, and the empty state has it
+/// too, so that nothing moves while the user types).
+pub const PALETTE_HEIGHT: f64 = 560.0;
 /// A panel's height before its content has reported one.
 const PANEL_DEFAULT_HEIGHT: f64 = 360.0;
 /// The share of the display's height a panel may take (spec §4.4).
@@ -169,6 +173,11 @@ fn panel_events(window: &WebviewWindow) {
                 && let Some(ui) = handle.app_handle().try_state::<Arc<super::Ui>>()
             {
                 ui.form.keyboard(*has);
+            }
+            if handle.label() == PALETTE
+                && let Some(ui) = handle.app_handle().try_state::<Arc<super::Ui>>()
+            {
+                ui.palette.controller.keyboard(*has);
             }
         }
         _ => {}
@@ -334,15 +343,6 @@ fn library_builder(app: &AppHandle) -> WebviewWindowBuilder<'_, tauri::Wry, AppH
         .inner_size(960.0, 640.0)
         .min_inner_size(640.0, 400.0)
         .center()
-}
-
-/// Shows the palette placeholder (task 3.6 adds the focus token and the hand-back).
-///
-/// # Errors
-///
-/// When the palette window is gone or cannot be shown.
-pub fn show_palette(app: &AppHandle) -> tauri::Result<()> {
-    show_panel(app, PALETTE, PALETTE_WIDTH, None)
 }
 
 /// Hides a panel, or closes (and so destroys) the library window.

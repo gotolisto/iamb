@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The three windows of the UI host: the library, the fill-in form and the search palette. They call the app's own commands (src/app/commands.rs) and listen to its events; nothing else of the core API.",
-  "windows": ["library", "form", "palette"],
+  "description": "The windows of the UI host: the library, the fill-in form, the search palette and the onboarding window. They call the app's own commands (src/app/commands.rs) and listen to its events; nothing else of the core API.",
+  "windows": ["library", "form", "palette", "onboarding"],
   "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
 }

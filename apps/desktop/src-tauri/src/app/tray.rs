@@ -4,7 +4,7 @@
 //! Service: running                 (disabled; the bridge's state)
 //! ─────────────
 //! Open library
-//! Search
+//! Search snippets…
 //! Fill in the last form again…     (ReopenLastForm, task 3.5)
 //! ✓ Pause expansion                (disabled while the service is not connected)
 //! ─────────────
@@ -20,6 +20,7 @@ use tauri::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{AppHandle, Manager, Wry};
 
+use super::onboarding_commands::{self, MenuEntries};
 use super::{Ui, windows};
 use crate::contract::{ConnectionState, StatusView};
 
@@ -29,12 +30,16 @@ const SEARCH: &str = "search";
 const REOPEN_FORM: &str = "reopen_form";
 const PAUSE: &str = "pause";
 const QUIT: &str = "quit";
+const SETUP: &str = onboarding_commands::SETUP_ID;
+const FIX_PERMISSIONS: &str = onboarding_commands::FIX_ID;
 
 /// The menu items that follow the bridge's state, and the icon (kept alive with them).
 pub struct Tray {
     status: MenuItem<Wry>,
     pause: CheckMenuItem<Wry>,
     icon: TrayIcon<Wry>,
+    /// "Set up Iamb…" and "Fix permissions…", added and removed as they apply (task 3.7).
+    pub setup: MenuEntries,
 }
 
 /// The status line of the menu.
@@ -58,7 +63,7 @@ impl Tray {
     pub fn create(app: &AppHandle) -> tauri::Result<Self> {
         let status = MenuItem::with_id(app, STATUS, "Service: connecting…", false, None::<&str>)?;
         let open = MenuItem::with_id(app, OPEN_LIBRARY, "Open library", true, None::<&str>)?;
-        let search = MenuItem::with_id(app, SEARCH, "Search", true, None::<&str>)?;
+        let search = MenuItem::with_id(app, SEARCH, "Search snippets…", true, None::<&str>)?;
         let reopen = MenuItem::with_id(
             app,
             REOPEN_FORM,
@@ -82,6 +87,7 @@ impl Tray {
                 &quit,
             ],
         )?;
+        let setup = MenuEntries::new(app, menu.clone())?;
         let mut builder = TrayIconBuilder::with_id("iamb")
             .tooltip("Iamb")
             .menu(&menu)
@@ -95,6 +101,7 @@ impl Tray {
             status,
             pause,
             icon,
+            setup,
         })
     }
 
@@ -131,9 +138,9 @@ fn on_menu_event(app: &AppHandle, event: &MenuEvent) {
             });
         }
         SEARCH => {
-            if let Err(e) = windows::show_palette(app) {
-                ui.log.warn(format_args!("cannot show the palette: {e}"));
-            }
+            // The palette for the application that was in front when the menu opened
+            // (`PaletteController::open_from_tray`); the flow does the rest.
+            ui.palette.controller.open_from_tray();
         }
         REOPEN_FORM => {
             // `ReopenLastForm` runs against the window that has the focus when it arrives
@@ -159,6 +166,8 @@ fn on_menu_event(app: &AppHandle, event: &MenuEvent) {
                 }
             });
         }
+        SETUP => onboarding_commands::open_later(app, "setup"),
+        FIX_PERMISSIONS => onboarding_commands::open_later(app, "fix"),
         QUIT => app.exit(0),
         _ => {}
     }

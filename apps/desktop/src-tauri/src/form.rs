@@ -95,6 +95,10 @@ pub const FOLLOW_EVERY: Duration = Duration::from_millis(200);
 /// acting on each would send `PanelFocus` twice for nothing.
 pub const KEYBOARD_SETTLE: Duration = Duration::from_millis(60);
 
+/// How long a submitted form is offered again ("Fill in “…” again", spec §4.5); the service
+/// keeps its answers for as long (architecture §4.5).
+pub const LAST_FORM_TTL: Duration = Duration::from_mins(30);
+
 /// The error code of a submit whose focus could not be given back.
 pub const FOCUS_LOST: &str = "focus_lost";
 
@@ -324,7 +328,8 @@ impl FormTimer {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn start(&self, session: u64, at: Instant, wall_ms: f64) {
+    /// Starts timing `session`, which arrived at `at` (`wall_ms` by the wall clock).
+    pub fn start(&self, session: u64, at: Instant, wall_ms: f64) {
         *self.lock() = (
             Some(Pending {
                 session,
@@ -336,7 +341,8 @@ impl FormTimer {
         );
     }
 
-    fn shown(&self, session: u64) {
+    /// `session`'s panel was shown now.
+    pub fn shown(&self, session: u64) {
         if let Some(p) = self.lock().0.as_mut().filter(|p| p.session == session) {
             p.shown = Some(Instant::now());
         }
@@ -441,6 +447,8 @@ pub struct FormController {
     timer: Arc<FormTimer>,
     service: Arc<dyn FormService>,
     prepainted: Arc<AtomicBool>,
+    /// The label of the form submitted last, and when (the palette offers it again).
+    last: Arc<Mutex<Option<(Instant, String)>>>,
     thread: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -483,6 +491,7 @@ impl FormController {
         let timer = Arc::new(FormTimer::default());
         let service = Arc::clone(&cfg.service);
         let prepainted = Arc::new(AtomicBool::new(false));
+        let last = Arc::new(Mutex::new(None));
         let mut flow = Flow {
             cfg,
             rx,
@@ -491,6 +500,7 @@ impl FormController {
             current: Arc::clone(&current),
             timer: Arc::clone(&timer),
             prepainted: Arc::clone(&prepainted),
+            last: Arc::clone(&last),
         };
         let thread = thread::Builder::new()
             .name("iamb-form".to_owned())
@@ -501,6 +511,7 @@ impl FormController {
             timer,
             service,
             prepainted,
+            last,
             thread: Mutex::new(Some(thread)),
         })
     }
@@ -577,6 +588,22 @@ impl FormController {
     #[must_use]
     pub fn timer(&self) -> &FormTimer {
         &self.timer
+    }
+
+    /// The label of the snippet whose form was submitted in the last [`LAST_FORM_TTL`], if any
+    /// (the palette's "Fill in “…” again"). Only the label is kept, never an answer.
+    #[must_use]
+    pub fn last_submitted(&self) -> Option<String> {
+        lock(&self.last)
+            .as_ref()
+            .filter(|(at, _)| at.elapsed() < LAST_FORM_TTL)
+            .map(|(_, label)| label.clone())
+    }
+
+    /// Whether a form is open.
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        lock(&self.current).is_some()
     }
 
     /// The form that is open, if any (for a panel whose page loaded after the request).
@@ -660,6 +687,7 @@ struct Flow {
     current: Arc<Mutex<Option<FormOpen>>>,
     timer: Arc<FormTimer>,
     prepainted: Arc<AtomicBool>,
+    last: Arc<Mutex<Option<(Instant, String)>>>,
 }
 
 impl Flow {
@@ -929,9 +957,13 @@ impl Flow {
             ));
         }
         let answer = self.call(RequestBody::FormSubmit { session, values });
+        let label = lock(&self.current).as_ref().map(|f| f.label.clone());
         self.close(session);
         match answer {
             Ok(_) => {
+                if let Some(label) = label.filter(|l| !l.is_empty()) {
+                    *lock(&self.last) = Some((Instant::now(), label));
+                }
                 self.log().info(format_args!("form {session}: submitted"));
                 Ok(())
             }

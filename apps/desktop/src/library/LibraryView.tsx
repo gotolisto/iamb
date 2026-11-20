@@ -5,6 +5,7 @@ import { onUiEvent } from "../ipc";
 import { afterNextPaint, navigationStartedAtMs, scriptStartedAtMs } from "../paint";
 import { api } from "../ipc";
 import { useStatus } from "../useStatus";
+import { paletteLink } from "../palette/api";
 import { libraryApi } from "./api";
 import type { LibraryEnv } from "./env";
 import { Library } from "./Library";
@@ -68,6 +69,7 @@ export function LibraryView() {
       guardClose,
       mac: isMac(),
       settings: settingsApi,
+      palette: paletteLink,
     }),
     [status.connection, status.service?.paused],
   );

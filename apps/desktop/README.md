@@ -9,7 +9,7 @@ commands of the Rust side.
 
 | Path | What |
 | --- | --- |
-| `src/` | The front end (Vite, React, TypeScript). `ipc.ts` is the typed API over the Tauri commands and events; `library/` the library window (task 3.3: sidebar, virtualised snippet list, editor; see below), `form/` the fill-in form panel (task 3.5; see below), `palette/` the search palette (a placeholder until task 3.6); `styles/tokens.css` the design tokens, generated from `docs/ux/tokens.json` by `pnpm tokens` (`scripts/tokens.mjs`, the same rules as the mock-ups' builder); `styles/base.css` uses only those. |
+| `src/` | The front end (Vite, React, TypeScript). `ipc.ts` is the typed API over the Tauri commands and events; `library/` the library window (task 3.3: sidebar, virtualised snippet list, editor; see below), `form/` the fill-in form panel (task 3.5; see below), `palette/` the search palette (task 3.6; see below); `styles/tokens.css` the design tokens, generated from `docs/ux/tokens.json` by `pnpm tokens` (`scripts/tokens.mjs`, the same rules as the mock-ups' builder); `styles/base.css` uses only those. |
 | `src-tauri/` | The `iamb-desktop` crate: `src/bridge/` (the connection to the service, reconnecting with backoff), `src/contract.rs` (what the front end sees and how it maps onto `iamb-ipc`), `src/app/` (tray, windows, commands), `src/crash.rs` and `src/log.rs` (as in the service, architecture §8). |
 | `src-tauri/tests/` | Bridge, message contract and crash-isolation tests against a worker on the mock platform. |
 | `icon-source/icon.svg` | The source of `src-tauri/icons/` (a placeholder mark); regenerate with `pnpm tauri icon icon-source/icon.svg -o src-tauri/icons` and keep only the desktop files. |
@@ -80,6 +80,35 @@ setting the service reads has none.
     # scroll measurement with 10,000 snippets (needs Playwright; see docs/test-strategy.md §8.4)
     pnpm build && NODE_PATH=/path/to/node_modules node scripts/scroll-kpi.mjs
 
+## The onboarding window
+
+`src/onboarding/` and `src-tauri/src/onboarding.rs` (task 3.7). One window, label `onboarding`
+(560 × 600), created on demand and destroyed when closed, opened by `src-tauri/src/app/onboarding_commands.rs`:
+at start while `ui.onboarding_done` is not set, from the menu's "Set up Iamb…" (offered while setup is
+unfinished) and from "Fix permissions…" (offered once setup is done while a permission is missing; a
+thread asks the service every 30 s), which shows the permissions step alone (`?mode=fix`). The
+steps are in `docs/ux/flows/1-onboarding.md`; `Onboarding.tsx` holds the state, `steps.tsx` one
+component per step, `model.ts` the rules and the copy, `example.ts` the snippet the Try step expands.
+
+- **Permissions** come from the worker (`GetPermissions`, ADR-0021), never from the UI host
+  itself, and are read again every second while the step is shown (the service has no event for it
+  yet, spec §11.2 entry 9). "Open settings" sends `OpenPermissionSettings`.
+- **The test field** is the window itself: on entering the Try step the window asks the platform's
+  focus inspector which window has the keyboard, refuses one that is not this process's, and sends
+  `SetTestField` with it; leaving the step, reaching the end and closing the window withdraw it.
+  What is typed there stays in the page's state and is never sent, logged or stored.
+- **The end** (`onboarding_finish`) withdraws the field, stores the default search shortcut when
+  none is set (a refusal is shown with a recorder) and `ui.onboarding_done`; the login item is
+  registered through the platform's `LoginItem`.
+- **Not built yet:** "Restart the helper" and "Start it again" need a control channel to the
+  supervisor (ADR-0023); until it exists `onboarding_restart_helper` answers `unavailable` and the
+  window says to quit Iamb and open it again. "I have snippets to import" needs the file dialog and
+  the import command, which the UI host does not have yet.
+
+Tests: `src/onboarding/*.test.ts(x)` (over a fake service), `src-tauri/tests/onboarding.rs` (a
+real worker on the mock platform) and `tests/onboarding_contract.rs`; the timing run and the
+walkthrough with testers are in `docs/test-strategy.md` §8.6 and `docs/onboarding-walkthrough.md`.
+
 ## The fill-in form panel
 
 `src/form/` and `src-tauri/src/form.rs` (task 3.5). `form.rs` is the flow, independent of
@@ -89,7 +118,7 @@ and renews the lease every 10 s; Insert hides the panel, hands the focus back (`
 sends `PanelFocus { shown: false }` and then `FormSubmit`; Cancel does the same with
 `FormCancel`. `src-tauri/src/app/form_panel.rs` is the window side and the `form_*` commands
 (they answer the `form` window only); `src-tauri/src/app/windows.rs` has the panel helpers the
-palette reuses (`show_panel`, `hide_panel`, `panel_frame`). `src/form/FormPanel.tsx` draws the
+palette uses too (`show_panel`, `hide_panel`, `panel_frame`). `src/form/FormPanel.tsx` draws the
 fields, `FormView.tsx` holds the answers for the panel's lifetime only, `model.ts` has the rules
 and the copy. The tray's "Fill in the last form again…" sends `ReopenLastForm`. Tests:
 `src/form/*.test.ts(x)`, `src-tauri/tests/form.rs` (the bridge and a real worker on the mock
@@ -97,6 +126,41 @@ platform).
 
     # the 150 ms measurement (docs/test-strategy.md §8.5)
     xvfb-run -a target/release/iamb-desktop --data-dir "$(mktemp -d)" --measure-form 20 --budget-ms 150
+
+## The search palette
+
+`src/palette/` and `src-tauri/src/palette.rs` (task 3.6). `palette.rs` is the flow, independent of
+Tauri, built like the form's: on `PaletteRequested` it takes `PanelFocus { palette, shown: true }`
+and waits for its answer before the panel takes the keyboard, shows the panel (620 by 560 px,
+upper third of the display) and renews the lease every 10 s; a pick hides the panel, hands the focus
+back (`restore_focus`), sends `PanelFocus { shown: false }` and then `ExpandSnippet` (a snippet
+with blanks makes the service send `FormRequested` and the form panel takes over) or
+`ReopenLastForm` ("Fill in “…” again"); Esc does the same without the last message; the shortcut
+again closes it, and while a form is open it does nothing. `palette_data.rs` is the search and its
+rows: `Search`, the rows drawn from the snippet list this side reads in pages and keeps (read again
+after a `LibraryChanged`), the preview (`GetSnippet`, `RenderPreview`). `src-tauri/src/app/palette_panel.rs`
+is the window side and the `palette_*` commands (they answer the `palette` window only);
+`src/palette/PaletteView.tsx` draws it and holds the query in its state for the palette's lifetime
+only. Tests: `src/palette/*.test.ts(x)`, `src-tauri/tests/palette.rs` (the bridge and a real worker
+on the mock platform), the relevance fixtures `spec/search/relevance.toml`.
+
+- **Who registers the shortcut.** The service: it registers the chord of the `palette_hotkey`
+  setting (`PutSetting` answers `conflict` when the system refuses it), hears it, captures a focus
+  token and sends `PaletteRequested`. The UI host never registers a shortcut. The service has no
+  default of its own, so the UI host offers `Ctrl+Shift+Space` once to a service that has no
+  setting (`palette::seed_default_shortcut`, a marker file in `run/` so that a shortcut the user
+  clears is not brought back); the onboarding window's last step does the same when the setting is
+  still unset.
+- **From the tray**, "Search snippets…" opens the palette for the application in front at that
+  moment; **in the library window**, Ctrl+K (⌘K) opens it over the window, and so does the
+  shortcut while the library has the focus: a pick then selects the snippet in the library
+  instead of typing it. "New snippet labelled “…”", "edit" (Ctrl+E, ⌘E), a review and a broken
+  snippet hand the library window a request (`library_take_request`, `src/library/usePaletteRequests.ts`).
+- **Ranking** is `iamb_core::search` (module docs): abbreviation, then label, content and tag, with
+  typos forgiven last, in the service's `Search`.
+
+    # the 100 ms measurement (docs/test-strategy.md §8.7)
+    xvfb-run -a target/release/iamb-desktop --data-dir "$(mktemp -d)" --measure-palette 20 --budget-ms 100
 
 ### The macOS panel (needs a function in `iamb-platform-macos`)
 
@@ -160,6 +224,5 @@ How it measures and what it gave is in `docs/test-strategy.md` §8.
 
 - The supervisor starts and restarts the UI host at login (architecture §3.2); until then start
   it yourself as above.
-- The palette (3.6): its content, on the form's panel helpers (`windows::show_panel`).
 - The non-activating panel on macOS, once `iamb-platform-macos` has the function above.
-- Onboarding (3.7), rich text (3.8), library health (3.10) and the accessibility pass (3.11).
+- Rich text (3.8), library health (3.10) and the accessibility pass (3.11).

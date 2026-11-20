@@ -74,6 +74,24 @@ pub const COMMANDS: &[&str] = &[
     "settings_put_exclusion",
     "diagnostics_recent",
     "diagnostics_test",
+    // The onboarding window's commands (`app/onboarding_commands.rs`, task 3.7).
+    "onboarding_permissions",
+    "onboarding_open_permission_settings",
+    "onboarding_test_field",
+    "onboarding_restart_helper",
+    "onboarding_finish",
+    "onboarding_login_item",
+    "onboarding_open_library",
+    "onboarding_close",
+    // The search palette's commands (`app/palette_panel.rs`, task 3.6).
+    "palette_ready",
+    "palette_current",
+    "palette_painted",
+    "palette_search",
+    "palette_preview",
+    "palette_pick",
+    "palette_open",
+    "library_take_request",
 ];
 
 /// The requests the bridge sends, by wire name (the `type` of each).

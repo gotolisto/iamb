@@ -17,7 +17,7 @@ use iamb_core::datetime::LocalDateTime;
 use iamb_core::engine::{Environment, ExclusionReason, FormSessionId, dry_run};
 use iamb_core::model::{
     Abbreviation, Folder, Id, Snippet, SnippetKind, SnippetTag, SyncMeta, Tag, Trigger,
-    fold_abbreviation, fold_char,
+    fold_abbreviation,
 };
 use iamb_core::sensitive::Sensitive;
 use iamb_core::template::{FormValues, overwrite};
@@ -879,74 +879,36 @@ fn palette_hotkey(shared: &Shared, view: &View, value: Option<&str>) -> Result<(
     }
 }
 
-/// Where the case-folded `query` (as characters) first occurs in `text`, as a UTF-16 range of
-/// `text`: folding can turn one character into several, so each folded character remembers
-/// the range of the character it came from.
-fn folded_range(text: &str, query: &[char]) -> Option<[usize; 2]> {
-    if query.is_empty() {
-        return None;
-    }
-    let mut folded: Vec<(char, usize, usize)> = Vec::new();
-    let mut at = 0;
-    for c in text.chars() {
-        let end = at + c.len_utf16();
-        folded.extend(fold_char(c).map(|f| (f, at, end)));
-        at = end;
-    }
-    folded
-        .windows(query.len())
-        .find(|w| w.iter().map(|(c, _, _)| *c).eq(query.iter().copied()))
-        .map(|w| [w[0].1, w[w.len() - 1].2])
-}
-
-/// The palette search over the snapshot: case-folded substring matching on the abbreviation,
-/// the label, the body and the names of the snippet's tags, best first; each hit says which
-/// field matched and where. Task 3.6 replaces it with the fuzzy search of
-/// `iamb-core`.
+/// The palette search over the snapshot: fuzzy matching on the abbreviation, the label, the
+/// body and the names of the snippet's tags, best first; each hit says which field matched and
+/// where (`iamb_core::search`, which holds the ranking).
 fn search(view: &View, query: &str, limit: usize) -> Vec<SearchHit> {
-    let q = fold_abbreviation(query.trim());
-    if q.is_empty() {
-        return Vec::new();
-    }
-    let q_chars: Vec<char> = q.chars().collect();
     let tag_names: HashMap<Id, &str> = view
         .tags
         .iter()
         .map(|t| (t.meta.id, t.name.as_str()))
         .collect();
-    let mut hits: Vec<SearchHit> = view
-        .snippets()
-        .filter_map(|s| {
-            let abbr = s.abbreviation.fold_key();
-            let (score, field, text) = if abbr == q {
-                (100, SearchField::Abbreviation, s.abbreviation.as_str())
-            } else if abbr.starts_with(&q) {
-                (80, SearchField::Abbreviation, s.abbreviation.as_str())
-            } else if abbr.contains(&q) {
-                (60, SearchField::Abbreviation, s.abbreviation.as_str())
-            } else if fold_abbreviation(&s.label).contains(&q) {
-                (40, SearchField::Label, s.label.as_str())
-            } else if fold_abbreviation(&s.body).contains(&q) {
-                (20, SearchField::Body, s.body.as_str())
-            } else {
-                let name = view
-                    .tags_of(s.meta.id)
-                    .iter()
-                    .filter_map(|t| tag_names.get(t))
-                    .find(|name| fold_abbreviation(name).contains(&q))?;
-                (10, SearchField::Tag, *name)
-            };
-            Some(SearchHit {
-                snippet: s.meta.id,
-                score,
-                field: Some(field),
-                ranges: folded_range(text, &q_chars).into_iter().collect(),
-            })
+    let docs = view.snippets().map(|s| iamb_core::search::Doc {
+        id: s.meta.id,
+        abbreviation: s.abbreviation.as_str(),
+        label: s.label.as_str(),
+        body: s.body.as_str(),
+        tags: view.tags_of(s.meta.id),
+    });
+    iamb_core::search::search(query, limit, docs, &|id| tag_names.get(&id).copied())
+        .into_iter()
+        .map(|h| SearchHit {
+            snippet: h.id,
+            score: h.score,
+            field: Some(match h.field {
+                iamb_core::search::Field::Abbreviation => SearchField::Abbreviation,
+                iamb_core::search::Field::Label => SearchField::Label,
+                iamb_core::search::Field::Body => SearchField::Body,
+                iamb_core::search::Field::Tag => SearchField::Tag,
+            }),
+            ranges: h.ranges,
         })
-        .collect();
-    hits.sort_by_key(|h| std::cmp::Reverse(h.score));
-    hits.truncate(limit);
-    hits
+        .collect()
 }
 
 fn health(view: &View) -> HealthReport {

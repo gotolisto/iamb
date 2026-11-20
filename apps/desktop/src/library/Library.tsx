@@ -25,6 +25,7 @@ import { SettingsView } from "./settings";
 import { Sidebar, type View, sameView } from "./Sidebar";
 import { Toast, type ToastState } from "./Toasts";
 import { useLibraryData } from "./useLibraryData";
+import { usePaletteRequests } from "./usePaletteRequests";
 import "./library.css";
 
 // ---- What the window remembers (a convenience: it renders without it) -----------------------
@@ -35,6 +36,28 @@ interface Remembered {
   sort: SortMode;
   view: View | null;
   snippet: string | null;
+}
+
+/**
+ * A one-shot request from another window (onboarding, task 3.7) to open at a view: written just
+ * before the window is shown, honoured when it is at most this old, and removed once the window
+ * has used it.
+ */
+const OPEN_KEY = "iamb.library.open";
+const OPEN_FRESH_MS = 10_000;
+
+function requestedView(): View | null {
+  try {
+    const raw = window.localStorage.getItem(OPEN_KEY);
+    if (!raw) return null;
+    const v = JSON.parse(raw) as { view?: unknown; at?: unknown };
+    if (v.view === "diagnostics" && typeof v.at === "number" && Date.now() - v.at < OPEN_FRESH_MS) {
+      return { kind: "diagnostics" };
+    }
+  } catch {
+    // No storage: the window opens where it was.
+  }
+  return null;
 }
 
 function recall(): Remembered {
@@ -109,8 +132,16 @@ export function Library({ env }: { env: LibraryEnv }) {
   const { api } = env;
   const mac = env.mac ?? isMac();
   const initial = useRef(recall());
+  const requested = useRef(requestedView());
+  useEffect(() => {
+    try {
+      window.localStorage.removeItem(OPEN_KEY);
+    } catch {
+      // Nothing to remove.
+    }
+  }, []);
   const [sort, setSort] = useState<SortMode>(initial.current.sort);
-  const [view, setView] = useState<View>(initial.current.view ?? { kind: "all" });
+  const [view, setView] = useState<View>(requested.current ?? initial.current.view ?? { kind: "all" });
   const [filter, setFilter] = useState("");
   const [selection, setSelection] = useState<Selection>(
     initial.current.snippet ? single(initial.current.snippet) : NO_SELECTION,
@@ -282,6 +313,28 @@ export function Library({ env }: { env: LibraryEnv }) {
 
   const rowsById = useRef(data.rowsById);
   rowsById.current = data.rowsById;
+  /** "New snippet labelled “…”" from the search palette: a draft with that label. */
+  const newLabelled = useCallback(
+    (label: string) => {
+      const target =
+        folder ??
+        data.folders.find((f) => f.parentId === null) ??
+        data.folders[0];
+      if (!target) return;
+      openDraft({
+        key: nextKey("d"),
+        folderId: target.id,
+        abbreviation: target.defaults.abbreviationPrefix ?? "",
+        label,
+        body: "",
+        trigger: target.defaults.trigger ?? "delimiter",
+        caseMode: target.defaults.caseMode ?? "insensitive",
+        tags: tag ? [tag.id] : [],
+      });
+    },
+    [data.folders, folder, openDraft, tag],
+  );
+
   const closeEditor = useCallback(() => {
     guard(() => {
       setDraft(null);
@@ -328,6 +381,8 @@ export function Library({ env }: { env: LibraryEnv }) {
     },
     [data.rowsById, guard, view],
   );
+
+  usePaletteRequests(env.palette, data.ready, { onNew: newLabelled, onShow: showSnippet });
 
   // ---- Saving, deleting, turning on and off ----------------------------------------------------
   const onSaved = useCallback(
@@ -615,6 +670,10 @@ export function Library({ env }: { env: LibraryEnv }) {
     } else if (k === "s" && !e.shiftKey) {
       e.preventDefault();
       void editor.current?.save();
+    } else if (k === "k" && !e.shiftKey) {
+      // Find in all snippets: the search palette over this window (spec §5.2).
+      e.preventDefault();
+      if (online) void env.palette?.open().catch(() => undefined);
     } else if (k === "f" && !e.shiftKey) {
       e.preventDefault();
       filterInput.current?.focus();
