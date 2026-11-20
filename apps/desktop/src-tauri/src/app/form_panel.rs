@@ -62,6 +62,13 @@ impl PanelHost for Panel {
 
 /// The platform layer the UI host gives the focus back with (`restore_focus`) and follows the
 /// front application with; none on Linux, which is for development only.
+#[cfg_attr(
+    any(windows, target_os = "macos"),
+    expect(
+        clippy::unnecessary_wraps,
+        reason = "the same signature returns `None` on Linux"
+    )
+)]
 fn platform_focus() -> Option<Arc<dyn FocusInspector>> {
     #[cfg(windows)]
     {
