@@ -118,7 +118,7 @@ iamb-platform = { path = "../iamb-platform" }
 #                                  gives; the version Tauri uses
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2.191"
-raw-window-handle = { version = "0.6.2", optional = true }
+raw-window-handle = { version = "0.6.2", optional = true, default-features = false, features = ["std"] }
 objc2 = "0.6.5"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "std",
