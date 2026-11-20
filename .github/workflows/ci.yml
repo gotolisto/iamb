@@ -49,6 +49,10 @@ jobs:
           cargo clippy -p iamb-platform-macos --features probe --target aarch64-apple-darwin --all-targets --locked -- -D warnings
           cargo clippy -p iamb-testkit --no-default-features --features probe --lib --bins --target x86_64-pc-windows-msvc --locked -- -D warnings
           cargo clippy -p iamb-testkit --no-default-features --features probe --lib --bins --target aarch64-apple-darwin --locked -- -D warnings
+      # The macOS panel (`make_non_activating_panel`, ADR-0017) is behind the `panel` feature,
+      # which only iamb-desktop enables, so the macOS step above does not see it either.
+      - name: Clippy (macOS panel)
+        run: cargo clippy -p iamb-platform-macos --features panel --target aarch64-apple-darwin --all-targets --locked -- -D warnings
       - name: Banned terms
         run: cargo xtask banned-terms
       - name: Template spec examples
@@ -121,6 +125,11 @@ jobs:
             Windows) IAMB_REQUIRE_DESKTOP=1 cargo test -p iamb-platform-windows --features probe --locked --test probe ;;
             macOS) cargo test -p iamb-platform-macos --features probe --locked --test probe ;;
           esac
+      # The macOS panel (feature `panel`, which the steps above leave off): a window converted
+      # into the non-activating panel on the main thread (`tests/panel.rs`).
+      - name: Test (macOS panel)
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        run: cargo test -p iamb-platform-macos --features panel --locked --test panel
       # Lints the code that only exists on this OS (iamb-platform-windows, iamb-platform-macos
       # and any `cfg` branch elsewhere), tests included. Linux is linted by the `lint` job.
       # Runs even when a test failed, so one failing test does not hide lint errors.

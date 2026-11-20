@@ -659,8 +659,8 @@ for its first form. The round trips to a real worker on the mock platform took 0
 What this does not measure: the trigger to `FormRequested` in the service (the engine share of
 §2.1, measured with the probe in the lab), and WebView2 and `WKWebView`, whose numbers come
 from the `desktop` CI job on their runners (report only) and, for the KPI, from the lab. On
-macOS the panel is not yet the non-activating panel (`apps/desktop/README.md`), which may change
-its show time.
+macOS the panel is the non-activating panel (`apps/desktop/README.md`, "The macOS panel"); the
+numbers measured before it existed are of an ordinary window.
 
 #### Focus returns correctly across the matrix
 
@@ -818,8 +818,8 @@ took under 2 ms (`PanelFocus`).
 
 What this does not measure: the shortcut to `PaletteRequested` in the service (the hotkey thread, the
 focus token), and WebView2 and `WKWebView`, whose numbers come from the `desktop` CI job on their
-runners (report only) and, for the KPI, from the lab. On macOS the panel is not yet the
-non-activating panel (`apps/desktop/README.md`).
+runners (report only) and, for the KPI, from the lab. On macOS the panel is the non-activating
+panel (`apps/desktop/README.md`, "The macOS panel").
 
 #### Focus returns correctly, and the keys stay out of the engine
 

@@ -162,41 +162,57 @@ on the mock platform), the relevance fixtures `spec/search/relevance.toml`.
     # the 100 ms measurement (docs/test-strategy.md §8.7)
     xvfb-run -a target/release/iamb-desktop --data-dir "$(mktemp -d)" --measure-palette 20 --budget-ms 100
 
-### The macOS panel (needs a function in `iamb-platform-macos`)
+### The macOS panel
 
-On macOS the form (and the palette, task 3.6) must be a non-activating panel, so that the app
-being typed into stays the active app (spec §4.4, §7; ADR-0017). Tauri 2 has no such window, and
-turning its `NSWindow` into an `NSPanel` takes Objective-C calls that are `unsafe`, which this
-crate cannot make (`unsafe_code = "forbid"` in the workspace lints, which it inherits). Until the
-function below exists the panel is an ordinary window of the accessory app: showing it activates
-Iamb and the hand-back activates the target app again. The flow, `PanelFocus` and the
-hand-back do not change.
-
-The function, in `iamb-platform-macos` (which already allows audited `unsafe` and depends on
-`objc2` and `objc2-app-kit`):
+On macOS the form and the palette are non-activating panels, so that the app being typed into
+stays the active app (spec §4.4, §7; ADR-0017). Tauri 2 has no such window, and turning its
+`NSWindow` into an `NSPanel` takes Objective-C calls that are `unsafe`, which this crate cannot
+make (`unsafe_code = "forbid"` in the workspace lints, which it inherits). The conversion is
+therefore in `iamb-platform-macos`, behind its `panel` feature, which only this crate enables (the
+service links that crate without it, so its binary is unchanged; ADR-0008):
 
 ```rust
 /// Turns `window` (a Tauri window, through `raw-window-handle`) into a non-activating panel.
-/// Main thread only (`MainThreadMarker`); idempotent.
+/// Main thread only; idempotent.
 pub fn make_non_activating_panel(
     window: &impl raw_window_handle::HasWindowHandle,
 ) -> Result<(), PlatformError>;
 ```
 
-It takes the `NSView` of the `AppKit` handle and its `window`, changes the window's class to a
-subclass of `NSPanel` registered once at run time whose `canBecomeKeyWindow` answers `YES`
-(`NSPanel` adds no instance variables, so `object_setClass` is sound), adds
-`NSWindowStyleMask::NonactivatingPanel` to the style mask, sets `becomesKeyOnlyIfNeeded` to `NO`,
-`floatingPanel` to `YES`, `hidesOnDeactivate` to `NO` and the collection behaviour
-`CanJoinAllSpaces | FullScreenAuxiliary`. It needs `raw-window-handle` (already in the build
-through Tauri) and the `NSPanel` feature of `objc2-app-kit`. A main-loop test in the crate
-creates a window, converts it and checks the class, the mask and that `NSApp` did not become
-active when the panel was made key.
+It takes the `NSView` of the `AppKit` handle and its `window`, changes the window's class to
+`IambNonActivatingPanel`, a subclass of `NSPanel` registered once at run time, adds
+`NSWindowStyleMask::NonactivatingPanel` to the style mask (after the class, so that `NSPanel`'s
+`setStyleMask:` sees it), sets `becomesKeyOnlyIfNeeded` to `NO`, `floatingPanel` to `YES`,
+`hidesOnDeactivate` to `NO` and adds `CanJoinAllSpaces | FullScreenAuxiliary` to the collection
+behaviour. Why the class change is sound, and the checks it makes before it (`NSPanel` and the
+subclass add no instance variables; the window's own class keeps its instance variables, has no
+`dealloc` of its own, and is the same for every window converted) are in
+`crates/iamb-platform-macos/src/panel.rs`.
 
-The desktop crate then calls it for `form` and `palette` right after they are created in
-`windows::prewarm` (on the main thread), and `windows::show_panel` stops calling `set_focus` on
-macOS (Tauri's `set_focus` activates the app; `show` alone orders the panel front and makes it
-key, which a non-activating panel does without activating Iamb).
+One difference from the first plan: the panel's `canBecomeKeyWindow` does not answer `YES` but asks
+the implementation of the window's original class (Tauri's), which answers Tauri's `focusable`
+flag. A plain `YES` would let `prepaint_panel`, which shows a panel out of sight with
+`set_focusable(false)`, take the keyboard from the app the user is typing into while the panel
+paints, and a panel that steals keys is the failure this all exists to prevent. The panel never
+becomes the main window.
+
+`windows::prewarm` calls it for `palette` and `form` right after they are created (in the setup
+hook, on the main thread, before either is shown), and `windows::show_panel` then calls `show`
+without `set_focus` for a converted panel: `show` orders the panel front and makes it key, which a
+non-activating panel does without activating Iamb, where `set_focus` would activate the app. If a
+conversion fails, the log says so (`the form window stays an ordinary window, which activates
+Iamb: …`) and that panel is shown with `set_focus` as before; the flow, `PanelFocus` and the
+hand-back are the same either way.
+
+`crates/iamb-platform-macos/tests/panel.rs` (`cargo test -p iamb-platform-macos --features panel
+--test panel`, macOS only) converts a borderless window of an `NSWindow` subclass that keeps a
+`focusable` flag as Tauri's does, checks the class, the mask and the other settings, that the flag
+still decides `canBecomeKeyWindow`, that a second call changes nothing and a window of another
+class is refused; then, with a window server session, that the shown panel becomes the key window
+while the app does not become active, and does not become key while its flag says not focusable.
+What only a Mac with the real UI host can confirm (the target app stays active, keys typed into the
+panel go to the panel, the hand-back) is in `docs/compatibility-run.md`, "The macOS panel" (M-P1
+to M-P5).
 
 ## Checks
 
@@ -224,5 +240,4 @@ How it measures and what it gave is in `docs/test-strategy.md` §8.
 
 - The supervisor starts and restarts the UI host at login (architecture §3.2); until then start
   it yourself as above.
-- The non-activating panel on macOS, once `iamb-platform-macos` has the function above.
 - Rich text (3.8), library health (3.10) and the accessibility pass (3.11).

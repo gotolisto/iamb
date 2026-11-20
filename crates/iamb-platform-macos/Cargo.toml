@@ -23,6 +23,16 @@ probe = [
     "objc2-app-kit/NSView",
     "objc2-app-kit/NSWindow",
 ]
+# `panel`: `make_non_activating_panel`, which turns a window of the UI host into a
+# non-activating panel (ADR-0017; `src/panel.rs`). Only iamb-desktop enables it: the service
+# links this crate without it, so neither `raw-window-handle` nor the panel code is in the
+# service binary and its imports stay as they are (ADR-0008, CI "Service binary imports").
+panel = [
+    "dep:raw-window-handle",
+    "objc2-app-kit/NSPanel",
+    "objc2-app-kit/NSView",
+    "objc2-app-kit/NSWindow",
+]
 
 # `run_with_main_loop` must be called on the process's main thread, which the standard test
 # harness keeps for itself; this test brings its own `main`.
@@ -51,6 +61,14 @@ name = "probe"
 path = "tests/probe.rs"
 harness = false
 required-features = ["probe"]
+
+# Converts a window into the non-activating panel on the main thread, which runs the
+# application event loop (skipped checks write `SKIPPED` without a window server session).
+[[test]]
+name = "panel"
+path = "tests/panel.rs"
+harness = false
+required-features = ["panel"]
 
 # These tables repeat [workspace.lints] from the root Cargo.toml, because a crate cannot
 # inherit the workspace lints and override one of them. The only differences: `unsafe_code`
@@ -91,12 +109,16 @@ iamb-platform = { path = "../iamb-platform" }
 #                                  its activation; `libc` for its process id),
 #                                  session (the workspace's session notifications),
 #                                  main_loop (the application event loop; `NSGraphicsContext`
-#                                  only for the signature of the event that stops it)
+#                                  only for the signature of the event that stops it),
+#                                  panel (feature `panel`: `NSPanel`, `NSView`, `NSWindow`)
 #   objc2-service-management       login_item
 #   objc2-security                 endpoint (code signature of the peer)
 #   libc                           memory (mlock), endpoint (peer credentials, modes)
+#   raw-window-handle              panel (feature `panel`): the window handle a Tauri window
+#                                  gives; the version Tauri uses
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2.191"
+raw-window-handle = { version = "0.6.2", optional = true }
 objc2 = "0.6.5"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "std",

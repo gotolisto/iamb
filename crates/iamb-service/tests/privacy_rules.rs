@@ -67,9 +67,9 @@ fn findings_left_to_later_tasks_say_where_they_are_tracked() {
     for (finding, task) in [
         ("| 11,", "Phase 5"),
         ("| 13,", "Task 3.5"),
-        // Both panels send `PanelFocus` (tasks 3.5 and 3.6); what is left is the macOS panel
-        // function and the check on a Mac.
-        ("| 16,", "macOS panel function"),
+        // Both panels send `PanelFocus` (tasks 3.5 and 3.6) and are non-activating panels on
+        // macOS (`make_non_activating_panel`); what is left is the check on a Mac.
+        ("| 16,", "The Mac check"),
     ] {
         let row = table
             .lines()
@@ -80,4 +80,10 @@ fn findings_left_to_later_tasks_say_where_they_are_tracked() {
             "finding {finding} is not tracked in {task}: {row}"
         );
     }
+    // The macOS panel function exists; the row must not still wait for it.
+    let row = table
+        .lines()
+        .find(|line| line.starts_with("| 16,"))
+        .expect("the row of finding 16");
+    assert!(!row.contains("The macOS panel function"), "{row}");
 }
