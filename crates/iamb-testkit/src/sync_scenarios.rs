@@ -25,15 +25,34 @@
 //!      online: every change is on the server, in the history, in a conflict, kept, blocked or
 //!      still waiting;
 //!    - a device that ends online holds each row as the server has it, or not at all, holds
-//!      what it wrote itself, and two such devices of one account hold the same.
+//!      what it wrote itself, holds every live row of its user's own personal profile, and two
+//!      such devices of one account hold the same;
+//!    - a field an outcome states for a row is what the scenario's own steps left in that
+//!      version; the author of a snippet's content is the one the steps give (the writer of a
+//!      step that changed the content, otherwise the author of the version the device held); a
+//!      snippet whose content someone else wrote and that must be reviewed is held on every
+//!      device of a reader that has not approved it, and on none of its author's; and of
+//!      several snippets with one abbreviation on a device, the one stated to expand is not
+//!      behind another, as far as the author of the content, the profile and the order in
+//!      which the server accepted the rows decide it;
+//!    - after a restore of the server, a version the backup lacks that a device of the
+//!      profile's owner held ends as the server's row or in its history; one that a device of
+//!      the user who wrote it held ends there or in that device's list of kept changes; a
+//!      write over a version written since the restore has its conflict; and a removal made
+//!      after the backup is made again when the device that made it ends online.
 //!
-//! **Where the line is.** The ledger takes the answers (`applied`, `rejected:forbidden`, …),
-//! the rows a write takes with it (`cascade`) and what each user may see from the scenario; it
-//! does not derive them. Whether the rules of §8 and §9 give those answers, permissions,
-//! cascades, visibility and field values is checked when task 4.4 replays every scenario
-//! against the real store and sync client and a model of the server, and compares each outcome
-//! field by field. Until then an outcome that is consistent with its own answers and wrong
-//! under the rules still passes here.
+//! **Where the line is.** The ledger takes from the scenario the answers (`applied`,
+//! `rejected:forbidden`, …), the rows a write takes with it (`cascade`) and what a user may see
+//! through a share or a membership; it does not derive them, because it has no model of
+//! permissions, the feed or the store. What it knows beyond versions it reads off the
+//! scenario's own data: which fields a step wrote, who owns a personal profile, who wrote a
+//! snippet's content. Whether the rules of §8 and §9 give the stated answers, cascades and
+//! visibility is checked when task 4.4 replays every scenario against the real store and sync
+//! client and a model of the server, and compares each outcome field by field. Until then an
+//! outcome that is consistent with its own answers and wrong under the rules still passes
+//! here: a write the permissions forbid that is answered `applied`, a cascade the rules do not
+//! give, a folder that stays on a member's device after its share ended. The tests hold one
+//! example of each, as examples that pass.
 //!
 //! # Format
 //!
@@ -93,7 +112,9 @@
 //!   revision, a delete included. A write the server makes because of a step (the rows a
 //!   folder's delete takes with it, a folder a write restores, the memberships an account call
 //!   changes) carries that step's name, and the step lists those rows in `cascade`. A row that
-//!   a device sends again after a restore keeps the name of the version it had.
+//!   a device sends again after a restore keeps the name of the version it had: the answers of
+//!   a step answered `reset_required:epoch` are those to the rows the device sends again, each
+//!   in the version the device held when the server was restored.
 //! - `absent` means the device or the server holds no row with that id: never received, purged,
 //!   or not visible to that user. Invitations are not rows of the local store: one is "on" a
 //!   device while the account endpoint lists it for that user. An invitation has no revision
@@ -147,7 +168,7 @@ pub const CATEGORIES: [&str; 12] = [
 
 /// What the brief of task 4.1 asks the scenarios to cover; each tag must appear in the `covers`
 /// of at least one scenario.
-pub const REQUIRED_COVERAGE: [&str; 45] = [
+pub const REQUIRED_COVERAGE: [&str; 55] = [
     "edit-same-field",
     "edit-different-fields",
     "edit-vs-delete-delete-last",
@@ -194,6 +215,17 @@ pub const REQUIRED_COVERAGE: [&str; 45] = [
     "nested-shares",
     "device-revoked-with-pending",
     "share-ends-and-begins",
+    // The cases the follow-up review asked for (docs/reviews/4.1-sync-design-followup.md).
+    "restore-lost-edit-vs-new-edit",
+    "restore-line-per-profile",
+    "restore-two-lost-versions",
+    "restore-lost-edit-kept",
+    "lost-pull-answers",
+    "subfolder-leaves-share",
+    "file-by-known-hash",
+    "revoked-device-returns",
+    "client-claims-newer-state",
+    "delete-above-nested-share",
 ];
 
 /// The states a row can be in at the end.
@@ -292,7 +324,7 @@ pub const CALL_ANSWERS: [&str; 18] = [
     "lost",
     "reset_required:expired",
     "reset_required:epoch",
-    "reset_required:ahead",
+    "error:server_behind",
     "upgrade_required",
     "server_too_old",
     "rate_limited",
