@@ -748,13 +748,19 @@ then" column is kept for a UI that meets an older service.
 | 21 | A conflict with both versions, their authors, devices and times, and its two actions (`Conflicts`, `GetConflict`, `ResolveConflict` on the account endpoint; sync design C3, C20) | "Changed on another device" · [Show the other version] in the editor, and the list of conflicts |
 | 22 | A mark, with the reason, on a row the server cannot store yet (too large, over the plan's limit); the row keeps working on this computer (sync design D5) | So that "not synced" is never a surprise on the second computer |
 | 23 | Devices of the account and "sign out everywhere" (`Devices`, `RenameDevice`, `RevokeDevice`, `SignOutEverywhere`), and deleting the account | Settings → Account; the remedy for a lost computer (sync design §11.3) |
+| 24 | The members of a group, with their addresses for its owner and admins (`Members`); the offer of a group's ownership and its answer (`TransferOwnership`, `AcceptOwnership`, `DeclineOwnership`); the name other people see (`SetDisplayName`), asked for at sign-in (sync design §3.1, C16) | The member list; "Ines wants to hand “Brindlewood team” over to you." [Accept] [Decline]; nobody is shown as part of an email address |
+| 25 | An approval that names the content the dialog showed (`ApproveSnippet(id, content_hash)`), answered `changed` when the snippet holds other content by then; `needs_review` when a snippet that waits for review is copied, duplicated or moved to another profile; for a pending review, what each `{snippet}` in it resolves to on this computer (sync design D10) | A change that arrives between the dialog and the click is not approved unseen; a copy cannot skip the review; the review can say what an included snippet types |
 
-Entries 20 to 23 come from the sync design (task 4.1), which also lists, per conflict scenario,
-what a device shows its user as a code (`conflict`, `kept`, `blocked`, `shared`, `revoked`,
-`duplicate`, `broken`, `review`, `adjusted`, `superseded`, `plan_limit`, `upgrade`,
-`invitation_invalid`, `refused`; [`sync-design.md`](../sync-design.md) §12). Task 4.5 gives each
-its words under the rules of §2 and §4.11: all of them appear in the library window, none as a
-notice over another application.
+Entries 20 to 25 come from the sync design (task 4.1, revised after its review), which also
+lists, per conflict scenario, what a device shows its user as a code (`conflict`, `kept`,
+`blocked`, `shared`, `revoked`, `duplicate`, `broken`, `review`, `adjusted`, `superseded`,
+`plan_limit`, `upgrade`, `invitation_invalid`, `refused`, `signed_out`, `restored`;
+[`sync-design.md`](../sync-design.md) §12). `signed_out` is "This computer was signed out of
+your account. Your own snippets are still here." and `restored` is "Iamb's server was restored
+from a backup. Please look at the members of your groups." Task 4.5 gives each its final words
+under the rules of §2 and §4.11: all of them appear in the library window, none as a notice
+over another application. A conflict (entry 21) can offer more than one other version, when
+more than two people changed a snippet; each has its own [Restore].
 
 Nothing else in the six flows needs a message that does not exist.
 

@@ -1,16 +1,44 @@
 //! The sync conflict scenarios of task 4.1 (`spec/sync/scenarios.toml`): the file format, a
-//! loader and the structural check behind the KPI "every scenario has a defined outcome".
+//! loader and the check behind the KPI "every scenario has a defined outcome".
 //!
 //! `docs/sync-design.md` §12 writes the same scenarios out in prose; the file is what the
-//! two-device simulation of task 4.4 replays. This module does not run a scenario. It checks
-//! that a scenario can be replayed and judged: every row it names exists, every step is one the
-//! format knows, and the outcome says, for the server and for every device, what state every row
-//! of the scenario is in and what the user is shown.
+//! two-device simulation of task 4.4 replays. This module does not run a scenario against a
+//! store, a sync client or a server. It checks two things:
+//!
+//! 1. **Structure**: a scenario can be replayed and judged. Every row it names exists, every
+//!    step is one the format knows, and the outcome says, for the server and for every device,
+//!    what state every row of the scenario is in and what the user is shown.
+//! 2. **Consistency** (the `ledger` module): the outcome agrees with the steps and the answers
+//!    the scenario itself states, and satisfies the invariants every outcome must satisfy
+//!    whatever the rules decide. The check follows each change from the device that made it to
+//!    the answer the scenario gives for it, and keeps a ledger of which version each row has on
+//!    the server and which version each device had seen. From that it requires:
+//!    - the server's row is the last write that reached it, live or deleted as that write left
+//!      it, or absent when nothing reached it or a purge is due; a refused or blocked write is
+//!      never the server's row;
+//!    - the history holds exactly the versions that later writes replaced;
+//!    - a write that replaced a version its device had not seen, written on another device,
+//!      has a conflict that names both, of the kind the two writes make, shown on the devices
+//!      of both authors; a conflict that was replaced hands its loser on;
+//!    - a refused change is kept on the device that made it, a blocked one stays there with
+//!      its row and its outbox entry, and no change is left unanswered on a device that ends
+//!      online: every change is on the server, in the history, in a conflict, kept, blocked or
+//!      still waiting;
+//!    - a device that ends online holds each row as the server has it, or not at all, holds
+//!      what it wrote itself, and two such devices of one account hold the same.
+//!
+//! **Where the line is.** The ledger takes the answers (`applied`, `rejected:forbidden`, …),
+//! the rows a write takes with it (`cascade`) and what each user may see from the scenario; it
+//! does not derive them. Whether the rules of §8 and §9 give those answers, permissions,
+//! cascades, visibility and field values is checked when task 4.4 replays every scenario
+//! against the real store and sync client and a model of the server, and compares each outcome
+//! field by field. Until then an outcome that is consistent with its own answers and wrong
+//! under the rules still passes here.
 //!
 //! # Format
 //!
 //! ```toml
-//! version = 1
+//! version = 2
 //!
 //! [[scenario]]
 //! id = "S01"                       # "S" and two digits, unique
@@ -22,7 +50,7 @@
 //!
 //! [scenario.start]
 //! users = ["ines"]
-//! devices = [{ id = "A", user = "ines" }]          # signed_in = false, protocol = 1 optional
+//! devices = [{ id = "A", user = "ines" }]          # signed_in = false, protocol = 1, copy_of
 //! profiles = [{ id = "p-ines", kind = "personal", owner = "ines" }]
 //! rows = [
 //!   { id = "f1", entity = "folder", profile = "p-ines", rev = 3, fields = { name = "Replies" } },
@@ -34,6 +62,7 @@
 //! do = "edit"                      # one of ACTIONS
 //! row = "s1"
 //! fields = { body = "…" }
+//! cascade = []                     # other rows the server writes when this change arrives
 //! answers = { s1 = "applied" }     # on a step that pushes: what the server answers per row
 //!
 //! [scenario.outcome]
@@ -56,15 +85,25 @@
 //!   change on the server that reaches its feed, in the order of the device ids, before the
 //!   next step begins. `offline` stops that, `online` starts it again with a sync. `manual`
 //!   keeps the network but leaves syncing to the `pull`, `push` and `deliver` steps until
-//!   `auto`.
+//!   `auto`. A `push` answered `held` or `lost` reached the server and was applied there; the
+//!   answer comes with `deliver`, with a later `replayed`, or never. `restart` stops and starts
+//!   the sync agent: what it had under way is forgotten, the outbox is not.
 //! - A version is named after the step whose write produced it; `start` is the content a row
 //!   has in `start`. A row's `version` in an outcome is the step that wrote its current
-//!   revision, a delete included.
+//!   revision, a delete included. A write the server makes because of a step (the rows a
+//!   folder's delete takes with it, a folder a write restores, the memberships an account call
+//!   changes) carries that step's name, and the step lists those rows in `cascade`. A row that
+//!   a device sends again after a restore keeps the name of the version it had.
 //! - `absent` means the device or the server holds no row with that id: never received, purged,
 //!   or not visible to that user. Invitations are not rows of the local store: one is "on" a
-//!   device while the account endpoint lists it for that user.
+//!   device while the account endpoint lists it for that user. An invitation has no revision
+//!   (`rev = 0`) and no history.
 //! - `advance` moves the shared clock by whole days; the server's daily purge runs, and each
 //!   device purges at its next sync.
+//! - A device with `copy_of` is a second installation whose data directory, device id and
+//!   tokens were copied from the device named.
+
+mod ledger;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -72,7 +111,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 /// The `version` of the file format this module reads.
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 
 /// The fewest scenarios the file may hold (the test of task 4.1: "30 or more").
 pub const MIN_SCENARIOS: usize = 30;
@@ -108,7 +147,7 @@ pub const CATEGORIES: [&str; 12] = [
 
 /// What the brief of task 4.1 asks the scenarios to cover; each tag must appear in the `covers`
 /// of at least one scenario.
-pub const REQUIRED_COVERAGE: [&str; 27] = [
+pub const REQUIRED_COVERAGE: [&str; 45] = [
     "edit-same-field",
     "edit-different-fields",
     "edit-vs-delete-delete-last",
@@ -136,13 +175,32 @@ pub const REQUIRED_COVERAGE: [&str; 27] = [
     "duplicated-push",
     "server-restore",
     "version-mismatch",
+    // The cases the review of the design asked for (docs/reviews/4.1-sync-design-review.md §4).
+    "lost-answer-then-delete",
+    "folder-delete-vs-move-out",
+    "folder-delete-refused",
+    "simultaneous-requests",
+    "abbreviation-takeover",
+    "stale-write-held-content",
+    "copy-held-snippet",
+    "three-writers",
+    "restore-membership",
+    "restore-single-holder",
+    "copied-data-directory",
+    "shared-folder-deleted",
+    "move-across-share-edge",
+    "tag-leaves-share",
+    "duplicate-links",
+    "nested-shares",
+    "device-revoked-with-pending",
+    "share-ends-and-begins",
 ];
 
 /// The states a row can be in at the end.
 pub const ROW_STATES: [&str; 3] = ["live", "deleted", "absent"];
 
 /// Steps a device takes that change no row.
-const DEVICE_CONTROL: [&str; 9] = [
+const DEVICE_CONTROL: [&str; 10] = [
     "offline",
     "online",
     "manual",
@@ -152,15 +210,17 @@ const DEVICE_CONTROL: [&str; 9] = [
     "deliver",
     "channel_down",
     "channel_up",
+    "restart",
 ];
 
 /// Steps a device takes that write something, so each needs an `id`.
-const DEVICE_WRITES: [&str; 17] = [
+const DEVICE_WRITES: [&str; 19] = [
     "create",
     "edit",
     "move",
     "delete",
     "undelete",
+    "copy",
     "invite",
     "accept",
     "decline",
@@ -169,6 +229,7 @@ const DEVICE_WRITES: [&str; 17] = [
     "set_role",
     "leave",
     "transfer_ownership",
+    "accept_ownership",
     "delete_group",
     "resolve",
     "sign_in",
@@ -176,7 +237,24 @@ const DEVICE_WRITES: [&str; 17] = [
 ];
 
 /// Other steps of a device.
-const DEVICE_OTHER: [&str; 3] = ["clock", "revoke_device", "upgrade"];
+const DEVICE_OTHER: [&str; 4] = ["clock", "revoke_device", "upgrade", "approve"];
+
+/// Steps that are calls to the server and not pushed rows: answered at once, with `ok` or an
+/// error, and never queued.
+const ACCOUNT_CALLS: [&str; 12] = [
+    "invite",
+    "accept",
+    "decline",
+    "withdraw",
+    "remove_member",
+    "set_role",
+    "leave",
+    "transfer_ownership",
+    "accept_ownership",
+    "delete_group",
+    "resolve",
+    "revoke_device",
+];
 
 /// Steps of the server (`at = "server"`).
 const SERVER_ACTIONS: [&str; 5] = [
@@ -208,7 +286,7 @@ pub const PUSH_ANSWERS: [&str; 16] = [
 ];
 
 /// What a call or a whole sync is answered with (`answer`).
-pub const CALL_ANSWERS: [&str; 15] = [
+pub const CALL_ANSWERS: [&str; 18] = [
     "ok",
     "held",
     "lost",
@@ -218,6 +296,9 @@ pub const CALL_ANSWERS: [&str; 15] = [
     "upgrade_required",
     "server_too_old",
     "rate_limited",
+    "device_revoked",
+    "error:device_conflict",
+    "error:needs_review",
     "error:invitation_invalid",
     "error:already_accepted",
     "error:not_owner",
@@ -236,7 +317,7 @@ pub const CONFLICT_KINDS: [&str; 5] = [
 ];
 
 /// What a device can show its user (the wording belongs to task 4.5).
-pub const SHOWN: [&str; 14] = [
+pub const SHOWN: [&str; 16] = [
     "conflict",
     "kept",
     "blocked",
@@ -251,7 +332,13 @@ pub const SHOWN: [&str; 14] = [
     "upgrade",
     "invitation_invalid",
     "refused",
+    "signed_out",
+    "restored",
 ];
+
+/// The states a recorded conflict can be in at the end; `replaced` means a newer conflict on
+/// the same row took it over, with its loser.
+pub const CONFLICT_STATES: [&str; 3] = ["open", "resolved", "replaced"];
 
 /// The whole file.
 #[derive(Debug, Clone, Deserialize)]
@@ -319,6 +406,8 @@ pub struct DeviceSpec {
     pub signed_in: bool,
     /// The sync protocol version it speaks, when the scenario is about versions.
     pub protocol: Option<u32>,
+    /// The device whose data directory, device id and tokens this installation was copied from.
+    pub copy_of: Option<String>,
 }
 
 const fn yes() -> bool {
@@ -457,7 +546,13 @@ pub struct Step {
     /// For `create` and `edit`: the fields written.
     #[serde(default)]
     pub fields: BTreeMap<String, toml::Value>,
-    /// For `move`: the new folder or parent, or `top`; for `restore_backup`: the backup step.
+    /// The other rows the server writes when this step's change arrives, under this step's
+    /// name: what a folder's delete takes with it, a folder a write restores, the memberships
+    /// and shares an account call changes.
+    #[serde(default)]
+    pub cascade: Vec<String>,
+    /// For `move` and `copy`: the new folder or parent, or `top`; for `restore_backup`: the
+    /// backup step.
     pub to: Option<String>,
     /// For `advance`: whole days.
     pub days: Option<u32>,
@@ -467,7 +562,7 @@ pub struct Step {
     pub choice: Option<String>,
     /// For `invite` and `set_role`: the role.
     pub role: Option<String>,
-    /// For `invite` and `accept`: the row the call creates.
+    /// For `invite`, `accept` and `copy`: the row the step creates.
     pub creates: Option<String>,
     /// For `revoke_device`: the device revoked.
     pub device: Option<String>,
@@ -556,9 +651,12 @@ pub struct ConflictOutcome {
     pub winner: String,
     /// The step whose write was replaced and is offered back.
     pub loser: String,
+    /// The losers taken over from the conflict this one replaced; offered back as well.
+    #[serde(default)]
+    pub carried: Vec<String>,
     /// The accounts that are shown the conflict.
     pub parties: Vec<String>,
-    /// `open` or `resolved`.
+    /// One of [`CONFLICT_STATES`].
     pub state: String,
 }
 
@@ -623,7 +721,9 @@ pub fn parse(text: &str) -> Result<ScenarioFile, String> {
 }
 
 /// Checks a scenario file and returns everything wrong with it; nothing means that every
-/// scenario can be replayed and has a defined outcome for the server and every device.
+/// scenario can be replayed, has a defined outcome for the server and every device, and that
+/// each outcome agrees with the scenario's own steps and answers (see the module's
+/// documentation for what that covers and what waits for the replay of task 4.4).
 #[must_use]
 pub fn validate(file: &ScenarioFile) -> Vec<String> {
     let mut problems = Vec::new();
@@ -726,6 +826,18 @@ impl<'a> Check<'a> {
         self.start();
         self.steps();
         self.outcome();
+        // The ledger follows references the structural check has just verified, so it runs
+        // only on a scenario that is sound so far.
+        if self.problems.is_empty() {
+            let devices: BTreeMap<&str, Vec<RowOutcome>> = self
+                .devices
+                .iter()
+                .filter_map(|device| Some((*device, self.resolve(device, 0)?)))
+                .collect();
+            for problem in ledger::check(self.scenario, &self.rows, &devices) {
+                self.fail(problem);
+            }
+        }
     }
 
     fn header(&mut self) {
@@ -776,6 +888,21 @@ impl<'a> Check<'a> {
             }
             if !self.users.contains(device.user.as_str()) {
                 self.fail(format!("device {} has an unknown user", device.id));
+            }
+        }
+        for device in &start.devices {
+            if let Some(original) = &device.copy_of {
+                let same_user = start
+                    .devices
+                    .iter()
+                    .any(|d| &d.id == original && d.user == device.user && d.id != device.id);
+                if !same_user {
+                    self.fail(format!(
+                        "device {} is a copy of {original}, which is not another device of the \
+                         same user",
+                        device.id
+                    ));
+                }
             }
         }
         if self.devices.is_empty() {
@@ -834,6 +961,12 @@ impl<'a> Check<'a> {
             }
             if self.rows.insert(&row.id, &row.entity).is_some() {
                 self.fail(format!("row {} is listed twice", row.id));
+            }
+            if row.entity == "invitation" && row.rev != 0 {
+                self.fail(format!(
+                    "the invitation {} has a revision; invitations have none (rev = 0)",
+                    row.id
+                ));
             }
             self.start_rows.insert(&row.id);
         }
@@ -918,6 +1051,18 @@ impl<'a> Check<'a> {
             }
             self.step(n, step);
         }
+        // A cascade may name a row that a later step creates (a folder's delete that reaches
+        // the server after another device's new snippet), so it is checked once all are known.
+        for (index, step) in scenario.steps.iter().enumerate() {
+            for row in &step.cascade {
+                if !self.rows.contains_key(row.as_str()) {
+                    self.fail(format!(
+                        "step {}: `cascade` names the unknown row {row}",
+                        index + 1
+                    ));
+                }
+            }
+        }
     }
 
     fn step(&mut self, n: usize, step: &'a Step) {
@@ -938,6 +1083,11 @@ impl<'a> Check<'a> {
         let writes = DEVICE_WRITES.contains(&action) || action == "backup";
         if writes && step.id.is_none() {
             self.fail(format!("step {n}: {action} writes, so it needs an id"));
+        }
+        if ACCOUNT_CALLS.contains(&action) && step.answer.is_none() {
+            self.fail(format!(
+                "step {n}: {action} is a call to the server, so it needs an `answer`"
+            ));
         }
         self.step_arguments(n, step);
         self.step_answers(n, step);
@@ -961,9 +1111,11 @@ impl<'a> Check<'a> {
                     _ => self.fail(format!("step {n}: `to` must be a known folder or \"top\"")),
                 }
             }
-            "delete" | "undelete" | "decline" | "withdraw" | "remove_member" | "leave" => {
+            "delete" | "undelete" | "decline" | "withdraw" | "remove_member" | "leave"
+            | "approve" => {
                 self.step_row(n, step);
             }
+            "copy" => self.step_copy(n, step),
             "set_role" => {
                 self.step_row(n, step);
                 if step.role.is_none() {
@@ -986,7 +1138,9 @@ impl<'a> Check<'a> {
                     self.fail(missing("role"));
                 }
             }
-            "transfer_ownership" | "delete_group" => self.step_group(n, step),
+            "transfer_ownership" | "accept_ownership" | "delete_group" => {
+                self.step_group(n, step);
+            }
             "sign_in" => {
                 if !step.user.as_deref().is_some_and(|u| self.users.contains(u)) {
                     self.fail(missing("user"));
@@ -1066,6 +1220,23 @@ impl<'a> Check<'a> {
         self.refs(row, entity, step.refs());
     }
 
+    /// A copy of a snippet into another folder: a new row, unless the store refuses it.
+    fn step_copy(&mut self, n: usize, step: &'a Step) {
+        self.step_row(n, step);
+        match step.to.as_deref() {
+            Some(to) if self.rows.get(to).copied() == Some("folder") => {}
+            _ => self.fail(format!("step {n}: `to` must be a known folder")),
+        }
+        let refused = step.answer.as_deref() == Some("error:needs_review");
+        match (&step.creates, refused) {
+            (None, true) => {}
+            (Some(_), true) => {
+                self.fail(format!("step {n}: a refused copy creates no row"));
+            }
+            (_, false) => self.step_creates(n, step, "snippet"),
+        }
+    }
+
     fn step_creates(&mut self, n: usize, step: &'a Step, entity: &'static str) {
         if entity == "invitation" {
             self.step_group(n, step);
@@ -1107,6 +1278,12 @@ impl<'a> Check<'a> {
         for version in &outcome.server.history {
             self.known_row("history", &version.row);
             self.version("history", &version.row, &version.version);
+            if self.rows.get(version.row.as_str()).copied() == Some("invitation") {
+                self.fail(format!(
+                    "the history holds the invitation {}; invitations have no history",
+                    version.row
+                ));
+            }
             // The history holds replaced versions only: a version is current or replaced.
             let current = outcome.server.rows.iter().find(|r| r.row == version.row);
             if current.and_then(|r| r.version.as_deref()) == Some(version.version.as_str()) {
@@ -1119,6 +1296,7 @@ impl<'a> Check<'a> {
         for conflict in &outcome.server.conflicts {
             self.conflict(conflict);
         }
+        self.conflicts_per_row();
         let devices: Vec<&str> = self.devices.iter().copied().collect();
         for device in devices {
             match outcome.device.get(device) {
@@ -1138,7 +1316,10 @@ impl<'a> Check<'a> {
         if !CONFLICT_KINDS.contains(&conflict.kind.as_str()) {
             self.fail(format!("unknown conflict kind {}", conflict.kind));
         }
-        for step in [&conflict.winner, &conflict.loser] {
+        for step in [&conflict.winner, &conflict.loser]
+            .into_iter()
+            .chain(&conflict.carried)
+        {
             if !self.steps.contains_key(step.as_str()) {
                 self.fail(format!("a conflict names the unknown step {step}"));
             }
@@ -1146,15 +1327,17 @@ impl<'a> Check<'a> {
         // The loser is what the user is offered back, so the server must still hold it; and
         // until the conflict is resolved the winner is what the row is.
         let server = &self.scenario.outcome.server;
-        let kept = server
-            .history
-            .iter()
-            .any(|v| v.row == conflict.row && v.version == conflict.loser);
-        if !kept {
-            self.fail(format!(
-                "the conflict on {} offers {} back, which the history does not hold",
-                conflict.row, conflict.loser
-            ));
+        for offered in std::iter::once(&conflict.loser).chain(&conflict.carried) {
+            let kept = server
+                .history
+                .iter()
+                .any(|v| v.row == conflict.row && &v.version == offered);
+            if !kept {
+                self.fail(format!(
+                    "the conflict on {} offers {offered} back, which the history does not hold",
+                    conflict.row
+                ));
+            }
         }
         let current = server.rows.iter().find(|r| r.row == conflict.row);
         if conflict.state == "open"
@@ -1176,8 +1359,36 @@ impl<'a> Check<'a> {
                 self.fail(format!("a conflict names the unknown user {party}"));
             }
         }
-        if !matches!(conflict.state.as_str(), "open" | "resolved") {
+        if !CONFLICT_STATES.contains(&conflict.state.as_str()) {
             self.fail(format!("unknown conflict state {}", conflict.state));
+        }
+    }
+
+    /// At most one conflict per row is open, and a conflict that a newer one replaced hands
+    /// its losers on to it, so that no replaced version drops out of reach.
+    fn conflicts_per_row(&mut self) {
+        let conflicts = &self.scenario.outcome.server.conflicts;
+        let mut open = BTreeSet::new();
+        for conflict in conflicts.iter().filter(|c| c.state == "open") {
+            if !open.insert(conflict.row.as_str()) {
+                self.fail(format!("two conflicts on {} are open", conflict.row));
+            }
+        }
+        for old in conflicts.iter().filter(|c| c.state == "replaced") {
+            for offered in std::iter::once(&old.loser).chain(&old.carried) {
+                let handed_on = conflicts.iter().any(|c| {
+                    c.row == old.row
+                        && c.state != "replaced"
+                        && (&c.loser == offered || c.carried.contains(offered))
+                });
+                if !handed_on {
+                    self.fail(format!(
+                        "the replaced conflict on {} offered {offered} back, and no later \
+                         conflict on the row takes it over",
+                        old.row
+                    ));
+                }
+            }
         }
     }
 

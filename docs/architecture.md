@@ -1,9 +1,9 @@
 # Iamb architecture
 
 Status: approved by the owner on 2026-11-18; §4 amended the same day after the Phase 1 review (ADR-0024) · Task 0.1 ·
-§4.4, §6.2, §6.4, §7, §8 rule 10 and §9 extended by the sync design of task 4.1
-([`sync-design.md`](sync-design.md); ADR-0027, ADR-0028 and ADR-0029, proposed and awaiting the
-owner) ·
+§4.4, §6.2, §6.4, §7, §8 rule 10 and §9 extended by the sync design of task 4.1, as revised
+after its review ([`sync-design.md`](sync-design.md); ADR-0027, ADR-0028 and ADR-0029, proposed
+and awaiting the owner) ·
 Decision records: [`docs/decisions/`](decisions/README.md) ·
 Review record: [`docs/reviews/0.1-architecture-review.md`](reviews/0.1-architecture-review.md)
 
@@ -265,10 +265,14 @@ pub trait Environment {
   this inside a profile for local edits; rows that arrive by sync are applied as they are, so two
   devices that each created the same abbreviation offline both keep their snippet
   ([ADR-0028](decisions/0028-data-model-for-sync.md)). A deterministic precedence decides which
-  snippet holds an abbreviation: the user's personal profile first, then the folders of other
-  profiles by the time the server recorded the user's access to them (the earliest-created
-  share), then the lower id of the shared folder; inside one of these the earlier creation time,
-  then the lower id. The losers neither trigger nor resolve, and library health lists them.
+  snippet holds an abbreviation: the user's personal profile first, and in it the snippets whose
+  content the user wrote before those whose content someone else wrote (a member, in a folder
+  the user shares); then the folders of other profiles by the time the server recorded the
+  user's access to them (the earliest-created share), then the lower id of the shared folder;
+  inside one of these the order in which the server first accepted the rows, then the lower id.
+  No device's clock takes part, and a snippet written by someone else never takes an
+  abbreviation from one the user wrote ([`sync-design.md`](sync-design.md) D13). The losers
+  neither trigger nor resolve, and library health lists them.
 - Case folding, used by the store's uniqueness check and by the matcher alike, is per-character
   lower-casing with final sigma folded to σ (`Abbreviation::fold_key`). There is no wider Unicode
   case folding: `ß` does not match `ss`.
@@ -576,7 +580,7 @@ left at the cargo name). On Linux the endpoint names no executable and the role 
 | Templates | `ParseTemplate(source)`, `RenderPreview(source, values, rich)` | — |
 | Diagnostics | `RecentDiagnostics` | `DiagnosticAdded` |
 | Settings | `GetSettings`, `PutSetting`, `ListExclusions`, `PutExclusion`, `ResetUsage` | `SettingsChanged` |
-| Sync | `OutboxRead(limit)`, `OutboxAck(results)`, `ApplyRemote(batch, position)`, `PurgeFolder(id)`, `AttachmentAvailable(profile, sha256)`, `MissingAttachments`, `SetSyncStatus`, `SetEntitlements`; added by the sync design (task 4.1, built in task 4.4): `SyncState`, `Adopt`, `ReconcileBegin`, `ReconcileEnd`, `SetAccess`, `SetKnownUsers`, `PutShare`, `DeleteShare`, `SignedOut`, `AttachmentsToUpload`, `UploadedAttachment` | `OutboxChanged` |
+| Sync | `OutboxRead(limit)`, `OutboxAck(results)`, `ApplyRemote(batch, position)`, `PurgeFolder(id)`, `AttachmentAvailable(profile, sha256)`, `MissingAttachments`, `SetSyncStatus`, `SetEntitlements`; added by the sync design (task 4.1, built in task 4.4): `SyncState`, `Adopt`, `AdoptMerge`, `ReconcileBegin`, `ReconcileEnd`, `SetAccess`, `SetKnownUsers`, `PutShare`, `DeleteShare`, `SetBlocked`, `SignedOut`, `AttachmentsToUpload`, `UploadedAttachment` | `OutboxChanged` |
 
 Names across the layers: the engine action `ShowForm` becomes the event `FormRequested`; the
 requests `FormSubmit` and `FormCancel` become the engine events `FormSubmitted` and
@@ -608,13 +612,17 @@ time.
 
 The Sync group as the sync design fixes it ([`sync-design.md`](sync-design.md) §7.2, §9): what
 `OutboxRead` returns is one change per row, ready to send (the row as it is now, the base
-revision of its oldest waiting entry, an id that makes a repeat harmless); `OutboxAck` takes the
-server's answer for each change and acts on it (a refused change is kept for the user, one the
-server cannot store yet stays local); `ApplyRemote` never writes a pulled row over an unsent
-change, answers per row, and stores the feed position in the same transaction; `PurgeFolder`
-keeps the folder's unsent changes for the user before it removes the folder. The Library group
-gains `ListKeptChanges`, `CopyKeptChange` and `DismissKeptChange` for those kept changes. No
-build answered the Sync group before task 4.4, which raises the protocol to 4 with it.
+revision of its oldest waiting entry, an id that makes a repeat harmless), and the store marks
+what it returned as handed out, so that a row the server may have seen is never dropped unsent;
+`OutboxAck` takes the server's answer for each change, and for each row a folder's delete took
+with it, and acts on it (a refused change is kept for the user, one the server cannot store yet
+stays local), and reports the rows that are still behind what a pull skipped; `ApplyRemote`
+never writes a pulled row over an unsent change, notes what it skipped, answers per row, and
+stores the feed position in the same transaction; `PurgeFolder` keeps the folder's unsent
+changes for the user before it removes the folder. The Library group gains `ListKeptChanges`,
+`CopyKeptChange` and `DismissKeptChange` for those kept changes, and `ApproveSnippet` names the
+content it approves. No build answered the Sync group before task 4.4, which raises the
+protocol to 4 with it.
 
 The React UI never speaks IPC itself. It calls Tauri commands in `iamb-desktop`, which forwards
 them and relays events back.
@@ -645,8 +653,9 @@ through the UI host or the service. Invitations are accepted inside the app: aft
 invitee's pending invitations are listed by `Invitations`; the email only tells them to open Iamb.
 
 The sync design adds what the account screens need ([`sync-design.md`](sync-design.md) §7.2):
-`CreateProfile`, `RenameProfile`, `DeleteProfile`, `TransferOwnership`, `SetMemberRole`,
-`LeaveProfile`, `WithdrawInvitation`, `DeclineInvitation`, `GetConflict`, `ResolveConflict`,
+`CreateProfile`, `RenameProfile`, `DeleteProfile`, `TransferOwnership`, `AcceptOwnership`,
+`DeclineOwnership`, `Members`, `SetMemberRole`, `LeaveProfile`, `WithdrawInvitation`,
+`DeclineInvitation`, `GetConflict`, `ResolveConflict`,
 `Devices`, `RenameDevice`, `RevokeDevice`, `SignOutEverywhere`, `SetDisplayName`, `DeleteAccount`
 and `SyncNow`. Groups, memberships and invitations change only through these calls and need a
 connection; `SetFolderShare` and `RemoveFolderShare` are written to the store as local changes
@@ -691,7 +700,7 @@ Device-local tables, never synced:
 | `sync_state` | The user's position in the server's change feed |
 | `entitlement` | The plan features last reported by the sync agent |
 | `schema_migrations` | Applied migration versions |
-| `folder_access`, `snippet_origin`, `kept_change`, `known_user`, `attachment_state` | Added by the sync design ([`sync-design.md`](sync-design.md) §7.1, built in task 4.4): the user's permission on each folder shared with them and when it began, as the server computed it; who wrote a snippet's content; changes the server refused, kept for the user; display names of authors and members; which attachment files this device has sent. `approval` also keeps the content that was approved, and `sync_state` the account the library belongs to |
+| `folder_access`, `snippet_origin`, `kept_change`, `known_user`, `attachment_state`, `skipped`, `left_alone` | Added by the sync design ([`sync-design.md`](sync-design.md) §7.1, built in task 4.4): the user's permission on each folder shared with them and when it began, as the server computed it; who wrote a snippet's content and when the server first accepted the row; changes the server refused, kept for the user; display names of authors and members; which attachment files this device has sent; pulled rows that were not applied because of an unsent change; rows a resync left in place for the same reason. `approval` also keeps the content that was approved, and `sync_state` the account the library belongs to and how far a first sign-in has come |
 
 Who can do what:
 
@@ -713,13 +722,16 @@ rules. Usage statistics stay on the device
 What the sync design adds to this model ([`sync-design.md`](sync-design.md) §3 to §5,
 [ADR-0028](decisions/0028-data-model-for-sync.md)): the server sets `rev` from one growing
 counter, `updated_at` from its own clock and `updated_by` from the caller, and for a snippet also
-who last changed what the snippet does (`content_by`, `content_at`), which travels beside the row
-and is kept in `snippet_origin`; `Profile`, `Membership` and invitations are written by the
-server only, through the account endpoint; a `FolderShare`'s id is derived from its folder and
-group, every other id is made on the device; a folder never changes its profile; a member with
-`edit` may move snippets and sub-folders only within the shared folder; a tag's name and colour
-can be changed by whoever may manage the profile. `sync-design.md` §4 has the permissions row by
-row.
+who last changed what the snippet does (`content_by`, `content_at`; the writer only when the
+content differs from the version the write was based on), which travels beside the row with the
+revision at which the server first accepted it and is kept in `snippet_origin`; `Profile`,
+`Membership` and invitations are written by the server only, through the account endpoint, and
+the ownership of a group changes only when the new owner accepts; a `FolderShare`'s id is
+derived from its folder and group, every other id is made on the device; a folder never changes
+its profile; a member with `edit` may move snippets and sub-folders only within the shared
+folder, and may not rename, move or delete the shared folder itself, wherever it lies in its
+owner's tree; a tag's name and colour can be changed by whoever may manage the profile.
+`sync-design.md` §4 has the permissions row by row.
 
 ## 8. Privacy and security rules
 
@@ -803,9 +815,13 @@ These hold for every phase and are what the Phase 2 privacy review checks
       approved revision keeps expanding, or nothing if there is none. Single-line plain text from
       other members expands without review. "By another user" is the author of the snippet's
       content as the server records it, not the row's last writer, and what is approved is the
-      content, so that a move or a new label does not ask again and nobody's edit can make
-      someone else's key presses count as the user's own
-      ([ADR-0028](decisions/0028-data-model-for-sync.md), [`sync-design.md`](sync-design.md) D10).
+      content, so that a move or a new label does not ask again and nobody's edit, also one sent
+      from a device that was a moment behind, can make someone else's key presses count as the
+      user's own; a held snippet cannot be copied before it is reviewed
+      ([ADR-0028](decisions/0028-data-model-for-sync.md), [`sync-design.md`](sync-design.md) C17,
+      D10). The sync design proposes to hold a `{snippet}` reference written by another user as
+      well, because it types the reader's own snippets; that addition is the owner's to confirm
+      (`sync-design.md` §13, question 10).
     - Rich snippets render Markdown with raw HTML disabled and links limited to `http`, `https`
       and `mailto`.
     - Downloaded attachments are verified against their SHA-256 before use.
@@ -872,24 +888,26 @@ real machines:
 
 The architecture fixes the frame ([ADR-0016](decisions/0016-sync-frame.md)). Task 4.1 fills it
 in: [`sync-design.md`](sync-design.md) has the server's tables and policies, the protocol, the
-rules for every conflict (`C1` to `C23` on the server, `D1` to `D14` on the device), the threat
-model for sharing and 49 conflict scenarios with their outcomes, which are also in
+rules for every conflict (`C1` to `C25` on the server, `D1` to `D17` on the device), the threat
+model for sharing and 67 conflict scenarios with their outcomes, which are also in
 `spec/sync/scenarios.toml` for the simulation of task 4.4
 ([ADR-0027](decisions/0027-sync-protocol-and-conflict-rules.md),
 [ADR-0028](decisions/0028-data-model-for-sync.md),
 [ADR-0029](decisions/0029-server-readable-content.md)). In short: the last write is the one the
 server accepts last, by its own counter and clock; a write replaces the whole row, and a stale
 one records a conflict that offers the other version back; a delete is a write like any other; a
-device never writes a pulled row over an unsent change; a change the server refuses is kept on
-the device for the user; and the server stores synced content readably in version 1 and never
-interprets it. The frame:
+device never writes a pulled row over an unsent change, and fetches a row it skipped once the
+change is settled; a change the server refuses is kept on the device for the user; the writes of
+one profile happen one after the other on the server; and the server stores synced content
+readably in version 1 and never interprets it. The frame:
 
 - The server is a Postgres database with row-level security, reached over HTTPS and a live-update
   channel, hosted on Supabase.
 - **Change feed.** The server keeps one ordered change feed per user. An entry is either a row
   change the user may see, or a visibility change: `folder_visible(folder)` when a share or
   membership gives the user access, `folder_revoked(folder)` when access ends. `sync_state` is the
-  user's position in that feed.
+  user's position in that feed; the server issues each position and accepts it once, which is
+  how it tells a device from a copy of its data directory.
 - **Pull.** The agent reads the feed from its position. A row change is applied through
   `ApplyRemote`. `folder_visible` triggers a full fetch of that folder, whatever the rows'
   revisions, which is how a newly shared folder appears within the 10-second target.

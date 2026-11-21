@@ -9,8 +9,9 @@ drift apart.
     python3 spec/sync/render_scenarios.py          # rewrite the section
     python3 spec/sync/render_scenarios.py --check  # exit 1 when the document is out of date
 
-The structure of the file is checked by `cargo test -p iamb-testkit --test sync_scenarios`,
-which also checks that the document carries every scenario's heading and outcome.
+The file is checked by `cargo test -p iamb-testkit --test sync_scenarios` (its structure, and
+that each outcome agrees with the scenario's own steps and answers), which also checks that the
+document carries every scenario's heading and outcome.
 """
 
 import sys
@@ -72,6 +73,8 @@ def step_text(step: dict) -> str:
         "deliver": f"The held answer reaches {at}.",
         "channel_down": f"{at}'s live channel drops.",
         "channel_up": f"{at}'s live channel is back.",
+        "restart": f"{at}'s sync agent stops and starts again.",
+        "approve": f"{at}: the user reviews {row} and approves it on this device.",
         "delete": f"{at} deletes {row}.",
         "undelete": f"{at} restores the deleted {row}.",
         "decline": f"{at}: the user declines the invitation {row}.",
@@ -108,7 +111,12 @@ def step_text(step: dict) -> str:
     if do == "set_role":
         return f"{at}: the user makes {row} a {step['role']}."
     if do == "transfer_ownership":
-        return f"{at}: the user transfers the ownership of `{step['group']}` to {step['user']}."
+        return f"{at}: the user offers the ownership of `{step['group']}` to {step['user']}."
+    if do == "accept_ownership":
+        return f"{at}: the user accepts the ownership of `{step['group']}`."
+    if do == "copy":
+        made = f" (new snippet `{step['creates']}`)" if "creates" in step else ""
+        return f"{at}: the user copies {row} into `{step['to']}`{made}."
     if do == "delete_group":
         return f"{at}: the user deletes the group `{step['group']}`."
     if do == "resolve":
@@ -134,6 +142,9 @@ def step_text(step: dict) -> str:
 def step_lines(number: int, step: dict) -> list[str]:
     label = f"`{step['id']}` · " if "id" in step else ""
     text = label + step_text(step)
+    if step.get("cascade"):
+        rows = ", ".join(f"`{row}`" for row in step["cascade"])
+        text += f" On the server the change also writes {rows}."
     answers = []
     if "answer" in step:
         answers.append(f"`{step['answer']}`")
@@ -162,6 +173,8 @@ def start_lines(start: dict) -> list[str]:
             extra.append("not signed in")
         if "protocol" in device:
             extra.append(f"protocol {device['protocol']}")
+        if "copy_of" in device:
+            extra.append(f"a copy of {device['copy_of']}'s data directory")
         note = f", {', '.join(extra)}" if extra else ""
         devices.append(f"{device['id']} ({device['user']}{note})")
     profiles = []
@@ -181,8 +194,10 @@ def start_lines(start: dict) -> list[str]:
         cell = fields(row.get("fields", {}))
         if extra:
             cell = (cell + "; " if cell else "") + "; ".join(extra)
+        # An invitation has no revision.
+        rev = "—" if row["entity"] == "invitation" else row["rev"]
         lines.append(
-            f"| `{row['id']}` | {row['entity'].replace('_', ' ')} | {refs(row)} | {row['rev']} "
+            f"| `{row['id']}` | {row['entity'].replace('_', ' ')} | {refs(row)} | {rev} "
             f"| {cell} |"
         )
     return lines
@@ -232,8 +247,9 @@ def outcome_lines(scenario: dict) -> list[str]:
     kept = "; ".join(f"`{row}` {', '.join(versions)}" for row, versions in history.items())
     lines.append(wrap("- History (replaced versions the server keeps): " + (kept or "none") + "."))
     conflicts = "; ".join(
-        f"`{c['row']}` {c['kind']}, winner {c['winner']}, loser {c['loser']}, "
-        f"shown to {' and '.join(c['parties'])}, {c['state']}"
+        f"`{c['row']}` {c['kind']}, winner {c['winner']}, loser {c['loser']}"
+        + (f" (and, taken over, {', '.join(c['carried'])})" if c.get("carried") else "")
+        + f", shown to {' and '.join(c['parties'])}, {c['state']}"
         for c in server["conflicts"]
     )
     lines.append(wrap("- Conflicts: " + (conflicts or "none") + "."))
