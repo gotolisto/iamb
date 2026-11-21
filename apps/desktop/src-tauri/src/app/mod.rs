@@ -143,6 +143,7 @@ fn setup(
     #[cfg(target_os = "macos")]
     app.set_activation_policy(tauri::ActivationPolicy::Accessory);
     let handle = app.handle().clone();
+    onboarding_commands::init(dirs.root());
     if let Err(e) = windows::prewarm(&handle, log) {
         log.error(format_args!(
             "cannot create the form and palette windows: {e}"
@@ -279,6 +280,7 @@ pub fn run(dirs: DataDirs, options: &Options, log: &Arc<Logger>) -> tauri::Resul
             onboarding_commands::onboarding_login_item,
             onboarding_commands::onboarding_open_library,
             onboarding_commands::onboarding_close,
+            onboarding_commands::app_restart_service,
         ])
         .setup(move |app| setup(app, &dirs, &setup_log, &setup_options).map_err(Into::into))
         .build(tauri::generate_context!())?;

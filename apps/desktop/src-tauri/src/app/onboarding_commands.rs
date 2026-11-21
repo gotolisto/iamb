@@ -17,6 +17,7 @@
 //! No command logs its arguments or its answers (architecture §8 rule 3): the front end keeps
 //! what is typed in the test field to itself.
 
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -28,7 +29,9 @@ use tauri::{
 
 use super::{Ui, windows};
 use crate::contract::CommandError;
-use crate::onboarding::{self, FinishView, Host, LoginView, NoSupervisor, PermissionsView};
+use crate::onboarding::{
+    self, FinishView, Host, LaunchSupervisor, LoginView, NoSupervisor, PermissionsView, Supervisor,
+};
 
 type Res<T> = Result<T, CommandError>;
 
@@ -43,16 +46,20 @@ const HEIGHT: f64 = 600.0;
 /// entry 9, "every 30 s while something is missing"), and how often it is asked at all.
 const PERMISSION_POLL: Duration = Duration::from_secs(30);
 
-/// The platform layer the commands use: what names the focused window, the login item, and
-/// (until the supervisor has a control pipe) nothing to restart the worker with.
-fn platform_host() -> Host {
+/// The platform layer the commands use: what names the focused window, the login item, and the
+/// supervisor of the data root `root` (none known: nothing to restart the worker with).
+fn platform_host(root: Option<&Path>) -> Host {
+    let supervisor: Arc<dyn Supervisor> = match root {
+        Some(root) => Arc::new(LaunchSupervisor::installed(root)),
+        None => Arc::new(NoSupervisor),
+    };
     #[cfg(windows)]
     {
         let p = Arc::new(iamb_platform_windows::Platform::new());
         Host {
             focus: Some(p.clone()),
             login: Some(p),
-            supervisor: Arc::new(NoSupervisor),
+            supervisor,
             pid: std::process::id(),
         }
     }
@@ -62,7 +69,7 @@ fn platform_host() -> Host {
         Host {
             focus: Some(p.clone()),
             login: Some(p),
-            supervisor: Arc::new(NoSupervisor),
+            supervisor,
             pid: std::process::id(),
         }
     }
@@ -71,15 +78,32 @@ fn platform_host() -> Host {
         Host {
             focus: None,
             login: None,
-            supervisor: Arc::new(NoSupervisor),
+            supervisor,
             pid: std::process::id(),
         }
     }
 }
 
+static HOST: OnceLock<Host> = OnceLock::new();
+
+/// Sets the host up for the data root `root` (start-up, before any command can run).
+pub fn init(root: &Path) {
+    let _ = HOST.set(platform_host(Some(root)));
+}
+
 fn host() -> &'static Host {
-    static HOST: OnceLock<Host> = OnceLock::new();
-    HOST.get_or_init(platform_host)
+    HOST.get_or_init(|| platform_host(None))
+}
+
+/// Asks the supervisor for a worker started afresh: "Start it again" in the library and the
+/// palette, the menu's "Start Iamb again", and the setup window's buttons. Blocks while the
+/// supervisor is started: call it off the main thread.
+///
+/// # Errors
+///
+/// `unavailable` when the supervisor is not found or cannot be started.
+pub fn restart_service() -> Res<()> {
+    host().supervisor.restart_worker()
 }
 
 fn only_onboarding(window: &WebviewWindow) -> Res<()> {
@@ -207,9 +231,12 @@ pub fn connection_changed(app: &AppHandle, connected: bool) {
 pub const SETUP_ID: &str = "setup";
 /// The menu id of "Fix permissions…".
 pub const FIX_ID: &str = "fix_permissions";
+/// The menu id of "Start Iamb again".
+pub const START_ID: &str = "start_again";
 
-/// The menu's "Set up Iamb…" (offered while setup is unfinished) and "Fix permissions…" (offered
-/// while a permission is missing). The items exist all the time; they are in the menu only while
+/// The menu's "Set up Iamb…" (offered while setup is unfinished), "Fix permissions…" (offered
+/// while a permission is missing) and "Start Iamb again" (offered while the service is not
+/// running). The items exist all the time; they are in the menu only while
 /// they apply, so a finished, healthy setup shows neither.
 pub struct MenuEntries {
     menu: Menu<Wry>,
@@ -217,8 +244,10 @@ pub struct MenuEntries {
     anchor: MenuId,
     setup: MenuItem<Wry>,
     fix: MenuItem<Wry>,
+    start: MenuItem<Wry>,
     setup_shown: AtomicBool,
     fix_shown: AtomicBool,
+    start_shown: AtomicBool,
 }
 
 impl MenuEntries {
@@ -233,8 +262,10 @@ impl MenuEntries {
             anchor,
             setup: MenuItem::with_id(app, SETUP_ID, "Set up Iamb…", true, None::<&str>)?,
             fix: MenuItem::with_id(app, FIX_ID, "Fix permissions…", true, None::<&str>)?,
+            start: MenuItem::with_id(app, START_ID, "Start Iamb again", true, None::<&str>)?,
             setup_shown: AtomicBool::new(false),
             fix_shown: AtomicBool::new(false),
+            start_shown: AtomicBool::new(false),
         })
     }
 
@@ -257,6 +288,11 @@ impl MenuEntries {
     /// Offers "Fix permissions…" or stops offering it.
     pub fn set_fix(&self, wanted: bool) {
         self.follow(&self.fix_shown, &self.fix, wanted);
+    }
+
+    /// Offers "Start Iamb again" (the service is not running) or stops offering it.
+    pub fn set_start(&self, wanted: bool) {
+        self.follow(&self.start_shown, &self.start, wanted);
     }
 }
 
@@ -351,7 +387,20 @@ pub async fn onboarding_test_field(
 #[tauri::command]
 pub async fn onboarding_restart_helper(window: WebviewWindow) -> Res<()> {
     only_onboarding(&window)?;
-    tauri::async_runtime::spawn_blocking(|| host().supervisor.restart_worker())
+    tauri::async_runtime::spawn_blocking(restart_service)
+        .await
+        .map_err(|_| CommandError::new("internal", "the request did not finish"))?
+}
+
+/// The windows that may ask for the service to start again: the library window's banner and the
+/// palette's note ("Iamb is not running." [Start it again]), and the setup window.
+pub const RESTART_CALLERS: [&str; 3] = [windows::LIBRARY, windows::PALETTE, ONBOARDING];
+
+/// "Start it again" in the library window and the search palette.
+#[tauri::command]
+pub async fn app_restart_service(window: WebviewWindow) -> Res<()> {
+    super::commands::caller(&window, &RESTART_CALLERS)?;
+    tauri::async_runtime::spawn_blocking(restart_service)
         .await
         .map_err(|_| CommandError::new("internal", "the request did not finish"))?
 }

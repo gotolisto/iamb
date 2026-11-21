@@ -33,6 +33,7 @@ describe("commands", () => {
     await api.reportFirstPaint({ navigationAtMs: 1000, scriptAtMs: 1100, paintedAtMs: 1234.5 });
     await api.dismiss();
     await api.quit();
+    await api.restartService();
     expect(calls).toEqual([
       { command: "status", args: undefined },
       { command: "refresh_status", args: undefined },
@@ -46,6 +47,7 @@ describe("commands", () => {
       },
       { command: "dismiss", args: undefined },
       { command: "app_quit", args: undefined },
+      { command: "app_restart_service", args: undefined },
     ]);
     // Every registered command is reachable from the API (the library's from its own,
     // library/api.test.ts; the template editor's from library/template/api.test.ts; the form

@@ -241,6 +241,9 @@ export const copy = {
   couldNotGetBack: (app: string | null) =>
     `Iamb could not get back to ${app ?? "the app"}. Click where the text should go and press Enter again.`,
   notRunning: "Iamb is not running.",
+  startAgain: "Start it again",
+  starting: "Starting…",
+  couldNotStart: "Iamb could not start it from here. Quit Iamb from its menu and open it again.",
   pickFailed: "Iamb could not do that. Try again.",
   preview: "Preview",
 } as const;

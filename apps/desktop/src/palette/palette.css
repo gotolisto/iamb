@@ -76,6 +76,10 @@
   text-decoration: underline;
 }
 
+.pl-notice-action {
+  margin-inline-start: var(--space-2);
+}
+
 .pl-body {
   display: flex;
   flex: 1 1 auto;

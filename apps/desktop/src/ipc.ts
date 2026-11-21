@@ -140,6 +140,7 @@ export const COMMANDS = [
   "onboarding_login_item",
   "onboarding_open_library",
   "onboarding_close",
+  "app_restart_service",
   "palette_ready",
   "palette_current",
   "palette_painted",
@@ -169,6 +170,8 @@ export function createApi(invoke: Invoke) {
     dismiss: () => invoke<void>("dismiss"),
     /** Ends Iamb: "Quit Iamb", once the library window asked about unsaved edits. */
     quit: () => invoke<void>("app_quit"),
+    /** "Start it again": asks the supervisor for the background service, started afresh. */
+    restartService: () => invoke<void>("app_restart_service"),
   };
 }
 

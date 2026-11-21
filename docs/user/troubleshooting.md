@@ -14,10 +14,13 @@ The library says **Iamb is not running.** Its background service stopped, so not
 expanded.
 
 Iamb restarts the service by itself after a failure, waiting a little longer after each repeated
-failure, up to 30 seconds between tries. The banner has no button. If the service does not come
-back, quit Iamb from its menu and open it again.
+failure, up to 30 seconds between tries. You do not have to wait: choose **Start it again** in the
+banner, or **Start Iamb again** in the menu (the icon shows a dot while the service is not running).
+The search panel says **Iamb is not running.** with the same **Start it again** button. Iamb then
+starts its background service afresh, and the banner goes as soon as the service answers.
 
-<!-- TODO: this build has no button that restarts the service. The "Start it again" and "Restart" buttons in setup always fail (NoSupervisor). Confirm the last step once the UI host and the supervisor are connected. -->
+If Iamb cannot start the service from there, the banner says so. Quit Iamb from its menu and open it
+again.
 
 ## A permission is missing (macOS)
 

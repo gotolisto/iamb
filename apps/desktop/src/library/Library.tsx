@@ -33,6 +33,9 @@ import "./library.css";
 
 const STORE_KEY = "iamb.library";
 
+/** How long "Start it again" waits for the service before it can be pressed again. */
+export const RESTART_WAIT_MS = 15_000;
+
 interface Remembered {
   sort: SortMode;
   view: View | null;
@@ -142,6 +145,8 @@ export function Library({ env }: { env: LibraryEnv }) {
     }
   }, []);
   const [sort, setSort] = useState<SortMode>(initial.current.sort);
+  // "Start it again" in the "Iamb is not running" banner: idle, waiting for the service, or refused.
+  const [restart, setRestart] = useState<"idle" | "starting" | "failed">("idle");
   const [view, setView] = useState<View>(requested.current ?? initial.current.view ?? { kind: "all" });
   const [filter, setFilter] = useState("");
   const [selection, setSelection] = useState<Selection>(
@@ -790,6 +795,26 @@ export function Library({ env }: { env: LibraryEnv }) {
     return () => document.removeEventListener("keydown", handler);
   }, []);
 
+  // ---- Starting the service again ----------------------------------------------------------------
+  const startAgain = async () => {
+    setRestart("starting");
+    try {
+      await env.restartService?.();
+    } catch {
+      setRestart("failed");
+    }
+  };
+  // The banner goes when the service answers; a later stop offers the button afresh.
+  useEffect(() => {
+    if (env.connection === "connected") setRestart("idle");
+  }, [env.connection]);
+  // A service that does not come back within a while: the button works again.
+  useEffect(() => {
+    if (restart !== "starting") return;
+    const t = setTimeout(() => setRestart((r) => (r === "starting" ? "idle" : r)), RESTART_WAIT_MS);
+    return () => clearTimeout(t);
+  }, [restart]);
+
   // ---- The leave dialog ------------------------------------------------------------------------
   const leaveSave = async () => {
     const action = leave?.action;
@@ -1023,7 +1048,13 @@ export function Library({ env }: { env: LibraryEnv }) {
           <Icon name="warn" />
           <p>
             <strong>Iamb is not running.</strong> Its background service stopped, so nothing can be saved or expanded.
+            {restart === "failed" ? " Iamb could not start it from here. Quit Iamb from its menu and open it again." : ""}
           </p>
+          {env.restartService && (
+            <button type="button" className="button" disabled={restart === "starting"} aria-busy={restart === "starting" ? true : undefined} onClick={() => void startAgain()}>
+              {restart === "starting" ? "Starting…" : "Start it again"}
+            </button>
+          )}
         </div>
       )}
       {data.error && online && (

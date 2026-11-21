@@ -157,6 +157,8 @@ export interface PaletteApi {
   preview: (id: string) => Promise<TemplatePreview | null>;
   /** What the user did. Rejects with `FOCUS_LOST` when the focus could not be given back. */
   pick: (session: number, action: PickAction) => Promise<void>;
+  /** "Start it again" under "Iamb is not running.": starts the background service again. */
+  restartService?: () => Promise<void>;
 }
 
 const unexpected = { code: "unexpected_response", message: "the answer did not have the expected shape" };
@@ -185,6 +187,7 @@ export function createPaletteApi(invoke: Invoke): PaletteApi {
       return isTemplatePreview(preview) ? preview : null;
     },
     pick: (session, action) => invoke<void>("palette_pick", { session, action }),
+    restartService: () => invoke<void>("app_restart_service"),
   };
 }
 

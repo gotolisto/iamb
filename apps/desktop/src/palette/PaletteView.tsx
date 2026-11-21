@@ -222,6 +222,8 @@ export function PaletteView({
   const [selected, setSelected] = useState(0);
   const [preview, setPreview] = useState<TemplatePreview | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // "Start it again" under "Iamb is not running.": idle, asked, or refused.
+  const [restart, setRestart] = useState<"idle" | "starting" | "failed">("idle");
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const session = useRef<number | null>(null);
@@ -230,6 +232,21 @@ export function PaletteView({
   const searchSeq = useRef(0);
   const previewSeq = useRef(0);
   const keys = keysFor(os);
+
+  const startAgain = async () => {
+    setRestart("starting");
+    try {
+      await api.restartService?.();
+    } catch {
+      setRestart("failed");
+      return;
+    }
+    // The next key searches again; the note goes as soon as the service answers.
+    inputRef.current?.focus();
+  };
+  useEffect(() => {
+    if (health === "ok") setRestart("idle");
+  }, [health]);
 
   const forget = useCallback(() => {
     session.current = null;
@@ -437,6 +454,8 @@ export function PaletteView({
     if (e.nativeEvent.isComposing) return;
     const mod = os === "mac" ? e.metaKey : e.ctrlKey;
     const key = e.key;
+    // Enter on a button of the panel ("Start it again") presses that button, not the row.
+    if (key === "Enter" && e.target instanceof HTMLButtonElement) return;
     if (key === "Escape") {
       e.preventDefault();
       pick({ kind: "close" });
@@ -521,9 +540,21 @@ export function PaletteView({
         )}
         {health === "down" && (
           <div className="pl-notice" role="alert">
-            {/* No "Start it again": nothing in this build can start the service (the
-                supervisor has no control pipe yet, ADR-0023), and the next key searches again. */}
-            <span>{copy.notRunning}</span>
+            <span>
+              {copy.notRunning}
+              {restart === "failed" ? ` ${copy.couldNotStart}` : ""}
+            </span>
+            {api.restartService && (
+              <button
+                type="button"
+                className="pl-link pl-notice-action"
+                disabled={restart === "starting"}
+                aria-busy={restart === "starting" ? true : undefined}
+                onClick={() => void startAgain()}
+              >
+                {restart === "starting" ? copy.starting : copy.startAgain}
+              </button>
+            )}
           </div>
         )}
         <div className="pl-body">

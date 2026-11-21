@@ -48,9 +48,9 @@ command-line tool works on Linux. See [Command line](cli.md).
 The first time Iamb starts, a short setup window opens. Choose **Get started** to begin. You can close
 it at any step, and Iamb keeps running. Until setup is finished, the menu offers **Set up Iamb…**.
 
-If the background service is not running, the first step says so and offers **Start it again**.
-In this version that button cannot restart the service. Quit Iamb from its menu and open it again.
-<!-- TODO: confirm what starts the background service when Iamb is opened. The restart button is not connected to anything yet (onboarding.rs, NoSupervisor). -->
+If the background service is not running, the first step says so and offers **Start it again**,
+which starts it. If Iamb cannot start it from there, the step says so: quit Iamb from its menu and
+open it again.
 
 ## Permissions
 

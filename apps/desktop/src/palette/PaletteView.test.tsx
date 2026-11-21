@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 /** A fake Rust side: the commands, recorded, and the panel's event. */
-function harness(open: PaletteOpen | null, os: Os = "win") {
+function harness(open: PaletteOpen | null, os: Os = "win", restartService?: () => Promise<void>) {
   let current = open;
   let handler: ((e: PaletteEvent) => void) | undefined;
   const answers = new Map<string, PaletteResults>();
@@ -29,6 +29,7 @@ function harness(open: PaletteOpen | null, os: Os = "win") {
     recent: vi.fn(() => Promise.resolve(recents.value)),
     preview: vi.fn((_id: string) => Promise.resolve(null)),
     pick: vi.fn((_s: number, _a: unknown) => Promise.resolve()),
+    ...(restartService ? { restartService } : {}),
   } satisfies PaletteApi;
   const listen: ListenPalette = (h) => {
     handler = h;
@@ -56,8 +57,8 @@ function harness(open: PaletteOpen | null, os: Os = "win") {
   };
 }
 
-async function opened(open: PaletteOpen = openOf(), os: Os = "win") {
-  const h = harness(open, os);
+async function opened(open: PaletteOpen = openOf(), os: Os = "win", restartService?: () => Promise<void>) {
+  const h = harness(open, os, restartService);
   await screen.findByRole("dialog", { name: "Search snippets" });
   await h.send({ type: "shown", session: open.session });
   return h;
@@ -352,11 +353,39 @@ describe("a service that does not answer", () => {
       vi.advanceTimersByTime(DOWN_MS);
     });
     expect(screen.getByText("Iamb is not running.")).toBeTruthy();
-    // The previous results stay, dimmed (flow 5), and nothing offers a restart that no build
-    // performs.
+    // The previous results stay, dimmed (flow 5); without a way to restart, no button offers one.
     expect(screen.getAllByRole("option").length).toBeGreaterThan(0);
     expect(document.querySelector(".pl-list")?.getAttribute("data-dim")).toBe("true");
     expect(screen.queryByRole("button", { name: "Start it again" })).toBeNull();
+  });
+
+  it("offers Start it again, which asks for the service and says when it could not", async () => {
+    const restart = vi.fn(() => Promise.resolve());
+    const h = await opened(openOf(), "win", restart);
+    const user = userEvent.setup({ advanceTimers: (ms) => vi.advanceTimersByTime(ms) });
+    h.api.search.mockImplementation(() => new Promise(() => undefined));
+    await user.type(screen.getByRole("combobox"), "r");
+    await act(async () => {
+      vi.advanceTimersByTime(DOWN_MS + SLOW_MS);
+    });
+    const button = screen.getByRole("button", { name: "Start it again" });
+    // Reached with Tab from the search field, pressed with the keyboard.
+    button.focus();
+    await user.keyboard("{Enter}");
+    expect(restart).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("combobox")));
+    expect(screen.getByRole("button", { name: "Starting…" })).toBeTruthy();
+
+    restart.mockImplementationOnce(() => Promise.reject(new Error("no")));
+    cleanup();
+    const failing = await opened(openOf(), "win", restart);
+    failing.api.search.mockImplementation(() => new Promise(() => undefined));
+    await user.type(screen.getByRole("combobox"), "r");
+    await act(async () => {
+      vi.advanceTimersByTime(DOWN_MS + SLOW_MS);
+    });
+    await user.click(screen.getByRole("button", { name: "Start it again" }));
+    await screen.findByText(/Iamb could not start it from here/);
   });
 
   it("keeps the previous results on screen while a newer search is pending", async () => {

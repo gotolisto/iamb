@@ -63,6 +63,13 @@ impl DataDirs {
         self.run().join("supervisor.lock")
     }
 
+    /// `run/restart-worker`: the UI host's request that the supervisor restart the worker now
+    /// (`crate::supervisor`, "Restart requests").
+    #[must_use]
+    pub fn restart_request(&self) -> PathBuf {
+        self.run().join(crate::supervisor::RESTART_REQUEST)
+    }
+
     /// The service endpoint's name.
     #[must_use]
     pub fn service_endpoint(&self) -> EndpointName {

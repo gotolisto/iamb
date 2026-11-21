@@ -5,7 +5,8 @@
 //! Iamb is on                       (disabled: the first line, crate::menu::status)
 //! 76 snippets                      (disabled: its second line, when there is one)
 //! ─────────────
-//! Set up Iamb… / Fix permissions…  (only while they apply, `onboarding_commands::MenuEntries`)
+//! Start Iamb again / Set up Iamb… / Fix permissions…
+//!                                  (only while they apply, `onboarding_commands::MenuEntries`)
 //! Search snippets…        ⌃⇧Space  (the search shortcut, when one is set)
 //! Fill in the last form again…     (ReopenLastForm, task 3.5)
 //! New snippet…                     (the library window with a new draft)
@@ -67,6 +68,7 @@ const QUIT: &str = "quit";
 pub const QUIT_REQUESTED: &str = "iamb:quit-requested";
 const SETUP: &str = onboarding_commands::SETUP_ID;
 const FIX_PERMISSIONS: &str = onboarding_commands::FIX_ID;
+const START_AGAIN: &str = onboarding_commands::START_ID;
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
@@ -274,6 +276,8 @@ impl Tray {
             let _ = self.detail.item.set_text(detail);
         }
         self.detail.follow(&self.menu, status.detail.is_some());
+        self.setup
+            .set_start(status.needs == Some(menu::NeedsItem::StartAgain));
         let connected = view.connection == ConnectionState::Connected;
         let _ = self.pause.set_enabled(connected);
         let _ = self.pause.set_checked(view.paused());
@@ -456,6 +460,16 @@ fn on_menu_event(app: &AppHandle, event: &MenuEvent) {
         }
         SETUP => onboarding_commands::open_later(app, "setup"),
         FIX_PERMISSIONS => onboarding_commands::open_later(app, "fix"),
+        START_AGAIN => {
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Err(e) = onboarding_commands::restart_service() {
+                    ui.log.warn(format_args!(
+                        "cannot start the service again: {}",
+                        e.message
+                    ));
+                }
+            });
+        }
         QUIT => match app.get_webview_window(windows::LIBRARY) {
             // The library window asks about unsaved edits first, as its close does (spec §4.3),
             // and then ends Iamb (`commands::app_quit`).

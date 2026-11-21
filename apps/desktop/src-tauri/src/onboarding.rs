@@ -34,6 +34,8 @@
 //! None of these functions logs.
 
 use std::collections::BTreeMap;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use iamb_ipc::{FocusRef, GrantState, PermissionName, RequestBody, ResponseBody};
@@ -364,9 +366,8 @@ pub fn login_item(item: &dyn LoginItem) -> Res<LoginView> {
         .map_err(|e| CommandError::new("unavailable", format!("the login item: {e}")))
 }
 
-/// Asks the supervisor to stop and start the worker (ADR-0023): "Restart the helper" and
-/// "Start it again". The supervisor has no control pipe yet (it is listed under "Hook points"
-/// in `iamb-service`'s `supervisor` module), so the host's default does nothing and says so.
+/// Asks the supervisor to stop and start the worker: "Restart the helper" and "Start it again"
+/// (UX specification §4.2, §4.6, §11.1). See [`LaunchSupervisor`].
 pub trait Supervisor: Send + Sync {
     /// Stops the worker and starts it again.
     ///
@@ -376,7 +377,149 @@ pub trait Supervisor: Send + Sync {
     fn restart_worker(&self) -> Res<()>;
 }
 
-/// The supervisor of a host that has no way to reach one yet.
+/// The file in `run/` that asks the supervisor for a worker started afresh: the same name as
+/// `iamb_service::supervisor::RESTART_REQUEST` (the UI host does not depend on the service crate;
+/// a test compares the two).
+pub const RESTART_REQUEST: &str = "restart-worker";
+
+/// How the UI host starts the supervisor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Launch {
+    /// Runs the executable, `iamb-service --supervise --data-dir …` (Windows, Linux, and
+    /// development builds on macOS).
+    Direct(PathBuf),
+    /// Opens the helper app inside `Iamb.app` through the system (`open -g`, macOS), so that it
+    /// runs as itself, as it does at login, and the permissions it was given stay its own
+    /// (ADR-0021), rather than as a child of the UI host.
+    Open(PathBuf),
+}
+
+/// The supervisor's file name next to the UI host.
+const SERVICE_EXE: &str = if cfg!(windows) {
+    "iamb-service.exe"
+} else {
+    "iamb-service"
+};
+
+/// Where the supervisor may be for a UI host running from `ui_exe`, best first: on macOS the
+/// helper app of the installed layout (`Iamb.app/Contents/Library/LoginItems/Iamb Service.app`,
+/// ADR-0021), then, everywhere, `iamb-service` next to the UI host (the Windows installer's
+/// layout, `/usr/bin` on Linux, and `target/` while developing).
+#[must_use]
+pub fn launch_candidates(ui_exe: &Path, macos: bool) -> Vec<Launch> {
+    let mut out = Vec::new();
+    let Some(dir) = ui_exe.parent() else {
+        return out;
+    };
+    if macos
+        && dir.ends_with("Contents/MacOS")
+        && let Some(contents) = dir.parent()
+    {
+        out.push(Launch::Open(
+            contents.join("Library/LoginItems/Iamb Service.app"),
+        ));
+    }
+    out.push(Launch::Direct(dir.join(SERVICE_EXE)));
+    out
+}
+
+/// The program and the arguments that start the supervisor for the data root `root`.
+#[must_use]
+pub fn launch_command(launch: &Launch, root: &Path) -> (PathBuf, Vec<OsString>) {
+    let service_args = [
+        OsString::from("--supervise"),
+        OsString::from("--data-dir"),
+        root.as_os_str().to_owned(),
+    ];
+    match launch {
+        Launch::Direct(exe) => (exe.clone(), service_args.to_vec()),
+        Launch::Open(app) => {
+            let mut args = vec![
+                OsString::from("-g"),
+                app.as_os_str().to_owned(),
+                OsString::from("--args"),
+            ];
+            args.extend(service_args);
+            (PathBuf::from("/usr/bin/open"), args)
+        }
+    }
+}
+
+/// The supervisor as the UI host reaches it (`iamb-service`'s `supervisor` module, "Restart
+/// requests"): it leaves the restart request in `run/` and starts the supervisor. A supervisor
+/// that already runs takes the request (the new one exits at once, finding the lock taken); one
+/// that does not run starts with a new worker.
+#[derive(Debug, Clone)]
+pub struct LaunchSupervisor {
+    /// How the supervisor is started; `None` when it was not found.
+    pub launch: Option<Launch>,
+    /// The data root (passed to the supervisor) and its `run/`.
+    pub root: PathBuf,
+}
+
+impl LaunchSupervisor {
+    /// The supervisor installed with the running UI host, for the data root `root`.
+    #[must_use]
+    pub fn installed(root: &Path) -> Self {
+        let launch = std::env::current_exe().ok().and_then(|exe| {
+            launch_candidates(&exe, cfg!(target_os = "macos"))
+                .into_iter()
+                .find(|l| match l {
+                    Launch::Direct(p) => p.is_file(),
+                    Launch::Open(p) => p.is_dir(),
+                })
+        });
+        Self {
+            launch,
+            root: root.to_owned(),
+        }
+    }
+}
+
+impl Supervisor for LaunchSupervisor {
+    fn restart_worker(&self) -> Res<()> {
+        let Some(launch) = &self.launch else {
+            return Err(CommandError::new(
+                "unavailable",
+                "Iamb cannot find its background service; reinstalling Iamb puts it back",
+            ));
+        };
+        let run = self.root.join("run");
+        crate::paths::create_private_dir(&run)
+            .and_then(|()| std::fs::write(run.join(RESTART_REQUEST), b""))
+            .map_err(|e| {
+                CommandError::new("unavailable", format!("cannot ask for a restart: {e}"))
+            })?;
+        let (program, args) = launch_command(launch, &self.root);
+        let mut command = std::process::Command::new(program);
+        command
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP: no console window, and the supervisor
+            // is not part of the UI host's group.
+            command.creation_flags(0x0800_0000 | 0x0000_0200);
+        }
+        let mut child = command.spawn().map_err(|e| {
+            CommandError::new(
+                "unavailable",
+                format!("cannot start the background service: {e}"),
+            )
+        })?;
+        // Reaped on a thread of its own: the supervisor may run as long as the session does.
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+        Ok(())
+    }
+}
+
+/// The supervisor of a host that has no way to reach one (tests, and a host whose data root is
+/// not known).
 pub struct NoSupervisor;
 
 impl Supervisor for NoSupervisor {
@@ -475,6 +618,64 @@ mod tests {
         assert_eq!(v(Grant::Denied, Grant::Denied).missing_count(), 2);
         assert_eq!(v(Grant::Granted, Grant::Denied).missing_count(), 1);
         assert_eq!(v(Grant::NotRequired, Grant::Granted).missing_count(), 0);
+    }
+
+    #[test]
+    fn the_supervisor_is_looked_for_where_the_installers_put_it() {
+        let mac = Path::new("/Applications/Iamb.app/Contents/MacOS/iamb-desktop");
+        assert_eq!(
+            launch_candidates(mac, true),
+            [
+                Launch::Open(PathBuf::from(
+                    "/Applications/Iamb.app/Contents/Library/LoginItems/Iamb Service.app"
+                )),
+                Launch::Direct(PathBuf::from(format!(
+                    "/Applications/Iamb.app/Contents/MacOS/{SERVICE_EXE}"
+                ))),
+            ]
+        );
+        let dev = Path::new("/home/ada/iamb/target/debug/iamb-desktop");
+        assert_eq!(
+            launch_candidates(dev, true),
+            [Launch::Direct(PathBuf::from(format!(
+                "/home/ada/iamb/target/debug/{SERVICE_EXE}"
+            )))]
+        );
+        assert_eq!(launch_candidates(mac, false).len(), 1);
+        assert!(launch_candidates(Path::new(""), false).is_empty());
+    }
+
+    #[test]
+    fn the_supervisor_is_started_for_the_same_data_root() {
+        let root = Path::new("/data/iamb");
+        let (program, args) = launch_command(&Launch::Direct("/x/iamb-service".into()), root);
+        assert_eq!(program, Path::new("/x/iamb-service"));
+        assert_eq!(args, ["--supervise", "--data-dir", "/data/iamb"]);
+        let (program, args) = launch_command(&Launch::Open("/A/Iamb Service.app".into()), root);
+        assert_eq!(program, Path::new("/usr/bin/open"));
+        assert_eq!(
+            args,
+            [
+                "-g",
+                "/A/Iamb Service.app",
+                "--args",
+                "--supervise",
+                "--data-dir",
+                "/data/iamb"
+            ]
+        );
+    }
+
+    #[test]
+    fn without_a_supervisor_a_restart_says_why() {
+        let none = LaunchSupervisor {
+            launch: None,
+            root: PathBuf::from("/nowhere"),
+        };
+        assert_eq!(
+            none.restart_worker().expect_err("not found").code,
+            "unavailable"
+        );
     }
 
     #[test]

@@ -39,4 +39,6 @@ export interface LibraryEnv {
   onQuitRequested?: ((handler: () => void) => () => void) | undefined;
   /** Ends Iamb (after `onQuitRequested`). */
   quit?: (() => Promise<void>) | undefined;
+  /** "Start it again" in the "Iamb is not running" banner: starts the background service again. */
+  restartService?: (() => Promise<void>) | undefined;
 }

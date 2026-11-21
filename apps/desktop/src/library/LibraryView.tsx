@@ -97,6 +97,7 @@ export function LibraryView() {
       palette: paletteLink,
       onQuitRequested,
       quit: () => api.quit(),
+      restartService: () => api.restartService(),
     }),
     [status.connection, status.service?.paused],
   );

@@ -93,6 +93,7 @@ pub const COMMANDS: &[&str] = &[
     "onboarding_login_item",
     "onboarding_open_library",
     "onboarding_close",
+    "app_restart_service",
     // The search palette's commands (`app/palette_panel.rs`, task 3.6).
     "palette_ready",
     "palette_current",

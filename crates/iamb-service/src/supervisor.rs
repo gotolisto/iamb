@@ -15,6 +15,21 @@
 //! dies, the worker reads the end of it and exits, so a killed supervisor leaves no orphan that
 //! holds the store lock.
 //!
+//! # Restart requests
+//!
+//! "Start it again" and "Restart the helper" in the UI host (UX specification §4.2, §4.6) ask for
+//! a worker started afresh now, without waiting for a backoff or a heartbeat timeout. The UI host
+//! creates the empty file [`RESTART_REQUEST`] in `run/`, the directory only the user can open
+//! (0700 on Unix, a DACL for the user alone on Windows; architecture §3.3), and then starts the
+//! supervisor, which exits at once when one is already running. The running supervisor looks for
+//! the file every [`REQUEST_POLL`]: it removes it, stops the worker it watches (killed: a worker
+//! asked over IPC to stop could not be told apart from one that exits for good) and starts a new
+//! one at once, without counting a failure; while it waits out a backoff, it starts the worker at
+//! once. A supervisor that starts removes a request left over from before. The file carries
+//! nothing: the worst a process of the same user can do with it is what it can already do by
+//! killing the worker. This is the minimal stand-in for the control pipe of ADR-0023, which
+//! updates still need.
+//!
 //! # Hook points
 //!
 //! - **UI host and sync agent.** §3.2 has the supervisor start and restart `iamb-desktop` and
@@ -52,6 +67,12 @@ pub const BACKOFF: [Duration; 4] = [
     Duration::from_secs(5),
     Duration::from_secs(30),
 ];
+
+/// The file in `run/` that asks for a worker started afresh (module docs, "Restart requests").
+pub const RESTART_REQUEST: &str = "restart-worker";
+
+/// How often the supervisor looks for [`RESTART_REQUEST`].
+pub const REQUEST_POLL: Duration = Duration::from_millis(200);
 
 /// The delay before restart number `failures` (1 for the first restart).
 #[must_use]
@@ -146,6 +167,28 @@ struct Child {
 enum Ended {
     Exited(ExitStatus),
     Hung,
+    /// The UI host asked for a restart (module docs, "Restart requests").
+    Asked,
+}
+
+/// Takes the restart request, if one waits: true when there was one.
+fn take_request(dirs: &DataDirs) -> bool {
+    std::fs::remove_file(dirs.restart_request()).is_ok()
+}
+
+/// Sleeps for `delay`, or less when a restart request arrives; true when one did.
+fn sleep_or_request(dirs: &DataDirs, delay: Duration) -> bool {
+    let until = Instant::now() + delay;
+    loop {
+        if take_request(dirs) {
+            return true;
+        }
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return false;
+        }
+        thread::sleep(left.min(REQUEST_POLL));
+    }
 }
 
 fn start_worker(cfg: &SupervisorConfig) -> io::Result<(Child, std::sync::mpsc::Receiver<()>)> {
@@ -185,14 +228,22 @@ fn watch(
     beats: &std::sync::mpsc::Receiver<()>,
     cfg: &SupervisorConfig,
 ) -> io::Result<Ended> {
-    let mut timeout = cfg.startup_grace;
+    let mut deadline = Instant::now() + cfg.startup_grace;
     loop {
-        match beats.recv_timeout(timeout) {
-            Ok(()) => timeout = cfg.heartbeat_timeout,
-            Err(RecvTimeoutError::Timeout) => {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match beats.recv_timeout(left.min(REQUEST_POLL)) {
+            Ok(()) => deadline = Instant::now() + cfg.heartbeat_timeout,
+            Err(RecvTimeoutError::Timeout) if Instant::now() >= deadline => {
                 let _ = child.process.kill();
                 let _ = child.process.wait();
                 return Ok(Ended::Hung);
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                if take_request(&cfg.dirs) {
+                    let _ = child.process.kill();
+                    let _ = child.process.wait();
+                    return Ok(Ended::Asked);
+                }
             }
             Err(RecvTimeoutError::Disconnected) => {
                 return child.process.wait().map(Ended::Exited);
@@ -216,6 +267,8 @@ pub fn run(cfg: &SupervisorConfig, log: &Logger) -> io::Result<Outcome> {
         crate::VERSION,
         std::process::id()
     ));
+    // A request from before this supervisor: the worker it starts now is the fresh one.
+    let _ = take_request(&cfg.dirs);
     // Hook point: start the UI host and the sync agent here once they exist (module docs).
     let mut failures = 0_usize;
     let mut attempt = 0_u64;
@@ -230,6 +283,13 @@ pub fn run(cfg: &SupervisorConfig, log: &Logger) -> io::Result<Outcome> {
                 ));
                 let pid = child.process.id();
                 match watch(&mut child, &beats, cfg) {
+                    Ok(Ended::Asked) => {
+                        log.info(format_args!(
+                            "restart asked: worker {pid} stopped, starting a new one"
+                        ));
+                        failures = 0;
+                        continue;
+                    }
                     Ok(Ended::Hung) => {
                         log.warn(format_args!(
                             "no heartbeat from worker {pid} for {} ms: killed",
@@ -261,7 +321,9 @@ pub fn run(cfg: &SupervisorConfig, log: &Logger) -> io::Result<Outcome> {
             "restarting the worker in {} ms (failure {failures})",
             delay.as_millis()
         ));
-        thread::sleep(delay);
+        if sleep_or_request(&cfg.dirs, delay) {
+            log.info(format_args!("restart asked: starting the worker now"));
+        }
     }
 }
 
@@ -277,6 +339,28 @@ mod tests {
         assert_eq!(delays, [0, 1, 5, 30, 30, 30]);
         assert_eq!(backoff_delay(&BACKOFF, 0), Duration::ZERO);
         assert_eq!(backoff_delay(&[], 3), Duration::ZERO);
+    }
+
+    #[test]
+    fn a_restart_request_is_taken_once_and_cuts_a_wait_short() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let dirs = DataDirs::new(dir.path());
+        create_private_dir(&dirs.run()).expect("run dir");
+        assert!(!take_request(&dirs));
+        std::fs::write(dirs.restart_request(), b"").expect("request");
+        assert!(take_request(&dirs));
+        assert!(!take_request(&dirs));
+
+        // Without a request the whole delay passes.
+        let start = Instant::now();
+        assert!(!sleep_or_request(&dirs, Duration::from_millis(250)));
+        assert!(start.elapsed() >= Duration::from_millis(250));
+        // With one, the wait ends at the next look.
+        std::fs::write(dirs.restart_request(), b"").expect("request");
+        let start = Instant::now();
+        assert!(sleep_or_request(&dirs, Duration::from_secs(30)));
+        assert!(start.elapsed() < Duration::from_secs(5));
+        assert!(!dirs.restart_request().exists());
     }
 
     #[test]
