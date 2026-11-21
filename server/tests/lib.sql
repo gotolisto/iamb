@@ -422,7 +422,7 @@ declare
     r   jsonb;
 begin
     -- A new cast each time: earlier accounts stay in the database, under no name.
-    delete from iamb_test.actor;
+    delete from iamb_test.actor where true;
     perform iamb_test.new_user('ines');
     perform iamb_test.new_user('tom');
     perform iamb_test.new_user('stranger');

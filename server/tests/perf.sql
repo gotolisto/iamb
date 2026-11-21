@@ -6,10 +6,10 @@ declare
     pi uuid; f uuid := gen_random_uuid(); sub uuid := gen_random_uuid(); r jsonb; ops jsonb; t0 timestamptz;
     push_ms numeric; cascade_ms numeric; i integer; n integer;
 begin
-    delete from iamb_test.actor;
+    delete from iamb_test.actor where true;
     perform iamb_test.new_user('perf'); perform iamb_test.hello('perf', 'Perf');
     pi := iamb_test.personal('perf');
-    update iamb.server_state set rate_limits = rate_limits || '{"push_calls": 1000, "push_ops": 100000}';
+    update iamb.server_state set rate_limits = rate_limits || '{"push_calls": 1000, "push_ops": 100000}' where id;
     update iamb.plan set limits = limits || '{"snippets_max": 100000}' where id = 'default-user';
     r := iamb_test.push('perf', jsonb_build_array(iamb_test.op_folder(f, pi, null, 'Perf'), iamb_test.op_folder(sub, pi, f, 'Sub')));
     select jsonb_agg(iamb_test.op_snippet(gen_random_uuid(), f, ';p' || g, repeat('x', 200))) into ops from generate_series(1, 200) g;

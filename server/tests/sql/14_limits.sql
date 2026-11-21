@@ -17,8 +17,8 @@ begin
     perform iamb_test.eq(r ->> 'error', 'too_large', 'rows over 500');
     -- Rate limits, per device and minute; over the limit nothing else is written.
     select rate_limits into st from iamb.server_state;
-    update iamb.server_state set rate_limits = rate_limits || '{"push_calls": 2, "push_ops": 3}';
-    delete from iamb.rate_bucket;
+    update iamb.server_state set rate_limits = rate_limits || '{"push_calls": 2, "push_ops": 3}' where id;
+    delete from iamb.rate_bucket where true;
     r := iamb_test.push('ines', jsonb_build_array(iamb_test.op_snippet(iamb_test.id(), f, ';1', '1'), iamb_test.op_snippet(iamb_test.id(), f, ';2', '2')));
     perform iamb_test.eq(iamb_test.st(r, 2), 'applied', 'within the limits');
     r := iamb_test.push('ines', jsonb_build_array(iamb_test.op_snippet(iamb_test.id(), f, ';3', '3'), iamb_test.op_snippet(iamb_test.id(), f, ';4', '4')));
@@ -26,5 +26,5 @@ begin
     r := iamb_test.push('ines', jsonb_build_array());
     perform iamb_test.ok(r ->> 'error' = 'rate_limited', 'calls per minute: ' || r::text);
     perform iamb_test.eq((select count(*)::integer from iamb.snippet where folder_id = f), 2, 'nothing written past the limit');
-    update iamb.server_state set rate_limits = st;
+    update iamb.server_state set rate_limits = st where id;
 end $$;

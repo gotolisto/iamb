@@ -123,7 +123,7 @@ declare
     t uuid := iamb_test.id(); ft uuid := iamb_test.id(); bf uuid := iamb_test.id();
     r jsonb; lim jsonb;
 begin
-    delete from iamb_test.actor;
+    delete from iamb_test.actor where true;
     perform iamb_test.new_user('ines'); perform iamb_test.new_user('tom');
     perform iamb_test.hello('ines', 'Ines'); perform iamb_test.hello('tom', 'Tom');
     pi := iamb_test.personal('ines'); pt := iamb_test.personal('tom');

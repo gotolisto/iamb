@@ -27,7 +27,7 @@ begin
     insert into iamb.conflict (id, entity, row_id, profile_id, kind, winner_rev, created_at, state, resolved_at, parties)
     values (gen_random_uuid(), 'snippet', s1, pi, 'edit_edit', 1, 0, 'resolved', iamb_private.now_ms() - 31 * day, '{}') returning id into c_old;
     -- Receipts and feed entries 31 days old.
-    update iamb.push_receipt set created_at = created_at - 31 * day;
+    update iamb.push_receipt set created_at = created_at - 31 * day where true;
     update iamb.feed set created_at = created_at - 31 * day where user_id = iamb_test.uid('tom');
     -- Invitations: pending past its time; answered 91 days ago. An offer of ownership 15 days old.
     perform iamb_test.call('ines', format('api.invite(iamb_test.dev(''ines''), 1, %L, %L, %L, ''member'')', inv, ids ->> 'g', iamb_test.email('stranger')));
@@ -85,10 +85,10 @@ begin
 end $$;
 
 -- The job can be run any number of times; with a small budget it works in several steps.
-update iamb.server_state set cascade_max = 2;
+update iamb.server_state set cascade_max = 2 where id;
 select iamb_test.daily();
 select iamb_test.daily();
-update iamb.server_state set cascade_max = 2000;
+update iamb.server_state set cascade_max = 2000 where id;
 do $$ begin perform iamb_test.check_all(); end $$;
 
 -- G15 and §5.12: a revoked device row stays for as long as its session exists, also after the
@@ -96,7 +96,7 @@ do $$ begin perform iamb_test.check_all(); end $$;
 do $$
 declare r jsonb;
 begin
-    delete from iamb_test.actor;
+    delete from iamb_test.actor where true;
     perform iamb_test.new_user('ines'); perform iamb_test.new_device('lost', 'ines');
     perform iamb_test.hello('ines', 'Ines'); perform iamb_test.hello('lost');
     r := iamb_test.call('ines', 'api.revoke_device(iamb_test.dev(''ines''), 1, iamb_test.dev(''lost''))');
