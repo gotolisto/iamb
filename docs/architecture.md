@@ -2,8 +2,8 @@
 
 Status: approved by the owner on 2026-11-18; §4 amended the same day after the Phase 1 review (ADR-0024) · Task 0.1 ·
 §4.4, §6.2, §6.4, §7, §8 rule 10 and §9 extended by the sync design of task 4.1, as revised
-after its review ([`sync-design.md`](sync-design.md); ADR-0027, ADR-0028 and ADR-0029, proposed
-and awaiting the owner) ·
+after its review and its follow-up review ([`sync-design.md`](sync-design.md); ADR-0027,
+ADR-0028 and ADR-0029, proposed and awaiting the owner) ·
 Decision records: [`docs/decisions/`](decisions/README.md) ·
 Review record: [`docs/reviews/0.1-architecture-review.md`](reviews/0.1-architecture-review.md)
 
@@ -580,7 +580,7 @@ left at the cargo name). On Linux the endpoint names no executable and the role 
 | Templates | `ParseTemplate(source)`, `RenderPreview(source, values, rich)` | — |
 | Diagnostics | `RecentDiagnostics` | `DiagnosticAdded` |
 | Settings | `GetSettings`, `PutSetting`, `ListExclusions`, `PutExclusion`, `ResetUsage` | `SettingsChanged` |
-| Sync | `OutboxRead(limit)`, `OutboxAck(results)`, `ApplyRemote(batch, position)`, `PurgeFolder(id)`, `AttachmentAvailable(profile, sha256)`, `MissingAttachments`, `SetSyncStatus`, `SetEntitlements`; added by the sync design (task 4.1, built in task 4.4): `SyncState`, `Adopt`, `AdoptMerge`, `ReconcileBegin`, `ReconcileEnd`, `SetAccess`, `SetKnownUsers`, `PutShare`, `DeleteShare`, `SetBlocked`, `SignedOut`, `AttachmentsToUpload`, `UploadedAttachment` | `OutboxChanged` |
+| Sync | `OutboxRead(limit)`, `OutboxAck(results)`, `ApplyRemote(batch, position, mode)`, `PurgeFolder(id, except)`, `AttachmentAvailable(profile, sha256)`, `MissingAttachments`, `SetSyncStatus`, `SetEntitlements`; added by the sync design (task 4.1, built in task 4.4): `SyncState`, `Adopt`, `AdoptMerge`, `ReconcileBegin`, `ReconcileEnd`, `SetAccess`, `SetKnownUsers`, `PutShare`, `DeleteShare`, `SetBlocked`, `SignedOut`, `AttachmentsToUpload`, `UploadedAttachment`, `NoteAccessRemoval`, `AccessRemovals` | `OutboxChanged` |
 
 Names across the layers: the engine action `ShowForm` becomes the event `FormRequested`; the
 requests `FormSubmit` and `FormCancel` become the engine events `FormSubmitted` and
@@ -611,18 +611,22 @@ names the snippets, folders and tags a change touched, or nothing when it may ha
 time.
 
 The Sync group as the sync design fixes it ([`sync-design.md`](sync-design.md) §7.2, §9): what
-`OutboxRead` returns is one change per row, ready to send (the row as it is now, the base
-revision of its oldest waiting entry, an id that makes a repeat harmless), and the store marks
-what it returned as handed out, so that a row the server may have seen is never dropped unsent;
-`OutboxAck` takes the server's answer for each change, and for each row a folder's delete took
-with it, and acts on it (a refused change is kept for the user, one the server cannot store yet
-stays local), and reports the rows that are still behind what a pull skipped; `ApplyRemote`
-never writes a pulled row over an unsent change, notes what it skipped, answers per row, and
-stores the feed position in the same transaction; `PurgeFolder` keeps the folder's unsent
-changes for the user before it removes the folder. The Library group gains `ListKeptChanges`,
-`CopyKeptChange` and `DismissKeptChange` for those kept changes, and `ApproveSnippet` names the
-content it approves. No build answered the Sync group before task 4.4, which raises the
-protocol to 4 with it.
+`OutboxRead` returns is one change per row, ready to send (the row as it is now, the base revision
+of its oldest waiting entry, an id that makes a repeat harmless), and the store marks what it
+returned as handed out, so that a row the server may have seen is never dropped unsent; `OutboxAck`
+takes the server's answer for each change, and for each row a folder's delete took with it, and acts
+on it (a refused change is kept for the user, one the server cannot store yet stays local), and
+reports the rows that are still behind what a pull skipped; `ApplyRemote` never writes a pulled row
+over an unsent change, notes what it skipped, answers per row, and stores the feed position in the
+same transaction; its `mode` says whether the rows come from the feed, from a resync, or from a
+resync after the server was restored from a backup, in which a row the device holds in a revision
+the backup lacks is kept and sent again instead of being replaced; `PurgeFolder` keeps the folder's
+unsent changes for the user before it removes the folder, leaves the sub-folders named in `except`,
+and is also what a folder that arrives as "no longer there" does; `NoteAccessRemoval` records a call
+by which the user took access away from someone, so that the device can make it again after such a
+restore. The Library group gains `ListKeptChanges`, `CopyKeptChange` and `DismissKeptChange` for
+those kept changes, and `ApproveSnippet` names the content it approves. No build answered the Sync
+group before task 4.4, which raises the protocol to 4 with it.
 
 The React UI never speaks IPC itself. It calls Tauri commands in `iamb-desktop`, which forwards
 them and relays events back.
@@ -700,7 +704,7 @@ Device-local tables, never synced:
 | `sync_state` | The user's position in the server's change feed |
 | `entitlement` | The plan features last reported by the sync agent |
 | `schema_migrations` | Applied migration versions |
-| `folder_access`, `snippet_origin`, `kept_change`, `known_user`, `attachment_state`, `skipped`, `left_alone` | Added by the sync design ([`sync-design.md`](sync-design.md) §7.1, built in task 4.4): the user's permission on each folder shared with them and when it began, as the server computed it; who wrote a snippet's content and when the server first accepted the row; changes the server refused, kept for the user; display names of authors and members; which attachment files this device has sent; pulled rows that were not applied because of an unsent change; rows a resync left in place for the same reason. `approval` also keeps the content that was approved, and `sync_state` the account the library belongs to and how far a first sign-in has come |
+| `folder_access`, `snippet_origin`, `kept_change`, `known_user`, `attachment_state`, `skipped`, `left_alone`, `access_removal` | Added by the sync design ([`sync-design.md`](sync-design.md) §7.1, built in task 4.4): the user's permission on each folder shared with them and when it began, as the server computed it; who wrote a snippet's content and when the server first accepted the row; changes the server refused, kept for the user; display names of authors and members; which attachment files this device has sent; pulled rows that were not applied because of an unsent change; rows a resync left in place for the same reason; the calls by which the user took access away from someone, which the device makes again after a restore of the server. `approval` also keeps the content that was approved, and `sync_state` the account the library belongs to and how far a first sign-in has come |
 
 Who can do what:
 
@@ -886,55 +890,57 @@ real machines:
 
 ## 9. Sync
 
-The architecture fixes the frame ([ADR-0016](decisions/0016-sync-frame.md)). Task 4.1 fills it
-in: [`sync-design.md`](sync-design.md) has the server's tables and policies, the protocol, the
-rules for every conflict (`C1` to `C25` on the server, `D1` to `D17` on the device), the threat
-model for sharing and 67 conflict scenarios with their outcomes, which are also in
-`spec/sync/scenarios.toml` for the simulation of task 4.4
-([ADR-0027](decisions/0027-sync-protocol-and-conflict-rules.md),
+The architecture fixes the frame ([ADR-0016](decisions/0016-sync-frame.md)). Task 4.1 fills it in:
+[`sync-design.md`](sync-design.md) has the server's tables and policies, the protocol, the rules for
+every conflict (`C1` to `C25` on the server, `D1` to `D17` on the device), the threat model for
+sharing and 77 conflict scenarios with their outcomes, which are also in `spec/sync/scenarios.toml`
+for the simulation of task 4.4 ([ADR-0027](decisions/0027-sync-protocol-and-conflict-rules.md),
 [ADR-0028](decisions/0028-data-model-for-sync.md),
 [ADR-0029](decisions/0029-server-readable-content.md)). In short: the last write is the one the
-server accepts last, by its own counter and clock; a write replaces the whole row, and a stale
-one records a conflict that offers the other version back; a delete is a write like any other; a
-device never writes a pulled row over an unsent change, and fetches a row it skipped once the
-change is settled; a change the server refuses is kept on the device for the user; the writes of
-one profile happen one after the other on the server; and the server stores synced content
-readably in version 1 and never interprets it. The frame:
+server accepts last, by its own counter and clock; a write replaces the whole row, and a stale one
+records a conflict that offers the other version back; a delete is a write like any other; a device
+never writes a pulled row over an unsent change, and fetches a row it skipped once the change is
+settled; a change the server refuses is kept on the device for the user; the writes of one profile
+happen one after the other on the server; after a restore of the server from a backup, devices send
+back every row they hold in a revision the backup lacks, whatever was written since, and only the
+operator begins the new epoch; and the server stores synced content readably in version 1 and never
+interprets it. The frame:
 
 - The server is a Postgres database with row-level security, reached over HTTPS and a live-update
   channel, hosted on Supabase.
 - **Change feed.** The server keeps one ordered change feed per user. An entry is either a row
   change the user may see, or a visibility change: `folder_visible(folder)` when a share or
   membership gives the user access, `folder_revoked(folder)` when access ends. `sync_state` is the
-  user's position in that feed; the server issues each position and accepts it once, which is
-  how it tells a device from a copy of its data directory.
+  user's position in that feed; the server issues each position and knows, per device, the last one
+  it issued and the one presented for it, which is how it tells a device from a copy of its data
+  directory without mistaking a repeated call for one.
 - **Pull.** The agent reads the feed from its position. A row change is applied through
   `ApplyRemote`. `folder_visible` triggers a full fetch of that folder, whatever the rows'
   revisions, which is how a newly shared folder appears within the 10-second target.
   `folder_revoked` triggers `PurgeFolder`, which removes the folder, its snippets and its cached
   attachments from the device.
 - **Push.** The store writes every local change to `outbox` in the same transaction as the change,
-  with the revision it was based on. The agent pushes in order (one change per row, parents
-  before what refers to them). The server applies last write wins per row and keeps the
-  overwritten version in a history table. When the base revision is older than the server's row
-  and another device changed the row's content in between, the server also records a conflict;
-  the device lists conflicts (`Conflicts`) so the user can restore the other version.
+  with the revision it was based on. The agent pushes in order (one change per row, parents before
+  what refers to them). The server applies last write wins per row and keeps the overwritten version
+  in a history table. When the base revision is older than the server's row and another device
+  changed the row's content in between, the server also records a conflict; the device lists
+  conflicts (`Conflicts`) so the user can restore the other version.
 - Deletes are soft and are purged after 30 days on the server and on devices that have read past
   them.
 - **Attachments.** Rows sync first. The agent then downloads every attachment of the effective
-  library that the device lacks (`MissingAttachments`), within the size limits set in task 4.6,
-  so snippets work offline after the first sync. It writes the bytes to `attachments/` itself
-  (temporary file, hash check, rename) and tells the service with `AttachmentAvailable`. Uploads
-  go the other way under the same path scheme.
-- When a rich snippet is expanded, the service resolves `attachment:` references while it builds
-  the clipboard content: HTML with images embedded as data URIs, plus plain text; a snippet that
-  is only one media file is also offered as a file (a copy named after it in `run/paste/`,
-  emptied when the worker starts). A missing attachment falls back to the
-  plain-text rendering with a `Diagnostic` (`attachment_missing`). Task 3.8 keeps the bytes in
-  `attachments/<profile id>/<sha256>` (`iamb-store::attachments`: types read from the bytes,
-  images up to 5 MiB, media up to 25 MiB, checked against the hash before use), links each rich
-  snippet to the attachments it references, and carries them in a JSON export; the editor adds
-  one with `PutAttachment` (`iamb_service::rich`; `docs/paste-fidelity.md`).
+  library that the device lacks (`MissingAttachments`), within the size limits set in task 4.6, so
+  snippets work offline after the first sync. It writes the bytes to `attachments/` itself
+  (temporary file, hash check, rename) and tells the service with `AttachmentAvailable`. Uploads go
+  the other way under the same path scheme.
+- When a rich snippet is expanded, the service resolves `attachment:` references while it builds the
+  clipboard content: HTML with images embedded as data URIs, plus plain text; a snippet that is only
+  one media file is also offered as a file (a copy named after it in `run/paste/`, emptied when the
+  worker starts). A missing attachment falls back to the plain-text rendering with a `Diagnostic`
+  (`attachment_missing`). Task 3.8 keeps the bytes in `attachments/<profile id>/<sha256>`
+  (`iamb-store::attachments`: types read from the bytes, images up to 5 MiB, media up to 25 MiB,
+  checked against the hash before use), links each rich snippet to the attachments it references,
+  and carries them in a JSON export; the editor adds one with `PutAttachment` (`iamb_service::rich`;
+  `docs/paste-fidelity.md`).
 - Plan features reach the device as `Entitlements` from the agent, stored by the service
   (`SetEntitlements`) and read by the UI.
 

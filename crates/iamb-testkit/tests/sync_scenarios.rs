@@ -5,7 +5,9 @@
 //! they cite. The check itself is tested on files broken on purpose, so that it is known to
 //! fail for each of the reasons it is there for; among them the eight wrong outcomes with which
 //! the review of the design showed that the first, structural check accepted anything
-//! (`docs/reviews/4.1-sync-design-review.md`, finding 15).
+//! (`docs/reviews/4.1-sync-design-review.md`, finding 15), and the thirteen of the follow-up
+//! review (`docs/reviews/4.1-sync-design-followup.md`, §4): ten must be refused, and the three
+//! that lie beyond what the check can know are kept as examples that pass.
 
 #![allow(clippy::unwrap_used, reason = "a failed unwrap is a failed test")]
 
@@ -13,8 +15,8 @@ use std::fs;
 use std::path::Path;
 
 use iamb_testkit::sync_scenarios::{
-    MIN_SCENARIOS, REQUIRED_COVERAGE, RowOutcome, Scenario, ScenarioFile, load, parse,
-    scenarios_path, validate,
+    ConflictOutcome, MIN_SCENARIOS, REQUIRED_COVERAGE, RowOutcome, Scenario, ScenarioFile,
+    VersionRef, load, parse, scenarios_path, validate,
 };
 
 fn scenarios() -> ScenarioFile {
@@ -637,6 +639,417 @@ fn a_conflict_must_be_shown_to_the_authors_of_its_versions() {
     caught(&found, "S55: the conflict on s1 is shown to");
 }
 
+// The wrong outcomes of the follow-up review (§4), each one change to a scenario of the real
+// file. M01 to M05 and M13 were refused when that review ran them; M04 is
+// `a_replaced_conflict_must_hand_its_loser_on` above.
+
+#[test]
+fn followup_m01_a_delete_that_gets_no_answer_fails() {
+    // Finding 1 of the first review as it was: the create arrived, the delete is never sent.
+    let found = altered("S50", |s| {
+        s.steps.last_mut().unwrap().answers.clear();
+        restate(&mut s.outcome.server.rows, row("s2", "live", Some("a1")));
+        s.outcome.server.history.clear();
+        let device = s.outcome.device.get_mut("A").unwrap();
+        device.rows.push(row("s2", "absent", None));
+    });
+    caught(
+        &found,
+        "S50: A ends online with its change a2 to s2 unanswered, and neither kept nor blocked: \
+         a lost edit",
+    );
+}
+
+#[test]
+fn followup_m02_a_row_left_deleted_on_one_device_fails() {
+    // Finding 2 of the first review as it was: the snippet that had left the folder stays
+    // deleted on the device that deleted the folder.
+    let found = altered("S51", |s| {
+        let device = s.outcome.device.get_mut("A").unwrap();
+        device.rows.push(row("s1", "deleted", Some("a1")));
+    });
+    caught(
+        &found,
+        "S51: A ends online and holds s1 as deleted · a1, which is not what the server holds",
+    );
+}
+
+#[test]
+fn followup_m03_a_purge_that_loses_an_unsent_change_fails() {
+    let found = altered("S61", |s| {
+        let device = s.outcome.device.get_mut("C").unwrap();
+        device.kept.clear();
+        device.shown.retain(|shown| shown != "kept");
+    });
+    caught(
+        &found,
+        "S61: C ends online with its change c1 to s1 unanswered, and neither kept nor blocked: \
+         a lost edit",
+    );
+}
+
+#[test]
+fn followup_m05_two_installations_without_a_conflict_fail() {
+    // Finding 8 of the first review as it was.
+    let found = altered("S60", |s| s.outcome.server.conflicts.clear());
+    caught(
+        &found,
+        "S60: b1 replaced a1 of s1, which was written elsewhere and which its writer had not \
+         seen, and no conflict offers a1 back: a lost edit",
+    );
+}
+
+#[test]
+fn followup_m13_a_stale_write_answered_as_an_ordinary_one_fails() {
+    let found = altered("S01", |s| {
+        let push = s.steps.last_mut().unwrap();
+        push.answers.insert("s1".to_owned(), "applied".to_owned());
+        s.outcome.server.conflicts.clear();
+        for device in s.outcome.device.values_mut() {
+            device.shown.clear();
+        }
+    });
+    caught(
+        &found,
+        "S01: b1 replaced a1 of s1, which was written elsewhere and which its writer had not \
+         seen, and no conflict offers a1 back: a lost edit",
+    );
+}
+
+// M06, M07, M11 and M12 passed when the follow-up review ran them. They follow from the
+// scenario's own data (who wrote the content, whose profile a row is in, which call a restore
+// lost), so the check refuses them now.
+
+#[test]
+fn followup_m06_the_reader_made_the_author_of_unreviewed_content_fails() {
+    // Finding 5 of the first review as it was: the reader's stale write names the reader as
+    // the author, and the member's key presses are held nowhere.
+    let found = altered("S55", |s| {
+        let author = toml::Value::String("ines".to_owned());
+        let server = &mut s.outcome.server.rows;
+        let snippet = server.iter_mut().find(|r| r.row == "s1").unwrap();
+        snippet.fields.insert("content_by".to_owned(), author);
+        for id in ["A", "B"] {
+            let device = s.outcome.device.get_mut(id).unwrap();
+            device.review.clear();
+            device.shown.retain(|shown| shown != "review");
+        }
+    });
+    caught(
+        &found,
+        "S55: the server: s1 is stated with content_by = ines, but a1 left it as tom",
+    );
+    for id in ["A", "B"] {
+        caught(
+            &found,
+            &format!(
+                "S55: {id}: s1 holds content that tom wrote and that must be reviewed, and is \
+                 not listed as held for review"
+            ),
+        );
+    }
+}
+
+#[test]
+fn followup_m07_a_members_snippet_taking_the_owners_abbreviation_fails() {
+    // Finding 4 of the first review as it was.
+    let found = altered("S54", |s| {
+        let device = s.outcome.device.get_mut("A").unwrap();
+        device.expands.insert(";iban".to_owned(), "s5".to_owned());
+    });
+    caught(
+        &found,
+        "S54: A: ;iban is stated to expand s5, but s3 comes before it for ines (D13)",
+    );
+}
+
+#[test]
+fn followup_m11_a_device_that_never_receives_a_row_of_its_own_profile_fails() {
+    let found = altered("S54", |s| {
+        let device = s.outcome.device.get_mut("A").unwrap();
+        device.rows.push(row("s5", "absent", None));
+        device.expands.clear();
+        device.shown.clear();
+    });
+    caught(
+        &found,
+        "S54: A ends online without s5, a live row of its user's own profile",
+    );
+}
+
+#[test]
+fn followup_m12_a_removal_that_is_not_made_again_after_a_restore_fails() {
+    // N2 of the follow-up review: Tom stays a member, although the device that removed him
+    // has synced.
+    let found = altered("S58", |s| {
+        let again = s.steps.pop().unwrap();
+        assert_eq!(again.action, "remove_member");
+        restate(
+            &mut s.outcome.server.rows,
+            row("m-tom", "live", Some("start")),
+        );
+        s.outcome.server.history.clear();
+        let member = s.outcome.device.get_mut("C").unwrap();
+        restate(&mut member.rows, row("m-tom", "live", Some("start")));
+    });
+    caught(
+        &found,
+        "S58: A ended m-tom with x1, the restore lost that call, and it is not made again \
+         although the device ends online",
+    );
+}
+
+// M08, M09 and M10 lie beyond the line the check draws: an access that did not end, a write
+// the permissions forbid, a cascade the rules do not give. Each is consistent with its own
+// answers, so the check lets it through; the replay of task 4.4 derives these from the rules.
+// They are kept here as examples that pass, so that nobody takes them for guarded.
+
+#[test]
+fn beyond_the_line_three_wrong_outcomes_still_pass() {
+    // M08: Tom's device keeps the deleted folder's rows and may still change it, after the
+    // share that gave him the folder ended.
+    let kept_access = altered("S61", |s| {
+        let device = s.outcome.device.get_mut("C").unwrap();
+        device.rows.clear();
+        device.access.insert("f1".to_owned(), "edit".to_owned());
+    });
+    assert_eq!(kept_access, Vec::<String>::new());
+    // M09: the delete by a member who may only use the folder is answered `applied`.
+    let forbidden_write = altered("S52", |s| {
+        let delete = s
+            .steps
+            .iter_mut()
+            .find(|step| step.id.as_deref() == Some("c1"));
+        delete.unwrap().cascade.push("s2".to_owned());
+        let push = s.steps.last_mut().unwrap();
+        push.answers.insert("f1b".to_owned(), "applied".to_owned());
+        for name in ["f1b", "s2"] {
+            restate(&mut s.outcome.server.rows, row(name, "deleted", Some("c1")));
+            s.outcome.server.history.push(VersionRef {
+                row: name.to_owned(),
+                version: "start".to_owned(),
+            });
+        }
+        let device = s.outcome.device.get_mut("C").unwrap();
+        device.kept.clear();
+        device.shown.clear();
+    });
+    assert_eq!(forbidden_write, Vec::<String>::new());
+    // M10: the folder's delete also takes the snippet that had been moved out of it.
+    let cascade = altered("S51", |s| {
+        let delete = s
+            .steps
+            .iter_mut()
+            .find(|step| step.id.as_deref() == Some("a1"));
+        delete.unwrap().cascade.push("s1".to_owned());
+        restate(&mut s.outcome.server.rows, row("s1", "deleted", Some("a1")));
+        s.outcome.server.history.push(VersionRef {
+            row: "s1".to_owned(),
+            version: "b1".to_owned(),
+        });
+        s.outcome.server.conflicts.push(ConflictOutcome {
+            row: "s1".to_owned(),
+            kind: "deleted_with_folder".to_owned(),
+            winner: "a1".to_owned(),
+            loser: "b1".to_owned(),
+            carried: Vec::new(),
+            parties: vec!["ines".to_owned()],
+            state: "open".to_owned(),
+        });
+        for device in s.outcome.device.values_mut() {
+            device.shown.push("conflict".to_owned());
+        }
+    });
+    assert_eq!(cascade, Vec::<String>::new());
+}
+
+// What a restore of the server may not lose (N1 of the follow-up review).
+
+#[test]
+fn a_lost_edit_replaced_by_a_newer_one_after_a_restore_fails() {
+    // N1 as the design was: the device takes the row written after the restore over the
+    // edit the restore lost, and sends nothing.
+    let found = altered("S68", |s| {
+        s.steps.last_mut().unwrap().answers.clear();
+        restate(&mut s.outcome.server.rows, row("s1", "live", Some("b1")));
+        s.outcome.server.history.retain(|v| v.version != "b1");
+        s.outcome.server.conflicts.clear();
+        for device in s.outcome.device.values_mut() {
+            device.shown.clear();
+        }
+    });
+    caught(
+        &found,
+        "S68: A held a1 of s1 when the server was restored, the backup does not have it, and \
+         it ends neither as the server's row nor in the history: a lost edit",
+    );
+}
+
+#[test]
+fn a_lost_edit_given_back_over_a_newer_one_needs_its_conflict() {
+    let found = altered("S68", |s| {
+        s.outcome.server.conflicts.clear();
+        for device in s.outcome.device.values_mut() {
+            device.shown.clear();
+        }
+    });
+    caught(
+        &found,
+        "S68: a1 replaced b1 of s1, which was written elsewhere and which its writer had not \
+         seen, and no conflict offers b1 back: a lost edit",
+    );
+    caught(
+        &found,
+        "S68: a1 was answered applied+conflict, and no conflict on s1 names it as the winner",
+    );
+}
+
+#[test]
+fn a_row_made_after_the_backup_that_is_taken_for_purged_fails() {
+    // The second part of N1 as the design was: one line for the whole server, above the
+    // revision of a row the restore lost, and the device removes the row.
+    let found = altered("S69", |s| {
+        let pull = s
+            .steps
+            .iter_mut()
+            .find(|step| step.action == "pull" && step.at == "A");
+        pull.unwrap().answers.clear();
+        restate(&mut s.outcome.server.rows, row("s2", "absent", None));
+    });
+    caught(
+        &found,
+        "S69: A held a1 of s2 when the server was restored, the backup does not have it, and \
+         it ends neither as the server's row nor in the history: a lost edit",
+    );
+}
+
+#[test]
+fn a_row_sent_again_that_the_restore_did_not_lose_fails() {
+    // B was offline since before the backup: it holds nothing the restore lost.
+    let found = altered("S59", |s| {
+        let online = s
+            .steps
+            .iter_mut()
+            .find(|step| step.at == "B" && step.action == "online");
+        let answers = &mut online.unwrap().answers;
+        answers.insert("s1".to_owned(), "applied".to_owned());
+    });
+    caught(
+        &found,
+        "S59: B sends s1 again after the restore, but it held no version of the row that the \
+         restore lost",
+    );
+}
+
+#[test]
+fn a_lost_edit_its_writer_may_no_longer_write_must_be_kept() {
+    // The share that let Tom write the snippet was lost with his edit: his device cannot give
+    // the edit back, and must not drop it.
+    let found = altered("S77", |s| {
+        let device = s.outcome.device.get_mut("C").unwrap();
+        device.kept.clear();
+        device.shown.retain(|shown| shown != "kept");
+    });
+    caught(
+        &found,
+        "S77: C held c1 of s1 when the server was restored, its own user wrote it, the backup \
+         does not have it, and it ends neither on the server nor among the device's kept \
+         changes: a lost edit",
+    );
+}
+
+#[test]
+fn a_refused_re_push_is_kept_by_the_user_who_wrote_it_and_by_nobody_else() {
+    // Had Tom's device sent the edit before its access check, the server would have refused
+    // it: the device keeps what its own user wrote.
+    let refused = |s: &mut Scenario, row: &str| {
+        let pull = s
+            .steps
+            .iter_mut()
+            .find(|step| step.at == "C" && step.action == "pull");
+        let answers = &mut pull.unwrap().answers;
+        answers.insert(row.to_owned(), "rejected:forbidden".to_owned());
+    };
+    let found = altered("S77", |s| {
+        refused(s, "s1");
+        let device = s.outcome.device.get_mut("C").unwrap();
+        device.kept.clear();
+        device.shown.retain(|shown| shown != "kept");
+    });
+    caught(
+        &found,
+        "S77: C: the server refused c1, and the device does not keep it for the user",
+    );
+    // The share is a version Ines wrote: refused to Tom's device, it is hers to give back,
+    // and Tom's device keeps nothing of it.
+    let dropped = altered("S77", |s| refused(s, "sh1"));
+    assert_eq!(dropped, Vec::<String>::new());
+    let kept_all_the_same = altered("S77", |s| {
+        refused(s, "sh1");
+        let device = s.outcome.device.get_mut("C").unwrap();
+        device.kept.push("a1".to_owned());
+    });
+    caught(
+        &kept_all_the_same,
+        "S77: device C: kept or blocked names a1, not a step of this device",
+    );
+}
+
+// What the scenario's own data say about content.
+
+#[test]
+fn a_stated_field_that_the_steps_did_not_leave_fails() {
+    // A write carries the whole row as its device holds it: A had pulled b1's content.
+    let found = altered("S71", |s| {
+        let body = toml::Value::String("Thanks for your order.".to_owned());
+        let snippet = s.outcome.server.rows.iter_mut().find(|r| r.row == "s1");
+        snippet.unwrap().fields.insert("body".to_owned(), body);
+    });
+    caught(
+        &found,
+        "S71: the server: s1 is stated with body = Thanks for your order., but a1 left it as \
+         Thanks a lot for your order.",
+    );
+}
+
+#[test]
+fn a_snippet_held_on_its_authors_device_fails() {
+    let found = altered("S40", |s| {
+        let device = s.outcome.device.get_mut("C").unwrap();
+        device.review.push("s1".to_owned());
+        device.shown.push("review".to_owned());
+    });
+    caught(
+        &found,
+        "S40: C: s1 is listed as held for review, but the device's own user wrote its content",
+    );
+}
+
+#[test]
+fn two_snippets_with_one_abbreviation_and_no_word_on_which_expands_fail() {
+    let found = altered("S54", |s| {
+        s.outcome.device.get_mut("A").unwrap().expands.clear();
+    });
+    caught(
+        &found,
+        "S54: A holds s3 and s5 with the abbreviation ;iban, and the outcome does not say \
+         which of them expands",
+    );
+}
+
+#[test]
+fn the_snippet_the_server_accepted_later_does_not_hold_the_abbreviation() {
+    // Both snippets are the user's own: the order in which the server accepted them decides.
+    let found = altered("S09", |s| {
+        for device in s.outcome.device.values_mut() {
+            let winner = device.expands.get_mut(";sig").unwrap();
+            *winner = if winner == "s2" { "s3" } else { "s2" }.to_owned();
+        }
+    });
+    caught(&found, "S09: A: ;sig is stated to expand");
+    caught(&found, "comes before it for ines (D13)");
+}
+
 #[test]
 fn an_answer_without_a_change_fails() {
     let text = valid_file(MIN_SCENARIOS).replacen(
@@ -688,7 +1101,7 @@ fn an_invitation_has_no_revision_and_no_history() {
     );
     let found = altered("S32", |s| {
         let mut kept = s.outcome.server.history.clone();
-        kept.push(iamb_testkit::sync_scenarios::VersionRef {
+        kept.push(VersionRef {
             row: "inv1".to_owned(),
             version: "start".to_owned(),
         });
