@@ -118,6 +118,7 @@ export const COMMANDS = [
   "template_preview",
   "template_add_attachment",
   "template_try_form",
+  "template_open_link",
   "form_ready",
   "form_current",
   "form_laid_out",

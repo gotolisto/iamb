@@ -9,9 +9,19 @@
 //
 // A formatted snippet (task 3.8, `rich`) previews as the formatted result: the service's
 // sanitised HTML (raw HTML disabled, links limited to http, https and mailto; UX specification
-// §9 rule 8), with its images embedded as data by the Rust side. Links in it do not navigate.
+// §9 rule 8), with its images embedded as data by the Rust side. A link in it opens in the system browser
+// through the service (`openLink`; the Rust side allows http, https and mailto only); the window
+// itself never navigates. A link stays a link for the keyboard (Enter) and for a screen reader.
 
-import { forwardRef, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
 
 import type { FieldView } from "../../ipc";
 import { failureCode, type PreviewPart, type TemplatePreview as Preview, type TemplateService } from "./api";
@@ -99,7 +109,7 @@ export const TemplatePreview = forwardRef<HTMLElement, TemplatePreviewProps>(fun
       preview.parts.length === 0 ? (
         <p className="tpl-out tpl-muted">Nothing to type yet.</p>
       ) : (
-        <div className="tpl-out">{renderParts(preview)}</div>
+        <div className="tpl-out">{renderParts(preview, service.openLink?.bind(service))}</div>
       );
   } else {
     body = <div className="tpl-out" />;
@@ -158,45 +168,77 @@ function fieldSummary(f: FieldView, values: Record<string, string> | undefined):
 
 const caret = (key: string) => <span key={key} className="tpl-caret" role="img" aria-label="Cursor position" />;
 
-function renderParts(p: Preview): ReactNode[] {
+function renderParts(p: Preview, open?: (url: string) => Promise<void>): ReactNode[] {
   const out: ReactNode[] = [];
   const cursor = p.cursor;
   p.parts.forEach((part, i) => {
     if (cursor && cursor.part === i && part.part !== "text") out.push(caret(`c${i}`));
-    out.push(renderPart(part, i, cursor && cursor.part === i ? cursor.offset : null));
+    out.push(renderPart(part, i, cursor && cursor.part === i ? cursor.offset : null, open));
   });
   if (cursor && cursor.part >= p.parts.length) out.push(caret("c-end"));
   return out;
 }
 
 /**
- * The service's HTML made fit for this window, whose policy allows no inline style and which has
- * nothing to open a link with (UX specification §9 rule 8): a column's alignment, which the
- * writer gives as `style="text-align:…"`, becomes `data-align` (the style sheet aligns on it),
- * and a link keeps its address as a tooltip but loses its `href`, so it is plain text to the
- * keyboard and to a screen reader instead of a link that does nothing. Only the exact forms the
- * writer produces are changed; the writer escapes every attribute.
+ * The service's HTML made fit for this window, whose policy allows no inline style: a column's
+ * alignment, which the writer gives as `style="text-align:…"`, becomes `data-align` (the style
+ * sheet aligns on it), and a link also gets its address as a tooltip. The link keeps its `href`,
+ * so it is a link to the keyboard and to a screen reader; a click or Enter is taken over by
+ * [`linkHandlers`] and never navigates. Only the exact forms the writer produces are changed; the
+ * writer escapes every attribute.
  */
 export function forPreview(html: string): string {
   return html
     .replace(/ style="text-align:(left|center|right)"/g, ' data-align="$1"')
-    .replace(/<a href="/g, '<a title="');
+    .replace(/<a href="([^"]*)"/g, '<a href="$1" title="$1"');
 }
 
-/** Keeps a click on a link in the formatted preview from navigating the window. */
-function stayHere(e: ReactMouseEvent) {
-  if ((e.target as HTMLElement).closest("a")) e.preventDefault();
+/**
+ * The handlers of the formatted preview's links: a click or Enter on one asks `open` to open its
+ * address in the system browser, and nothing navigates the window (the default is always
+ * prevented, with or without `open`). Enter is handled on key down so the browser's own click
+ * for it does not open the link twice; other mouse buttons do nothing.
+ */
+function linkHandlers(open: ((url: string) => Promise<void>) | undefined) {
+  const anchor = (e: { target: EventTarget }) => (e.target as HTMLElement).closest("a");
+  const go = (a: HTMLAnchorElement) => {
+    const url = a.getAttribute("href");
+    // The Rust side refuses what may not be opened; a failure to open has nothing to show here
+    // and the address (library content) is not logged.
+    if (url && open) open(url).catch(() => undefined);
+  };
+  return {
+    onClick: (e: ReactMouseEvent) => {
+      const a = anchor(e);
+      if (!a) return;
+      e.preventDefault();
+      go(a);
+    },
+    onAuxClick: (e: ReactMouseEvent) => {
+      if (anchor(e)) e.preventDefault();
+    },
+    onKeyDown: (e: ReactKeyboardEvent) => {
+      const a = anchor(e);
+      if (!a || e.key !== "Enter" || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      e.preventDefault();
+      go(a);
+    },
+  };
 }
 
-function renderPart(part: PreviewPart, i: number, cursorAt: number | null): ReactNode {
+function renderPart(
+  part: PreviewPart,
+  i: number,
+  cursorAt: number | null,
+  open?: (url: string) => Promise<void>,
+): ReactNode {
   if (part.part === "formatted") {
     // The service's sanitised rendering (module docs); nothing here builds HTML.
     return (
       <div
         key={i}
         className="tpl-formatted"
-        onClick={stayHere}
-        onAuxClick={stayHere}
+        {...linkHandlers(open)}
         dangerouslySetInnerHTML={{ __html: forPreview(part.html) }}
       />
     );

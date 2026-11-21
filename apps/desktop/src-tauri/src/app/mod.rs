@@ -241,6 +241,7 @@ pub fn run(dirs: DataDirs, options: &Options, log: &Arc<Logger>) -> tauri::Resul
             template_commands::template_preview,
             template_commands::template_add_attachment,
             template_commands::template_try_form,
+            template_commands::template_open_link,
             settings_commands::settings_get,
             settings_commands::settings_put,
             settings_commands::settings_list_exclusions,

@@ -67,6 +67,8 @@ pub const COMMANDS: &[&str] = &[
     // Formatted snippets (`app/template_commands.rs`, task 3.8).
     "template_add_attachment",
     "template_try_form",
+    // Links in a formatted preview (`app/template_commands.rs`, `link.rs`).
+    "template_open_link",
     // The fill-in form's commands (`app/form_panel.rs`, task 3.5).
     "form_ready",
     "form_current",

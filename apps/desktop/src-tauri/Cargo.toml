@@ -30,6 +30,9 @@ iamb-platform = { path = "../../../crates/iamb-platform" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 tauri = { version = "=2.12.5", features = ["tray-icon"] }
+# Parses the address of a link in the formatted preview before it is opened (`link`); already in
+# the lock through Tauri.
+url = "2.5.8"
 
 # `harden_process` (architecture §8 rule 9, "Crash handling"); Linux writes its coredump
 # filter in `src/crash.rs`.

@@ -82,6 +82,8 @@ describe("payloads written by the Rust side (contract.fixtures.json)", () => {
     expect(fixtures.events).toHaveLength(5);
     for (const event of fixtures.events) expect(isUiEvent(event)).toBe(true);
     expect(isCommandError(fixtures.error)).toBe(true);
+    expect(isCommandError(fixtures.template.link_refused)).toBe(true);
+    expect(fixtures.template.link_refused.code).toBe("link_refused");
     const snippet = fixtures.snippet;
     expect(snippet.abbreviation).toBe("brb");
     expect(snippet.folderId).toMatch(/^[0-9a-f-]{36}$/);

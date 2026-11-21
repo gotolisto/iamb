@@ -109,3 +109,14 @@ pub async fn template_try_form(
         .await
         .map_err(|_| CommandError::new("internal", "the request did not finish"))?
 }
+
+/// Opens a link of the formatted preview in the system browser (spec §9 rule 8): `http`, `https`
+/// and `mailto` only, no credentials (`crate::link`). The library window only; the window itself
+/// never navigates. Not logged: the address is library content.
+#[tauri::command]
+pub async fn template_open_link(window: WebviewWindow, url: String) -> Res<()> {
+    super::commands::caller(&window, &[windows::LIBRARY])?;
+    tauri::async_runtime::spawn_blocking(move || crate::link::open(&url))
+        .await
+        .map_err(|_| CommandError::new("internal", "the request did not finish"))?
+}
