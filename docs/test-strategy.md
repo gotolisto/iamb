@@ -149,7 +149,10 @@ only in a PR that says why, e.g. a new bench, an accepted slowdown or a runner i
   in < 2 s.
 - Leak rule 1: least-squares slope of memory over hours 1–72 (first hour is warm-up), multiplied by
   71 h, is < 5 MB.
-- Leak rule 2: mean memory of the last hour minus mean of hour 1 is < 5 MB.
+- Leak rule 2: within one worker life, mean memory of the life's last hour minus mean of its hour 2
+  (the hour after its warm-up) is < 5 MB. The life is the last one if it holds both windows, else the
+  longest that does; if none does, the rule is skipped, not passed. Never across lives: each worker
+  settles at its own plateau.
 - Handle and thread counts return to their hour-1 range after each kill and stay flat.
 - Expansion correctness during the run ≥ 99.9%.
 
@@ -277,9 +280,17 @@ artifact `soak-<run id>`):
   edit builds a new snapshot while the old one is in use; the allocator keeps the high-water
   mark). A 2-minute window reported that climb as a 20 MB leak.
 - **Warm-up in both leak rules.** §5.2 calls hour 1 warm-up for rule 1. The harness applies the
-  same to rule 2: it compares the last `W` with `[W, 2W]` (hour 2 in the lab), not with hour 1,
-  which would charge the climb above to the 5 MB budget. Every worker life has its own warm-up
-  `W`; samples inside it count for neither leak rule nor for the handle and thread ranges.
+  same to rule 2: it compares the last `V` of one worker life with the first `V` after that life's
+  warm-up (`[start + W, start + W + V]`; hour 2 of the first life in the lab), not with hour 1,
+  which would charge the climb above to the 5 MB budget. `V` is `W`, or half of the life's settled
+  stretch (its length minus `W`) when that is shorter, as it is for every life of the CI run. Every
+  worker life has its own warm-up `W`; samples inside it count for neither leak rule nor for the
+  handle and thread ranges.
+- **Rule 2 within one life.** Two lives settle at different plateaus (a worker started later holds
+  a different allocator state), and a nightly run failed with no leak when rule 2 compared life 1
+  with life 8. The windows therefore come from one life: the last, else the longest that holds both
+  windows (each at least two samples, not overlapping), else the rule is reported skipped with the
+  reason. A real leak in one life still fails it.
 - **Leaks across kills.** A kill resets the worker's memory, which would hide a leak in a plain
   slope. Rule 1 therefore uses the least-squares slope pooled within worker lives (one intercept
   per life), times `D − W`.

@@ -11,17 +11,23 @@
 //! a leak of 20 MB.
 //!
 //! Both leak rules treat the first `W` of every process life as warm-up, as §5.2 does for rule 1:
-//! rule 2 compares the last `W` with the first `W` after the warm-up (`[W, 2W]`; hour 2 in the
-//! lab) rather than with the warm-up itself, which would charge the climb above to the budget.
-//! The driver keeps its kills out of the first and last `W` (plus four samples), so both windows
-//! hold settled samples of one worker life.
+//! rule 2 compares the last `W` with the first `W` after the warm-up (`[W, 2W]` of the life;
+//! hour 2 in the lab) rather than with the warm-up itself, which would charge the climb above to
+//! the budget. Both windows are taken from one worker life, because a kill gives the new worker a
+//! new plateau, and a difference between two lives' plateaus is not a leak (a nightly run failed
+//! that way with no leak). The life is the last one if it holds both windows: the first `V`
+//! after its warm-up (`[start + W, start + W + V]`) and its last `V`, not overlapping; otherwise
+//! the longest life that does; if none does, the rule is skipped with that reason, never passed.
+//! `V` is `W`, or half of the life's settled stretch (its length minus `W`) when that is shorter,
+//! which is the case for every life of the CI run (its kills leave the last worker 11.5 min, of
+//! which 7.5 are warm-up). Each window needs at least two samples. The supervisor has one life.
 //!
 //! | Rule | Check |
 //! | --- | --- |
 //! | `no-unexpected-exit` | The supervisor never exited and the worker never restarted, apart from the injected kills |
 //! | `restart-under-2s` | Every injected kill recovered (control endpoint, IPC `Health`, a probe expansion) in under 2 s |
 //! | `leak-slope` | Per process: the least-squares slope of memory over time, pooled within each worker life (a kill resets the worker's memory), from `W` after the start of each life, times `D − W`, is under 5 MB |
-//! | `leak-window` | Per process: mean memory of the last `W` minus mean of `[W, 2W]` is under 5 MB (samples within `W` after a restart left out) |
+//! | `leak-window` | Per process, within one worker life (the last, else the longest long enough): mean memory of the life's last `V` minus mean of its first `V` after warm-up (`V = W`, shorter in short lives) is under 5 MB |
 //! | `handles-threads-flat` | Per process: handle and thread counts stay within the range of the first `W`, give or take `max(2, 10%)`, except within `W` after a restart |
 //! | `expansion-correctness` | At least 99.9% of the checked expansions left exactly the expected text |
 //!
@@ -221,6 +227,82 @@ fn mean(values: &[f64]) -> Option<f64> {
         .then(|| values.iter().sum::<f64>() / f(u64::try_from(values.len()).unwrap_or(1)))
 }
 
+/// The two window means of [`leak_window`].
+struct WindowMeans {
+    life: u32,
+    window_s: u64,
+    first: f64,
+    last: f64,
+    first_n: usize,
+    last_n: usize,
+}
+
+/// The window means of one life of `process`, if it is long enough: the samples in the first
+/// `v` after the life's warm-up (`[start + w, start + w + v]`) and in the life's last `v`, not
+/// overlapping, each at least two. `v` is `w`, or half the settled stretch (`end - start - w`)
+/// if that is shorter.
+fn life_means(samples: &[Sample], process: Process, life: u32, w: u64) -> Option<WindowMeans> {
+    let mine: Vec<&Sample> = samples
+        .iter()
+        .filter(|s| process.life(s).0 == life)
+        .collect();
+    let start = process.life(mine.first()?).1;
+    let end = mine.last()?.t_ms;
+    let v = w.min(end.saturating_sub(start + w) / 2);
+    if v == 0 {
+        return None;
+    }
+    let last_from = end - v;
+    let first_to = (start + w + v).min(last_from.saturating_sub(1));
+    let values = |lo: u64, hi: u64| -> Vec<f64> {
+        mine.iter()
+            .filter(|s| s.t_ms >= lo && s.t_ms <= hi)
+            .filter_map(|s| process.of(s).memory_kb().map(f))
+            .collect()
+    };
+    let (first, last) = (values(start + w, first_to), values(last_from, end));
+    (first.len() >= 2 && last.len() >= 2).then(|| WindowMeans {
+        life,
+        window_s: v / 1000,
+        first: mean(&first).unwrap_or(0.0),
+        last: mean(&last).unwrap_or(0.0),
+        first_n: first.len(),
+        last_n: last.len(),
+    })
+}
+
+/// Rule `leak-window`: growth within one life (module docs): the last life if it holds both
+/// windows, else the longest life that does, else the reason it cannot be evaluated.
+fn leak_window(samples: &[Sample], process: Process, w: u64) -> Result<WindowMeans, String> {
+    let mut lives: Vec<u32> = samples.iter().map(|s| process.life(s).0).collect();
+    lives.sort_unstable();
+    lives.dedup();
+    let Some(&newest) = lives.last() else {
+        return Err("too few samples".to_owned());
+    };
+    if let Some(m) = life_means(samples, process, newest, w) {
+        return Ok(m);
+    }
+    let span = |life: u32| {
+        let t = samples
+            .iter()
+            .filter(|s| process.life(s).0 == life)
+            .map(|s| s.t_ms);
+        t.clone().max().unwrap_or(0) - t.min().unwrap_or(0)
+    };
+    lives
+        .iter()
+        .filter_map(|&l| life_means(samples, process, l, w).map(|m| (span(l), m)))
+        .max_by_key(|(sp, _)| *sp)
+        .map(|(_, m)| m)
+        .ok_or_else(|| {
+            format!(
+                "no worker life with two windows of two samples each after its warm-up (a life needs more than {} s)",
+                w / 1000
+            )
+        })
+}
+
 /// Applies every rule of the module docs.
 #[allow(
     clippy::too_many_lines,
@@ -312,44 +394,33 @@ pub fn evaluate(e: &Evidence) -> Vec<RuleResult> {
             ),
         });
 
-        // Leak rule 2: the first window after warm-up vs the last window.
+        // Leak rule 2: within one worker life, the first window after warm-up vs the last window.
         let in_restart_warmup = |s: &Sample| {
             let (life, start) = process.life(s);
             life > 1 && s.t_ms < start + w
         };
-        let first: Vec<f64> = e
-            .samples
-            .iter()
-            .filter(|s| s.t_ms >= w && s.t_ms <= 2 * w && !in_restart_warmup(s))
-            .filter_map(|s| process.of(s).memory_kb().map(f))
-            .collect();
-        let last_from = e.samples.last().map_or(0, |s| s.t_ms.saturating_sub(w));
-        let last: Vec<f64> = e
-            .samples
-            .iter()
-            .filter(|s| s.t_ms >= last_from && !in_restart_warmup(s))
-            .filter_map(|s| process.of(s).memory_kb().map(f))
-            .collect();
-        out.push(match (mean(&first), mean(&last)) {
-            (Some(a), Some(b)) if e.samples.len() >= 3 => RuleResult::new(
+        out.push(match leak_window(&e.samples, process, w) {
+            Ok(m) => RuleResult::new(
                 format!("leak-window [{name}]"),
-                if b - a < LEAK_LIMIT_KB {
+                if m.last - m.first < LEAK_LIMIT_KB {
                     Verdict::Pass
                 } else {
                     Verdict::Fail
                 },
                 format!(
-                    "{:.1} KiB ({} first, {} last samples)",
-                    b - a,
-                    first.len(),
-                    last.len()
+                    "{:.1} KiB in life {}, windows of {} s ({} first, {} last samples)",
+                    m.last - m.first,
+                    m.life,
+                    m.window_s,
+                    m.first_n,
+                    m.last_n
                 ),
                 "< 5120 KiB",
             ),
-            _ => RuleResult::new(
+            Err(why) => RuleResult::new(
                 format!("leak-window [{name}]"),
                 Verdict::Skipped,
-                "too few samples".to_owned(),
+                why,
                 "< 5120 KiB",
             ),
         });
@@ -557,6 +628,88 @@ mod tests {
             .collect();
         let r = evaluate(&evidence(samples));
         assert_eq!(verdict(&r, "leak-slope [worker]"), Verdict::Pass);
+    }
+
+    /// Lives of fifteen minutes, each flat at `level(life)` KiB.
+    fn lives_flat(level: impl Fn(u32) -> u64) -> Vec<Sample> {
+        (0..=30)
+            .map(|m| {
+                let life = u32::try_from(m / 15 + 1).expect("small");
+                sample(m * 60, life, m / 15 * 900, 2000, level(life))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn leak_window_compares_within_a_life_not_across_lives() {
+        // Life 1 settles 12 MiB lower than the last life: a difference of plateaus, no leak.
+        let r = evaluate(&evidence(lives_flat(|l| {
+            if l == 1 { 9000 } else { 9000 + 12_000 }
+        })));
+        assert_eq!(verdict(&r, "leak-window [worker]"), Verdict::Pass);
+        assert!(r.iter().all(|x| x.verdict == Verdict::Pass), "{r:#?}");
+    }
+
+    #[test]
+    fn leak_window_sees_steady_growth_in_the_last_life() {
+        // Two lives of 15 minutes (W = 7.5 min): the last grows 2000 KiB a minute (7.5 MiB between its two windows); the first is flat.
+        let samples: Vec<Sample> = (0..=30)
+            .map(|m| {
+                let (life, start) = if m < 15 { (1, 0) } else { (2, 15) };
+                let kb = if life == 2 {
+                    9000 + (m - 15) * 2000
+                } else {
+                    9000
+                };
+                sample(m * 60, life, start * 60, 2000, kb)
+            })
+            .collect();
+        let r = evaluate(&evidence(samples));
+        assert_eq!(verdict(&r, "leak-window [worker]"), Verdict::Fail);
+    }
+
+    #[test]
+    fn leak_window_falls_back_to_the_longest_long_enough_life() {
+        // Life 1 runs 0 to 24 minutes and grows; life 2 (the last) has only 6 minutes.
+        let samples: Vec<Sample> = (0..=30)
+            .map(|m| {
+                if m < 24 {
+                    sample(m * 60, 1, 0, 2000, 9000 + m * 1000)
+                } else {
+                    sample(m * 60, 2, 24 * 60, 2000, 30_000)
+                }
+            })
+            .collect();
+        let r = evaluate(&evidence(samples));
+        let rule = r
+            .iter()
+            .find(|x| x.rule == "leak-window [worker]")
+            .expect("rule");
+        assert_eq!(rule.verdict, Verdict::Fail, "{rule:?}");
+        assert!(rule.value.contains("life 1"), "{rule:?}");
+    }
+
+    #[test]
+    fn leak_window_is_skipped_when_no_life_holds_both_windows() {
+        // Lives of five minutes: all of each is warm-up (W = 7.5 min).
+        let samples: Vec<Sample> = (0..=30)
+            .map(|m| {
+                let life = u32::try_from(m / 5 + 1).expect("small");
+                sample(m * 60, life, m / 5 * 300, 2000, 9000)
+            })
+            .collect();
+        let r = evaluate(&evidence(samples));
+        let rule = r
+            .iter()
+            .find(|x| x.rule == "leak-window [worker]")
+            .expect("rule");
+        assert_eq!(rule.verdict, Verdict::Skipped, "{rule:?}");
+        assert!(
+            rule.value.contains("no worker life with two windows"),
+            "{rule:?}"
+        );
+        // The supervisor has one life and is still checked.
+        assert_eq!(verdict(&r, "leak-window [supervisor]"), Verdict::Pass);
     }
 
     #[test]
