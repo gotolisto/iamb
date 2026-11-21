@@ -1031,10 +1031,12 @@ impl Flow {
         .map(|_| ())
     }
 
-    /// Ends the form on the Rust side: the front end forgets, the values are overwritten.
+    /// Ends the form on the Rust side: the values are overwritten, then the front end forgets.
+    /// In this order a front end (or a test) that hears `Closed` and asks for the current form
+    /// finds none, as with the palette's `finish`.
     fn close(&mut self, session: u64) {
-        self.cfg.host.send(&FormEvent::Closed { session });
         forget(lock(&self.current).take());
+        self.cfg.host.send(&FormEvent::Closed { session });
     }
 
     fn requested(&mut self, mut request: Request) {

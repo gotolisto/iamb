@@ -391,14 +391,18 @@ impl Host {
         self.bridge.stop();
     }
 
-    /// Registers the palette's shortcut with the service.
-    fn register_shortcut(&self) {
+    /// Registers the palette's shortcut with the service, and waits until the engine has
+    /// handled what the settings change sent the focus thread (the focused app is judged
+    /// again, which clears the engine's buffer): otherwise that can reach the engine after
+    /// the keys or the pick that follow.
+    fn register_shortcut(&self, service: &Service) {
         self.bridge
             .call(RequestBody::PutSetting {
                 key: "palette_hotkey".to_owned(),
                 value: Some(CHORD.to_owned()),
             })
             .expect("the shortcut is registered");
+        service.worker().sync();
     }
 
     /// Presses the global shortcut and waits for the palette to be shown.
@@ -445,7 +449,7 @@ fn diagnostic_codes(service: &Service) -> Vec<String> {
 fn the_shortcut_opens_the_palette_and_a_pick_types_where_the_cursor_was() {
     let service = Service::start(Endpoint::Mock);
     let host = Host::start(&service);
-    host.register_shortcut();
+    host.register_shortcut(&service);
     let session = host.open(&service);
 
     // The panel was shown within the budget of its part (the paint is the window's, measured
@@ -503,7 +507,7 @@ fn the_shortcut_opens_the_palette_and_a_pick_types_where_the_cursor_was() {
 fn esc_changes_nothing_and_the_keyboard_is_the_apps_again() {
     let service = Service::start(Endpoint::Mock);
     let host = Host::start(&service);
-    host.register_shortcut();
+    host.register_shortcut(&service);
     let session = host.open(&service);
     host.palette.pick(session, Pick::Close).expect("closed");
     service.worker().settle();
@@ -526,7 +530,7 @@ fn esc_changes_nothing_and_the_keyboard_is_the_apps_again() {
 fn keys_typed_into_the_panel_never_reach_the_engine() {
     let service = Service::start(Endpoint::Mock);
     let host = Host::start(&service);
-    host.register_shortcut();
+    host.register_shortcut(&service);
     let session = host.open(&service);
     // Typed into the panel (on the mock they land in the editor's text, as the window behind a
     // non-activating panel stays the focused one).
@@ -547,7 +551,7 @@ fn keys_typed_into_the_panel_never_reach_the_engine() {
 fn a_pick_for_a_snippet_with_blanks_opens_the_form_and_the_panels_do_not_fight() {
     let service = Service::start(Endpoint::Mock);
     let host = Host::start(&service);
-    host.register_shortcut();
+    host.register_shortcut(&service);
     let session = host.open(&service);
     let before = host.form_panel.events();
     host.palette
@@ -589,7 +593,7 @@ fn a_pick_for_a_snippet_with_blanks_opens_the_form_and_the_panels_do_not_fight()
 fn the_shortcut_again_closes_the_palette() {
     let service = Service::start(Endpoint::Mock);
     let host = Host::start(&service);
-    host.register_shortcut();
+    host.register_shortcut(&service);
     let session = host.open(&service);
     assert!(service.os.press_chord(Chord::parse(CHORD).expect("chord")));
     host.panel.wait("closed", |s| {
@@ -609,7 +613,7 @@ fn the_shortcut_again_closes_the_palette() {
 fn when_the_focus_cannot_be_given_back_nothing_is_sent_and_the_panel_returns() {
     let service = Service::start(Endpoint::Mock);
     let host = Host::start(&service);
-    host.register_shortcut();
+    host.register_shortcut(&service);
     let session = host.open(&service);
     service.os.refuse_focus_restore(true);
     let err = host
@@ -637,7 +641,7 @@ fn when_the_focus_cannot_be_given_back_nothing_is_sent_and_the_panel_returns() {
 fn a_panel_that_loses_the_keyboard_gives_it_back_to_the_app_and_takes_it_again() {
     let service = Service::start(Endpoint::Mock);
     let host = Host::start(&service);
-    host.register_shortcut();
+    host.register_shortcut(&service);
     let session = host.open(&service);
     // A click into the app behind: the panel stays, and the keys are the app's again.
     host.palette.keyboard(false);
@@ -669,7 +673,7 @@ fn the_lease_is_renewed_while_the_palette_is_open() {
     let host = Host::start_with(&service, |cfg| {
         cfg.lease_renewal = Duration::from_millis(150);
     });
-    host.register_shortcut();
+    host.register_shortcut(&service);
     let session = host.open(&service);
     // Longer than twice the lease (600 ms): the hold must outlive it because it is renewed, so
     // the clock is what is tested, not a wait for an event.
@@ -757,7 +761,7 @@ fn the_tray_s_fill_in_again_goes_to_the_window_that_was_in_front() {
 fn a_palette_whose_window_is_gone_or_that_the_system_closes_closes() {
     let service = Service::start(Endpoint::Mock);
     let host = Host::start(&service);
-    host.register_shortcut();
+    host.register_shortcut(&service);
     // Closed by the system (Alt+F4): as Esc.
     let session = host.open(&service);
     host.palette.close_requested();
@@ -814,7 +818,7 @@ fn opened_from_iamb_s_own_window_a_pick_goes_to_the_library_and_types_nothing() 
 fn the_last_form_is_offered_again_and_reopens_with_its_answers() {
     let service = Service::start(Endpoint::Mock);
     let host = Host::start(&service);
-    host.register_shortcut();
+    host.register_shortcut(&service);
     service.type_text("hi ");
     let form = host.form_panel.wait_shown(0);
     host.form
@@ -848,7 +852,7 @@ fn the_last_form_is_offered_again_and_reopens_with_its_answers() {
 fn a_palette_whose_panel_loses_the_service_closes() {
     let mut service = Service::start(Endpoint::Mock);
     let host = Host::start(&service);
-    host.register_shortcut();
+    host.register_shortcut(&service);
     let session = host.open(&service);
     service.stop_worker();
     host.panel.wait("closed", |s| {
@@ -862,7 +866,7 @@ fn a_palette_whose_panel_loses_the_service_closes() {
 fn a_ui_host_killed_with_the_palette_open_recovers() {
     let service = Service::start(Endpoint::Mock);
     let host = Host::start(&service);
-    host.register_shortcut();
+    host.register_shortcut(&service);
     host.open(&service);
     host.stop();
     // Typing expands at once: the hold ended with the connection.
@@ -998,7 +1002,7 @@ fn what_is_searched_reaches_no_log_through_the_palette_flow() {
     const CANARY: &str = "zqxpalettecanary";
     let service = Service::start(Endpoint::Mock);
     let host = Host::start(&service);
-    host.register_shortcut();
+    host.register_shortcut(&service);
     let session = host.open(&service);
     host.sink.data.search(&host.bridge, CANARY).expect("search");
     // The one place a query is used for anything else: handed to the library, once.
@@ -1174,7 +1178,7 @@ fn search_through_the_bridge_at_10000_snippets() {
 fn a_refused_pick_shows_a_notice_and_one_that_types_does_not() {
     let service = Service::start(Endpoint::Mock);
     let host = Host::start(&service);
-    host.register_shortcut();
+    host.register_shortcut(&service);
     // A pick that types: no notice.
     let session = host.open(&service);
     host.palette
@@ -1207,7 +1211,7 @@ fn a_refused_pick_shows_a_notice_and_one_that_types_does_not() {
 fn a_refused_form_insert_shows_a_notice_with_the_shortcut() {
     let service = Service::start(Endpoint::Mock);
     let host = Host::start(&service);
-    host.register_shortcut();
+    host.register_shortcut(&service);
     service.type_text("hi ");
     let session = host.form_panel.wait_shown(0);
     // The field turns into a password field before Insert.
