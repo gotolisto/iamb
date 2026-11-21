@@ -89,20 +89,41 @@ Rules for the recipient's library:
 
 ## What the sync design changes or adds (task 4.1)
 
-[`../../sync-design.md`](../../sync-design.md) fixes the rules behind this flow. Four points
-touch its copy:
+[`../../sync-design.md`](../../sync-design.md) fixes the rules behind this flow, and was revised
+after its review. These points touch the flow's copy:
 
 - **Step 2 promises more than version 1 does.** "Your other folders stay on this computer until
   you choose to sync or share them" is not true under the sync design: signing in adopts the
-  library on the computer into the account and syncs all of it; only shared folders are visible
-  to other people. This is open question 1 of the sync design (§13) and the owner's to decide.
-  The design's proposal for the sentence: "Signing in keeps your snippets in step between your
-  computers. Only folders you share can be seen by other people."
-- **A change the server refuses is kept.** When the folder became read-only, was unshared, or
-  the person was removed while their computer held changes it had not sent, those changes are
-  kept on that computer in a list, with [Copy to my snippets] (rule D5; UX spec §11.2, entry 20).
-  The row "The folder was unshared, or the user removed from the group" above gains: "2 changes
-  you made there were not synced. They are kept on this computer." [Show]
+  library on the computer into the account and syncs all of it, which stores it on Iamb's
+  server; only shared folders are visible to other people. This is open question 1 of the sync
+  design (§13) and the owner's to decide. The design's proposal for the sentence: "Signing in
+  stores your snippets on Iamb's server and keeps them in step between your computers. Only
+  folders you share can be seen by other people." Signing in also asks for the name other
+  people will see; no part of the email address is used as a name.
+- **A change the server refuses is kept.** When the folder became read-only, was unshared or
+  deleted, or the person was removed while their computer held changes it had not sent, those
+  changes are kept on that computer in a list, with [Copy to my snippets] (rules D5 and D6; UX
+  spec §11.2, entry 20). A deletion that was refused is listed there too, as a line that says
+  what was not deleted. The row "The folder was unshared, or the user removed from the group"
+  above gains: "2 changes you made there were not synced. They are kept on this computer."
+  [Show]
+- **Who may share.** The sync design recommends that in a family every member may share a
+  folder, as this flow shows, and that in a team only its owner and admins may (open question 7
+  of the sync design): a shared folder works on every member's computer within ten seconds,
+  with nothing for the recipient to accept. In this flow Ines owns the team, so nothing changes
+  for her; a team member who is not an admin sees [Share…] disabled for the team with "Only
+  the owner and admins of “Brindlewood team” can share folders with it."
+- **The review also holds a snippet that includes another snippet**, when someone else wrote
+  it: `{snippet}` types the reader's own snippet of that abbreviation, private ones included.
+  The table of what is held gains a row, "`{snippet}` · “[;sig] types your snippet ‘Signature’:
+  …” with the text it resolves to on this computer, or “[;sig] types a snippet of yours with
+  that abbreviation, when you have one”" (rule D10; open question 10 of the sync design, which
+  adds this to ADR-0022). "Not held" then reads: single-line plain text from other members that
+  includes no other snippet, and anything the user wrote themselves.
+- **A snippet that waits for review cannot be copied.** [Copy to my snippets], Duplicate and
+  dragging it into one of the user's own folders open the review instead: "Review this snippet
+  before you copy it." (rule D10, scenario S56). Otherwise the copy would be the user's own
+  snippet, with the other person's key presses, on all their computers.
 - **Sharing that was stopped elsewhere stays stopped.** A computer that was offline and shares a
   folder which another of the owner's computers has unshared in the meantime does not win:
   "Sharing of “Shop replies” was stopped on another computer." (rule C11, scenario S37).

@@ -53,8 +53,9 @@ jobs:
         run: cargo xtask banned-terms
       - name: Template spec examples
         run: python3 spec/template/reference.py
-      # docs/sync-design.md §12 is rendered from spec/sync/scenarios.toml; the structure of the
-      # scenarios themselves is checked by `cargo test -p iamb-testkit --test sync_scenarios`.
+      # docs/sync-design.md §12 is rendered from spec/sync/scenarios.toml; the scenarios'
+      # structure and outcomes (a ledger of every change and its answer) are checked by
+      # `cargo test -p iamb-testkit --test sync_scenarios`.
       - name: Sync scenarios written out
         run: python3 spec/sync/render_scenarios.py --check
 
