@@ -6,9 +6,14 @@
 //! `-psn_…` argument older systems pass to apps they launch is ignored.
 //!
 //! ```text
-//! iamb-service --supervise [--data-dir PATH] [--platform native|mock]
+//! iamb-service --supervise [--ui-host PATH | --no-ui-host] [--data-dir PATH] [--platform native|mock]
 //! iamb-service [--worker] [--data-dir PATH] [--platform native|mock] [--heartbeat-stdout]
 //! ```
+//!
+//! The supervisor also starts the UI host (`iamb-desktop`, installed beside it) and restarts it
+//! after an abnormal exit (`iamb_service::supervisor`, "The UI host"); `--ui-host` names another
+//! one, `--no-ui-host` starts none (the UI host passes it when it starts the supervisor itself).
+//! With `--platform mock` none is started unless `--ui-host` names one.
 //!
 //! `--platform mock` runs the worker against the in-memory mock platform: development and CI
 //! only (it is the only choice on Linux). `--heartbeat-stdout` is passed by the supervisor: the
@@ -25,7 +30,7 @@
 
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::thread;
@@ -38,12 +43,25 @@ use iamb_service::supervisor::{self, SupervisorConfig};
 use iamb_service::worker::{ExitReason, Worker, WorkerConfig};
 use iamb_service::{EXIT_RESTART, VERSION};
 
-const USAGE: &str = "usage: iamb-service [--supervise | --worker] [--data-dir PATH] [--platform native|mock] [--heartbeat-stdout]";
+const USAGE: &str = "usage: iamb-service [--supervise [--ui-host PATH | --no-ui-host] | --worker] [--data-dir PATH] [--platform native|mock] [--heartbeat-stdout]";
+
+/// What `--ui-host` and `--no-ui-host` asked for.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+enum UiHostChoice {
+    /// Neither: the installed UI host on the native platform, none on the mock one.
+    #[default]
+    Default,
+    /// `--ui-host PATH`.
+    Path(PathBuf),
+    /// `--no-ui-host`.
+    None,
+}
 
 #[derive(Debug, Default)]
 struct Args {
     /// `--supervise` (true) or `--worker` (false); `None` when neither was given.
     supervise: Option<bool>,
+    ui_host: UiHostChoice,
     data_dir: Option<PathBuf>,
     platform: Option<PlatformChoice>,
     heartbeat_stdout: bool,
@@ -58,6 +76,11 @@ fn parse(args: impl Iterator<Item = OsString>) -> Result<Option<Args>, String> {
             Some("--worker") => out.supervise = Some(false),
             Some(psn) if psn.starts_with("-psn_") => {}
             Some("--heartbeat-stdout") => out.heartbeat_stdout = true,
+            Some("--no-ui-host") => out.ui_host = UiHostChoice::None,
+            Some("--ui-host") => {
+                out.ui_host =
+                    UiHostChoice::Path(PathBuf::from(args.next().ok_or("--ui-host needs a path")?));
+            }
             Some("--data-dir") => {
                 out.data_dir = Some(PathBuf::from(args.next().ok_or("--data-dir needs a path")?));
             }
@@ -121,7 +144,7 @@ fn main() -> ExitCode {
         .platform
         .unwrap_or_else(PlatformChoice::default_for_build);
     if args.supervise.unwrap_or_else(launched_as_login_item) {
-        return supervise(dirs, choice, &hardening);
+        return supervise(dirs, choice, &args.ui_host, &hardening);
     }
     let supervised = args.heartbeat_stdout;
     #[cfg(target_os = "macos")]
@@ -151,7 +174,25 @@ fn crash_handling(log: &Arc<Logger>, dirs: &DataDirs, process: &'static str, h: 
     }
 }
 
-fn supervise(dirs: DataDirs, choice: PlatformChoice, hardening: &Hardening) -> ExitCode {
+/// The UI host the supervisor starts (`supervisor` module docs, "The UI host"): the one
+/// `--ui-host` names; none with `--no-ui-host`; otherwise, on the native platform, the one
+/// installed with this executable, when it is there.
+fn ui_host(choice: &UiHostChoice, platform: PlatformChoice, exe: &Path) -> Option<PathBuf> {
+    match choice {
+        UiHostChoice::Path(p) => Some(p.clone()),
+        UiHostChoice::Default if platform == PlatformChoice::Native => {
+            iamb_service::paths::ui_host_beside(exe).filter(|p| p.is_file())
+        }
+        UiHostChoice::None | UiHostChoice::Default => None,
+    }
+}
+
+fn supervise(
+    dirs: DataDirs,
+    choice: PlatformChoice,
+    ui: &UiHostChoice,
+    hardening: &Hardening,
+) -> ExitCode {
     let log = Arc::new(Logger::open(&dirs.logs(), "supervisor"));
     crash_handling(&log, &dirs, "supervisor", hardening);
     let exe = match std::env::current_exe() {
@@ -166,7 +207,15 @@ fn supervise(dirs: DataDirs, choice: PlatformChoice, hardening: &Hardening) -> E
         "--platform".into(),
         choice.as_str().into(),
     ];
-    let cfg = SupervisorConfig::new(dirs, exe, worker_args);
+    let ui_host = ui_host(ui, choice, &exe).map(|exe| supervisor::Program {
+        exe,
+        args: vec!["--data-dir".into(), dirs.root().as_os_str().to_owned()],
+    });
+    if ui_host.is_none() {
+        log.info(format_args!("no ui host to start"));
+    }
+    let mut cfg = SupervisorConfig::new(dirs, exe, worker_args);
+    cfg.ui_host = ui_host;
     match supervisor::run(&cfg, &log) {
         Ok(supervisor::Outcome::Stopped) => ExitCode::SUCCESS,
         Ok(supervisor::Outcome::AlreadyRunning) => {

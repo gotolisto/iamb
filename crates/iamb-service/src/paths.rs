@@ -151,6 +151,28 @@ pub fn is_login_item_helper(exe: &Path) -> bool {
             .is_some_and(|ext| ext == "app")
 }
 
+/// The UI host's file name (`iamb-desktop`, `iamb-desktop.exe`).
+pub const UI_HOST_EXE: &str = if cfg!(windows) {
+    "iamb-desktop.exe"
+} else {
+    "iamb-desktop"
+};
+
+/// The UI host installed with the supervisor whose executable is `exe` (architecture §3.2): in
+/// the macOS helper layout (ADR-0021) the main app's executable,
+/// `Iamb.app/Contents/MacOS/iamb-desktop`; otherwise `iamb-desktop` next to the supervisor (the
+/// Windows installer's layout, `/usr/bin` on Linux, `target/` while developing). Whether it exists
+/// is the caller's question.
+#[must_use]
+pub fn ui_host_beside(exe: &Path) -> Option<PathBuf> {
+    if is_login_item_helper(exe) {
+        // …/Iamb.app/Contents/Library/LoginItems/<helper>.app/Contents/MacOS/<exe>
+        let main_contents = exe.ancestors().nth(6)?;
+        return Some(main_contents.join("MacOS").join(UI_HOST_EXE));
+    }
+    exe.parent().map(|dir| dir.join(UI_HOST_EXE))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,6 +194,23 @@ mod tests {
     #[test]
     fn nothing_known_is_none() {
         assert_eq!(default_root(|_| None), None);
+    }
+
+    #[test]
+    fn the_ui_host_is_found_where_the_installers_put_it() {
+        assert_eq!(
+            ui_host_beside(Path::new(
+                "/Applications/Iamb.app/Contents/Library/LoginItems/Iamb Service.app/Contents/MacOS/iamb-service"
+            )),
+            Some(PathBuf::from(format!(
+                "/Applications/Iamb.app/Contents/MacOS/{UI_HOST_EXE}"
+            )))
+        );
+        assert_eq!(
+            ui_host_beside(Path::new("/opt/iamb/iamb-service")),
+            Some(PathBuf::from(format!("/opt/iamb/{UI_HOST_EXE}")))
+        );
+        assert_eq!(ui_host_beside(Path::new("")), None);
     }
 
     #[test]

@@ -30,12 +30,23 @@
 //! killing the worker. This is the minimal stand-in for the control pipe of ADR-0023, which
 //! updates still need.
 //!
+//! # The UI host
+//!
+//! §3.2 has the supervisor start the UI host too, so that the menu-bar or tray icon appears after
+//! login (the login item starts the supervisor alone). When [`SupervisorConfig::ui_host`] is set,
+//! [`run`] starts it once it holds the lock, on a thread of its own, and supervises it by its exit
+//! only (no heartbeat): an abnormal exit restarts it after the same backoff as the worker's, with
+//! its own count; status 0 (the user quit it, or another UI host already runs for this data root
+//! and this one stepped aside) ends its supervision. The UI host outlives a supervisor that stops:
+//! it then says "Iamb is not running" and offers to start it again. `main` sets it to the
+//! installed UI host ([`crate::paths::ui_host_beside`]) for the native platform, to the one
+//! `--ui-host` names, and to none with `--no-ui-host` or the mock platform (tests and
+//! development).
+//!
 //! # Hook points
 //!
-//! - **UI host and sync agent.** §3.2 has the supervisor start and restart `iamb-desktop` and
-//!   `iamb-sync` too. They do not exist yet. Each will be one more [`Child`] supervised by the
-//!   same loop (their own backoff counters; no heartbeat, exit-only supervision), added in
-//!   [`run`] where the comment says so.
+//! - **Sync agent.** §3.2 has the supervisor start and restart `iamb-sync` too. It will be
+//!   supervised as the UI host is ([`supervise_by_exit`]).
 //! - **Updates** (ADR-0023): the UI host will ask the supervisor, over a private pipe with the
 //!   peer verification of ADR-0006, to stop the worker and to start it again.
 
@@ -44,6 +55,7 @@ use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Read};
 use std::path::PathBuf;
 use std::process::{Child as Process, ChildStdin, Command, ExitStatus, Stdio};
+use std::sync::Arc;
 use std::sync::mpsc::{RecvTimeoutError, channel};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -100,6 +112,18 @@ pub struct SupervisorConfig {
     pub backoff: Vec<Duration>,
     /// Normally [`HEALTHY_AFTER`].
     pub healthy_after: Duration,
+    /// The UI host to start and supervise by its exit (module docs, "The UI host"); none by
+    /// default.
+    pub ui_host: Option<Program>,
+}
+
+/// A program the supervisor starts: its executable and arguments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Program {
+    /// The executable.
+    pub exe: PathBuf,
+    /// Its arguments.
+    pub args: Vec<OsString>,
 }
 
 impl SupervisorConfig {
@@ -114,6 +138,7 @@ impl SupervisorConfig {
             startup_grace: STARTUP_GRACE,
             backoff: BACKOFF.to_vec(),
             healthy_after: HEALTHY_AFTER,
+            ui_host: None,
         }
     }
 }
@@ -252,12 +277,73 @@ fn watch(
     }
 }
 
+/// Starts the thread that supervises the UI host (module docs, "The UI host").
+fn start_ui_host(program: Program, cfg: &SupervisorConfig, log: &Arc<Logger>) {
+    let backoff = cfg.backoff.clone();
+    let healthy_after = cfg.healthy_after;
+    let thread_log = Arc::clone(log);
+    if let Err(e) = thread::Builder::new()
+        .name("iamb-ui-host".to_owned())
+        .spawn(move || supervise_by_exit("ui host", &program, &backoff, healthy_after, &thread_log))
+    {
+        log.error(format_args!("cannot supervise the ui host: {e}"));
+    }
+}
+
+/// Starts `program` and starts it again after an abnormal exit, with the backoff `schedule`,
+/// until it exits with status 0. `name` is for the log.
+pub fn supervise_by_exit(
+    name: &str,
+    program: &Program,
+    schedule: &[Duration],
+    healthy_after: Duration,
+    log: &Logger,
+) {
+    let mut failures = 0_usize;
+    loop {
+        let started = Instant::now();
+        let spawned = Command::new(&program.exe)
+            .args(&program.args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn();
+        match spawned {
+            Ok(mut child) => {
+                let pid = child.id();
+                log.info(format_args!("{name} started: pid {pid}"));
+                match child.wait() {
+                    Ok(status) if status.success() => {
+                        log.info(format_args!("{name} {pid} exited; not restarted"));
+                        return;
+                    }
+                    Ok(status) => {
+                        log.warn(format_args!("{name} {pid} exited abnormally: {status}"));
+                    }
+                    Err(e) => log.error(format_args!("cannot wait for {name} {pid}: {e}")),
+                }
+            }
+            Err(e) => log.error(format_args!("cannot start the {name}: {e}")),
+        }
+        if started.elapsed() >= healthy_after {
+            failures = 0;
+        }
+        failures += 1;
+        let delay = backoff_delay(schedule, failures);
+        log.info(format_args!(
+            "restarting the {name} in {} ms (failure {failures})",
+            delay.as_millis()
+        ));
+        thread::sleep(delay);
+    }
+}
+
 /// Runs the supervisor until the worker stops normally.
 ///
 /// # Errors
 ///
 /// I/O errors taking the lock.
-pub fn run(cfg: &SupervisorConfig, log: &Logger) -> io::Result<Outcome> {
+pub fn run(cfg: &SupervisorConfig, log: &Arc<Logger>) -> io::Result<Outcome> {
     let Some(_lock) = take_lock(&cfg.dirs)? else {
         log.info(format_args!("another supervisor is running; exiting"));
         return Ok(Outcome::AlreadyRunning);
@@ -269,7 +355,10 @@ pub fn run(cfg: &SupervisorConfig, log: &Logger) -> io::Result<Outcome> {
     ));
     // A request from before this supervisor: the worker it starts now is the fresh one.
     let _ = take_request(&cfg.dirs);
-    // Hook point: start the UI host and the sync agent here once they exist (module docs).
+    if let Some(ui) = &cfg.ui_host {
+        start_ui_host(ui.clone(), cfg, log);
+    }
+    // Hook point: start the sync agent here once it exists (module docs).
     let mut failures = 0_usize;
     let mut attempt = 0_u64;
     loop {

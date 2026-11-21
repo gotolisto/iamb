@@ -416,16 +416,25 @@ pub async fn onboarding_finish(ui: State<'_, Arc<Ui>>, window: WebviewWindow) ->
 }
 
 /// "Start Iamb when I log in": registers (`Some(true)`) or removes (`Some(false)`) the login
-/// item, or only reads it (`None`).
-#[tauri::command]
-pub async fn onboarding_login_item(window: WebviewWindow, enabled: Option<bool>) -> Res<LoginView> {
-    only_onboarding(&window)?;
+/// item, or only reads it (`None`). The setup window's last step and Settings → General.
+///
+/// # Errors
+///
+/// `unavailable` when there is no login item or the system refuses.
+pub async fn login_item(enabled: Option<bool>) -> Res<LoginView> {
     tauri::async_runtime::spawn_blocking(move || match enabled {
         Some(on) => host().set_login(on),
         None => host().login_status(),
     })
     .await
     .map_err(|_| CommandError::new("internal", "the request did not finish"))?
+}
+
+/// "Start Iamb when I log in" at the end of setup ([`login_item`]).
+#[tauri::command]
+pub async fn onboarding_login_item(window: WebviewWindow, enabled: Option<bool>) -> Res<LoginView> {
+    only_onboarding(&window)?;
+    login_item(enabled).await
 }
 
 /// Opens the library window and, unless `close_this` is false, closes this one.

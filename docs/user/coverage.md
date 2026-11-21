@@ -13,7 +13,7 @@ Status:
 - **Not in this version**: the feature belongs to sync or accounts, which are in progress.
 - **TODO**: the page says something that still needs confirming. The TODO is also in the page itself.
 
-Counts: 115 features listed. Documented 97, Gap 13, Not in this version 5. The gaps and TODOs are
+Counts: 115 features listed. Documented 98, Gap 12, Not in this version 5. The gaps and TODOs are
 listed at the end. Documented rows were checked against the code on the date of the last review:
 claims the code did not support were corrected or removed, and the pages say where something is
 not confirmed.
@@ -115,8 +115,8 @@ not confirmed.
 | Feature | Source | Page | Status |
 | --- | --- | --- | --- |
 | General: pause switch, tray icon switch, appearance | `GeneralSection.tsx` | [Settings](settings.md#general) | Documented |
-| Start Iamb when I log in (setup only; registers the background service, which does not start the icon yet) | `onboarding/steps.tsx`, `login_item.rs`, `supervisor.rs` | [Get started](getting-started.md#start-at-login), [Settings](settings.md#settings-not-in-this-version) | Documented |
-| Start Iamb when I log in in Settings | UX spec 4.7 | none | Gap |
+| Start Iamb when I log in at the end of setup; the background service starts the menu icon and windows at login and restarts them after a crash | `onboarding/steps.tsx`, `login_item.rs`, `supervisor.rs` "The UI host" | [Get started](getting-started.md#start-at-login) | Documented |
+| Start Iamb when I log in in Settings | UX spec 4.7, `GeneralSection.tsx`, `settings_commands.rs` | [Settings](settings.md#general) | Documented |
 | Updates section and automatic updates | UX spec 4.7 | [Settings](settings.md#settings-not-in-this-version) | Gap |
 | Typing settings | `TypingSection.tsx` | [Settings](settings.md#typing) | Documented |
 | Date and time formats with custom format and errors | `DatesSection.tsx` | [Settings](settings.md#dates) | Documented |
@@ -187,29 +187,27 @@ saying they are missing. Each one needs a decision before the page can say more.
    the signing secrets exist (`docs/release.md`).
 2. **Crash reports.** The switch is saved, but no code sends reports. The Settings page still says
    "A report says where Iamb failed". Confirm before publishing.
-3. **Start at login in Settings.** Only in setup. It registers the background service; the
-   supervisor does not start the menu icon or windows yet.
-4. **Updates.** No update check or automatic install in the app.
-5. **Shortcuts for fill-in again and pause.** Not in the app.
-6. **Import and export in the library window.** Only in the command line. The paste-fidelity notes
+3. **Updates.** No update check or automatic install in the app.
+4. **Shortcuts for fill-in again and pause.** Not in the app.
+5. **Import and export in the library window.** Only in the command line. The paste-fidelity notes
    refer to an Import button that does not exist yet.
-7. **Share a folder, and drag to reorder or nest.** Not in the app.
-8. **Show as text (raw source) in the editor, and Move to… in More actions.** Not in the app.
-9. **Quit Iamb.** It asks only about unsaved edits, and it ends the UI host only. The spec says it
+6. **Share a folder, and drag to reorder or nest.** Not in the app.
+7. **Show as text (raw source) in the editor, and Move to… in More actions.** Not in the app.
+8. **Quit Iamb.** It asks only about unsaved edits, and it ends the UI host only. The spec says it
     asks "Abbreviations stop expanding…" and stops the service too. Not confirmed what keeps running.
-10. **Missing-permission banner in the library window (macOS).** Not in the app.
-11. **Opening the library from Applications or the Start menu.** A second start of Iamb exits without
+9. **Missing-permission banner in the library window (macOS).** Not in the app.
+10. **Opening the library from Applications or the Start menu.** A second start of Iamb exits without
     opening anything. With the menu icon hidden, the library is reached through the search
     shortcut and Ctrl+E. Confirm with the design.
-12. **Installing the `iamb` command.** The installers carry the desktop app and the service only.
-13. **Compatibility results.** The matrix is a plan. No published results exist yet
+11. **Installing the `iamb` command.** The installers carry the desktop app and the service only.
+12. **Compatibility results.** The matrix is a plan. No published results exist yet
     (`docs/results/` does not exist), so `troubleshooting.md` lists the differences without test
     outcomes.
-14. **Version number in About, and the log folder button.** Not shown.
-15. **Linux desktop.** The architecture says Linux is for development and the command line, and the
+13. **Version number in About, and the log folder button.** Not shown.
+14. **Linux desktop.** The architecture says Linux is for development and the command line, and the
     Linux package is marked development. The pages follow the architecture.
-16. **Accessibility results.** The manual screen-reader runs are not recorded.
-17. **Review of snippets from other people, shared folders, accounts.** Belong to sync and accounts,
+15. **Accessibility results.** The manual screen-reader runs are not recorded.
+16. **Review of snippets from other people, shared folders, accounts.** Belong to sync and accounts,
     which are in progress. The sync client crate exists but nothing starts it.
 
 Not verified against code or a running app: the text of system prompts in the installers, what opening

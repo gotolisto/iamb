@@ -94,11 +94,12 @@ named **Iamb Service**). If Iamb cannot
 change it, you can start Iamb yourself from the Applications folder (macOS) or the Start menu
 (Windows).
 
-This box is only offered in setup. See [Settings](settings.md#settings-not-in-this-version).
+You can change this later in [Settings](settings.md#general), under **General**.
 
-What starts at login is Iamb's background service, the part that expands snippets. In this version it
-does not start the menu icon or the windows.
-<!-- TODO: confirm. The supervisor does not start the UI host yet (supervisor.rs, "Hook points"). The Settings window has no start-at-login switch. -->
+What starts at login is Iamb's background service. It starts the rest of Iamb, so the menu icon
+appears after you log in, ready for the search shortcut and the menu. If the menu icon and its
+windows close unexpectedly, the background service starts them again; when you quit Iamb yourself,
+they stay closed.
 
 ## Your first snippet
 

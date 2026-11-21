@@ -42,6 +42,7 @@ describe("the commands", () => {
     void api.putExclusion("mybank.exe", "My bank", true);
     void api.recentDiagnostics();
     void api.testAbbreviation(";rty");
+    void api.loginItem(false);
     expect(calls.map(([c]) => c)).toEqual([
       "settings_get",
       "settings_put",
@@ -50,12 +51,14 @@ describe("the commands", () => {
       "settings_put_exclusion",
       "diagnostics_recent",
       "diagnostics_test",
+      "settings_login_item",
     ]);
     for (const [command] of calls) expect(COMMANDS as readonly string[]).toContain(command);
     expect(calls[1]?.[1]).toEqual({ key: "locale", value: "de" });
     // Removing a setting sends no value.
     expect(calls[2]?.[1]).toEqual({ key: "locale", value: null });
     expect(calls[4]?.[1]).toEqual({ appId: "mybank.exe", displayName: "My bank", excluded: true });
+    expect(calls[7]?.[1]).toEqual({ enabled: false });
   });
 
   it("name every key once", () => {

@@ -385,7 +385,7 @@ pub const RESTART_REQUEST: &str = "restart-worker";
 /// How the UI host starts the supervisor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Launch {
-    /// Runs the executable, `iamb-service --supervise --data-dir …` (Windows, Linux, and
+    /// Runs the executable, `iamb-service --supervise --no-ui-host --data-dir …` (Windows, Linux, and
     /// development builds on macOS).
     Direct(PathBuf),
     /// Opens the helper app inside `Iamb.app` through the system (`open -g`, macOS), so that it
@@ -426,8 +426,10 @@ pub fn launch_candidates(ui_exe: &Path, macos: bool) -> Vec<Launch> {
 /// The program and the arguments that start the supervisor for the data root `root`.
 #[must_use]
 pub fn launch_command(launch: &Launch, root: &Path) -> (PathBuf, Vec<OsString>) {
+    // `--no-ui-host`: this UI host is the one; the supervisor is not to start another.
     let service_args = [
         OsString::from("--supervise"),
+        OsString::from("--no-ui-host"),
         OsString::from("--data-dir"),
         root.as_os_str().to_owned(),
     ];
@@ -650,7 +652,10 @@ mod tests {
         let root = Path::new("/data/iamb");
         let (program, args) = launch_command(&Launch::Direct("/x/iamb-service".into()), root);
         assert_eq!(program, Path::new("/x/iamb-service"));
-        assert_eq!(args, ["--supervise", "--data-dir", "/data/iamb"]);
+        assert_eq!(
+            args,
+            ["--supervise", "--no-ui-host", "--data-dir", "/data/iamb"]
+        );
         let (program, args) = launch_command(&Launch::Open("/A/Iamb Service.app".into()), root);
         assert_eq!(program, Path::new("/usr/bin/open"));
         assert_eq!(
@@ -660,6 +665,7 @@ mod tests {
                 "/A/Iamb Service.app",
                 "--args",
                 "--supervise",
+                "--no-ui-host",
                 "--data-dir",
                 "/data/iamb"
             ]

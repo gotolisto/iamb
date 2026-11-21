@@ -49,7 +49,7 @@ fn a_restart_leaves_the_request_and_starts_the_supervisor_for_the_data_root() {
     let deadline = Instant::now() + Duration::from_secs(10);
     let written = loop {
         if let Ok(text) = std::fs::read_to_string(&args)
-            && text.lines().count() >= 3
+            && text.lines().count() >= 4
         {
             break text;
         }
@@ -57,9 +57,8 @@ fn a_restart_leaves_the_request_and_starts_the_supervisor_for_the_data_root() {
         std::thread::sleep(Duration::from_millis(20));
     };
     let lines: Vec<&str> = written.lines().collect();
-    assert_eq!(lines[0], "--supervise");
-    assert_eq!(lines[1], "--data-dir");
-    assert_eq!(Path::new(lines[2]), data.path());
+    assert_eq!(lines[..3], ["--supervise", "--no-ui-host", "--data-dir"]);
+    assert_eq!(Path::new(lines[3]), data.path());
 
     let mode = std::fs::metadata(data.path().join("run"))
         .expect("run dir")

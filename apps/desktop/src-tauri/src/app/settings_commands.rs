@@ -59,6 +59,18 @@ pub async fn settings_put(
     Ok(())
 }
 
+/// "Start Iamb when I log in" in Settings → General: registers (`Some(true)`) or removes
+/// (`Some(false)`) the login item, or only reads it (`None`). Not a service setting: the UI host
+/// asks the system (specification §11.1).
+#[tauri::command]
+pub async fn settings_login_item(
+    window: WebviewWindow,
+    enabled: Option<bool>,
+) -> Res<crate::onboarding::LoginView> {
+    super::commands::caller(&window, &[super::windows::LIBRARY])?;
+    super::onboarding_commands::login_item(enabled).await
+}
+
 /// The apps where Iamb does not expand.
 #[tauri::command]
 pub async fn settings_list_exclusions(

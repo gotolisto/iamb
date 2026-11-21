@@ -253,6 +253,7 @@ pub fn run(dirs: DataDirs, options: &Options, log: &Arc<Logger>) -> tauri::Resul
             settings_commands::settings_put,
             settings_commands::settings_list_exclusions,
             settings_commands::settings_put_exclusion,
+            settings_commands::settings_login_item,
             settings_commands::diagnostics_recent,
             settings_commands::diagnostics_test,
             form_panel::form_ready,

@@ -59,6 +59,13 @@ export interface TestResult {
   error: string | null;
 }
 
+/** "Start Iamb when I log in" as the system has it (`LoginView` in src-tauri/src/onboarding.rs). */
+export type LoginState = "enabled" | "disabled" | "requires_approval" | "unavailable";
+
+export function isLoginState(v: unknown): v is LoginState {
+  return v === "enabled" || v === "disabled" || v === "requires_approval" || v === "unavailable";
+}
+
 /** The commands, over `invoke` (Tauri's, or a fake in tests). */
 export function createSettingsApi(invoke: Invoke) {
   return {
@@ -74,6 +81,12 @@ export function createSettingsApi(invoke: Invoke) {
     recentDiagnostics: () => invoke<Diagnostic[]>("diagnostics_recent"),
     /** What typing `typed` would do; nothing is typed or stored. */
     testAbbreviation: (typed: string) => invoke<TestResult>("diagnostics_test", { typed }),
+    /** Registers (true) or removes (false) the login item; no argument only reads it. */
+    loginItem: async (enabled?: boolean) => {
+      const state = await invoke<unknown>("settings_login_item", { enabled: enabled ?? null });
+      if (!isLoginState(state)) throw { code: "unexpected_response", message: "not a login item state" };
+      return state;
+    },
   };
 }
 

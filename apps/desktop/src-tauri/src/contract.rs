@@ -82,6 +82,7 @@ pub const COMMANDS: &[&str] = &[
     "settings_put",
     "settings_list_exclusions",
     "settings_put_exclusion",
+    "settings_login_item",
     "diagnostics_recent",
     "diagnostics_test",
     // The onboarding window's commands (`app/onboarding_commands.rs`, task 3.7).

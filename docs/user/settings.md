@@ -11,6 +11,7 @@ This page lists every setting in the app, with its default.
 
 | Setting | Choices | Default | What it does |
 | --- | --- | --- | --- |
+| **Start Iamb when I log in** | On or off | On (set at the end of setup) | Starts Iamb when you sign in to your computer: its background service and the menu icon. On macOS the system may ask you to approve it once, in System Settings under Login Items. If this copy of Iamb cannot start at login, the switch is off and cannot be changed. |
 | **Expand snippets as I type** | On or off | On | Turn off to pause Iamb everywhere. The menu has the same switch, **Pause Iamb**. Search still works while paused. |
 | **Show the Iamb icon in the menu bar** (macOS) or **in the notification area** (Windows) | On or off | On | Turn off to hide the icon. Iamb keeps running. With the icon hidden, the library window is reached with the [search shortcut](search.md) and **Ctrl+E** (**⌘E** on macOS). |
 | **Appearance** | Follow the system, Light, Dark | Follow the system | The colours of the library window. |
@@ -107,8 +108,6 @@ About does not show a version number or a link to the log folder.
 
 These settings are planned but not in the app yet:
 
-- Start Iamb when I log in (it is offered only at the end of setup; see
-  [Get started](getting-started.md#start-at-login)).
 - Check for updates and install them.
 - Shortcuts for fill-in forms and for pause.
 - Account and sync settings (see [Sync](sync.md) and [Accounts](accounts.md)).
