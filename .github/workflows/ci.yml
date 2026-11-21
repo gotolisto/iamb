@@ -5,6 +5,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      installers:
+        description: Also build the installers and run the install smoke test (unsigned; about 30-60 min)
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -291,6 +296,16 @@ jobs:
           sudo apt-get install -y --no-install-recommends postgresql postgresql-contrib
       - name: Policy tests
         run: server/tests/run.sh
+
+  # The installers and the install smoke test (docs/release.md), on demand only: a manual run
+  # with `installers` ticked. Every release runs them too (release.yml). Not part of `ci-ok`, so
+  # pull requests do not wait for them. Never signed from here.
+  installers:
+    name: installers
+    if: github.event_name == 'workflow_dispatch' && inputs.installers
+    uses: ./.github/workflows/installers.yml
+    with:
+      sign: false
 
   # Single required status check for branch protection.
   ci-ok:

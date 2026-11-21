@@ -1,5 +1,10 @@
 //! `iamb-service`: the supervisor (`--supervise`) or the worker (`--worker`, the default).
 //!
+//! On macOS the installed supervisor is a login-item helper app inside `Iamb.app` (ADR-0021),
+//! which the system starts without arguments; there, with neither `--supervise` nor `--worker`
+//! given, the default is `--supervise` (`iamb_service::paths::is_login_item_helper`). The
+//! `-psn_…` argument older systems pass to apps they launch is ignored.
+//!
 //! ```text
 //! iamb-service --supervise [--data-dir PATH] [--platform native|mock]
 //! iamb-service [--worker] [--data-dir PATH] [--platform native|mock] [--heartbeat-stdout]
@@ -37,7 +42,8 @@ const USAGE: &str = "usage: iamb-service [--supervise | --worker] [--data-dir PA
 
 #[derive(Debug, Default)]
 struct Args {
-    supervise: bool,
+    /// `--supervise` (true) or `--worker` (false); `None` when neither was given.
+    supervise: Option<bool>,
     data_dir: Option<PathBuf>,
     platform: Option<PlatformChoice>,
     heartbeat_stdout: bool,
@@ -48,8 +54,9 @@ fn parse(args: impl Iterator<Item = OsString>) -> Result<Option<Args>, String> {
     let mut args = args.peekable();
     while let Some(arg) = args.next() {
         match arg.to_str() {
-            Some("--supervise") => out.supervise = true,
-            Some("--worker") => out.supervise = false,
+            Some("--supervise") => out.supervise = Some(true),
+            Some("--worker") => out.supervise = Some(false),
+            Some(psn) if psn.starts_with("-psn_") => {}
             Some("--heartbeat-stdout") => out.heartbeat_stdout = true,
             Some("--data-dir") => {
                 out.data_dir = Some(PathBuf::from(args.next().ok_or("--data-dir needs a path")?));
@@ -113,7 +120,7 @@ fn main() -> ExitCode {
     let choice = args
         .platform
         .unwrap_or_else(PlatformChoice::default_for_build);
-    if args.supervise {
+    if args.supervise.unwrap_or_else(launched_as_login_item) {
         return supervise(dirs, choice, &hardening);
     }
     let supervised = args.heartbeat_stdout;
@@ -125,6 +132,12 @@ fn main() -> ExitCode {
         return ExitCode::from(u8::try_from(code).unwrap_or(1));
     }
     ExitCode::from(work(&dirs, choice, supervised, &hardening))
+}
+
+/// True when this process is the macOS login-item helper started by the system (module docs).
+fn launched_as_login_item() -> bool {
+    cfg!(target_os = "macos")
+        && std::env::current_exe().is_ok_and(|exe| iamb_service::paths::is_login_item_helper(&exe))
 }
 
 /// The panic hook (by location only: a panic message could quote data) and the log line that

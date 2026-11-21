@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements of Iamb.app (the UI host, iamb-desktop), signed with the hardened runtime.
+
+  Deliberately empty: the UI host is not sandboxed, so it needs no entitlement for its network
+  use (update checks, opt-in crash reports); the system web view runs its scripts in the
+  system's own processes, so no JIT or unsigned-memory exception is needed; it sends no Apple
+  Events, loads no third-party libraries and reads no keystrokes (that is the helper's job,
+  ADR-0021). Add a key here only with the reason next to it (docs/release.md).
+-->
+<plist version="1.0">
+<dict/>
+</plist>

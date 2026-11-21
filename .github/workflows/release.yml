@@ -1,0 +1,96 @@
+# Release (docs/release.md): on a tag `v*`, or by hand from the Actions tab.
+#
+# 1. version: the tag must be `v` + [workspace.package] version in Cargo.toml.
+# 2. installers: build the macOS disk image, the Windows installer and the Linux package, signed
+#    where the owner has added the signing secrets (unsigned otherwise, said in the job summary),
+#    then the install smoke test on fresh runners (installers.yml).
+# 3. publish (tags only): a draft GitHub release with the installers and SHA256SUMS. The owner
+#    reviews and publishes it by hand.
+#
+# A manual run builds and tests the installers of the chosen branch or tag and keeps them as
+# workflow artifacts; it publishes nothing.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    name: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: The version has one source, and the tag matches it
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$REF_TYPE" = tag ]; then
+            cargo xtask release-version --tag "$REF_NAME"
+          else
+            cargo xtask release-version
+          fi
+
+  installers:
+    name: installers
+    needs: version
+    uses: ./.github/workflows/installers.yml
+    with:
+      sign: true
+    secrets: inherit
+
+  publish:
+    name: publish (draft release)
+    needs: [version, installers]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installer-*
+          path: artifacts
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.installers.outputs.version }}
+        run: |
+          mkdir -p dist
+          signing=""
+          for info in artifacts/*/build-info.json; do
+            dir="$(dirname "$info")"
+            installer="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['installer'])" "$info")"
+            mode="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['mode'])" "$info")"
+            cp "$dir/$installer" dist/
+            signing="$signing- \`$installer\`: $mode"$'\n'
+          done
+          (cd dist && sha256sum -- * > SHA256SUMS)
+          {
+            echo "Iamb $VERSION"
+            echo
+            echo "Signing of this build (\`unsigned\` means the system warns on first open; see docs/release.md):"
+            echo
+            printf '%s' "$signing"
+            echo
+            echo "Checksums are in SHA256SUMS."
+          } > notes.md
+          gh release create "$TAG" dist/* --draft --verify-tag --title "Iamb $VERSION" --notes-file notes.md

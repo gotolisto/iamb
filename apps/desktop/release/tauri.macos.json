@@ -1,0 +1,14 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "bundle": {
+    "targets": ["app", "dmg"],
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "hardenedRuntime": true,
+      "entitlements": "../release/macos/Iamb.entitlements",
+      "files": {
+        "Library/LoginItems/Iamb Service.app": "../release/out/Iamb Service.app"
+      }
+    }
+  }
+}

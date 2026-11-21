@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Info.plist of the helper app Iamb.app/Contents/Library/LoginItems/Iamb Service.app
+  (ADR-0021). build-helper.sh replaces @VERSION@ (the release version) and @BUILD@
+  (its MAJOR.MINOR.PATCH, the only form CFBundleVersion accepts). The bundle identifier must stay equal to
+  HELPER_BUNDLE_ID in crates/iamb-platform-macos/src/login_item.rs: the main app registers the
+  login item by it, and the user's Accessibility and Input Monitoring grants belong to it.
+  LSUIElement: an agent app, no Dock icon and no menu bar (the worker also sets the Accessory
+  activation policy itself).
+-->
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleDisplayName</key>
+  <string>Iamb Service</string>
+  <key>CFBundleExecutable</key>
+  <string>iamb-service</string>
+  <key>CFBundleIconFile</key>
+  <string>icon.icns</string>
+  <key>CFBundleIdentifier</key>
+  <string>org.iamb.Iamb.Service</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>Iamb Service</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>@VERSION@</string>
+  <key>CFBundleVersion</key>
+  <string>@BUILD@</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>13.0</string>
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSHumanReadableCopyright</key>
+  <string>AGPL-3.0-or-later</string>
+</dict>
+</plist>

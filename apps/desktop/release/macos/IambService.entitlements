@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements of the helper app "Iamb Service.app" (iamb-service: supervisor and worker),
+  signed with the hardened runtime.
+
+  Deliberately empty. The helper observes keys with an event tap and posts synthetic keys;
+  macOS controls both through the user's Accessibility and Input Monitoring grants (TCC),
+  which are given to the helper's signed identity in System Settings and are not entitlements
+  of an app outside the sandbox (architecture §5, ADR-0021). It has no network code (ADR-0008),
+  sends no Apple Events, and loads no code that is not signed with it, so no hardened-runtime
+  exception applies. Add a key here only with the reason next to it (docs/release.md).
+-->
+<plist version="1.0">
+<dict/>
+</plist>

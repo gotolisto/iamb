@@ -2,7 +2,6 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Iamb",
   "mainBinaryName": "iamb-desktop",
-  "version": "0.0.0",
   "identifier": "org.iamb.Iamb",
   "build": {
     "devUrl": "http://localhost:1420",

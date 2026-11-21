@@ -116,6 +116,34 @@ pub fn create_private_dir(dir: &Path) -> io::Result<()> {
     }
 }
 
+/// True when `exe` is the executable of a login-item helper app, the installed layout of the
+/// supervisor on macOS (ADR-0021): `….app/Contents/Library/LoginItems/<name>.app/Contents/MacOS/<exe>`.
+///
+/// The system starts a login item without arguments, so `main` takes this layout to mean
+/// `--supervise` when neither `--supervise` nor `--worker` is given. A development binary
+/// (`target/…/iamb-service`) and the worker the supervisor starts (always with `--worker`) are
+/// unaffected.
+#[must_use]
+pub fn is_login_item_helper(exe: &Path) -> bool {
+    let Some(helper) = exe
+        .parent()
+        .filter(|p| p.ends_with("Contents/MacOS"))
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+    else {
+        return false;
+    };
+    helper.extension().is_some_and(|ext| ext == "app")
+        && helper
+            .parent()
+            .filter(|p| p.ends_with("Contents/Library/LoginItems"))
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .and_then(Path::extension)
+            .is_some_and(|ext| ext == "app")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,5 +165,29 @@ mod tests {
     #[test]
     fn nothing_known_is_none() {
         assert_eq!(default_root(|_| None), None);
+    }
+
+    #[test]
+    fn the_installed_helper_is_recognised() {
+        assert!(is_login_item_helper(Path::new(
+            "/Applications/Iamb.app/Contents/Library/LoginItems/Iamb Service.app/Contents/MacOS/iamb-service"
+        )));
+        // Not inside an outer app.
+        assert!(!is_login_item_helper(Path::new(
+            "/tmp/Contents/Library/LoginItems/Iamb Service.app/Contents/MacOS/iamb-service"
+        )));
+        // The main app's own executable, a sidecar next to it, a development build.
+        assert!(!is_login_item_helper(Path::new(
+            "/Applications/Iamb.app/Contents/MacOS/iamb-service"
+        )));
+        assert!(!is_login_item_helper(Path::new(
+            "/Users/ada/iamb/target/release/iamb-service"
+        )));
+        assert!(!is_login_item_helper(Path::new("iamb-service")));
+        // Windows and Linux installs.
+        assert!(!is_login_item_helper(Path::new(
+            r"C:\Users\Ada\AppData\Local\Iamb\iamb-service.exe"
+        )));
+        assert!(!is_login_item_helper(Path::new("/usr/bin/iamb-service")));
     }
 }
