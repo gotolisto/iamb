@@ -108,6 +108,13 @@ if [[ -z "$filter" || "restore" == *"$filter"* ]]; then
     run_one "restore" restore_test
 fi
 
+# §11.6: a push of 200 ops and a cascade of 2,000 rows against push's 20 s time-out.
+if [[ -z "$filter" || "perf" == *"$filter"* ]]; then
+    perf_test() { psql -U postgres -d "$1" -f "$here/perf.sql" -At | tail -1 > "$work/perf.json"; }
+    run_one "perf" perf_test
+    [[ -s "$work/perf.json" ]] && echo "      $(cat "$work/perf.json")"
+fi
+
 # G20: the function log holds ids, counts and codes, never row content. The tests write bodies,
 # labels, names and addresses that would show here if a log line carried them.
 if [[ -z "$filter" ]]; then

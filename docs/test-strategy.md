@@ -982,3 +982,43 @@ KPI: 0 critical accessibility issues, against WCAG 2.1 AA (`docs/ux/spec.md` §8
 - **Not covered here**: real screen readers (NVDA, Narrator, VoiceOver), the focus handed to and
   taken back from the non-activating panels, Increase contrast on macOS, real 200% zoom and the
   zoom keys, and the native title bar; `docs/accessibility-run.md` lists the steps for a person.
+
+## 9. Sync server (task 4.2)
+
+The server's schema, row-level security and database functions (`server/`, built from
+`docs/sync-design.md`) are tested by SQL tests that act as each kind of user of §4 of the design
+(owner, admin, member with `edit`, member with `view`, former member, stranger, a revoked device, a
+session that ended, a session opened with a password) and fail on any violation. `server/README.md`
+has the layout, the table of which test covers which guarantee, and how to run them.
+
+- **Where they run.** Locally and in CI (the `server` job, Linux) against a throwaway Postgres cluster
+  with a stand-in for the platform's `auth`, `storage` and `realtime` schemas (`server/tests/run.sh`;
+  the README lists what the stand-in cannot model), with the migrations applied twice. Against the
+  hosted project through the Management API, each file inside a transaction that is rolled back
+  (`server/tests/hosted.sh`), plus the authentication checks with throwaway accounts
+  (`server/tests/hosted_auth_probe.py`).
+- **What they cover.** The plan's three: an outsider reads nothing (`03_outsider`: every table, every
+  reading function, the stored files, the live channel); a viewer cannot write (`04_viewer`: every op of
+  §4.3 and every account call the role does not allow); a removed member loses access, including through
+  the feed, the history, conflicts, attachments, the live channel and the rows he wrote (`05_removed_member`,
+  also for an ended share and a deleted shared folder). Then every guarantee G1 to G23 of §11.5 that can
+  be tested in the database, among them the two-connection tests of G21 (`20_concurrency`: each second
+  request is seen waiting on the first's locks), the restore procedure against a real dump
+  (`restore_test.sh`, G23 and the restore checks of §11.6), and a scan of the function log for row
+  content (G20). After every step of every test, `folder_access` is compared with the slow reference of
+  §5.4 (G1), the folder tree is checked (I7), and for every actor the rows the policies give are
+  compared with the server's own rule for who may read a row.
+- **Measured** (§11.6): a push of 200 ops and a folder delete that takes 2,000 rows, against push's own
+  time-out of 20 s (`server/tests/perf.sql`).
+
+Results (2026-11-21):
+
+| KPI or check | Target | Result |
+| --- | --- | --- |
+| Row-level security on the tables of Iamb's schemas | 100% | 29 of 29, locally and on the hosted project; the exposed schemas `api` and `api_service` hold no table |
+| Security advisor warnings | 0 | 24, all lint 0029 (a signed-in user can run a `security definer` function of `api`), which is the design's write path and which Supabase documents as intentional for per-user privileged operations; the one other warning (a mutable `search_path` on the retention job) was fixed. See `server/README.md`, "The hosted project" |
+| Performance advisor warnings | 0 | 0 (4 findings at INFO level: indexes unused on a project without traffic) |
+| Local tests | all pass | 21 of 21: 18 SQL files, the restore test, the measurement, the log scan; about 35 s |
+| Hosted tests | all pass | 17 of 17 SQL files (all but the concurrency file, which needs a superuser), rolled back; the authentication checks as listed in the README |
+| Push of 200 ops | < 20 s | 0.21-0.31 s locally, 0.44 s on the hosted project |
+| Cascade of 2,000 rows | < 20 s | 1.4 s locally, 4.6 s on the hosted project |

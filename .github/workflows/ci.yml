@@ -275,12 +275,29 @@ jobs:
       - name: iamb-core line coverage (gate 85%)
         run: cargo llvm-cov -p iamb-core --locked --summary-only --fail-under-lines 85
 
+  # The server's schema, policies and functions (server/README.md): the policy tests against a
+  # local Postgres with a stand-in for the platform's auth, storage and realtime schemas, the
+  # restore test, the two-connection concurrency tests and the log check. Linux only: the tests
+  # exercise SQL, not the operating system.
+  server:
+    name: server (policy tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Postgres
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql postgresql-contrib
+      - name: Policy tests
+        run: server/tests/run.sh
+
   # Single required status check for branch protection.
   ci-ok:
     name: ci-ok
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [lint, test, coverage, desktop]
+    needs: [lint, test, coverage, desktop, server]
     if: always()
     steps:
       - name: Require all jobs to have succeeded

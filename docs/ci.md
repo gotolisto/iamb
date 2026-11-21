@@ -60,8 +60,15 @@ Tauri dependencies would slow every leg.
   which run a worker on the mock platform in the test process (and, on Linux, kill a UI host
   child process).
 - `coverage` (Linux): `cargo llvm-cov` on `iamb-core`; fails below 85% line coverage.
-- `ci-ok`: succeeds only if `lint`, `coverage`, every `test` leg and every `desktop` leg
-  succeeded. This is the single check to require in branch protection.
+- `server` (Linux): the sync server's schema, policies and functions (`server/README.md`). It
+  installs Postgres from the distribution and runs `server/tests/run.sh`, which starts a
+  throwaway cluster, loads a stand-in for the platform's `auth`, `storage` and `realtime`
+  schemas, applies `server/supabase/migrations/` twice, and runs the policy tests, the
+  two-connection concurrency tests, the restore test, a measurement of push and cascade times,
+  and a check that no function log line carries row content. Linux only: the tests exercise SQL,
+  not the operating system.
+- `ci-ok`: succeeds only if `lint`, `coverage`, `server`, every `test` leg and every `desktop`
+  leg succeeded. This is the single check to require in branch protection.
 
 `.github/workflows/bench.yml` runs the four benchmarks in quick mode and uploads the results. On
 pushes to `main` and manual runs it runs them once, report only. On a pull request it runs them
@@ -98,6 +105,7 @@ On Linux the workspace-wide commands below include `iamb-desktop`, which needs t
     cargo xtask banned-terms
     python3 spec/template/reference.py
     cargo llvm-cov -p iamb-core --locked --summary-only --fail-under-lines 85
+    server/tests/run.sh
 
 The `desktop` job's steps:
 

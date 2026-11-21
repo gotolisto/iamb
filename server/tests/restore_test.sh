@@ -131,6 +131,7 @@ begin
                                 and x.profile_id = coalesce(w.profile_id, iamb_private.row_profile(w.entity, w.id))), 0)),
         'every row below the new epoch is at or below its profile''s backup_rev');
     perform iamb_test.ok((select rev from iamb.snippet where id = s1) = (ids ->> 'w1')::bigint, 'w2 was lost');
+    perform iamb_test.ok((after ->> 'w2')::bigint > backup, 'a write committed just after the backup is above the profile''s line');
     -- The script made again what took access away, and nothing that gives access.
     perform iamb_test.ok(exists (select 1 from jsonb_array_elements(report -> 'calls') c
                                  where c -> 'line' ->> 'event' = 'remove_member' and c ->> 'result' = 'made_again'), 'remove_member made again');
