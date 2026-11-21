@@ -70,7 +70,7 @@ const RET_RESULTS = (): PaletteResults => ({
       { label: "Return label", abbreviation: ";rret" },
       { field: "abbreviation", ranges: [[2, 5]] },
     ),
-    hit({ label: "Return refused", abbreviation: ";rno", firstLine: "I am sorry, {field name=Name}" }),
+    hit({ label: "Return refused", abbreviation: ";rno", firstLine: "I am sorry, {field name=Name}", hasFields: true }),
     hit({ label: "Wheel retensioning", abbreviation: ";wten", enabled: false }),
     hit({ label: "Out of stock", abbreviation: ";roos", tags: ["returns"] }, { field: "tag", ranges: [[0, 3]] }),
   ],
@@ -352,10 +352,24 @@ describe("a service that does not answer", () => {
       vi.advanceTimersByTime(DOWN_MS);
     });
     expect(screen.getByText("Iamb is not running.")).toBeTruthy();
-    // "Start it again" asks again.
-    h.api.search.mockClear();
-    await user.click(screen.getByRole("button", { name: "Start it again" }));
-    expect(h.api.search).toHaveBeenCalledWith("retu");
+    // The previous results stay, dimmed (flow 5), and nothing offers a restart that no build
+    // performs.
+    expect(screen.getAllByRole("option").length).toBeGreaterThan(0);
+    expect(document.querySelector(".pl-list")?.getAttribute("data-dim")).toBe("true");
+    expect(screen.queryByRole("button", { name: "Start it again" })).toBeNull();
+  });
+
+  it("keeps the previous results on screen while a newer search is pending", async () => {
+    const h = await opened();
+    h.answers.set("ret", RET_RESULTS());
+    const user = userEvent.setup({ advanceTimers: (ms) => vi.advanceTimersByTime(ms) });
+    await user.type(screen.getByRole("combobox"), "ret");
+    await screen.findByText("4 of 76");
+    const before = screen.getAllByRole("option").length;
+    h.api.search.mockImplementation(() => new Promise(() => undefined));
+    await user.type(screen.getByRole("combobox"), "u");
+    expect(screen.getAllByRole("option")).toHaveLength(before);
+    expect(screen.queryByText(/New snippet labelled/)).toBeNull();
   });
 
   it("says so at once when the search fails", async () => {

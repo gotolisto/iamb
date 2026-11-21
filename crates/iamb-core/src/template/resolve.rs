@@ -83,6 +83,11 @@ pub(crate) struct Expanded {
 }
 
 impl Expanded {
+    /// A `{field}` or `{if}` in this body or any body below it.
+    pub(crate) const fn has_form(&self) -> bool {
+        self.has_form
+    }
+
     fn new(body: Arc<Body>, abbr: Option<&str>, snippets: Vec<Arc<Expanded>>, rich: bool) -> Self {
         let own_form = body
             .form_events

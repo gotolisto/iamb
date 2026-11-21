@@ -20,6 +20,10 @@
 //! Nothing here is derived from the rules of the design beyond those three facts. What an
 //! account call writes into a row, what an adoption makes of a local row and where the server
 //! puts a folder it had to place elsewhere are not known here, and such versions are skipped.
+//!
+//! The module also reads off the scenario which group each membership and share belongs to
+//! (`row_groups`), from which the ledger tells which profiles a user's memberships and shares
+//! reach.
 
 use std::collections::BTreeMap;
 
@@ -116,6 +120,57 @@ pub(super) fn row_profiles(scenario: &Scenario) -> BTreeMap<&str, &str> {
         }
     }
     profiles
+}
+
+/// Membership or share → its group, and membership → its account, for the rows of the start and
+/// those the steps create. A membership is created by the acceptance of an invitation, and has
+/// that invitation's group and account.
+pub(super) fn row_groups(scenario: &Scenario) -> (BTreeMap<&str, &str>, BTreeMap<&str, &str>) {
+    let mut groups = BTreeMap::new();
+    let mut members = BTreeMap::new();
+    // Invitation → its group and the account invited.
+    let mut invited: BTreeMap<&str, (&str, &str)> = BTreeMap::new();
+    for row in &scenario.start.rows {
+        let (Some(group), id) = (row.group.as_deref(), row.id.as_str()) else {
+            continue;
+        };
+        match (row.entity.as_str(), row.user.as_deref()) {
+            ("folder_share", _) => {
+                groups.insert(id, group);
+            }
+            ("membership", Some(user)) => {
+                groups.insert(id, group);
+                members.insert(id, user);
+            }
+            ("invitation", Some(user)) => {
+                invited.insert(id, (group, user));
+            }
+            _ => {}
+        }
+    }
+    for step in &scenario.steps {
+        let (group, user) = (step.group.as_deref(), step.user.as_deref());
+        match (step.action.as_str(), &step.row, &step.creates) {
+            ("create", Some(row), _) if step.entity.as_deref() == Some("folder_share") => {
+                if let Some(group) = group {
+                    groups.insert(row.as_str(), group);
+                }
+            }
+            ("invite", _, Some(row)) => {
+                if let (Some(group), Some(user)) = (group, user) {
+                    invited.insert(row.as_str(), (group, user));
+                }
+            }
+            ("accept", Some(invitation), Some(row)) => {
+                if let Some((group, user)) = invited.get(invitation.as_str()) {
+                    groups.insert(row.as_str(), group);
+                    members.insert(row.as_str(), user);
+                }
+            }
+            _ => {}
+        }
+    }
+    (groups, members)
 }
 
 impl<'a> Ledger<'a> {

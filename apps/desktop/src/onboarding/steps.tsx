@@ -419,20 +419,31 @@ export function TryStep(props: {
     }
   }, [api]);
 
+  // The service takes the window that has the keyboard as the field, so the field is declared
+  // when it has the keyboard (its focus), not when the step mounts, when another Iamb window
+  // may hold it; and again every poll while it has the focus, so that a service that restarted
+  // (it forgets the field) takes it back without the person doing anything.
+  const focused = useRef(false);
+  const onFocus = () => {
+    focused.current = true;
+    void declare().then((ok) => {
+      if (!ok && alive.current) void diagnose();
+    });
+  };
   useEffect(() => {
     if (blocked) return;
-    let live = true;
-    void declare().then((ok) => {
-      if (live && !ok) void diagnose();
-    });
+    const timer = setInterval(() => {
+      if (focused.current) void declare();
+    }, pollMs);
     return () => {
-      live = false;
+      clearInterval(timer);
+      focused.current = false;
       if (declared.current) {
         declared.current = false;
         void api.testField(false).catch(() => undefined);
       }
     };
-  }, [blocked, declare, diagnose, api]);
+  }, [blocked, declare, api, pollMs]);
 
   // ---- Did it expand? Did nothing happen? ----------------------------------------------------
   useEffect(() => {
@@ -583,6 +594,10 @@ export function TryStep(props: {
           readOnly={worked}
           onChange={(e) => change(e.target.value)}
           onKeyDown={onKey}
+          onFocus={onFocus}
+          onBlur={() => {
+            focused.current = false;
+          }}
           onCompositionStart={() => {
             composing.current = true;
           }}

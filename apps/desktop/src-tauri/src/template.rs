@@ -36,6 +36,7 @@
 use std::collections::BTreeMap;
 
 use std::path::Path;
+use std::sync::Mutex;
 
 use iamb_core::model::Id;
 use iamb_ipc::{
@@ -234,6 +235,60 @@ fn image_type(bytes: &[u8]) -> Option<&'static str> {
     }
 }
 
+/// The most bytes of `data:` URIs the preview keeps for the next refresh.
+const IMAGE_CACHE_BYTES: usize = 32 * 1024 * 1024;
+
+/// The `data:` URIs of recent images, by the hash that names them (an attachment's bytes never
+/// change under their hash), oldest first. The preview refreshes 150 ms after each keystroke and
+/// would otherwise read, check and encode every image of the snippet each time.
+#[derive(Default)]
+struct ImageCache {
+    entries: std::collections::VecDeque<(String, std::sync::Arc<str>)>,
+    bytes: usize,
+}
+
+impl ImageCache {
+    fn get(&self, key: &str) -> Option<std::sync::Arc<str>> {
+        self.entries
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, uri)| std::sync::Arc::clone(uri))
+    }
+
+    fn put(&mut self, key: &str, uri: &std::sync::Arc<str>) {
+        if uri.len() > IMAGE_CACHE_BYTES {
+            return;
+        }
+        self.bytes += uri.len();
+        self.entries
+            .push_back((key.to_owned(), std::sync::Arc::clone(uri)));
+        while self.bytes > IMAGE_CACHE_BYTES {
+            let Some((_, old)) = self.entries.pop_front() else {
+                break;
+            };
+            self.bytes -= old.len();
+        }
+    }
+}
+
+fn image_cache() -> std::sync::MutexGuard<'static, ImageCache> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<ImageCache>> = std::sync::OnceLock::new();
+    CACHE
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// [`data_uri`] of the file at `path`, kept by `hash`.
+fn cached_data_uri(hash: &str, path: &Path) -> Option<std::sync::Arc<str>> {
+    if let Some(uri) = image_cache().get(hash) {
+        return Some(uri);
+    }
+    let uri: std::sync::Arc<str> = data_uri(path)?.into();
+    image_cache().put(hash, &uri);
+    Some(uri)
+}
+
 /// The bytes of an attachment's file as a `data:` URI, when it is an image of a size the
 /// preview shows.
 fn data_uri(path: &Path) -> Option<String> {
@@ -274,7 +329,7 @@ pub fn embed_images(html: &str, attachments: &[WireAttachment]) -> String {
             .iter()
             .find(|a| a.sha256.to_string() == hex)
             .and_then(|a| a.path.as_deref())
-            .and_then(data_uri);
+            .and_then(|path| cached_data_uri(hex, path));
         match uri {
             Some(uri) => {
                 out.push_str("<img src=\"");
@@ -582,6 +637,30 @@ mod tests {
         ] {
             assert!(REQUESTS.contains(&body.name()));
         }
+    }
+
+    #[test]
+    fn an_image_is_read_and_encoded_once_however_often_the_preview_refreshes() {
+        use iamb_core::model::Sha256;
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("pic");
+        std::fs::write(&path, b"\x89PNG\r\n\x1a\nnot really a picture").expect("write");
+        // A hash of its own, so that no other test shares the cache entry.
+        let sha = Sha256::from_bytes([0x5c; 32]);
+        let attachment = WireAttachment {
+            sha256: sha,
+            mime: "image/png".to_owned(),
+            size: 30,
+            file_name: "pic.png".to_owned(),
+            path: Some(path.clone()),
+        };
+        let html = format!("<p><img src=\"attachment:{sha}\" alt=\"pic\"></p>");
+        let first = embed_images(&html, std::slice::from_ref(&attachment));
+        assert!(first.contains("src=\"data:image/png;base64,"), "{first}");
+        // The file is gone: a second refresh is served from the cache, not read again.
+        std::fs::remove_file(&path).expect("remove");
+        let second = embed_images(&html, std::slice::from_ref(&attachment));
+        assert_eq!(second, first);
     }
 
     #[test]

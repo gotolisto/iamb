@@ -425,6 +425,13 @@ impl Resolved {
         self.form.fields()
     }
 
+    /// True when the template asks for values: a `{field}` or `{if}` anywhere in it, in an
+    /// included snippet too. Cheap: it does not build the form ([`form`](Self::form)).
+    #[must_use]
+    pub fn has_form(&self) -> bool {
+        self.root.has_form()
+    }
+
     /// True when a `{clipboard}` appears anywhere in the resolved template (taken branch or not),
     /// so the clipboard must be read at match time.
     #[must_use]

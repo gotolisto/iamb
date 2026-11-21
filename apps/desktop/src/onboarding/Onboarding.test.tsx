@@ -29,6 +29,9 @@ async function toSnippet(options: Parameters<typeof rig>[0] = {}) {
   return r;
 }
 
+/** What the field was told, consecutive repeats of one answer counted once (it is renewed). */
+const told = (r: { testField: boolean[] }) => r.testField.filter((on, i) => i === 0 || on !== r.testField[i - 1]);
+
 /** Saves the starter snippet and arrives at the Try step. */
 async function toTry(options: Parameters<typeof rig>[0] = {}) {
   const r = await toSnippet(options);
@@ -296,7 +299,7 @@ describe("Step 3: First snippet", () => {
 describe("Step 4: Try it", () => {
   it("declares the test field on entering and withdraws it on leaving", async () => {
     const r = await toTry();
-    expect(r.testField).toEqual([true]);
+    expect(told(r)).toEqual([true]);
     expect(screen.getByText(/and then a/).textContent).toBe("Type ;em and then a space.");
     expect(screen.getByText(/Iamb expands when you finish the word with a space or with punctuation such as/)).toBeTruthy();
     expect(screen.getByText(/Enter and Tab do not expand a snippet\./)).toBeTruthy();
@@ -304,7 +307,35 @@ describe("Step 4: Try it", () => {
     expect(field().rows).toBe(3);
     await userEvent.setup().click(button("Back"));
     await onStep(/Make your first snippet/);
-    expect(r.testField).toEqual([true, false]);
+    expect(told(r)).toEqual([true, false]);
+  });
+
+  it("declares the field when it has the keyboard, not when the step mounts", async () => {
+    const r = await toTry();
+    // The field has the focus on entering, so it is declared; another window of Iamb that
+    // held the keyboard at the time of the mount would have been declared before.
+    expect(r.testField.length).toBeGreaterThan(0);
+    const before = r.testField.length;
+    fireEvent.blur(field());
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const idle = r.testField.length;
+    // Without the keyboard it asks nothing (a blurred field is not renewed) ...
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(r.testField.length).toBe(idle);
+    expect(idle).toBeGreaterThanOrEqual(before);
+    // ... and a focus declares it again.
+    fireEvent.focus(field());
+    await waitFor(() => expect(r.testField.length).toBeGreaterThan(idle));
+    expect(r.testField.at(-1)).toBe(true);
+  });
+
+  it("declares the field again while it has the keyboard, for a service that restarted", async () => {
+    const r = await toTry();
+    const first = r.testField.length;
+    // The service forgot the field at a restart: nothing in the window changed, yet it is
+    // declared again within a few polls.
+    await waitFor(() => expect(r.testField.length).toBeGreaterThanOrEqual(first + 3));
+    expect(r.testField.every(Boolean)).toBe(true);
   });
 
   it("withdraws the test field when the window closes", async () => {
@@ -315,7 +346,7 @@ describe("Step 4: Try it", () => {
     await userEvent.setup().click(button(/Save and try it/));
     await onStep(/Try it here/);
     unmount();
-    await waitFor(() => expect(r.testField).toEqual([true, false]));
+    await waitFor(() => expect(told(r)).toEqual([true, false]));
   });
 
   it("recognises the expansion, announces it and puts the keyboard on Continue", async () => {

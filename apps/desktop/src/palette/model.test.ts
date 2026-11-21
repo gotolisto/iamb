@@ -36,15 +36,18 @@ describe("the rows of the palette", () => {
     expect(itemsFor("warranty", answer("warranty"), null)).toEqual([{ kind: "new", label: "warranty" }]);
   });
 
-  it("shows nothing for a query that has not been answered yet, not the old answer", () => {
-    expect(itemsFor("rete", answer("ret", hit()), null)).toEqual([]);
+  it("keeps the previous rows while the answer to the new query is pending, but never its no-match row", () => {
+    const old = hit();
+    expect(itemsFor("rete", answer("ret", old), null)).toEqual([{ kind: "hit", hit: old }]);
+    expect(itemsFor("warranty", answer("war"), null)).toEqual([]);
+    expect(itemsFor("rete", null, null)).toEqual([]);
   });
 });
 
 describe("what Enter does", () => {
   const items = {
     plain: { kind: "hit" as const, hit: hit() },
-    asks: { kind: "hit" as const, hit: hit({ firstLine: "Hi {field name=Name}" }) },
+    asks: { kind: "hit" as const, hit: hit({ firstLine: "Hi {field name=Name}", hasFields: true }) },
     review: { kind: "hit" as const, hit: hit({ needsReview: true }) },
     broken: { kind: "hit" as const, hit: hit({ broken: "E_UNKNOWN_MACRO" }) },
     off: { kind: "hit" as const, hit: hit({ enabled: false }) },
@@ -60,6 +63,15 @@ describe("what Enter does", () => {
     expect(verbOf(items.clash, false)).toBe("insert");
     expect(verbOf({ kind: "again", label: "x" }, false)).toBe("form");
     expect(verbOf({ kind: "new", label: "x" }, false)).toBe("create");
+  });
+
+  it("asks for values by the service's flag, not by the first line", () => {
+    // The field is on a later line or in an included snippet: the first line shows none.
+    const later = { kind: "hit" as const, hit: hit({ firstLine: "Dear customer,", hasFields: true }) };
+    expect(verbOf(later, false)).toBe("fill");
+    // A literal brace in the first line is not a field.
+    const literal = { kind: "hit" as const, hit: hit({ firstLine: "{field name=Name}", hasFields: false }) };
+    expect(verbOf(literal, false)).toBe("insert");
   });
 
   it("types or opens the form for a snippet, and opens the library for the others", () => {
@@ -162,6 +174,12 @@ describe("the preview", () => {
     };
     expect(previewText(preview)).toBe("Hi ⟨tab ×2⟩");
     expect(previewText(null)).toBe("");
+    // A formatted snippet shows its text, not its Markdown.
+    const rich: TemplatePreview = {
+      ...preview,
+      parts: [{ part: "formatted", html: "<p><strong>Hi</strong></p>", plain: "Hi" }],
+    };
+    expect(previewText(rich)).toBe("Hi");
     expect(previewText({ ...preview, error: { code: "E_X", message: "m", start: 0, end: 1 } as never })).toBe("");
   });
 });

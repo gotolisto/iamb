@@ -207,6 +207,7 @@ export function createFake(options: FakeOptions = {}) {
     trigger: s.trigger,
     enabled: s.enabled,
     tags: s.tags,
+    hasFields: /\{(field|if)\b/.test(s.body),
     broken: brokenOf(s),
     uses: usage.get(s.id)?.uses ?? 0,
     lastUsed: usage.get(s.id)?.lastUsed ?? null,

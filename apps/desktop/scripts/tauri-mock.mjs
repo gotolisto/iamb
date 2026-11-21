@@ -25,6 +25,7 @@ export const mock = (count) => {
     abbreviation: `;${words[i % words.length].slice(0, 3)}${i}`,
     label: `${words[(i * 7) % words.length]} ${words[(i * 3) % words.length]} ${i}`,
     firstLine: i % 5 === 0 ? `Hello {field name="Name"}, thank you for your ${words[i % words.length]}.` : `Thank you for your ${words[i % words.length]} number ${i}.`,
+    hasFields: i % 5 === 0,
     kind: "plain",
     trigger: "delimiter",
     enabled: i % 17 !== 0,

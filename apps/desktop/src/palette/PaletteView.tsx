@@ -77,7 +77,7 @@ function rowLabel(item: Item, index: number, total: number): string {
     case "hit": {
       const row = item.hit.row;
       const parts = [titleOf(item.hit), `abbreviation ${speakAbbreviation(row.abbreviation)}`];
-      if (asksForValues(row.firstLine)) parts.push("asks for values");
+      if (asksForValues(row)) parts.push("asks for values");
       if (!row.enabled) parts.push("off");
       if (row.needsReview) parts.push("needs your review");
       if (isTemplateError(row.broken)) parts.push("broken");
@@ -132,7 +132,7 @@ function ItemRow({
     body = (
       <>
         <span className="pl-nm">
-          {asksForValues(row.firstLine) && (
+          {asksForValues(row) && (
             <span className="pl-ask" title={copy.asks}>
               <Icon name="field" title={copy.asks} />
             </span>
@@ -521,10 +521,9 @@ export function PaletteView({
         )}
         {health === "down" && (
           <div className="pl-notice" role="alert">
-            <span>{copy.notRunning}</span>{" "}
-            <button type="button" className="pl-link" onClick={() => runSearch(query)}>
-              {copy.startAgain}
-            </button>
+            {/* No "Start it again": nothing in this build can start the service (the
+                supervisor has no control pipe yet, ADR-0023), and the next key searches again. */}
+            <span>{copy.notRunning}</span>
           </div>
         )}
         <div className="pl-body">
@@ -541,7 +540,7 @@ export function PaletteView({
             role="listbox"
             aria-label={copy.title}
             aria-keyshortcuts={keys.aria.rows}
-            data-dim={health === "slow" ? "true" : undefined}
+            data-dim={health !== "ok" ? "true" : undefined}
           >
             {items.map((it, i) => (
               <ItemRow

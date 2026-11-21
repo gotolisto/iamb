@@ -83,6 +83,10 @@ def step_text(step: dict) -> str:
         "leave": f"{at}: the user leaves the group (membership {row}).",
         "sign_out": f"{at}: the user signs out.",
         "backup": "A backup of the server's database is taken.",
+        "replay_calls": (
+            "The operator's restore script makes again, from the function log, the calls that "
+            "took access away after the backup."
+        ),
     }
     if do in simple:
         return simple[do]

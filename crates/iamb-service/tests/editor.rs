@@ -381,6 +381,43 @@ fn summaries_come_in_pages_without_bodies() {
 }
 
 #[test]
+fn a_summary_says_whether_the_snippet_asks_for_values_wherever_the_field_is() {
+    let h = Harness::start(&[
+        (1, "plain", "no fields here\n{date}", false),
+        (2, "late", "first line\nsecond {field name=Name}", false),
+        (3, "inc", "see {snippet abbr=\"late\"}", false),
+        (4, "cond", "x\n{if field=Opt}yes{endif}", false),
+        (5, "bad", "{field name=", false),
+    ]);
+    let mut ui = h.client(Role::Ui);
+    let ResponseBody::SnippetSummaries { summaries, .. } = call(
+        &mut ui,
+        RequestBody::ListSnippetSummaries {
+            query: SnippetQuery::default(),
+            offset: 0,
+            limit: 10,
+        },
+    ) else {
+        panic!("not summaries")
+    };
+    let asks = |abbr: &str| {
+        summaries
+            .iter()
+            .find(|s| s.abbreviation == abbr)
+            .unwrap_or_else(|| panic!("no {abbr}"))
+            .has_fields
+    };
+    assert!(!asks("plain"), "a macro that asks nothing");
+    assert!(asks("late"), "a field on a later line");
+    assert!(asks("inc"), "a field in an included snippet");
+    assert!(asks("cond"), "an {{if}} on a later line");
+    assert!(
+        !asks("bad"),
+        "a template that does not compile asks nothing"
+    );
+}
+
+#[test]
 fn an_abbreviation_is_checked_without_saving() {
     let h = Harness::start(LIBRARY);
     let mut ui = h.client(Role::Ui);

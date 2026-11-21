@@ -33,7 +33,7 @@ export const mock = (config) => {
   const summary = (s) => ({
     id: s.id, folderId: s.folderId, abbreviation: s.abbreviation, label: s.label,
     firstLine: s.body.split("\n")[0].slice(0, 120), kind: s.kind, trigger: s.trigger, enabled: s.enabled,
-    tags: s.tags, broken: null, uses: null, lastUsed: null, updatedAt: s.updatedAt,
+    tags: s.tags, hasFields: fieldsOf(s.body).length > 0, broken: null, uses: null, lastUsed: null, updatedAt: s.updatedAt,
   });
 
   // A tokenizer for `{name attr="value" ...}` macros: literal text and macros covering the source.
@@ -71,7 +71,7 @@ export const mock = (config) => {
   const rows = (hits) => ({
     total: snippets.size,
     hits: hits.map((s) => ({
-      row: { id: s.id, abbreviation: s.abbreviation, label: s.label, folder: "Replies", firstLine: s.body.split("\n")[0], kind: s.kind === "rich" ? "rich" : fieldsOf(s.body).length ? "form" : "plain", enabled: s.enabled, broken: null, needsReview: false, tags: s.tags },
+      row: { id: s.id, abbreviation: s.abbreviation, label: s.label, folder: "Replies", firstLine: s.body.split("\n")[0], kind: s.kind === "rich" ? "rich" : fieldsOf(s.body).length ? "form" : "plain", enabled: s.enabled, broken: null, hasFields: fieldsOf(s.body).length > 0, needsReview: false, tags: s.tags },
       field: "label", ranges: [],
     })),
   });

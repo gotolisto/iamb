@@ -568,8 +568,10 @@ fn a_pick_for_a_snippet_with_blanks_opens_the_form_and_the_panels_do_not_fight()
     assert_eq!(service.text(), "brb ");
     // While the form is open the shortcut does nothing.
     let shows = host.panel.shows();
+    let refused = service.log_count("desktop", "palette: not opened, a form is open");
     assert!(service.os.press_chord(Chord::parse(CHORD).expect("chord")));
-    std::thread::sleep(Duration::from_millis(300));
+    // The palette's flow says it saw the shortcut and refused it: wait for that, not for a time.
+    service.wait_log_count("desktop", "palette: not opened, a form is open", refused);
     assert_eq!(
         host.panel.shows(),
         shows,
@@ -649,9 +651,11 @@ fn a_panel_that_loses_the_keyboard_gives_it_back_to_the_app_and_takes_it_again()
         std::thread::sleep(Duration::from_millis(20));
     }
     assert!(host.panel.visible(), "the panel stays open");
-    // Back into the panel: its keys are dropped again.
+    // Back into the panel: its keys are dropped again. Wait for the service to say it took the
+    // panel's hold in (its log), not for a time.
+    let holds = service.log_count("worker", "panel has the keyboard");
     host.palette.keyboard(true);
-    std::thread::sleep(Duration::from_millis(200));
+    service.wait_log_count("worker", "panel has the keyboard", holds);
     let text = service.text();
     service.type_text("omw ");
     assert_eq!(service.text(), format!("{text}omw "), "nothing expanded");
@@ -667,6 +671,8 @@ fn the_lease_is_renewed_while_the_palette_is_open() {
     });
     host.register_shortcut();
     let session = host.open(&service);
+    // Longer than twice the lease (600 ms): the hold must outlive it because it is renewed, so
+    // the clock is what is tested, not a wait for an event.
     std::thread::sleep(Duration::from_millis(1500));
     service.type_text("brb ");
     assert_eq!(service.text(), "brb ", "still the panel's keyboard");
@@ -881,6 +887,10 @@ fn search_forgives_typos_ranks_and_says_where() {
     let found = data.search(&host.bridge, "hi").expect("search");
     assert_eq!(found.hits[0].row.id, id(3).to_string());
     assert_eq!(found.hits[0].field.as_deref(), Some("abbreviation"));
+    // The row says whether picking it asks for values: from the service, not the first line.
+    assert!(found.hits[0].row.has_fields, "\"Hello {{field}}!\" asks");
+    let found = data.search(&host.bridge, "brb").expect("search");
+    assert!(!found.hits[0].row.has_fields, "\"be right back\" does not");
     // Nothing matches: no rows, and the total is still there for "0 of 3".
     let found = data.search(&host.bridge, "warranty").expect("search");
     assert_eq!((found.hits.len(), found.total), (0, 3));
@@ -891,6 +901,46 @@ fn search_forgives_typos_ranks_and_says_where() {
             .hits
             .is_empty()
     );
+    host.stop();
+}
+
+#[test]
+fn the_preview_of_a_formatted_snippet_is_its_text_not_its_markdown() {
+    let service = Service::start(Endpoint::Mock);
+    let host = Host::start(&service);
+    let mut cli = service.client(Role::Ui);
+    let folder = match cli.call(RequestBody::ListFolders {}).expect("folders") {
+        ResponseBody::Folders { folders, .. } => folders[0].meta.id,
+        other => panic!("unexpected {other:?}"),
+    };
+    let mut added = iamb_core::model::Snippet::new_defaults(
+        iamb_core::model::SyncMeta::new(id(9), iamb_core::model::Timestamp(99)),
+        folder,
+        iamb_core::model::Abbreviation::new(";bold").expect("abbreviation"),
+        "Bold".to_owned(),
+        "Hello **world**",
+        None,
+    );
+    added.kind = iamb_core::model::SnippetKind::Rich;
+    cli.call(RequestBody::PutSnippet {
+        snippet: added,
+        tags: None,
+    })
+    .expect("saved");
+    let preview = host
+        .sink
+        .data
+        .preview(&host.bridge, &id(9).to_string())
+        .expect("preview");
+    let strip = preview
+        .parts
+        .iter()
+        .find_map(|p| match p {
+            iamb_desktop::template::PartView::Formatted { plain, .. } => Some(plain.clone()),
+            _ => None,
+        })
+        .expect("a formatted part: the snippet is previewed as formatted");
+    assert_eq!(strip, "Hello world");
     host.stop();
 }
 

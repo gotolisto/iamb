@@ -27,6 +27,11 @@
 //!    - a device that ends online holds each row as the server has it, or not at all, holds
 //!      what it wrote itself, holds every live row of its user's own personal profile, and two
 //!      such devices of one account hold the same;
+//!    - a device holds a row of someone else's profile only where a membership or a share
+//!      reaches that profile for its user: one that is live on the server when the device ends
+//!      online, one that existed at some time of the scenario otherwise; and a device that was
+//!      signed out or revoked, and not signed in again, holds no version that reached the
+//!      server afterwards;
 //!    - a field an outcome states for a row is what the scenario's own steps left in that
 //!      version; the author of a snippet's content is the one the steps give (the writer of a
 //!      step that changed the content, otherwise the author of the version the device held); a
@@ -37,9 +42,13 @@
 //!      which the server accepted the rows decide it;
 //!    - after a restore of the server, a version the backup lacks that a device of the
 //!      profile's owner held ends as the server's row or in its history; one that a device of
-//!      the user who wrote it held ends there or in that device's list of kept changes; a
-//!      write over a version written since the restore has its conflict; and a removal made
-//!      after the backup is made again when the device that made it ends online.
+//!      the user who wrote it held ends there or in that device's list of kept changes, and a
+//!      device whose session the restore ended, and that was not signed in again, still holds
+//!      it; a write over a version written since the restore has its conflict; of two versions
+//!      of one row that the restore lost, the later one stays, whichever is given back first;
+//!      a removal made after the backup is made again, by the operator's replay or by the
+//!      device that made it when it ends online, and before that device gives a share with the
+//!      same group back; and only a scenario that restores the server shows `restored`.
 //!
 //! **Where the line is.** The ledger takes from the scenario the answers (`applied`,
 //! `rejected:forbidden`, …), the rows a write takes with it (`cascade`) and what a user may see
@@ -51,8 +60,10 @@
 //! client and a model of the server, and compares each outcome field by field. Until then an
 //! outcome that is consistent with its own answers and wrong under the rules still passes
 //! here: a write the permissions forbid that is answered `applied`, a cascade the rules do not
-//! give, a folder that stays on a member's device after its share ended. The tests hold one
-//! example of each, as examples that pass.
+//! give, a sub-folder that stays on a member's device after it left the folder that is shared
+//! with them (the check knows which profiles a share reaches, not which folders), a mark only
+//! the server sets. The tests hold one example of each of the first three, as examples that
+//! pass.
 //!
 //! # Format
 //!
@@ -107,6 +118,12 @@
 //!   `auto`. A `push` answered `held` or `lost` reached the server and was applied there; the
 //!   answer comes with `deliver`, with a later `replayed`, or never. `restart` stops and starts
 //!   the sync agent: what it had under way is forgotten, the outbox is not.
+//! - A step answered `session_refused` is one at which the device finds its session no longer
+//!   good, without having chosen that: the authentication service refuses its refresh token,
+//!   or the server answers that the session is not one it accepts. The device signs itself out
+//!   and sets aside what belongs to other people (D14): its rows stay as they were. A `sign_in`
+//!   answered `reset_required:epoch` is a sign-in whose resync finds that the server was
+//!   restored; its `answers` are those to the rows the device sends again.
 //! - A version is named after the step whose write produced it; `start` is the content a row
 //!   has in `start`. A row's `version` in an outcome is the step that wrote its current
 //!   revision, a delete included. A write the server makes because of a step (the rows a
@@ -114,7 +131,11 @@
 //!   changes) carries that step's name, and the step lists those rows in `cascade`. A row that
 //!   a device sends again after a restore keeps the name of the version it had: the answers of
 //!   a step answered `reset_required:epoch` are those to the rows the device sends again, each
-//!   in the version the device held when the server was restored.
+//!   in the version the device held when the server was restored; so are the answers of a
+//!   later step of that device for such a row (a share it gives back only after it has made a
+//!   removal again). `replay_calls` is the operator's step of the restore procedure (C18): the
+//!   calls that took access away after the backup are made again from the function log, and
+//!   the step lists in `cascade` the rows that ends, which carry the step's name.
 //! - `absent` means the device or the server holds no row with that id: never received, purged,
 //!   or not visible to that user. Invitations are not rows of the local store: one is "on" a
 //!   device while the account endpoint lists it for that user. An invitation has no revision
@@ -168,7 +189,7 @@ pub const CATEGORIES: [&str; 12] = [
 
 /// What the brief of task 4.1 asks the scenarios to cover; each tag must appear in the `covers`
 /// of at least one scenario.
-pub const REQUIRED_COVERAGE: [&str; 55] = [
+pub const REQUIRED_COVERAGE: [&str; 62] = [
     "edit-same-field",
     "edit-different-fields",
     "edit-vs-delete-delete-last",
@@ -226,6 +247,14 @@ pub const REQUIRED_COVERAGE: [&str; 55] = [
     "revoked-device-returns",
     "client-claims-newer-state",
     "delete-above-nested-share",
+    // The cases the close-out review asked for (docs/reviews/4.1-sync-design-closeout.md).
+    "restore-ends-sessions",
+    "restore-share-after-removal",
+    "restore-removal-before-share",
+    "file-hash-in-body",
+    "restore-attachment-row",
+    "nested-share-survives",
+    "password-session",
 ];
 
 /// The states a row can be in at the end.
@@ -289,10 +318,11 @@ const ACCOUNT_CALLS: [&str; 12] = [
 ];
 
 /// Steps of the server (`at = "server"`).
-const SERVER_ACTIONS: [&str; 5] = [
+const SERVER_ACTIONS: [&str; 6] = [
     "advance",
     "backup",
     "restore_backup",
+    "replay_calls",
     "set_protocol",
     "set_limit",
 ];
@@ -318,7 +348,7 @@ pub const PUSH_ANSWERS: [&str; 16] = [
 ];
 
 /// What a call or a whole sync is answered with (`answer`).
-pub const CALL_ANSWERS: [&str; 18] = [
+pub const CALL_ANSWERS: [&str; 19] = [
     "ok",
     "held",
     "lost",
@@ -329,6 +359,7 @@ pub const CALL_ANSWERS: [&str; 18] = [
     "server_too_old",
     "rate_limited",
     "device_revoked",
+    "session_refused",
     "error:device_conflict",
     "error:needs_review",
     "error:invitation_invalid",
@@ -1112,7 +1143,7 @@ impl<'a> Check<'a> {
         } else if on_device && !self.devices.contains(step.at.as_str()) {
             self.fail(format!("step {n}: unknown device {}", step.at));
         }
-        let writes = DEVICE_WRITES.contains(&action) || action == "backup";
+        let writes = DEVICE_WRITES.contains(&action) || matches!(action, "backup" | "replay_calls");
         if writes && step.id.is_none() {
             self.fail(format!("step {n}: {action} writes, so it needs an id"));
         }
@@ -1190,6 +1221,16 @@ impl<'a> Check<'a> {
                 .to
                 .as_deref()
                 .is_some_and(|to| self.steps.contains_key(to)),
+            // The replay ends something, and only a restore gives it something to make again.
+            "replay_calls" => {
+                !step.cascade.is_empty()
+                    && self
+                        .scenario
+                        .steps
+                        .iter()
+                        .take_while(|earlier| !std::ptr::eq(*earlier, step))
+                        .any(|earlier| earlier.action == "restore_backup")
+            }
             "set_protocol" => step.min.is_some() && step.max.is_some(),
             "set_limit" => step.name.is_some() && step.value.is_some(),
             "upgrade" => step.protocol.is_some(),

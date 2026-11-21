@@ -68,7 +68,7 @@ function rowLabel(s: Summary, index: number, total: number): string {
     rowTitle(s),
     `abbreviation ${speakAbbreviation(s.abbreviation)}`,
   ];
-  if (asksForValues(s.firstLine)) parts.push("asks for values");
+  if (asksForValues(s)) parts.push("asks for values");
   if (!s.enabled) parts.push("off");
   if (isTemplateError(s.broken)) parts.push("broken");
   else if (s.broken === "duplicate") parts.push("yours is used");
@@ -116,7 +116,7 @@ function SnippetRow({
     >
       <div className="row-top">
         <span className="row-title">{rowTitle(s)}</span>
-        {asksForValues(s.firstLine) && (
+        {asksForValues(s) && (
           <span className="row-mark" title="Asks for values">
             <Icon name="field" />
           </span>

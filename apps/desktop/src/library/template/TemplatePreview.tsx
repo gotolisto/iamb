@@ -169,6 +169,20 @@ function renderParts(p: Preview): ReactNode[] {
   return out;
 }
 
+/**
+ * The service's HTML made fit for this window, whose policy allows no inline style and which has
+ * nothing to open a link with (UX specification §9 rule 8): a column's alignment, which the
+ * writer gives as `style="text-align:…"`, becomes `data-align` (the style sheet aligns on it),
+ * and a link keeps its address as a tooltip but loses its `href`, so it is plain text to the
+ * keyboard and to a screen reader instead of a link that does nothing. Only the exact forms the
+ * writer produces are changed; the writer escapes every attribute.
+ */
+export function forPreview(html: string): string {
+  return html
+    .replace(/ style="text-align:(left|center|right)"/g, ' data-align="$1"')
+    .replace(/<a href="/g, '<a title="');
+}
+
 /** Keeps a click on a link in the formatted preview from navigating the window. */
 function stayHere(e: ReactMouseEvent) {
   if ((e.target as HTMLElement).closest("a")) e.preventDefault();
@@ -183,7 +197,7 @@ function renderPart(part: PreviewPart, i: number, cursorAt: number | null): Reac
         className="tpl-formatted"
         onClick={stayHere}
         onAuxClick={stayHere}
-        dangerouslySetInnerHTML={{ __html: part.html }}
+        dangerouslySetInnerHTML={{ __html: forPreview(part.html) }}
       />
     );
   }

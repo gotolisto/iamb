@@ -460,6 +460,7 @@ fn responses() -> Vec<ResponseBody> {
                 trigger: "delimiter".to_owned(),
                 enabled: true,
                 tags: vec![id(3)],
+                has_fields: true,
                 broken: None,
                 uses: Some(31),
                 last_used: Some(Timestamp(1_763_390_000_000)),

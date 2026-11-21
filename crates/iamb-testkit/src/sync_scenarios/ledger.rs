@@ -12,7 +12,11 @@
 //! - what each version of a row holds, as far as the scenario's own steps say it: the fields a
 //!   step wrote, and who wrote a snippet's content (the `facts` module);
 //! - around a restore of the server: which versions the backup lacks, which version of each row
-//!   each device held at that moment, and which removals were made after the backup.
+//!   each device held at that moment, which removals were made after the backup, and in which
+//!   order the lost versions of a row had been written;
+//! - which devices were signed out, when, and whether they chose it; and which memberships and
+//!   shares the scenario has, so that a row on a device can be traced to what lets its user
+//!   read the row's profile.
 //!
 //! It takes the answers from the scenario and does not derive them: it has no model of
 //! permissions, the feed or the store. The replay of task 4.4 has; see the documentation of the
@@ -57,8 +61,11 @@ pub(super) fn check<'a>(
     ledger.server_history();
     ledger.conflicts();
     ledger.device_changes(outcomes);
+    ledger.shown_restored();
     ledger.device_rows(outcomes);
-    ledger.after_restore();
+    ledger.signed_out(outcomes);
+    ledger.reach(outcomes);
+    ledger.after_restore(outcomes);
     ledger.stated_fields(outcomes);
     ledger.reviews(outcomes);
     ledger.precedence(outcomes);
@@ -220,6 +227,18 @@ struct Ledger<'a> {
     /// Row, the version that stays and the version given back too late, for each re-push
     /// answered `superseded`.
     offers: Vec<(&'a str, &'a str, &'a str)>,
+    /// Row → the latest of its lost versions, by its place in `writes`, that the server has
+    /// taken in again since the restore.
+    taken_in: BTreeMap<&'a str, usize>,
+    /// The devices that have found the restore since it happened.
+    resynced: BTreeSet<&'a str>,
+    /// Device → how many writes had reached the server when it was signed out, and whether
+    /// that was a session refused without the device or its user having chosen it. Removed
+    /// when the device signs in again.
+    signed_out_at: BTreeMap<&'a str, (usize, bool)>,
+    /// Membership or share → its group, and membership → its account.
+    groups: BTreeMap<&'a str, &'a str>,
+    members: BTreeMap<&'a str, &'a str>,
     /// What each version of each row holds, as far as the steps say.
     facts: BTreeMap<(&'a str, &'a str), Facts<'a>>,
     /// Row → the profile that owns it.
@@ -269,6 +288,12 @@ impl<'a> Ledger<'a> {
             .iter()
             .filter_map(|step| Some((step.id.as_deref()?, step)))
             .collect();
+        let signed_out_at = devices
+            .iter()
+            .filter(|(_, device)| !device.signed_in)
+            .map(|(id, _)| (*id, (0, false)))
+            .collect();
+        let (groups, members) = facts::row_groups(scenario);
         let mut ledger = Self {
             scenario,
             entities: entities.clone(),
@@ -292,6 +317,11 @@ impl<'a> Ledger<'a> {
             removals: Vec::new(),
             lost_removals: Vec::new(),
             offers: Vec::new(),
+            taken_in: BTreeMap::new(),
+            resynced: BTreeSet::new(),
+            signed_out_at,
+            groups,
+            members,
             facts: BTreeMap::new(),
             profiles: facts::row_profiles(scenario),
             approved: Vec::new(),
@@ -333,13 +363,17 @@ impl<'a> Ledger<'a> {
             "offline" => self.set(at, |device| device.mode = Mode::Offline),
             "online" | "auto" => self.set(at, |device| device.mode = Mode::Auto),
             "manual" => self.set(at, |device| device.mode = Mode::Manual),
-            "sign_out" => self.set(at, |device| device.signed_in = false),
-            "sign_in" => self.set(at, |device| device.signed_in = true),
+            "sign_out" => self.sign_out(at, false),
+            "sign_in" => {
+                self.set(at, |device| device.signed_in = true);
+                self.signed_out_at.remove(at);
+            }
             "upgrade" => self.set(at, |device| device.stopped = false),
             "restart" => self.restart(at),
             "advance" => self.advance(step.days.unwrap_or(0)),
             "backup" => self.backup(step),
             "restore_backup" => self.restore(step),
+            "replay_calls" => self.replay(step),
             "approve" => self.note_approval(step),
             "copy" => {
                 if let Some(row) = &step.creates {
@@ -360,8 +394,10 @@ impl<'a> Ledger<'a> {
             Some("upgrade_required" | "error:server_behind") => {
                 self.set(at, |device| device.stopped = true);
             }
-            Some("device_revoked" | "error:device_conflict") => {
-                self.set(at, |device| device.signed_in = false);
+            Some("device_revoked" | "error:device_conflict") => self.sign_out(at, false),
+            Some("session_refused") => self.sign_out(at, true),
+            Some("reset_required:epoch") => {
+                self.resynced.insert(at);
             }
             Some("held" | "lost") if action == "push" => self.send(at),
             _ => {}
@@ -376,6 +412,20 @@ impl<'a> Ledger<'a> {
         if let Some(device) = self.devices.get_mut(device) {
             change(device);
         }
+    }
+
+    /// A device is signed out: by its user, by a revocation, or (`refused`) because its session
+    /// was no longer good without anybody on the device having chosen that. What reaches the
+    /// server from now on is not on this device until it signs in again.
+    fn sign_out(&mut self, device: &str, refused: bool) {
+        let Some((id, found)) = self.devices.get_key_value(device) else {
+            return;
+        };
+        let (id, was_signed_in) = (*id, found.signed_in);
+        if was_signed_in {
+            self.signed_out_at.insert(id, (self.writes.len(), refused));
+        }
+        self.set(device, |device| device.signed_in = false);
     }
 
     /// A change made on a device: it waits in the outbox, on the base of the row's oldest
@@ -495,7 +545,18 @@ impl<'a> Ledger<'a> {
     /// and pushes, or the rows a device sends again after a restore.
     fn unmatched(&mut self, step: &'a Step, row: &'a str, answer: &str) {
         let at = step.at.as_str();
+        // A device that has found the restore sends again what it held and the restore lost: in
+        // the step that finds it, or in a later one (a share held back until a removal is made
+        // again, D7).
+        let holds_lost = self
+            .held
+            .get(at)
+            .and_then(|rows| rows.get(row))
+            .is_some_and(|version| self.lost_versions.contains(&(row, *version)));
+        let again = step.answer.as_deref() == Some("reset_required:epoch")
+            || (self.resynced.contains(at) && holds_lost);
         match (step.action.as_str(), step.id.as_deref()) {
+            _ if again => self.push_again(at, row, answer),
             ("sign_in", Some(id)) => {
                 if answer.starts_with("applied") {
                     self.put(row, id, Some(at), Base::Unjudged, false, false);
@@ -504,9 +565,6 @@ impl<'a> Ledger<'a> {
                 } else if answer.starts_with("blocked:") {
                     self.blocked.push((at, id, row));
                 }
-            }
-            _ if step.answer.as_deref() == Some("reset_required:epoch") => {
-                self.push_again(at, row, answer);
             }
             _ => self.fail(format!(
                 "{at} is answered {answer} for {row}, to which it has no unsent change"
@@ -532,10 +590,21 @@ impl<'a> Ledger<'a> {
             return;
         };
         let current = self.server.get(row).copied();
+        // Where this version stood in the history the restore lost, and the latest of that
+        // history the row has taken in again (kept across ordinary writes, C18).
+        let place = self.lost_place(row, version);
+        let taken_in = self.taken_in.get(row).copied();
         if answer == "superseded" {
             // A later version of the same lost history came back first: this one is kept in
             // the history and offered back.
             if let Some(stays) = current.filter(|held| held.version != version) {
+                if place.is_some() && taken_in < place {
+                    self.fail(format!(
+                        "{device} gives {version} of {row} back and is answered superseded, but \
+                         {version} is later than every lost version the row has taken in: the \
+                         later one stays (C18)"
+                    ));
+                }
                 self.history.entry(row).or_default().insert(version);
                 self.offers.push((row, stays.version, version));
             }
@@ -552,6 +621,13 @@ impl<'a> Ledger<'a> {
         if !answer.starts_with("applied") {
             return;
         }
+        if place.is_some() && taken_in > place {
+            self.fail(format!(
+                "{device} gives {version} of {row} back over a later version of the history the \
+                 restore lost, which the row had taken in already: the later one stays, and the \
+                 earlier one is answered superseded (C18)"
+            ));
+        }
         if let Some(old) = current
             && old.version != version
         {
@@ -563,6 +639,13 @@ impl<'a> Ledger<'a> {
             .rev()
             .find(|w| w.row == row && w.version == version)
             .is_some_and(|w| w.deletes);
+        if !deletes && self.entity(row) == "folder_share" {
+            self.removals_first(device, row);
+        }
+        if let Some(place) = place {
+            let latest = self.taken_in.entry(row).or_insert(place);
+            *latest = (*latest).max(place);
+        }
         // Whatever was written since the restore was written without the lost version.
         let stale = current.is_some_and(|old| {
             old.version != version && self.since_restore.contains(&(row, old.version))
@@ -589,6 +672,57 @@ impl<'a> Ledger<'a> {
         }
     }
 
+    /// Where `version` of `row` stood among the writes the restore lost.
+    fn lost_place(&self, row: &str, version: &str) -> Option<usize> {
+        self.writes.iter().enumerate().position(|(index, w)| {
+            w.row == row && w.version == version && self.lost_writes.contains(&index)
+        })
+    }
+
+    /// A device gives a share back only after it has made again the removals it had made from
+    /// that group and the restore lost: otherwise the folder reaches the person who had been
+    /// removed (D7).
+    fn removals_first(&mut self, device: &str, share: &str) {
+        let Some(group) = self.groups.get(share).copied() else {
+            return;
+        };
+        let mut problems = Vec::new();
+        for removal in &self.lost_removals {
+            let same_group = self.groups.get(removal.row).copied() == Some(group);
+            let still = self.server.get(removal.row).is_some_and(|h| !h.deleted);
+            if removal.device == device && same_group && still {
+                problems.push(format!(
+                    "{device} gives the share {share} back before it has made again {}, its \
+                     removal of {} that the restore lost: what took access away goes first (D7)",
+                    removal.step, removal.row
+                ));
+            }
+        }
+        self.problems.append(&mut problems);
+    }
+
+    /// The operator's step of the restore procedure: the calls that took access away after the
+    /// backup are made again from the function log, before any device is let in (C18).
+    fn replay(&mut self, step: &'a Step) {
+        let Some(id) = step.id.as_deref() else {
+            return;
+        };
+        for row in &step.cascade {
+            let lost = self.lost_removals.iter().any(|removal| {
+                let with = self.steps.get(removal.step).map(|s| s.cascade.as_slice());
+                removal.row == row || with.is_some_and(|rows| rows.contains(row))
+            });
+            if lost {
+                self.put(row, id, None, Base::Unjudged, true, false);
+            } else {
+                self.fail(format!(
+                    "the operator's replay {id} ends {row}, which no call that the restore lost \
+                     had ended: the replay makes again what took access away, and nothing else"
+                ));
+            }
+        }
+    }
+
     /// A change reaches the server and is applied, with the rows it takes with it.
     fn arrive(&mut self, device: &'a str, change: &Change<'a>) {
         let deletes = change.step.action == "delete";
@@ -610,7 +744,7 @@ impl<'a> Ledger<'a> {
         let action = step.action.as_str();
         if action == "revoke_device" {
             if let Some(device) = &step.device {
-                self.set(device, |device| device.signed_in = false);
+                self.sign_out(device, false);
             }
             return;
         }
@@ -678,6 +812,14 @@ impl<'a> Ledger<'a> {
             Base::Unjudged => false,
             Base::Seen(seen) => seen != replaced.map(|held| held.version),
         };
+        // A change a device made on top of a version the restore lost stands for that version:
+        // the row has taken it in (C18, `repush: "base"`).
+        if let Base::Seen(Some(seen)) = base
+            && let Some(place) = self.lost_place(row, seen)
+        {
+            let latest = self.taken_in.entry(row).or_insert(place);
+            *latest = (*latest).max(place);
+        }
         if cascade
             && device.is_some()
             && let Some(old) = replaced
@@ -755,6 +897,8 @@ impl<'a> Ledger<'a> {
         self.lost_removals.extend(lost);
         self.held = self.seen.clone();
         self.since_restore.clear();
+        self.taken_in.clear();
+        self.resynced.clear();
     }
 
     /// After a step, every device that syncs by itself, and the device of a `pull`, has seen
@@ -1085,10 +1229,141 @@ impl<'a> Ledger<'a> {
         self.problems.append(&mut problems);
     }
 
+    /// A device says that the server was restored only in a scenario that restores it: nothing
+    /// a client claims makes other devices resync (C18).
+    fn shown_restored(&mut self) {
+        let steps = &self.scenario.steps;
+        if steps.iter().any(|step| step.action == "restore_backup") {
+            return;
+        }
+        for (id, found) in &self.scenario.outcome.device {
+            if found.shown.iter().any(|shown| shown == "restored") {
+                self.problems.push(format!(
+                    "{id} shows that the server was restored, and no step of the scenario \
+                     restores it"
+                ));
+            }
+        }
+    }
+
+    /// A device that was signed out or revoked, and not signed in again, receives nothing: it
+    /// holds no version that reached the server afterwards, except what it wrote itself.
+    fn signed_out(&mut self, outcomes: &BTreeMap<&'a str, Vec<RowOutcome>>) {
+        let mut problems = Vec::new();
+        for (id, (since, _)) in &self.signed_out_at {
+            for row in outcomes.get(id).into_iter().flatten() {
+                let Some(version) = row.version.as_deref().filter(|v| *v != "start") else {
+                    continue;
+                };
+                let own = self.steps.get(version).is_some_and(|step| step.at == *id);
+                let first = self
+                    .writes
+                    .iter()
+                    .position(|w| w.row == row.row && w.version == version);
+                if !own && first.is_some_and(|index| index >= *since) {
+                    problems.push(format!(
+                        "{id} was signed out before {version} of {} reached the server, was \
+                         not signed in again, and ends holding it",
+                        row.row
+                    ));
+                }
+            }
+        }
+        self.problems.append(&mut problems);
+    }
+
+    /// Whether `user` is a member of `group`: now, by a membership that is live on the server,
+    /// or at any time of the scenario.
+    fn member(&self, user: &str, group: &str, now: bool) -> bool {
+        self.members.iter().any(|(row, account)| {
+            *account == user
+                && self.groups.get(row).copied() == Some(group)
+                && (!now || self.server.get(row).is_some_and(|held| !held.deleted))
+        })
+    }
+
+    /// Whether a membership or a share lets `user` read rows of `profile`: now, or at any time
+    /// of the scenario. Which folders of the profile a share covers is not known here.
+    fn reaches(&self, user: &str, profile: &str, now: bool) -> bool {
+        let profiles = &self.scenario.start.profiles;
+        let Some(found) = profiles.iter().find(|p| p.id == profile) else {
+            return true;
+        };
+        if found.owner == user || found.local_to.is_some() {
+            return true;
+        }
+        if found.kind != "personal" {
+            return self.member(user, profile, now);
+        }
+        self.entities.iter().any(|(row, entity)| {
+            *entity == "folder_share"
+                && self.profiles.get(row).copied() == Some(profile)
+                && (!now || self.server.get(row).is_some_and(|held| !held.deleted))
+                && self
+                    .groups
+                    .get(row)
+                    .is_some_and(|group| self.member(user, group, now))
+        })
+    }
+
+    /// A device holds a row of someone else's profile only where a membership or a share
+    /// reaches that profile for its user: a live one when the device ends online, one that the
+    /// scenario had at some time otherwise.
+    fn reach(&mut self, outcomes: &BTreeMap<&'a str, Vec<RowOutcome>>) {
+        let mut problems = Vec::new();
+        for (id, device) in &self.devices {
+            let now = device.syncing();
+            for row in outcomes.get(id).into_iter().flatten() {
+                let Some(profile) = self.profiles.get(row.row.as_str()).copied() else {
+                    continue;
+                };
+                if row.state == "absent" || self.reaches(device.user, profile, now) {
+                    continue;
+                }
+                let when = if now { "gives" } else { "ever gave" };
+                problems.push(format!(
+                    "{id} holds {}, a row of {profile}, and no membership or share {when} {} \
+                     that profile",
+                    row.row, device.user
+                ));
+            }
+        }
+        self.problems.append(&mut problems);
+    }
+
     /// After a restore of the server nothing a device still held is lost, and what took access
     /// away is taken away again (C18, D7).
-    fn after_restore(&mut self) {
+    fn after_restore(&mut self, outcomes: &BTreeMap<&'a str, Vec<RowOutcome>>) {
         let mut problems = Vec::new();
+        // A device whose session was refused, and that was not signed in again, has set aside
+        // what belongs to other people and removed nothing (D14): what its own user wrote, and
+        // the restore lost, is still on it, or among its kept changes once the time is up.
+        for (id, device) in &self.devices {
+            if !matches!(self.signed_out_at.get(id), Some((_, true))) {
+                continue;
+            }
+            let rows = outcomes.get(id).map_or(&[][..], Vec::as_slice);
+            let found = self.scenario.outcome.device.get(*id);
+            for (row, version) in self.held.get(id).into_iter().flatten() {
+                let wrote = self.user_of(version) == Some(device.user);
+                let lost = self.lost_versions.contains(&(*row, *version));
+                if !wrote || !lost || SERVER_WRITTEN.contains(&self.entity(row)) {
+                    continue;
+                }
+                let holds = rows
+                    .iter()
+                    .any(|r| r.row == *row && r.version.as_deref() == Some(*version));
+                let listed = found.is_some_and(|f| f.kept.iter().any(|k| k == version));
+                if !holds && !listed {
+                    problems.push(format!(
+                        "{id} held {version} of {row} when the server was restored, its own \
+                         user wrote it, the backup does not have it, and the device, whose \
+                         session was refused and which was not signed in again, ends without \
+                         it and without keeping it: a lost edit"
+                    ));
+                }
+            }
+        }
         for (id, device) in self.devices.iter().filter(|(_, d)| d.syncing()) {
             for (row, version) in self.held.get(id).into_iter().flatten() {
                 // Only a device that may write the row gives it back. The ledger knows one

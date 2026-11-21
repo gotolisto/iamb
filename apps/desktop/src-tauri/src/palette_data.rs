@@ -73,6 +73,8 @@ pub struct PaletteRow {
     pub enabled: bool,
     /// Why it does not expand although enabled: `duplicate` or a template error code (`E_…`).
     pub broken: Option<String>,
+    /// Expanding it asks for values (a `{field}` or `{if}` anywhere in it).
+    pub has_fields: bool,
     /// A revision by someone else waits for the user's approval.
     pub needs_review: bool,
     /// The names of its tags.
@@ -256,6 +258,7 @@ impl PaletteData {
             kind: s.kind.clone(),
             enabled: s.enabled,
             broken: s.broken.clone(),
+            has_fields: s.has_fields,
             needs_review: loaded.pending.contains(id),
             tags: s
                 .tags
@@ -384,7 +387,9 @@ impl PaletteData {
     pub fn preview(&self, bridge: &Bridge, id: &str) -> Res<PreviewView> {
         let snippet = library::snippet(bridge, id)?;
         let _ = parse_id(id)?;
-        template::preview(bridge, snippet.body, BTreeMap::new())
+        // A formatted snippet is rendered as one: the strip shows its text, not its Markdown.
+        let rich = snippet.kind == "rich";
+        template::preview_as(bridge, snippet.body, BTreeMap::new(), rich)
     }
 }
 

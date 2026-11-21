@@ -554,6 +554,19 @@ textarea.tpl-input {
   color: var(--color-accent-text);
 }
 
+/* A column's alignment (`forPreview`): the window's policy allows no inline style. */
+.tpl-formatted [data-align="left"] {
+  text-align: left;
+}
+
+.tpl-formatted [data-align="center"] {
+  text-align: center;
+}
+
+.tpl-formatted [data-align="right"] {
+  text-align: right;
+}
+
 .tpl-formatted img {
   max-width: 100%;
   height: auto;

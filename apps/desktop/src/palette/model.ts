@@ -1,7 +1,7 @@
 // The search palette's rules, without React: which rows there are, what Enter does for each,
 // how matches are marked, and the copy (docs/ux/spec.md §4.5, §5.5; flows/5-search.md).
 
-import { asksForValues, isTemplateError, previewLine, rowTitle } from "../library/model";
+import { asksForValues, isTemplateError, lineShowsField, previewLine, rowTitle } from "../library/model";
 import type { TemplatePreview } from "../library/template/api";
 import type { PaletteHit, PaletteResults, PickAction } from "./api";
 
@@ -49,7 +49,12 @@ export function itemsFor(
     const used: Item[] = (recent?.hits ?? []).slice(0, room).map((hit) => ({ kind: "hit", hit }));
     return [...again, ...used];
   }
-  if (!answer || answer.query.trim() !== typed) return [];
+  if (!answer) return [];
+  // The answer is to an earlier query and a newer one is on its way: the previous rows stay
+  // (flow 5, the service that is slow to answer), never its "no match" row.
+  if (answer.query.trim() !== typed) {
+    return answer.results.hits.map((hit) => ({ kind: "hit", hit }));
+  }
   if (answer.results.hits.length === 0) return [{ kind: "new", label: typed }];
   return answer.results.hits.map((hit) => ({ kind: "hit", hit }));
 }
@@ -68,7 +73,7 @@ export function verbOf(item: Item, ownWindow: boolean): Verb {
       if (ownWindow) return "select";
       if (isTemplateError(row.broken)) return "open";
       if (row.needsReview) return "review";
-      return asksForValues(row.firstLine) ? "fill" : "insert";
+      return asksForValues(row) ? "fill" : "insert";
     }
   }
 }
@@ -159,7 +164,7 @@ export const titleOf = (hit: PaletteHit): string => rowTitle(hit.row);
 
 /** The ranges of a body hit that fall inside the first line, which is all a row shows. */
 export function bodyRanges(hit: PaletteHit): Array<[number, number]> {
-  if (hit.field !== "body" || asksForValues(hit.row.firstLine)) return [];
+  if (hit.field !== "body" || lineShowsField(hit.row.firstLine)) return [];
   const length = hit.row.firstLine.length;
   return hit.ranges.filter(([a]) => a < length).map(([a, b]) => [a, Math.min(b, length)]);
 }
@@ -183,6 +188,8 @@ export function previewText(preview: TemplatePreview | null): string {
     .map((p) => {
       if (p.part === "text") return p.text;
       if (p.part === "key") return `⟨${p.key}${p.times > 1 ? ` ×${p.times}` : ""}⟩`;
+      // A formatted snippet: the text without its formatting, never its Markdown source.
+      if (p.part === "formatted") return p.plain;
       return "";
     })
     .join("");
@@ -234,7 +241,6 @@ export const copy = {
   couldNotGetBack: (app: string | null) =>
     `Iamb could not get back to ${app ?? "the app"}. Click where the text should go and press Enter again.`,
   notRunning: "Iamb is not running.",
-  startAgain: "Start it again",
   pickFailed: "Iamb could not do that. Try again.",
   preview: "Preview",
 } as const;
