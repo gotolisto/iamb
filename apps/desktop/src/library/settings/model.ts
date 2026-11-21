@@ -396,6 +396,8 @@ export const SECTION_OF_KEY: Record<SettingKey, "general" | "typing" | "dates" |
   time_format: "dates",
   locale: "dates",
   palette_hotkey: "shortcuts",
+  reopen_form_hotkey: "shortcuts",
+  pause_hotkey: "shortcuts",
   injection_overrides: "apps",
   "ui.onboarding_done": "onboarding",
   "ui.theme": "general",

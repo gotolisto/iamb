@@ -15,7 +15,7 @@
 // What the walk covers, in order: the library (focus the panes, create a snippet, write its
 // template with an insert list and a field, make it formatted, Tab out of the editor, save,
 // preview, the context menu, a dialog with its focus trap and its return, delete and undo),
-// settings (change one), library health and "Why didn't it expand?", the search palette (find
+// settings (change one; open the log folder from About), library health and "Why didn't it expand?", the search palette (find
 // the snippet and insert it), the fill-in form (answer every kind of field and insert), and the
 // onboarding window's first two steps. The exit code is 1 when a step fails.
 
@@ -355,6 +355,12 @@ async function walkLibrary(browser, mode) {
     await w.key("Enter");
     await w.until("settings", `the ${section} section`, (name) => document.querySelector("#settings-section")?.textContent.trim() === name, section);
     await w.check(`settings: ${section}`);
+    if (section === "About") {
+      await w.tabTo("settings", "the Open the log folder button", () => document.activeElement?.textContent?.trim() === "Open the log folder");
+      await w.check("the log folder button has the focus");
+      await w.key("Enter");
+      await w.until("settings", "the log folder opened", () => window.__mock.state.opened === 1);
+    }
   }
   await w.tabTo("settings", "the Appearance choice", () => document.activeElement?.type === "radio" && document.activeElement.closest('[role="radiogroup"]'));
   await w.check("a setting has the focus");

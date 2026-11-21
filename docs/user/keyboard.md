@@ -12,8 +12,11 @@ These work in any app.
 | Action | Windows | macOS | Changeable |
 | --- | --- | --- | --- |
 | Search snippets | Ctrl+Shift+Space | ⌃⇧Space | Yes, in [Settings](settings.md#shortcuts) |
+| Fill in the last form again | Not set | Not set | Yes, in [Settings](settings.md#shortcuts) |
+| Pause or resume | Not set | Not set | Yes, in [Settings](settings.md#shortcuts) |
 
-Pause has no shortcut. Use the menu's **Pause Iamb**, or the switch in
+The last two have no shortcut until you set one. Without one, fill in the last form again from
+[search](search.md) or the menu, and pause from the menu's **Pause Iamb** or the switch in
 [Settings](settings.md#general).
 
 ## Library window

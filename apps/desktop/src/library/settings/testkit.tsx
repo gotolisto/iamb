@@ -27,6 +27,7 @@ export function createFakeSettings(
   // The login item, as the system has it; `null` refuses every change.
   let login: LoginState | null = options.login ?? "enabled";
   let refuseLogin = false;
+  let refuseOpen = false;
 
   const guard = () => {
     if (down) throw new Failure(down, "the service is not connected");
@@ -87,6 +88,14 @@ export function createFakeSettings(
       guard();
       return [...diagnostics].sort((a, b) => b.at - a.at);
     },
+    about: async () => {
+      calls.push("about");
+      return { version: "0.1.0", logFolder: "/Users/test/Library/Application Support/Iamb/logs" };
+    },
+    openLogFolder: async () => {
+      calls.push("openLogFolder");
+      if (refuseOpen) throw new Failure("unavailable", "Iamb could not open the folder");
+    },
     loginItem: async (enabled) => {
       calls.push(`loginItem ${String(enabled)}`);
       if (login === null || (refuseLogin && enabled !== undefined)) {
@@ -122,6 +131,10 @@ export function createFakeSettings(
     stored: (key: string) => values.get(key),
     /** The login item as the system has it now. */
     login: () => login,
+    /** The file manager cannot be started from now on. */
+    refuseOpenFolder: () => {
+      refuseOpen = true;
+    },
     /** The system refuses to change the login item from now on. */
     refuseLoginChanges: () => {
       refuseLogin = true;

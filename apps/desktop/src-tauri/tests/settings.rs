@@ -116,6 +116,16 @@ fn persists_palette_hotkey() {
 }
 
 #[test]
+fn persists_reopen_form_hotkey() {
+    persists("reopen_form_hotkey", "Ctrl+Alt+F");
+}
+
+#[test]
+fn persists_pause_hotkey() {
+    persists("pause_hotkey", "Ctrl+Alt+P");
+}
+
+#[test]
 fn persists_injection_overrides() {
     persists(
         "injection_overrides",
@@ -154,8 +164,8 @@ fn persists_ui_crash_reports() {
 }
 
 /// The keys the service's own source reads: `map.get("…")` and `settings.get("…")` of the
-/// engine's settings and the worker's start, and the `…_KEY` constants of the handlers and the
-/// platform crate.
+/// engine's settings and the worker's start, the worker's `HOTKEY_SETTINGS` table, and the `…_KEY`
+/// constant of the platform crate.
 fn keys_the_service_reads() -> BTreeSet<String> {
     let root = app_dir().join("../../..");
     let mut found = BTreeSet::new();
@@ -179,11 +189,13 @@ fn keys_the_service_reads() -> BTreeSet<String> {
         take(&text, "map.get(\"", "\")");
         take(&text, "settings.get(\"", "\")");
     }
-    take(
-        &read(&root.join("crates/iamb-service/src/worker/handlers.rs")),
-        "PALETTE_HOTKEY_KEY: &str = \"",
-        "\";",
-    );
+    // The shortcuts' settings: the keys of the worker's `HOTKEY_SETTINGS` table.
+    let worker = read(&root.join("crates/iamb-service/src/worker/mod.rs"));
+    let table = &worker[worker
+        .find("HOTKEY_SETTINGS: [")
+        .expect("HOTKEY_SETTINGS not found")..];
+    let table = &table[..table.find("];").expect("HOTKEY_SETTINGS end")];
+    take(table, "(\"", "\"");
     take(
         &read(&root.join("crates/iamb-platform/src/injection_settings.rs")),
         "INJECTION_SETTINGS_KEY: &str = \"",

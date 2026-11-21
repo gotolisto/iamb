@@ -13,7 +13,7 @@ Status:
 - **Not in this version**: the feature belongs to sync or accounts, which are in progress.
 - **TODO**: the page says something that still needs confirming. The TODO is also in the page itself.
 
-Counts: 115 features listed. Documented 98, Gap 12, Not in this version 5. The gaps and TODOs are
+Counts: 115 features listed. Documented 101, Gap 9, Not in this version 5. The gaps and TODOs are
 listed at the end. Documented rows were checked against the code on the date of the last review:
 claims the code did not support were corrected or removed, and the pages say where something is
 not confirmed.
@@ -122,14 +122,14 @@ not confirmed.
 | Date and time formats with custom format and errors | `DatesSection.tsx` | [Settings](settings.md#dates) | Documented |
 | Month and day names: English, Español, Deutsch, Français | `DatesSection.tsx` | [Settings](settings.md#dates) | Documented |
 | Shortcut for search | `ShortcutsSection.tsx` | [Settings](settings.md#shortcuts) | Documented |
-| Shortcuts for fill-in again and pause | UX spec 5.1 | [Settings](settings.md#settings-not-in-this-version) | Gap |
+| Shortcuts for fill-in again and pause | UX spec 5.1, `ShortcutsSection.tsx`, `worker/handlers.rs` (`reopen_form_hotkey`, `pause_hotkey`) | [Settings](settings.md#shortcuts), [Keyboard](keyboard.md#global) | Documented |
 | Excluded apps list | `AppsSection.tsx` | [Settings](settings.md#apps), [Exclusions](exclusions.md) | Documented |
 | Usage counts and reset | `PrivacySection.tsx` | [Settings](settings.md#privacy) | Documented |
 | Send crash reports switch (saved; nothing sends reports) and local crash reports | `PrivacySection.tsx`, `crash.rs`, `architecture.md` 8 rule 9 | [Settings](settings.md#privacy), [Privacy](privacy.md#crash-reports) | Documented as not sent, with a TODO |
 | About: licence and source link | `AboutSection.tsx` | [Settings](settings.md#about) | Documented |
-| Version in About | UX spec 4.7 | none | Gap |
+| Version in About | UX spec 4.7, `AboutSection.tsx` | [Settings](settings.md#about) | Documented |
 | Account section | UX spec 4.7 | [Accounts](accounts.md) | Not in this version (accounts) |
-| Open the log folder from About | UX spec 4.7 | none | Gap |
+| Open the log folder from About | UX spec 4.7, `AboutSection.tsx`, `settings.rs` `open_folder` | [Settings](settings.md#about) | Documented |
 
 ## Menu, onboarding and system
 
@@ -188,26 +188,24 @@ saying they are missing. Each one needs a decision before the page can say more.
 2. **Crash reports.** The switch is saved, but no code sends reports. The Settings page still says
    "A report says where Iamb failed". Confirm before publishing.
 3. **Updates.** No update check or automatic install in the app.
-4. **Shortcuts for fill-in again and pause.** Not in the app.
-5. **Import and export in the library window.** Only in the command line. The paste-fidelity notes
+4. **Import and export in the library window.** Only in the command line. The paste-fidelity notes
    refer to an Import button that does not exist yet.
-6. **Share a folder, and drag to reorder or nest.** Not in the app.
-7. **Show as text (raw source) in the editor, and Move to… in More actions.** Not in the app.
-8. **Quit Iamb.** It asks only about unsaved edits, and it ends the UI host only. The spec says it
+5. **Share a folder, and drag to reorder or nest.** Not in the app.
+6. **Show as text (raw source) in the editor, and Move to… in More actions.** Not in the app.
+7. **Quit Iamb.** It asks only about unsaved edits, and it ends the UI host only. The spec says it
     asks "Abbreviations stop expanding…" and stops the service too. Not confirmed what keeps running.
-9. **Missing-permission banner in the library window (macOS).** Not in the app.
-10. **Opening the library from Applications or the Start menu.** A second start of Iamb exits without
+8. **Missing-permission banner in the library window (macOS).** Not in the app.
+9. **Opening the library from Applications or the Start menu.** A second start of Iamb exits without
     opening anything. With the menu icon hidden, the library is reached through the search
     shortcut and Ctrl+E. Confirm with the design.
-11. **Installing the `iamb` command.** The installers carry the desktop app and the service only.
-12. **Compatibility results.** The matrix is a plan. No published results exist yet
+10. **Installing the `iamb` command.** The installers carry the desktop app and the service only.
+11. **Compatibility results.** The matrix is a plan. No published results exist yet
     (`docs/results/` does not exist), so `troubleshooting.md` lists the differences without test
     outcomes.
-13. **Version number in About, and the log folder button.** Not shown.
-14. **Linux desktop.** The architecture says Linux is for development and the command line, and the
+12. **Linux desktop.** The architecture says Linux is for development and the command line, and the
     Linux package is marked development. The pages follow the architecture.
-15. **Accessibility results.** The manual screen-reader runs are not recorded.
-16. **Review of snippets from other people, shared folders, accounts.** Belong to sync and accounts,
+13. **Accessibility results.** The manual screen-reader runs are not recorded.
+14. **Review of snippets from other people, shared folders, accounts.** Belong to sync and accounts,
     which are in progress. The sync client crate exists but nothing starts it.
 
 Not verified against code or a running app: the text of system prompts in the installers, what opening

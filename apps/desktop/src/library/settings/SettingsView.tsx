@@ -20,7 +20,7 @@ const BODIES: Record<SectionId, (props: SectionProps) => React.ReactNode> = {
   shortcuts: (p) => <ShortcutsSection {...p} />,
   apps: (p) => <AppsSection {...p} />,
   privacy: (p) => <PrivacySection {...p} />,
-  about: () => <AboutSection />,
+  about: (p) => <AboutSection {...p} />,
 };
 
 /**

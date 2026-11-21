@@ -627,9 +627,10 @@ line, its tags and why it is broken, if it is); `CheckAbbreviation` answers the 
 (the snippet that holds the abbreviation, the ones it would hide or be hidden by) from the
 snapshot without writing; a `Search` hit says which field matched and where; `LibraryChanged`
 names the snippets, folders and tags a change touched, or nothing when it may have touched any
-(an import); `PutSetting("palette_hotkey")` registers the chord before it stores it and answers
-`conflict` when the system refuses it (the old chord stays); and every diagnostic carries its
-time.
+(an import); `PutSetting` of a shortcut (`palette_hotkey`, and `reopen_form_hotkey` and
+`pause_hotkey`, whose presses do what `ReopenLastForm` and `SetPaused` do) registers the chord
+before it stores it and answers `conflict` when the system refuses it (the old chord stays); and
+every diagnostic carries its time.
 
 The Sync group as the sync design fixes it ([`sync-design.md`](sync-design.md) §7.2, §9): what
 `OutboxRead` returns is one change per row, ready to send (the row as it is now, the base revision

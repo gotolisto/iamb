@@ -64,6 +64,8 @@ pub struct Ui {
     pub notices: crate::notice::Notices,
     /// The UI host's log.
     pub log: Arc<Logger>,
+    /// The folder of the log files (Settings → About, "Open the log folder").
+    pub logs: std::path::PathBuf,
     tray: OnceLock<tray::Tray>,
 }
 
@@ -176,6 +178,7 @@ fn setup(
         palette,
         notices,
         log: Arc::clone(log),
+        logs: dirs.logs(),
         tray: OnceLock::new(),
     });
     match tray::Tray::create(&handle, palette_panel::platform_focus()) {
@@ -254,6 +257,8 @@ pub fn run(dirs: DataDirs, options: &Options, log: &Arc<Logger>) -> tauri::Resul
             settings_commands::settings_list_exclusions,
             settings_commands::settings_put_exclusion,
             settings_commands::settings_login_item,
+            settings_commands::settings_about,
+            settings_commands::settings_open_log_folder,
             settings_commands::diagnostics_recent,
             settings_commands::diagnostics_test,
             form_panel::form_ready,

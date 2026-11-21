@@ -49,12 +49,14 @@ see [Templates](templates.md#date-and-time).
 | Setting | Default | What it does |
 | --- | --- | --- |
 | **Search snippets** | Ctrl+Shift+Space (⌃⇧Space on macOS) | The shortcut that opens [search](search.md) from any app. |
+| **Fill in the last form again** | Not set | Opens the last [fill-in form](forms.md#your-last-answers) again, with your answers, in the app you are in. |
+| **Pause or resume** | Not set | Turns expansion off or on everywhere, as the menu's **Pause Iamb** does. |
 
-To change it, select the box and press the new keys. On Windows a shortcut needs Ctrl, Alt or the
+To change a shortcut, select its box and press the new keys. On Windows a shortcut needs Ctrl, Alt or the
 Windows key, and one other key. On macOS it needs Control, Option or Command, and one other key. A
 function key can stand alone. Backspace clears the shortcut. Esc leaves it as it was. If
-another app already uses the shortcut, Iamb says so and keeps the old one. When the shortcut is not
-the default, a button next to it puts the default back.
+another app already uses the shortcut, Iamb says so and keeps the old one. When the search shortcut
+is not the default, a button next to it puts the default back. The other two have no default.
 
 Shortcuts inside the library window are fixed. See [Keyboard](keyboard.md).
 
@@ -97,17 +99,16 @@ Three statements that Settings also shows:
 
 ## About
 
+- **Version**: the version of Iamb, for example **Iamb 0.1.0**.
 - **Licence**: AGPL-3.0-or-later.
 - **Source code**: the address of the project repository, shown as text.
-
-About does not show a version number or a link to the log folder.
-
-<!-- TODO: add the version number once the About page shows it. -->
+- **Log folder**: where Iamb writes its log files, and an **Open the log folder** button that opens
+  it in Finder or File Explorer. The logs never contain what you type. See
+  [Privacy](privacy.md#what-iamb-stores-and-where).
 
 ## Settings not in this version
 
 These settings are planned but not in the app yet:
 
 - Check for updates and install them.
-- Shortcuts for fill-in forms and for pause.
 - Account and sync settings (see [Sync](sync.md) and [Accounts](accounts.md)).

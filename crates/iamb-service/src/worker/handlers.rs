@@ -27,13 +27,13 @@ use iamb_ipc::{
     SnippetQuery, SnippetSummary, TAG_COLORS, TagEntry, TransferFormat, UnusedEntry, WireAction,
     WireAttachment, WireDiagnostic, WireExclusion, WireValues,
 };
-use iamb_platform::{Chord, INJECTION_SETTINGS_KEY};
+use iamb_platform::{Chord, HotkeyId, INJECTION_SETTINGS_KEY};
 use iamb_store::health::{self, Why};
 use iamb_store::transfer::{self, Format, OnConflict, TransferError};
 use iamb_store::{AppExclusion, ListOptions, StoreError, Usage};
 
 use super::store::{StoreCtx, new_id};
-use super::{EngineMsg, Explicit, FocusMsg, PALETTE_HOTKEY, Shared};
+use super::{EngineMsg, Explicit, FocusMsg, Shared, hotkey_of_setting};
 use crate::clock;
 use crate::library::{AppIdRule, View, engine_settings};
 use crate::templates;
@@ -932,10 +932,10 @@ fn put_setting(shared: &Shared, view: &View, key: String, value: Option<String>)
         None => next.remove(&key),
     };
     engine_settings(&next).map_err(|m| err(ErrorCode::Invalid, m))?;
-    if key == PALETTE_HOTKEY_KEY {
+    if let Some(id) = hotkey_of_setting(&key) {
         // The chord is taken from the system before it is stored: a chord the system refuses
         // is the client's error, and the one registered before stays.
-        palette_hotkey(shared, view, value.as_deref())?;
+        register_hotkey(shared, view, &key, id, value.as_deref())?;
     }
     let for_injector = key == INJECTION_SETTINGS_KEY;
     write(shared, move |ctx| {
@@ -968,40 +968,40 @@ fn put_setting(shared: &Shared, view: &View, key: String, value: Option<String>)
     .and_then(|()| done())
 }
 
-/// The setting that holds the palette's chord.
-const PALETTE_HOTKEY_KEY: &str = "palette_hotkey";
-
-/// Registers `value` as the palette's chord (none: unregisters it). A chord that does not parse
-/// is `invalid`; one the system refuses (another application has it) is `conflict`, and the
-/// chord of the current setting is registered again.
-fn palette_hotkey(shared: &Shared, view: &View, value: Option<&str>) -> Result<(), ErrorBody> {
+/// Registers `value` as the chord of the shortcut whose setting is `key` and whose hotkey is
+/// `id` (none: unregisters it). A chord that does not parse is `invalid`; one the system refuses
+/// (another application has it) is `conflict`, and the chord of the current setting is
+/// registered again.
+fn register_hotkey(
+    shared: &Shared,
+    view: &View,
+    key: &str,
+    id: HotkeyId,
+    value: Option<&str>,
+) -> Result<(), ErrorBody> {
     let chord = value
         .map(|text| {
             Chord::parse(text).map_err(|_| {
                 err(
                     ErrorCode::Invalid,
-                    "the palette_hotkey setting is not a valid chord",
+                    format!("the {key} setting is not a valid chord"),
                 )
             })
         })
         .transpose()?;
     let platform = &shared.platform;
-    let _ = platform.unregister(PALETTE_HOTKEY);
+    let _ = platform.unregister(id);
     let Some(chord) = chord else {
         return Ok(());
     };
-    match platform.register(PALETTE_HOTKEY, chord) {
+    match platform.register(id, chord) {
         Ok(()) => Ok(()),
         Err(e) => {
             shared
                 .logger
-                .warn(format_args!("cannot register the palette hotkey: {e}"));
-            if let Some(old) = view
-                .settings
-                .get(PALETTE_HOTKEY_KEY)
-                .and_then(|t| Chord::parse(t).ok())
-            {
-                let _ = platform.register(PALETTE_HOTKEY, old);
+                .warn(format_args!("cannot register the {key} shortcut: {e}"));
+            if let Some(old) = view.settings.get(key).and_then(|t| Chord::parse(t).ok()) {
+                let _ = platform.register(id, old);
             }
             Err(err(
                 ErrorCode::Conflict,

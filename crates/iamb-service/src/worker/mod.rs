@@ -105,6 +105,31 @@ pub const DIAGNOSTICS_KEPT: usize = 200;
 /// The hotkey id of the search palette.
 pub const PALETTE_HOTKEY: iamb_platform::HotkeyId = iamb_platform::HotkeyId(1);
 
+/// The hotkey id of "Fill in the last form again" (UX specification §5.1; `ReopenLastForm` for
+/// the focused window).
+pub const REOPEN_FORM_HOTKEY: iamb_platform::HotkeyId = iamb_platform::HotkeyId(2);
+
+/// The hotkey id of "Pause or resume" (UX specification §5.1; global pause, as `SetPaused`).
+pub const PAUSE_HOTKEY: iamb_platform::HotkeyId = iamb_platform::HotkeyId(3);
+
+/// The settings that hold the global shortcuts' chords, and their hotkey ids (specification
+/// §11.2, entry 5). None is set by default; the UI host stores the palette's at the end of
+/// onboarding.
+pub const HOTKEY_SETTINGS: [(&str, iamb_platform::HotkeyId); 3] = [
+    ("palette_hotkey", PALETTE_HOTKEY),
+    ("reopen_form_hotkey", REOPEN_FORM_HOTKEY),
+    ("pause_hotkey", PAUSE_HOTKEY),
+];
+
+/// The hotkey id of the setting `key`, if it holds a shortcut.
+#[must_use]
+pub fn hotkey_of_setting(key: &str) -> Option<iamb_platform::HotkeyId> {
+    HOTKEY_SETTINGS
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, id)| *id)
+}
+
 /// How the worker is started.
 pub struct WorkerConfig {
     /// The data root.
@@ -713,7 +738,7 @@ impl Worker {
             // Remembered form values still expire after 30 minutes and at restart.
             logger.warn(format_args!("the session watcher did not start: {e}"));
         }
-        register_palette_hotkey(&shared);
+        register_hotkeys(&shared);
 
         {
             let shared = Arc::clone(&shared);
@@ -847,7 +872,9 @@ impl Worker {
         self.shared.watching.store(false, Ordering::Relaxed);
         let _ = platform.unwatch();
         let _ = platform.unwatch_session();
-        let _ = platform.unregister(PALETTE_HOTKEY);
+        for (_, id) in HOTKEY_SETTINGS {
+            let _ = platform.unregister(id);
+        }
         self.endpoint.stop();
         self.shared.clients.shutdown_all();
         let _ = self.watchdog_stop.send(());
@@ -884,24 +911,26 @@ impl fmt::Debug for ExitHandle {
     }
 }
 
-/// Registers the palette hotkey from the `palette_hotkey` setting, if there is one (worker
-/// start; a change of the setting registers it again, `handlers::put_setting`).
-fn register_palette_hotkey(shared: &Shared) {
+/// Registers the global shortcuts from their settings ([`HOTKEY_SETTINGS`]), those that are set
+/// (worker start; a change of a setting registers it again, `handlers::put_setting`).
+fn register_hotkeys(shared: &Shared) {
     let view = shared.view.get();
-    let Some(text) = view.settings.get("palette_hotkey") else {
-        return;
-    };
-    match iamb_platform::Chord::parse(text) {
-        Ok(chord) => {
-            if let Err(e) = shared.platform.register(PALETTE_HOTKEY, chord) {
-                shared
-                    .logger
-                    .warn(format_args!("cannot register the palette hotkey: {e}"));
+    for (key, id) in HOTKEY_SETTINGS {
+        let Some(text) = view.settings.get(key) else {
+            continue;
+        };
+        match iamb_platform::Chord::parse(text) {
+            Ok(chord) => {
+                if let Err(e) = shared.platform.register(id, chord) {
+                    shared
+                        .logger
+                        .warn(format_args!("cannot register the {key} shortcut: {e}"));
+                }
             }
+            Err(_) => shared
+                .logger
+                .warn(format_args!("the {key} setting is not a valid chord")),
         }
-        Err(_) => shared.logger.warn(format_args!(
-            "the palette_hotkey setting is not a valid chord"
-        )),
     }
 }
 

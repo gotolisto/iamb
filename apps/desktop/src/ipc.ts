@@ -131,6 +131,8 @@ export const COMMANDS = [
   "settings_list_exclusions",
   "settings_put_exclusion",
   "settings_login_item",
+  "settings_about",
+  "settings_open_log_folder",
   "diagnostics_recent",
   "diagnostics_test",
   "onboarding_permissions",

@@ -43,6 +43,8 @@ describe("the commands", () => {
     void api.recentDiagnostics();
     void api.testAbbreviation(";rty");
     void api.loginItem(false);
+    void api.about();
+    void api.openLogFolder();
     expect(calls.map(([c]) => c)).toEqual([
       "settings_get",
       "settings_put",
@@ -52,6 +54,8 @@ describe("the commands", () => {
       "diagnostics_recent",
       "diagnostics_test",
       "settings_login_item",
+      "settings_about",
+      "settings_open_log_folder",
     ]);
     for (const [command] of calls) expect(COMMANDS as readonly string[]).toContain(command);
     expect(calls[1]?.[1]).toEqual({ key: "locale", value: "de" });

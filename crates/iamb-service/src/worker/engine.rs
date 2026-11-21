@@ -151,7 +151,8 @@ use iamb_platform::{
 use super::keys::KeyQueue;
 use super::store::StoreMsg;
 use super::{
-    EngineMsg, EngineStatus, Explicit, FocusMsg, PALETTE_HOTKEY, Shared, WakeCounters, coded,
+    EngineMsg, EngineStatus, Explicit, FocusMsg, PALETTE_HOTKEY, PAUSE_HOTKEY, REOPEN_FORM_HOTKEY,
+    Shared, WakeCounters, coded,
 };
 
 /// How long a parked request waits for the focus change of its window: the UI host's
@@ -574,17 +575,7 @@ impl EngineThread {
                     self.form_lease = Some((session, Instant::now() + self.form_lease_for));
                 }
             }
-            EngineMsg::SetPaused(on) => {
-                self.handoff.disturb();
-                self.handle(Event::Paused(on));
-                if self.paused != on {
-                    self.paused = on;
-                    let status = self.shared.status(self.status());
-                    self.shared
-                        .clients
-                        .broadcast(&EventBody::StatusChanged { status });
-                }
-            }
+            EngineMsg::SetPaused(on) => self.set_paused(on),
             EngineMsg::Snapshot(snapshot) => self.handle(Event::SnapshotChanged(snapshot)),
             // The forget itself ran at the top of this function, when the session watcher or
             // `Worker::forget_form_values` asked for it; the message only woke the thread.
@@ -675,7 +666,27 @@ impl EngineThread {
                         .warn(format_args!("palette hotkey without a focused window: {e}")),
                 }
             }
+            // "Fill in the last form again" (UX specification §5.1): as `ReopenLastForm`, for the
+            // window that has the focus now, where the shortcut was pressed.
+            Routed::Hotkey(id) if id == REOPEN_FORM_HOTKEY => {
+                self.on_request(Explicit::Reopen, None);
+            }
+            // "Pause or resume" (§5.1).
+            Routed::Hotkey(id) if id == PAUSE_HOTKEY => self.set_paused(!self.paused),
             Routed::Hotkey(_) => {}
+        }
+    }
+
+    /// Global pause on or off (`SetPaused`, and the "Pause or resume" shortcut).
+    fn set_paused(&mut self, on: bool) {
+        self.handoff.disturb();
+        self.handle(Event::Paused(on));
+        if self.paused != on {
+            self.paused = on;
+            let status = self.shared.status(self.status());
+            self.shared
+                .clients
+                .broadcast(&EventBody::StatusChanged { status });
         }
     }
 
