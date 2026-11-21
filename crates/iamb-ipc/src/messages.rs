@@ -30,9 +30,10 @@ use std::fmt;
 use std::path::PathBuf;
 
 use iamb_core::engine::{Action, Diagnostic};
-use iamb_core::model::{
-    Attachment, Folder, FolderShare, Id, Membership, Profile, Sha256, Snippet, SnippetAttachment,
-    SnippetTag, SyncMeta, Tag, Timestamp,
+use iamb_core::model::{Folder, Id, Sha256, Snippet, SyncMeta, Tag, Timestamp};
+use iamb_core::sync::{
+    AccessRemoval, AccessRoot, AckOutcome, ApplyMode, ApplyStatus, Change, KeptChange, LostLine,
+    OpResult, OutboxPhase, ReconcileScope, RemoteRow, SyncInfo,
 };
 use iamb_core::template::{FieldKind, FieldSpec, KeyName};
 use iamb_platform::FocusToken;
@@ -767,47 +768,6 @@ pub struct WireExclusion {
     pub created_at: Timestamp,
 }
 
-/// A pending local change, for the sync agent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WireOutboxEntry {
-    /// Position in the outbox.
-    pub seq: i64,
-    /// The table (`snippet`, `folder`, …).
-    pub entity: String,
-    /// The row.
-    pub row_id: Id,
-    /// `put` or `delete`.
-    pub op: String,
-    /// The server revision the change was based on.
-    pub base_rev: u64,
-    /// When the change was made.
-    pub created_at: Timestamp,
-}
-
-/// A row from the server, for `ApplyRemote`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "entity", content = "row", rename_all = "snake_case")]
-pub enum RemoteRow {
-    /// A profile.
-    Profile(Profile),
-    /// A membership.
-    Membership(Membership),
-    /// A folder.
-    Folder(Folder),
-    /// A folder share.
-    FolderShare(FolderShare),
-    /// A snippet.
-    Snippet(Snippet),
-    /// A tag.
-    Tag(Tag),
-    /// A snippet–tag link.
-    SnippetTag(SnippetTag),
-    /// Attachment metadata.
-    Attachment(Attachment),
-    /// A snippet–attachment link.
-    SnippetAttachment(SnippetAttachment),
-}
-
 /// An attachment by profile and content hash.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AttachmentRef {
@@ -955,6 +915,14 @@ pub enum RequestBody {
     ResetUsage {},
     /// Revisions waiting for review. → [`ResponseBody::PendingReviews`]
     ListPendingReviews {},
+    /// The changes the server refused, or that lost their folder (D5). →
+    /// [`ResponseBody::KeptChanges`]
+    ListKeptChanges {},
+    /// Removes one kept change. → [`ResponseBody::Done`]
+    DismissKeptChange {
+        /// The kept change.
+        id: Id,
+    },
     /// Approves a revision. → [`ResponseBody::Done`]
     ApproveSnippet {
         /// The snippet.
@@ -1115,27 +1083,115 @@ pub enum RequestBody {
     },
 
     // ---- Sync -------------------------------------------------------------------------------
-    /// The oldest pending local changes. → [`ResponseBody::Outbox`]
+    /// Changes ready to send, built under D1 (`docs/sync-design.md` §7.2); the entries they cover
+    /// are marked as handed out in the same transaction. → [`ResponseBody::Changes`]
     OutboxRead {
-        /// At most this many.
+        /// At most this many rows (and the rows they refer to that the server never saw).
         limit: u32,
+        /// Which changes (in a new epoch, what took access away goes first, §6.7).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        phase: Option<OutboxPhase>,
     },
-    /// Removes pushed changes from the outbox. → [`ResponseBody::Acked`]
+    /// Acts on the server's result for each change (D4, D5). → [`ResponseBody::SyncAcked`]
     OutboxAck {
-        /// Their `seq` values.
-        ids: Vec<i64>,
+        /// The results, each with the outbox entries it covers.
+        results: Vec<OpResult>,
     },
-    /// Applies rows from the server. → [`ResponseBody::Done`]
+    /// Applies rows from the server (D2, D3, D7). → [`ResponseBody::Applied`]
     ApplyRemote {
-        /// The rows.
+        /// The rows; a null row removes the local row.
         batch: Vec<RemoteRow>,
+        /// The position to store in the same transaction.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        position: Option<String>,
+        /// `feed`, `reconcile` or `epoch`.
+        #[serde(default)]
+        mode: ApplyMode,
     },
-    /// Removes a folder whose access ended, with its snippets and cached attachments. →
+    /// Removes a tree whose access ended, keeping unsent changes for the user (D6). →
     /// [`ResponseBody::Done`]
     PurgeFolder {
         /// The folder.
         id: Id,
+        /// The sub-trees that stay readable.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        except: Vec<Id>,
     },
+    /// The store's sync state. → [`ResponseBody::SyncState`]
+    SyncState {},
+    /// Records the account, its personal profile and the device id. → [`ResponseBody::Done`]
+    SetAccount {
+        /// The account.
+        user: Id,
+        /// Its personal profile.
+        personal_profile: Id,
+        /// This installation's device id.
+        device: Id,
+    },
+    /// Replaces the device id (C25). → [`ResponseBody::Done`]
+    SetDeviceId {
+        /// The new id.
+        device: Id,
+    },
+    /// Stores the position in the feed. → [`ResponseBody::Done`]
+    SetPosition {
+        /// The position, or none.
+        position: Option<String>,
+    },
+    /// Begins a reconcile (D7). → [`ResponseBody::ReconcileToken`]
+    ReconcileBegin {
+        /// Everything, or one tree.
+        scope: ReconcileScope,
+        /// After a restore of the server: the lines of the restore.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lost: Option<LostLine>,
+    },
+    /// Ends a reconcile (D7). → [`ResponseBody::AccessRemovals`]
+    ReconcileEnd {
+        /// The token `ReconcileBegin` answered.
+        token: String,
+        /// The position to store.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        position: Option<String>,
+    },
+    /// Forgets the lines of a restore. → [`ResponseBody::Done`]
+    ClearLostLines {},
+    /// The user's access roots (`SetAccess`). → [`ResponseBody::Done`]
+    SetAccess {
+        /// The roots outside the personal profile.
+        roots: Vec<AccessRoot>,
+    },
+    /// Marks a change that keeps failing as blocked (D17). → [`ResponseBody::Done`]
+    SetBlocked {
+        /// The entries of the change.
+        seqs: Vec<i64>,
+        /// Why (`server_error`).
+        reason: String,
+    },
+    /// Offers blocked changes again. → [`ResponseBody::Done`]
+    Unblock {
+        /// Only changes blocked for this reason.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    /// Notes an account call that takes access away (D7). → [`ResponseBody::Done`]
+    NoteAccessRemoval {
+        /// The entry.
+        entry: AccessRemoval,
+        /// The call was refused: the entry goes.
+        #[serde(default)]
+        refused: bool,
+    },
+    /// After a sign-out (D14). → [`ResponseBody::Done`]
+    SignedOut {
+        /// The server confirmed it.
+        confirmed: bool,
+        /// Keep the unsent changes to shared folders in the list.
+        keep: bool,
+    },
+    /// The folders the device holds outside the personal profile (the access check, D7). →
+    /// [`ResponseBody::Ids`]
+    ForeignFolders {},
     /// An attachment's bytes are now in `attachments/`. → [`ResponseBody::Done`]
     AttachmentAvailable {
         /// The profile.
@@ -1174,7 +1230,7 @@ pub enum RequestBody {
 
 impl RequestBody {
     /// Every request name, in declaration order (the golden tests cover each).
-    pub const NAMES: [&'static str; 48] = [
+    pub const NAMES: [&'static str; 63] = [
         "list_folders",
         "list_snippets",
         "get_snippet",
@@ -1192,6 +1248,8 @@ impl RequestBody {
         "export",
         "health",
         "list_pending_reviews",
+        "list_kept_changes",
+        "dismiss_kept_change",
         "approve_snippet",
         "get_status",
         "set_paused",
@@ -1220,6 +1278,19 @@ impl RequestBody {
         "missing_attachments",
         "set_sync_status",
         "set_entitlements",
+        "sync_state",
+        "set_account",
+        "set_device_id",
+        "set_position",
+        "reconcile_begin",
+        "reconcile_end",
+        "clear_lost_lines",
+        "set_access",
+        "set_blocked",
+        "unblock",
+        "note_access_removal",
+        "signed_out",
+        "foreign_folders",
         "put_attachment",
         "recent_snippets",
         "reset_usage",
@@ -1248,6 +1319,8 @@ impl RequestBody {
             Self::RecentSnippets { .. } => "recent_snippets",
             Self::ResetUsage {} => "reset_usage",
             Self::ListPendingReviews {} => "list_pending_reviews",
+            Self::ListKeptChanges {} => "list_kept_changes",
+            Self::DismissKeptChange { .. } => "dismiss_kept_change",
             Self::ApproveSnippet { .. } => "approve_snippet",
             Self::GetStatus {} => "get_status",
             Self::SetPaused { .. } => "set_paused",
@@ -1276,6 +1349,19 @@ impl RequestBody {
             Self::MissingAttachments {} => "missing_attachments",
             Self::SetSyncStatus { .. } => "set_sync_status",
             Self::SetEntitlements { .. } => "set_entitlements",
+            Self::SyncState {} => "sync_state",
+            Self::SetAccount { .. } => "set_account",
+            Self::SetDeviceId { .. } => "set_device_id",
+            Self::SetPosition { .. } => "set_position",
+            Self::ReconcileBegin { .. } => "reconcile_begin",
+            Self::ReconcileEnd { .. } => "reconcile_end",
+            Self::ClearLostLines {} => "clear_lost_lines",
+            Self::SetAccess { .. } => "set_access",
+            Self::SetBlocked { .. } => "set_blocked",
+            Self::Unblock { .. } => "unblock",
+            Self::NoteAccessRemoval { .. } => "note_access_removal",
+            Self::SignedOut { .. } => "signed_out",
+            Self::ForeignFolders {} => "foreign_folders",
             Self::PutAttachment { .. } => "put_attachment",
         }
     }
@@ -1302,6 +1388,8 @@ impl RequestBody {
             | Self::Health {}
             | Self::RecentSnippets { .. }
             | Self::ListPendingReviews {}
+            | Self::ListKeptChanges {}
+            | Self::DismissKeptChange { .. }
             | Self::ApproveSnippet { .. }
             | Self::PutAttachment { .. } => Group::Library,
             Self::GetStatus {}
@@ -1330,7 +1418,20 @@ impl RequestBody {
             | Self::AttachmentAvailable { .. }
             | Self::MissingAttachments {}
             | Self::SetSyncStatus { .. }
-            | Self::SetEntitlements { .. } => Group::Sync,
+            | Self::SetEntitlements { .. }
+            | Self::SyncState {}
+            | Self::SetAccount { .. }
+            | Self::SetDeviceId { .. }
+            | Self::SetPosition { .. }
+            | Self::ReconcileBegin { .. }
+            | Self::ReconcileEnd { .. }
+            | Self::ClearLostLines {}
+            | Self::SetAccess { .. }
+            | Self::SetBlocked { .. }
+            | Self::Unblock { .. }
+            | Self::NoteAccessRemoval { .. }
+            | Self::SignedOut { .. }
+            | Self::ForeignFolders {} => Group::Sync,
         }
     }
 }
@@ -1471,10 +1572,45 @@ pub enum ResponseBody {
         /// The exclusions.
         exclusions: Vec<WireExclusion>,
     },
-    /// Pending local changes, oldest first.
-    Outbox {
+    /// Changes ready to send (`OutboxRead`).
+    Changes {
+        /// The changes, in dependency order.
+        changes: Vec<Change>,
+    },
+    /// What `OutboxAck` did (D15, D7).
+    SyncAcked {
+        /// Rows now behind, and left-alone rows removed.
+        outcome: AckOutcome,
+    },
+    /// What `ApplyRemote` did with each row.
+    Applied {
+        /// One status per row, in the order sent.
+        status: Vec<ApplyStatus>,
+    },
+    /// The store's sync state.
+    SyncState {
+        /// The state.
+        info: SyncInfo,
+    },
+    /// The token of a reconcile.
+    ReconcileToken {
+        /// The token.
+        token: String,
+    },
+    /// The access removals a restore lost (`ReconcileEnd`).
+    AccessRemovals {
         /// The entries.
-        entries: Vec<WireOutboxEntry>,
+        entries: Vec<AccessRemoval>,
+    },
+    /// Ids.
+    Ids {
+        /// The ids.
+        ids: Vec<Id>,
+    },
+    /// The kept changes.
+    KeptChanges {
+        /// The kept changes.
+        changes: Vec<KeptChange>,
     },
     /// Outbox entries removed.
     Acked {
@@ -1527,7 +1663,7 @@ pub enum ResponseBody {
 
 impl ResponseBody {
     /// Every response name, in declaration order.
-    pub const NAMES: [&'static str; 25] = [
+    pub const NAMES: [&'static str; 32] = [
         "done",
         "folders",
         "snippets",
@@ -1546,7 +1682,14 @@ impl ResponseBody {
         "diagnostics",
         "settings",
         "exclusions",
-        "outbox",
+        "changes",
+        "sync_acked",
+        "applied",
+        "sync_state",
+        "reconcile_token",
+        "access_removals",
+        "ids",
+        "kept_changes",
         "acked",
         "missing_attachments",
         "tags",
@@ -1577,7 +1720,14 @@ impl ResponseBody {
             Self::Diagnostics { .. } => "diagnostics",
             Self::Settings { .. } => "settings",
             Self::Exclusions { .. } => "exclusions",
-            Self::Outbox { .. } => "outbox",
+            Self::Changes { .. } => "changes",
+            Self::SyncAcked { .. } => "sync_acked",
+            Self::Applied { .. } => "applied",
+            Self::SyncState { .. } => "sync_state",
+            Self::ReconcileToken { .. } => "reconcile_token",
+            Self::AccessRemovals { .. } => "access_removals",
+            Self::Ids { .. } => "ids",
+            Self::KeptChanges { .. } => "kept_changes",
             Self::Acked { .. } => "acked",
             Self::MissingAttachments { .. } => "missing_attachments",
             Self::Tags { .. } => "tags",

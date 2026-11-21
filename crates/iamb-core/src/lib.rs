@@ -9,6 +9,7 @@ pub mod model;
 pub mod rich;
 pub mod search;
 pub mod sensitive;
+pub mod sync;
 pub mod template;
 
 /// Version of the `iamb-core` crate, taken from the workspace package version.

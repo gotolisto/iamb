@@ -2,15 +2,11 @@
 //!
 //! Every function takes a `&Connection`; writers are always called inside a transaction.
 //!
-//! # Open questions for the sync design (task 4.1)
+//! # Soft delete and sync
 //!
-//! Soft delete is unchanged in Phase 1; these four edges need a rule before sync (review 1.9,
-//! finding 22):
-//!
-//! - Deleting a snippet, tag or profile leaves its link, share and folder rows live (reads filter them out).
-//! - `put` on a deleted folder restores it but not the rows the delete cascaded to.
-//! - A purge can remove rows that still have unsent outbox entries.
-//! - One conflicting row fails a whole `apply_remote` batch.
+//! The four edges of soft delete that review 1.9 (finding 22) left for the sync design are
+//! answered in `docs/sync-design.md` §7.3; the rules they cite (C6, C7, C10, D3, D8) are
+//! implemented here and in [`crate::sync`].
 
 use std::fmt::Write as _;
 
@@ -88,6 +84,7 @@ fn existing(
         .optional()?)
 }
 
+/// Writes one outbox entry with a new op id (C15) and returns its `seq`.
 pub(crate) fn outbox_push(
     conn: &Connection,
     kind: EntityKind,
@@ -95,18 +92,37 @@ pub(crate) fn outbox_push(
     op: OutboxOp,
     base_rev: u64,
     now: Timestamp,
-) -> Result<(), StoreError> {
+) -> Result<i64, StoreError> {
+    outbox_push_cascade(conn, kind, id, op, base_rev, now, None)
+}
+
+/// [`outbox_push`] for a row a folder's delete took with it: `cascade` is the folder entry's
+/// `seq` and op id (C6, D1).
+pub(crate) fn outbox_push_cascade(
+    conn: &Connection,
+    kind: EntityKind,
+    id: Id,
+    op: OutboxOp,
+    base_rev: u64,
+    now: Timestamp,
+    cascade: Option<(i64, [u8; 16])>,
+) -> Result<i64, StoreError> {
+    // The op id: 16 bytes from SQLite's own random source. The server needs only a UUID's text
+    // form, which any 16 bytes have.
     conn.prepare_cached(
-        "INSERT INTO outbox (entity, row_id, op, base_rev, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO outbox (entity, row_id, op, base_rev, created_at, op_id, cascade_of, cascade_op)
+         VALUES (?1, ?2, ?3, ?4, ?5, randomblob(16), ?6, ?7)",
     )?
     .execute(params![
         kind.as_str(),
         id.as_bytes(),
         op.as_str(),
         u64_int(base_rev, "rev")?,
-        now.0
+        now.0,
+        cascade.map(|c| c.0),
+        cascade.map(|c| c.1.to_vec()),
     ])?;
-    Ok(())
+    Ok(conn.last_insert_rowid())
 }
 
 /// Local insert-or-update. `created_at` and `rev` of an existing row are kept; `updated_at` is
@@ -205,21 +221,22 @@ pub(crate) fn put_remote<E: Entity>(conn: &Connection, value: &E) -> Result<(), 
     Ok(())
 }
 
-/// Soft-deletes one row and writes its outbox entry.
+/// Soft-deletes one row and writes its outbox entry; returns the entry's `seq`.
 fn soft_delete(
     conn: &Connection,
     kind: EntityKind,
     id: Id,
     base_rev: u64,
     now: Timestamp,
-) -> Result<(), StoreError> {
+    cascade: Option<(i64, [u8; 16])>,
+) -> Result<i64, StoreError> {
     let sql = format!(
         "UPDATE {} SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
         kind.as_str()
     );
     conn.prepare_cached(&sql)?
         .execute(params![now.0, id.as_bytes()])?;
-    outbox_push(conn, kind, id, OutboxOp::Delete, base_rev, now)
+    outbox_push_cascade(conn, kind, id, OutboxOp::Delete, base_rev, now, cascade)
 }
 
 /// Local soft delete. Deleting a folder also deletes its sub-folders and their snippets.
@@ -238,14 +255,28 @@ pub(crate) fn delete_local<E: Entity>(
     if deleted {
         return Ok(());
     }
-    soft_delete(conn, E::KIND, id, rev, now)?;
+    let seq = soft_delete(conn, E::KIND, id, rev, now, None)?;
     if E::KIND == EntityKind::Folder {
-        cascade_folder(conn, id, now)?;
+        let op: Vec<u8> = conn
+            .prepare_cached("SELECT op_id FROM outbox WHERE seq = ?1")?
+            .query_row([seq], |r| r.get(0))?;
+        let op: [u8; 16] = op
+            .try_into()
+            .map_err(|_| StoreError::InvalidData("outbox op id is not 16 bytes".into()))?;
+        cascade_folder(conn, id, now, (seq, op))?;
     }
     Ok(())
 }
 
-fn cascade_folder(conn: &Connection, id: Id, now: Timestamp) -> Result<(), StoreError> {
+/// A folder's delete on the device: its live sub-folders and snippets, each with an entry that
+/// names the folder's (C6, D1), and the live shares of the folder and of every folder below it,
+/// each with an entry of its own (§7.3).
+fn cascade_folder(
+    conn: &Connection,
+    id: Id,
+    now: Timestamp,
+    cascade: (i64, [u8; 16]),
+) -> Result<(), StoreError> {
     const SUBTREE: &str = "WITH RECURSIVE sub(id) AS (
                                SELECT ?1
                                UNION
@@ -262,48 +293,76 @@ fn cascade_folder(conn: &Connection, id: Id, now: Timestamp) -> Result<(), Store
     let snippets = collect(&format!(
         "{SUBTREE} SELECT id, rev FROM snippet WHERE folder_id IN (SELECT id FROM sub) AND deleted_at IS NULL"
     ))?;
+    let shares = collect(&format!(
+        "{SUBTREE} SELECT id, rev FROM folder_share WHERE folder_id IN (SELECT id FROM sub) AND deleted_at IS NULL"
+    ))?;
     for (fid, rev) in folders {
-        soft_delete(conn, EntityKind::Folder, fid, rev, now)?;
+        soft_delete(conn, EntityKind::Folder, fid, rev, now, Some(cascade))?;
     }
     for (sid, rev) in snippets {
-        soft_delete(conn, EntityKind::Snippet, sid, rev, now)?;
+        soft_delete(conn, EntityKind::Snippet, sid, rev, now, Some(cascade))?;
+    }
+    for (xid, rev) in shares {
+        soft_delete(conn, EntityKind::FolderShare, xid, rev, now, None)?;
     }
     Ok(())
 }
 
 /// Hard-deletes rows soft-deleted before `cutoff`, children first. A row that a surviving row
-/// still refers to is kept. Returns the number of rows deleted directly (link rows, usage and
-/// approvals removed by `ON DELETE CASCADE` are not counted).
+/// still refers to is kept, and so is every row with an entry in the outbox, waiting or blocked
+/// (D8). Returns the number of rows deleted directly (link rows, usage and approvals removed by
+/// `ON DELETE CASCADE` are not counted).
 pub(crate) fn purge_deleted_before(
     conn: &Connection,
     cutoff: Timestamp,
 ) -> Result<usize, StoreError> {
     let mut removed = 0usize;
-    let mut run = |sql: &str| -> Result<usize, StoreError> {
-        let n = conn.prepare_cached(sql)?.execute([cutoff.0])?;
+    let mut run = |table: &str, extra: &str| -> Result<usize, StoreError> {
+        let sql = format!(
+            "DELETE FROM {table} WHERE deleted_at < ?1
+             AND NOT EXISTS (SELECT 1 FROM outbox o WHERE o.entity = '{table}' AND o.row_id = {table}.id)
+             {extra}"
+        );
+        let n = conn.prepare_cached(&sql)?.execute([cutoff.0])?;
         removed += n;
         Ok(n)
     };
-    run("DELETE FROM snippet_tag WHERE deleted_at < ?1")?;
-    run("DELETE FROM snippet_attachment WHERE deleted_at < ?1")?;
-    run("DELETE FROM folder_share WHERE deleted_at < ?1")?;
-    run("DELETE FROM membership WHERE deleted_at < ?1")?;
-    run("DELETE FROM snippet WHERE deleted_at < ?1")?;
+    run("snippet_tag", "")?;
+    run("snippet_attachment", "")?;
+    run("folder_share", "")?;
+    run("membership", "")?;
+    run(
+        "snippet",
+        "AND NOT EXISTS (SELECT 1 FROM snippet_tag x WHERE x.snippet_id = snippet.id
+                         AND EXISTS (SELECT 1 FROM outbox o WHERE o.entity = 'snippet_tag' AND o.row_id = x.id))
+         AND NOT EXISTS (SELECT 1 FROM snippet_attachment x WHERE x.snippet_id = snippet.id
+                         AND EXISTS (SELECT 1 FROM outbox o WHERE o.entity = 'snippet_attachment' AND o.row_id = x.id))",
+    )?;
     // Leaves first; each pass removes one level.
-    while run("DELETE FROM folder WHERE deleted_at < ?1
-             AND NOT EXISTS (SELECT 1 FROM folder c WHERE c.parent_id = folder.id)
-             AND NOT EXISTS (SELECT 1 FROM snippet s WHERE s.folder_id = folder.id)")?
-        > 0
+    while run(
+        "folder",
+        "AND NOT EXISTS (SELECT 1 FROM folder c WHERE c.parent_id = folder.id)
+         AND NOT EXISTS (SELECT 1 FROM snippet s WHERE s.folder_id = folder.id)
+         AND NOT EXISTS (SELECT 1 FROM folder_share x WHERE x.folder_id = folder.id)",
+    )? > 0
     {}
-    run("DELETE FROM tag WHERE deleted_at < ?1")?;
-    run("DELETE FROM attachment WHERE deleted_at < ?1")?;
-    run("DELETE FROM profile WHERE deleted_at < ?1
-             AND NOT EXISTS (SELECT 1 FROM folder x WHERE x.profile_id = profile.id)
-             AND NOT EXISTS (SELECT 1 FROM snippet x WHERE x.profile_id = profile.id)
-             AND NOT EXISTS (SELECT 1 FROM tag x WHERE x.profile_id = profile.id)
-             AND NOT EXISTS (SELECT 1 FROM attachment x WHERE x.profile_id = profile.id)
-             AND NOT EXISTS (SELECT 1 FROM membership x WHERE x.profile_id = profile.id)
-             AND NOT EXISTS (SELECT 1 FROM folder_share x WHERE x.profile_id = profile.id)")?;
+    run(
+        "tag",
+        "AND NOT EXISTS (SELECT 1 FROM snippet_tag x WHERE x.tag_id = tag.id)",
+    )?;
+    run(
+        "attachment",
+        "AND NOT EXISTS (SELECT 1 FROM snippet_attachment x WHERE x.attachment_id = attachment.id)",
+    )?;
+    run(
+        "profile",
+        "AND NOT EXISTS (SELECT 1 FROM folder x WHERE x.profile_id = profile.id)
+         AND NOT EXISTS (SELECT 1 FROM snippet x WHERE x.profile_id = profile.id)
+         AND NOT EXISTS (SELECT 1 FROM tag x WHERE x.profile_id = profile.id)
+         AND NOT EXISTS (SELECT 1 FROM attachment x WHERE x.profile_id = profile.id)
+         AND NOT EXISTS (SELECT 1 FROM membership x WHERE x.profile_id = profile.id)
+         AND NOT EXISTS (SELECT 1 FROM folder_share x WHERE x.profile_id = profile.id)",
+    )?;
     Ok(removed)
 }
 

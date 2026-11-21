@@ -38,7 +38,33 @@ const FIXTURES: &[Fixture] = &[
         sql: include_str!("fixtures/v0002.sql"),
         check: check_v2,
     },
+    Fixture {
+        version: 3,
+        sql: include_str!("fixtures/v0003.sql"),
+        check: check_v3,
+    },
 ];
+
+fn fid3(n: u8) -> Id {
+    let mut b = fid(n).as_bytes().to_owned();
+    b[14] = 0x0c;
+    Id::from_bytes(b)
+}
+
+fn check_v3(store: &Store) -> TestResult {
+    use iamb_core::sync::{RowKind, RowRef};
+    // Both snippets with one folded abbreviation are there (C9).
+    assert!(store.get_snippet(fid3(0x20))?.is_some());
+    assert!(store.get_snippet(fid3(0x21))?.is_some());
+    let origin = store.snippet_origin(fid3(0x20))?.ok_or("origin")?;
+    assert_eq!(origin.created_rev, 40);
+    assert_eq!(store.kept_changes()?.len(), 1);
+    assert_eq!(store.access_roots()?.len(), 1);
+    // The handed-out entry is not "unsent".
+    let key = RowRef { kind: RowKind::Snippet, id: fid3(0x21) };
+    assert_eq!(store.unsent_entries(key)?, 0);
+    Ok(())
+}
 
 /// `X'01900000000070008000000000000bNN'` from the version 2 fixture.
 fn fid2(n: u8) -> Id {

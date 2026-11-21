@@ -25,6 +25,7 @@ mod entity;
 mod error;
 pub mod health;
 pub mod migrations;
+pub mod sync;
 mod ops;
 pub mod transfer;
 

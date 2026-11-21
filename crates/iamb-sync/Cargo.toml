@@ -1,0 +1,49 @@
+[package]
+name = "iamb-sync"
+description = "The sync agent: push, pull, retry with backoff and live updates against the Iamb server."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "iamb-sync"
+path = "src/bin/iamb-sync.rs"
+
+[features]
+# The model of the server (`model`), and the device side over a store in process, for the scenario
+# replay and the two-device simulation. The shipped agent has neither: it reaches the store through
+# the service (ADR-0008).
+model = ["dep:iamb-store"]
+
+[dependencies]
+getrandom = "0.4.3"
+iamb-core = { path = "../iamb-core" }
+iamb-ipc = { path = "../iamb-ipc" }
+iamb-store = { path = "../iamb-store", optional = true }
+rustls = { version = "0.23.37", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-native-certs = "0.8.3"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tungstenite = { version = "0.30.0", default-features = false, features = ["handshake", "rustls-tls-native-roots"] }
+ureq = { version = "3.5.2", default-features = false, features = ["rustls-no-provider"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[lints]
+workspace = true
+
+# The OS keychain for the account's tokens (architecture §3, ADR-0020): the Keychain on macOS and
+# the Credential Manager on Windows, through the `keyring` crate's safe API (MIT or Apache-2.0).
+# Linux keeps them in a file in the user-only data directory for development.
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3.6.3", default-features = false, features = ["apple-native"] }
+
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3.6.3", default-features = false, features = ["windows-native"] }
