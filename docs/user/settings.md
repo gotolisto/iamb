@@ -11,7 +11,7 @@ This page lists every setting in the app, with its default.
 
 | Setting | Choices | Default | What it does |
 | --- | --- | --- | --- |
-| **Expand snippets as I type** | On or off | On | Turn off to pause Iamb everywhere. The menu has the same switch, **Pause expansion**. Search still works while paused. |
+| **Expand snippets as I type** | On or off | On | Turn off to pause Iamb everywhere. The menu has the same switch, **Pause Iamb**. Search still works while paused. |
 | **Show the Iamb icon in the menu bar** (macOS) or **in the notification area** (Windows) | On or off | On | Turn off to hide the icon. Iamb keeps running. With the icon hidden, the library window is reached with the [search shortcut](search.md) and **Ctrl+E** (**⌘E** on macOS). |
 | **Appearance** | Follow the system, Light, Dark | Follow the system | The colours of the library window. |
 

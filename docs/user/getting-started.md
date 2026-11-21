@@ -138,20 +138,31 @@ the library window. Opening the Iamb app a second time does not open the library
 
 Click the Iamb icon to open its menu. It has these items:
 
-- A status line: **Service: running**, **Service: paused**, **Service: not listening**,
-  **Service: connecting…** or **Service: not running, retrying**.
-- **Open library**.
-- **Search snippets…**, which opens [search](search.md).
-- **Fill in the last form again…**, which reopens the last [fill-in form](forms.md#your-last-answers).
-- **Pause expansion**, a switch. See [Settings](settings.md#general).
+- Two status lines at the top. The first says how Iamb is: **Iamb is on** (with the number of
+  snippets under it), **Iamb is paused** ("Typed abbreviations do not expand. Search still
+  works."), **Iamb cannot expand yet** (for example "2 permissions are missing") or **Iamb is not
+  running** ("Its background service stopped."). While Iamb starts, it says **Connecting…**.
 - **Set up Iamb…**, while setup is not finished. **Fix permissions…**, when a permission is missing
   on macOS.
-- **Quit Iamb**. This closes the menu icon and the windows. If a snippet has unsaved edits, Iamb asks
-  first. It does not ask whether you want expansion to stop. Whether the background service keeps
-  expanding after you quit is not confirmed for this version.
+- **Search snippets…**, which opens [search](search.md). The search shortcut is shown beside it.
+- **Fill in the last form again…**, which reopens the last [fill-in form](forms.md#your-last-answers).
+- **New snippet…**, which opens the library window with a new, empty snippet.
+- **Open library**.
+- **Pause Iamb**, a switch. See [Settings](settings.md#general).
+- **Never expand in** *app*, for the app you were using when you opened the menu. If that app is
+  already excluded, the item says **Expand in** *app* **again**. The item is not shown for Iamb's
+  own windows, or when Iamb cannot tell which app was in front. See [Exclusions](exclusions.md).
+- **Why didn't it expand?**, which opens that view in the library window. See
+  [Troubleshooting](troubleshooting.md).
+- **Settings…** (⌘, on macOS, Ctrl+, on Windows), which opens [Settings](settings.md) in the
+  library window.
+- **Quit Iamb** on macOS, **Exit Iamb** on Windows. This closes the menu icon and the windows. If a
+  snippet has unsaved edits, Iamb asks first. It does not ask whether you want expansion to stop.
+  Whether the background service keeps expanding after you quit is not confirmed for this version.
 
-The menu has no **Settings**, **New snippet**, **Why didn't it expand?** or **Never expand in this
-app** item. Open the library window, then use **Settings** and **Why didn't it expand?** in its sidebar.
+The icon itself shows three states: the plain mark when Iamb is on, a fainter mark when it is
+paused, and the mark with a dot when Iamb needs you (it is not running, or a permission is
+missing). It does not change with the app you are using.
 
 <!-- TODO: Quit calls app.exit(0) in the UI host only (commands.rs, app_quit). The UX spec says Quit asks first and stops the service too. Neither is built. -->
 

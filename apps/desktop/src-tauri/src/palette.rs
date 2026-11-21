@@ -159,6 +159,21 @@ pub enum LibraryRequest {
         /// The snippet's id.
         id: String,
     },
+    /// Show one of the window's views (the menu's "Settings…" and "Why didn't it expand?").
+    View {
+        /// Which.
+        view: LibraryView,
+    },
+}
+
+/// A view of the library window a [`LibraryRequest::View`] opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LibraryView {
+    /// Settings.
+    Settings,
+    /// "Why didn't it expand?".
+    Diagnostics,
 }
 
 impl std::fmt::Debug for LibraryRequest {
@@ -167,6 +182,7 @@ impl std::fmt::Debug for LibraryRequest {
         match self {
             Self::New { .. } => f.write_str("LibraryRequest::New { label: <redacted> }"),
             Self::Show { id } => write!(f, "LibraryRequest::Show {{ id: {id} }}"),
+            Self::View { view } => write!(f, "LibraryRequest::View {{ view: {view:?} }}"),
         }
     }
 }

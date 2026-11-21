@@ -99,6 +99,13 @@ impl PermissionsView {
     pub fn missing(&self) -> bool {
         self.accessibility == Grant::Denied || self.input_monitoring == Grant::Denied
     }
+
+    /// How many are missing (0, 1 or 2).
+    #[must_use]
+    pub fn missing_count(&self) -> u8 {
+        u8::from(self.accessibility == Grant::Denied)
+            + u8::from(self.input_monitoring == Grant::Denied)
+    }
 }
 
 /// How the end of onboarding went.
@@ -465,6 +472,9 @@ mod tests {
         assert!(v(Grant::Granted, Grant::Denied).missing());
         assert!(!v(Grant::NotRequired, Grant::NotRequired).missing());
         assert!(!v(Grant::Granted, Grant::Granted).missing());
+        assert_eq!(v(Grant::Denied, Grant::Denied).missing_count(), 2);
+        assert_eq!(v(Grant::Granted, Grant::Denied).missing_count(), 1);
+        assert_eq!(v(Grant::NotRequired, Grant::Granted).missing_count(), 0);
     }
 
     #[test]

@@ -206,12 +206,20 @@ export const paletteApi: PaletteApi = createPaletteApi((command, args) =>
 // ---- What the palette asks of the library window ---------------------------------------------
 
 /** What a pick asked of the library window (`LibraryRequest` in src-tauri/src/palette.rs). */
-export type LibraryRequest = { kind: "new"; label: string } | { kind: "show"; id: string };
+export type LibraryRequest =
+  | { kind: "new"; label: string }
+  | { kind: "show"; id: string }
+  | { kind: "view"; view: LibraryRequestView };
+
+/** The views the menu's "Settings…" and "Why didn't it expand?" open (`LibraryView`). */
+export type LibraryRequestView = "settings" | "diagnostics";
 
 export function isLibraryRequest(v: unknown): v is LibraryRequest {
   return (
     isObject(v) &&
-    ((v.kind === "new" && isString(v.label)) || (v.kind === "show" && isString(v.id)))
+    ((v.kind === "new" && isString(v.label)) ||
+      (v.kind === "show" && isString(v.id)) ||
+      (v.kind === "view" && (v.view === "settings" || v.view === "diagnostics")))
   );
 }
 

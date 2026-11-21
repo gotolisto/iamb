@@ -13,7 +13,7 @@ These work in any app.
 | --- | --- | --- | --- |
 | Search snippets | Ctrl+Shift+Space | ⌃⇧Space | Yes, in [Settings](settings.md#shortcuts) |
 
-Pause has no shortcut. Use the menu's **Pause expansion**, or the switch in
+Pause has no shortcut. Use the menu's **Pause Iamb**, or the switch in
 [Settings](settings.md#general).
 
 ## Library window

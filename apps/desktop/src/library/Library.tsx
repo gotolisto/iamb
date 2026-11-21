@@ -328,6 +328,8 @@ export function Library({ env }: { env: LibraryEnv }) {
   const openDraft = useCallback(
     (seed: DraftSeed) => {
       guard(() => {
+        // The editor lives in the list's views: from Settings and the like, go back to them.
+        setView((v) => (v.kind === "settings" || v.kind === "diagnostics" || v.kind === "health" ? { kind: "all" } : v));
         setSelection(NO_SELECTION);
         setDraft(seed);
         setEditorKey(`draft-${seed.key}`);
@@ -430,7 +432,11 @@ export function Library({ env }: { env: LibraryEnv }) {
     [data.rowsById, guard, view],
   );
 
-  usePaletteRequests(env.palette, data.ready, { onNew: newLabelled, onShow: showSnippet });
+  usePaletteRequests(env.palette, data.ready, {
+    onNew: newLabelled,
+    onShow: showSnippet,
+    onView: (next) => changeView(next === "settings" ? { kind: "settings" } : { kind: "diagnostics" }),
+  });
 
   // ---- Saving, deleting, turning on and off ----------------------------------------------------
   const onSaved = useCallback(

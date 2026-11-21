@@ -14,9 +14,15 @@ Add the apps where you type passwords or secrets.
 
 If you leave the identifier empty, Iamb asks you to write it.
 
+Quicker, from the menu: while you are in the app, open the Iamb menu and choose **Never expand in**
+*app*. The item names the app by its identifier (the last part of a macOS bundle identifier, or the
+Windows program name without `.exe`). For an app that is already excluded, the same item says
+**Expand in** *app* **again** and removes it from the list.
+
 ## Remove an app
 
-In the same list, choose **Remove** next to the app.
+In the same list, choose **Remove** next to the app. Or, while you are in the app, choose
+**Expand in** *app* **again** in the Iamb menu.
 
 ## What an excluded app means
 
@@ -46,8 +52,6 @@ list. Nothing expands there.
 
 ## Pause everywhere
 
-To stop Iamb in every app at once, use the menu's **Pause expansion**, turn off
+To stop Iamb in every app at once, use the menu's **Pause Iamb**, turn off
 **Expand snippets as I type** in [Settings](settings.md#general), or choose **Pause Iamb** from the
 status line at the bottom of the library window's sidebar. Search still works while paused.
-
-<!-- TODO: the tray menu's quick "Never expand in <app>" item is not in the app yet. Settings is the only place to add an exclusion. -->

@@ -13,7 +13,7 @@ Status:
 - **Not in this version**: the feature belongs to sync or accounts, which are in progress.
 - **TODO**: the page says something that still needs confirming. The TODO is also in the page itself.
 
-Counts: 114 features listed. Documented 92, Gap 17, Not in this version 5. The gaps and TODOs are
+Counts: 115 features listed. Documented 96, Gap 14, Not in this version 5. The gaps and TODOs are
 listed at the end. Documented rows were checked against the code on the date of the last review:
 claims the code did not support were corrected or removed, and the pages say where something is
 not confirmed.
@@ -135,10 +135,11 @@ not confirmed.
 
 | Feature | Source | Page | Status |
 | --- | --- | --- | --- |
-| Menu: status line, Open library, Search, Fill in again, Pause, Set up, Fix permissions, Quit | `tray.rs` | [Get started](getting-started.md#the-menu) | Documented |
-| Menu: Settings item | UX spec 4.1 | [Get started](getting-started.md#the-menu) (says it is missing) | Gap |
-| Menu: New snippet… and Why didn't it expand? | UX spec 4.1 | [Get started](getting-started.md#the-menu) (says they are missing) | Gap |
-| Menu: "Never expand in this app" | UX spec 4.1 | [Get started](getting-started.md#the-menu) (says it is missing) | Gap |
+| Menu: status lines, Open library, Search, Fill in again, Pause, Set up, Fix permissions, Quit or Exit | `tray.rs`, `menu.rs` | [Get started](getting-started.md#the-menu) | Documented |
+| Menu icon states: on, paused, needs you | UX spec 4.1, `menu.rs` | [Get started](getting-started.md#the-menu) | Documented |
+| Menu: Settings item | UX spec 4.1, `tray.rs` | [Get started](getting-started.md#the-menu) | Documented |
+| Menu: New snippet… and Why didn't it expand? | UX spec 4.1, `tray.rs` | [Get started](getting-started.md#the-menu) | Documented |
+| Menu: "Never expand in this app" | UX spec 4.1, `tray.rs`, `menu.rs` | [Get started](getting-started.md#the-menu), [Exclusions](exclusions.md) | Documented |
 | Quit asks about unsaved edits | `Library.tsx`, `LibraryView.tsx` | [Get started](getting-started.md#the-menu) (menu) | Documented |
 | Quit confirmation with the "stop expanding" sentence, and Quit stopping the service | UX spec 4.1, `commands.rs` `app_quit` (`app.exit(0)`, UI host only) | [Get started](getting-started.md#the-menu) (says it is not confirmed) | Gap |
 | "Start it again" and "Restart" buttons (setup window; the library banner has none) | UX spec 4.2, `steps.tsx`, `onboarding.rs` `NoSupervisor` | [Troubleshooting](troubleshooting.md#iamb-is-not-running) | Gap: the buttons exist in setup but always fail |
@@ -194,25 +195,23 @@ saying they are missing. Each one needs a decision before the page can say more.
    refer to an Import button that does not exist yet.
 7. **Share a folder, and drag to reorder or nest.** Not in the app.
 8. **Show as text (raw source) in the editor, and Move to… in More actions.** Not in the app.
-9. **Menu: Settings, New snippet…, Why didn't it expand?, "Never expand in this app".** Not in the
-   app.
-10. **Quit Iamb.** It asks only about unsaved edits, and it ends the UI host only. The spec says it
+9. **Quit Iamb.** It asks only about unsaved edits, and it ends the UI host only. The spec says it
     asks "Abbreviations stop expanding…" and stops the service too. Not confirmed what keeps running.
-11. **Restart buttons.** "Start it again" and "Restart" exist in the setup window but cannot restart
+10. **Restart buttons.** "Start it again" and "Restart" exist in the setup window but cannot restart
     anything (`NoSupervisor`). The library's "Iamb is not running" banner has no button.
-12. **Missing-permission banner in the library window (macOS).** Not in the app.
-13. **Opening the library from Applications or the Start menu.** A second start of Iamb exits without
+11. **Missing-permission banner in the library window (macOS).** Not in the app.
+12. **Opening the library from Applications or the Start menu.** A second start of Iamb exits without
     opening anything. With the menu icon hidden, the library is reached through the search
     shortcut and Ctrl+E. Confirm with the design.
-14. **Installing the `iamb` command.** The installers carry the desktop app and the service only.
-15. **Compatibility results.** The matrix is a plan. No published results exist yet
+13. **Installing the `iamb` command.** The installers carry the desktop app and the service only.
+14. **Compatibility results.** The matrix is a plan. No published results exist yet
     (`docs/results/` does not exist), so `troubleshooting.md` lists the differences without test
     outcomes.
-16. **Version number in About, and the log folder button.** Not shown.
-17. **Linux desktop.** The architecture says Linux is for development and the command line, and the
+15. **Version number in About, and the log folder button.** Not shown.
+16. **Linux desktop.** The architecture says Linux is for development and the command line, and the
     Linux package is marked development. The pages follow the architecture.
-18. **Accessibility results.** The manual screen-reader runs are not recorded.
-19. **Review of snippets from other people, shared folders, accounts.** Belong to sync and accounts,
+17. **Accessibility results.** The manual screen-reader runs are not recorded.
+18. **Review of snippets from other people, shared folders, accounts.** Belong to sync and accounts,
     which are in progress. The sync client crate exists but nothing starts it.
 
 Not verified against code or a running app: the text of system prompts in the installers, what opening

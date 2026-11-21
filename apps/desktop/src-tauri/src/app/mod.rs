@@ -109,6 +109,9 @@ impl BridgeSink for Sink {
                 ui.form.connection_lost();
                 palette_panel::connection_lost(&ui);
             }
+            if connected {
+                tray::refresh_shortcut(&ui);
+            }
             settings_commands::connection_changed(&self.app, connected);
             onboarding_commands::connection_changed(&self.app, connected);
         }
@@ -124,6 +127,9 @@ impl BridgeSink for Sink {
             ui.form.service_event(event);
             palette_panel::service_event(&ui, event);
             ui.notices.service_event(event);
+            if matches!(event, iamb_ipc::EventBody::SettingsChanged { .. }) {
+                tray::refresh_shortcut(&ui);
+            }
         }
     }
 }
@@ -171,7 +177,7 @@ fn setup(
         log: Arc::clone(log),
         tray: OnceLock::new(),
     });
-    match tray::Tray::create(&handle) {
+    match tray::Tray::create(&handle, palette_panel::platform_focus()) {
         Ok(t) => {
             let _ = ui.tray.set(t);
         }

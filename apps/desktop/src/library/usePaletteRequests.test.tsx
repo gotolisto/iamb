@@ -70,4 +70,20 @@ describe("the library's side of the search palette", () => {
   it("does nothing without a palette", () => {
     renderHook(() => usePaletteRequests(undefined, true, { onNew: vi.fn(), onShow: vi.fn() }));
   });
+
+  it("shows the view the menu asked for", async () => {
+    const l = link([{ kind: "view", view: "settings" }]);
+    const onView = vi.fn();
+    const onNew = vi.fn();
+    const onShow = vi.fn();
+    renderHook(() => usePaletteRequests(l.fake, true, { onNew, onShow, onView }));
+    await flush();
+    expect(onView).toHaveBeenCalledWith("settings");
+    l.push({ kind: "view", view: "diagnostics" });
+    l.hear();
+    await flush();
+    expect(onView).toHaveBeenLastCalledWith("diagnostics");
+    expect(onNew).not.toHaveBeenCalled();
+    expect(onShow).not.toHaveBeenCalled();
+  });
 });

@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use tauri::menu::{Menu, MenuItem};
+use tauri::menu::{Menu, MenuId, MenuItem};
 use tauri::{
     AppHandle, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent, Wry,
 };
@@ -208,15 +208,13 @@ pub const SETUP_ID: &str = "setup";
 /// The menu id of "Fix permissions…".
 pub const FIX_ID: &str = "fix_permissions";
 
-/// Where the two entries go in the menu: after the status line and its separator, before "Open
-/// library".
-const ENTRY_AT: usize = 2;
-
 /// The menu's "Set up Iamb…" (offered while setup is unfinished) and "Fix permissions…" (offered
 /// while a permission is missing). The items exist all the time; they are in the menu only while
 /// they apply, so a finished, healthy setup shows neither.
 pub struct MenuEntries {
     menu: Menu<Wry>,
+    /// The item they follow: the separator under the status lines, before "Search snippets…".
+    anchor: MenuId,
     setup: MenuItem<Wry>,
     fix: MenuItem<Wry>,
     setup_shown: AtomicBool,
@@ -224,14 +222,15 @@ pub struct MenuEntries {
 }
 
 impl MenuEntries {
-    /// The two items, not yet in `menu`.
+    /// The two items, not yet in `menu`; they go right after the item `anchor`.
     ///
     /// # Errors
     ///
     /// When the items cannot be built.
-    pub fn new(app: &AppHandle, menu: Menu<Wry>) -> tauri::Result<Self> {
+    pub fn new(app: &AppHandle, menu: Menu<Wry>, anchor: MenuId) -> tauri::Result<Self> {
         Ok(Self {
             menu,
+            anchor,
             setup: MenuItem::with_id(app, SETUP_ID, "Set up Iamb…", true, None::<&str>)?,
             fix: MenuItem::with_id(app, FIX_ID, "Fix permissions…", true, None::<&str>)?,
             setup_shown: AtomicBool::new(false),
@@ -243,11 +242,11 @@ impl MenuEntries {
         if shown.swap(wanted, Ordering::SeqCst) == wanted {
             return;
         }
-        let _ = if wanted {
-            self.menu.insert(item, ENTRY_AT)
+        if wanted {
+            super::tray::insert_after(&self.menu, &self.anchor, item);
         } else {
-            self.menu.remove(item)
-        };
+            let _ = self.menu.remove(item);
+        }
     }
 
     /// Offers "Set up Iamb…" or stops offering it.
@@ -261,14 +260,16 @@ impl MenuEntries {
     }
 }
 
-/// Sets the menu's "Set up Iamb…" and "Fix permissions…" entries (`None` leaves one as it is).
-fn show_menu_entries(ui: &Ui, setup: Option<bool>, fix: Option<bool>) {
+/// Sets the menu's "Set up Iamb…" and "Fix permissions…" entries (`None` leaves one as it is);
+/// `missing` permissions, while "Fix permissions…" is offered, make the icon say "Needs you".
+fn show_menu_entries(ui: &Ui, setup: Option<bool>, fix: Option<(bool, u8)>) {
     if let Some(tray) = ui.tray.get() {
         if let Some(setup) = setup {
             tray.setup.set_setup(setup);
         }
-        if let Some(fix) = fix {
+        if let Some((fix, missing)) = fix {
             tray.setup.set_fix(fix);
+            tray.set_missing(if fix { missing } else { 0 });
         }
     }
 }
@@ -292,8 +293,8 @@ fn start_poll(app: &AppHandle) {
                     onboarding::is_done(&ui.bridge),
                     onboarding::permissions(&ui.bridge),
                 ) {
-                    (Ok(done), Ok(p)) => onboarding::menu_offers_fix(done, &p),
-                    _ => false,
+                    (Ok(done), Ok(p)) => (onboarding::menu_offers_fix(done, &p), p.missing_count()),
+                    _ => (false, 0),
                 };
                 show_menu_entries(&ui, None, Some(fix));
             }

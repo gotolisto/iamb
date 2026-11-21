@@ -18,6 +18,7 @@
 //! - [`crash`], [`log`], [`paths`]: crash handling without heap contents, the log file, and the
 //!   data root, as in the service (architecture §3.3, §8).
 //! - [`link`]: which addresses a link in the formatted preview may open, and the opening.
+//! - [`menu`]: what the tray or menu-bar menu and its icon show, independent of Tauri.
 //! - [`timing`]: the cold-open measurement.
 
 pub mod app;
@@ -28,6 +29,7 @@ pub mod form;
 pub mod library;
 pub mod link;
 pub mod log;
+pub mod menu;
 pub mod notice;
 pub mod onboarding;
 pub mod palette;
