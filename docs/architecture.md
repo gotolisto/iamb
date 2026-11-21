@@ -2,8 +2,8 @@
 
 Status: approved by the owner on 2026-11-18; §4 amended the same day after the Phase 1 review (ADR-0024) · Task 0.1 ·
 §4.4, §6.2, §6.4, §7, §8 rule 10 and §9 extended by the sync design of task 4.1, as revised
-after its review and its follow-up review ([`sync-design.md`](sync-design.md); ADR-0027,
-ADR-0028 and ADR-0029, proposed and awaiting the owner) ·
+after its review, its follow-up review and its close-out review ([`sync-design.md`](sync-design.md);
+ADR-0027, ADR-0028 and ADR-0029, proposed and awaiting the owner) ·
 Decision records: [`docs/decisions/`](decisions/README.md) ·
 Review record: [`docs/reviews/0.1-architecture-review.md`](reviews/0.1-architecture-review.md)
 
@@ -622,9 +622,12 @@ same transaction; its `mode` says whether the rows come from the feed, from a re
 resync after the server was restored from a backup, in which a row the device holds in a revision
 the backup lacks is kept and sent again instead of being replaced; `PurgeFolder` keeps the folder's
 unsent changes for the user before it removes the folder, leaves the sub-folders named in `except`,
-and is also what a folder that arrives as "no longer there" does; `NoteAccessRemoval` records a call
-by which the user took access away from someone, so that the device can make it again after such a
-restore. The Library group gains `ListKeptChanges`, `CopyKeptChange` and `DismissKeptChange` for
+and is also what a folder that arrives as "no longer there" does, which leaves in place the parts of
+it that are shared by themselves; `NoteAccessRemoval` records a call by which the user took access
+away from someone, before the call is sent and again when it is answered, so that the device can
+make it again after such a restore, before it gives anything back; `SignedOut` says whether the
+server confirmed the sign-out: only then are other people's folders removed, and otherwise they are
+set aside, unused and unseen, until the account has signed in again and synced, for 30 days at most. The Library group gains `ListKeptChanges`, `CopyKeptChange` and `DismissKeptChange` for
 those kept changes, and `ApproveSnippet` names the content it approves. No build answered the Sync
 group before task 4.4, which raises the protocol to 4 with it.
 
@@ -704,7 +707,7 @@ Device-local tables, never synced:
 | `sync_state` | The user's position in the server's change feed |
 | `entitlement` | The plan features last reported by the sync agent |
 | `schema_migrations` | Applied migration versions |
-| `folder_access`, `snippet_origin`, `kept_change`, `known_user`, `attachment_state`, `skipped`, `left_alone`, `access_removal` | Added by the sync design ([`sync-design.md`](sync-design.md) §7.1, built in task 4.4): the user's permission on each folder shared with them and when it began, as the server computed it; who wrote a snippet's content and when the server first accepted the row; changes the server refused, kept for the user; display names of authors and members; which attachment files this device has sent; pulled rows that were not applied because of an unsent change; rows a resync left in place for the same reason; the calls by which the user took access away from someone, which the device makes again after a restore of the server. `approval` also keeps the content that was approved, and `sync_state` the account the library belongs to and how far a first sign-in has come |
+| `folder_access`, `snippet_origin`, `kept_change`, `known_user`, `attachment_state`, `skipped`, `left_alone`, `access_removal` | Added by the sync design ([`sync-design.md`](sync-design.md) §7.1, built in task 4.4): the user's permission on each folder shared with them and when it began, as the server computed it; who wrote a snippet's content and when the server first accepted the row; changes the server refused, kept for the user; display names of authors and members; which attachment files this device has sent; pulled rows that were not applied because of an unsent change; rows a resync left in place for the same reason; the calls by which the user took access away from someone, which the device makes again after a restore of the server. `approval` also keeps the content that was approved, and `sync_state` the account the library belongs to, how far a first sign-in has come, and since when other people's folders are set aside after a sign-out the server did not confirm |
 
 Who can do what:
 
@@ -893,7 +896,7 @@ real machines:
 The architecture fixes the frame ([ADR-0016](decisions/0016-sync-frame.md)). Task 4.1 fills it in:
 [`sync-design.md`](sync-design.md) has the server's tables and policies, the protocol, the rules for
 every conflict (`C1` to `C25` on the server, `D1` to `D17` on the device), the threat model for
-sharing and 77 conflict scenarios with their outcomes, which are also in `spec/sync/scenarios.toml`
+sharing and 84 conflict scenarios with their outcomes, which are also in `spec/sync/scenarios.toml`
 for the simulation of task 4.4 ([ADR-0027](decisions/0027-sync-protocol-and-conflict-rules.md),
 [ADR-0028](decisions/0028-data-model-for-sync.md),
 [ADR-0029](decisions/0029-server-readable-content.md)). In short: the last write is the one the
@@ -902,9 +905,12 @@ records a conflict that offers the other version back; a delete is a write like 
 never writes a pulled row over an unsent change, and fetches a row it skipped once the change is
 settled; a change the server refuses is kept on the device for the user; the writes of one profile
 happen one after the other on the server; after a restore of the server from a backup, devices send
-back every row they hold in a revision the backup lacks, whatever was written since, and only the
-operator begins the new epoch; and the server stores synced content readably in version 1 and never
-interprets it. The frame:
+back every row they hold in a revision the backup lacks, whatever was written since, after what took
+access away has been taken away again, and only the operator begins the new epoch; a device removes
+other people's folders at a sign-out only on the server's word, and sets them aside otherwise,
+because a restore can end its session before it has given back what it holds; a session is accepted
+only when it was opened the way Iamb signs in; and the server stores synced content readably in
+version 1 and never interprets it. The frame:
 
 - The server is a Postgres database with row-level security, reached over HTTPS and a live-update
   channel, hosted on Supabase.

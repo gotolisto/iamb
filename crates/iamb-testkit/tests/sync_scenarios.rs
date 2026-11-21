@@ -5,9 +5,11 @@
 //! they cite. The check itself is tested on files broken on purpose, so that it is known to
 //! fail for each of the reasons it is there for; among them the eight wrong outcomes with which
 //! the review of the design showed that the first, structural check accepted anything
-//! (`docs/reviews/4.1-sync-design-review.md`, finding 15), and the thirteen of the follow-up
-//! review (`docs/reviews/4.1-sync-design-followup.md`, §4): ten must be refused, and the three
-//! that lie beyond what the check can know are kept as examples that pass.
+//! (`docs/reviews/4.1-sync-design-review.md`, finding 15), the thirteen of the follow-up
+//! review (`docs/reviews/4.1-sync-design-followup.md`, §4), of which eleven must be refused, and
+//! four of the eight the close-out review saw pass
+//! (`docs/reviews/4.1-sync-design-closeout.md`, §5). What lies beyond what the check can know
+//! is kept as three examples that pass.
 
 #![allow(clippy::unwrap_used, reason = "a failed unwrap is a failed test")]
 
@@ -799,19 +801,40 @@ fn followup_m12_a_removal_that_is_not_made_again_after_a_restore_fails() {
     );
 }
 
-// M08, M09 and M10 lie beyond the line the check draws: an access that did not end, a write
-// the permissions forbid, a cascade the rules do not give. Each is consistent with its own
+// M08 passed when the follow-up review ran it, and the second revision kept it as an example
+// that passes. Which profiles a membership or a share reaches follows from the scenario's own
+// rows, so the check refuses it now.
+
+#[test]
+fn followup_m08_a_folder_that_stays_after_its_only_share_ended_fails() {
+    // Tom's device keeps the deleted folder's rows and may still change it, after the share
+    // that gave him the folder ended.
+    let found = altered("S61", |s| {
+        let device = s.outcome.device.get_mut("C").unwrap();
+        device.rows.clear();
+        device.access.insert("f1".to_owned(), "edit".to_owned());
+    });
+    caught(
+        &found,
+        "S61: C holds f1, a row of p-ines, and no membership or share gives tom that profile",
+    );
+}
+
+// M09 and M10 lie beyond the line the check draws, and so does an access that ended for a part
+// of a profile only: a write the permissions forbid, a cascade the rules do not give, a
+// sub-folder that left the folder shared with a member. Each is consistent with its own
 // answers, so the check lets it through; the replay of task 4.4 derives these from the rules.
 // They are kept here as examples that pass, so that nobody takes them for guarded.
 
 #[test]
 fn beyond_the_line_three_wrong_outcomes_still_pass() {
-    // M08: Tom's device keeps the deleted folder's rows and may still change it, after the
-    // share that gave him the folder ended.
-    let kept_access = altered("S61", |s| {
+    // V16 of the close-out review: Tom's device keeps the sub-folder that was moved out of
+    // the shared folder, and may still change it. The folder above it is still shared with
+    // him, and the check knows which profiles a share reaches, not which folders.
+    let kept_access = altered("S72", |s| {
         let device = s.outcome.device.get_mut("C").unwrap();
-        device.rows.clear();
-        device.access.insert("f1".to_owned(), "edit".to_owned());
+        device.rows.retain(|r| r.row == "f2");
+        device.access.insert("f1b".to_owned(), "edit".to_owned());
     });
     assert_eq!(kept_access, Vec::<String>::new());
     // M09: the delete by a member who may only use the folder is answered `applied`.
@@ -992,6 +1015,229 @@ fn a_refused_re_push_is_kept_by_the_user_who_wrote_it_and_by_nobody_else() {
     caught(
         &kept_all_the_same,
         "S77: device C: kept or blocked names a1, not a step of this device",
+    );
+}
+
+// What a restore of the server may not lose when it ends the devices' sessions (K1 of the
+// close-out review), and what it may not give back (K2).
+
+/// S78 as the design was before: the device removes the team's folder when its session is
+/// refused.
+fn purged_at_the_refused_session(s: &mut Scenario) {
+    restate(
+        &mut s.outcome.server.rows,
+        row("gs1", "live", Some("start")),
+    );
+    s.outcome.server.history.clear();
+    let device = s.outcome.device.get_mut("C").unwrap();
+    device.same_as = None;
+    device.rows = ["m-ines", "m-tom", "gf1", "gs1"]
+        .map(|name| row(name, "absent", None))
+        .to_vec();
+}
+
+#[test]
+fn a_device_that_removes_shared_rows_when_a_restore_ends_its_session_fails() {
+    // The device signs in again and has nothing left to give back.
+    let found = altered("S78", |s| {
+        s.steps.last_mut().unwrap().answers.clear();
+        restate(
+            &mut s.outcome.server.rows,
+            row("gs1", "live", Some("start")),
+        );
+        s.outcome.server.history.clear();
+    });
+    caught(
+        &found,
+        "S78: C held c1 of gs1 when the server was restored, its own user wrote it, the backup \
+         does not have it, and it ends neither on the server nor among the device's kept \
+         changes: a lost edit",
+    );
+    // Nobody signs in on it again, and it ends without the folder.
+    let found = altered("S78", |s| {
+        let again = s.steps.pop().unwrap();
+        assert_eq!(again.action, "sign_in");
+        purged_at_the_refused_session(s);
+    });
+    caught(
+        &found,
+        "S78: C held c1 of gs1 when the server was restored, its own user wrote it, the backup \
+         does not have it, and the device, whose session was refused and which was not signed \
+         in again, ends without it and without keeping it: a lost edit",
+    );
+    // The same device with the edit among its kept changes, as after the thirty days: fine.
+    let kept = altered("S78", |s| {
+        s.steps.pop();
+        purged_at_the_refused_session(s);
+        let device = s.outcome.device.get_mut("C").unwrap();
+        device.kept.push("c1".to_owned());
+        device.shown.push("kept".to_owned());
+    });
+    assert_eq!(kept, Vec::<String>::new());
+}
+
+#[test]
+fn a_folder_shared_after_a_removal_must_not_reach_the_removed_member() {
+    // K2 as the design was: nobody makes the removal again before the share comes back, and
+    // the folder is on Tom's device.
+    let found = altered("S79", |s| {
+        s.steps.retain(|step| step.action != "replay_calls");
+        restate(
+            &mut s.outcome.server.rows,
+            row("m-tom", "live", Some("start")),
+        );
+        s.outcome.server.history.clear();
+        let member = s.outcome.device.get_mut("C").unwrap();
+        member.rows.clear();
+        member.same_as = Some("server".to_owned());
+    });
+    caught(
+        &found,
+        "S79: A ended m-tom with x1, the restore lost that call, and it is not made again \
+         although the device ends online",
+    );
+    // He is removed again, and his device holds the folder all the same.
+    let found = altered("S79", |s| {
+        let member = s.outcome.device.get_mut("C").unwrap();
+        for name in ["f9", "s9"] {
+            restate(&mut member.rows, row(name, "live", Some("start")));
+        }
+    });
+    caught(
+        &found,
+        "S79: C holds f9, a row of p-ines, and no membership or share gives tom that profile",
+    );
+}
+
+#[test]
+fn the_operators_replay_ends_only_what_a_lost_call_had_ended() {
+    let found = altered("S79", |s| {
+        let replay = s
+            .steps
+            .iter_mut()
+            .find(|step| step.action == "replay_calls");
+        replay.unwrap().cascade = vec!["m-ines".to_owned()];
+    });
+    caught(
+        &found,
+        "S79: the operator's replay o1 ends m-ines, which no call that the restore lost had \
+         ended",
+    );
+    // And it is a step of the restore procedure: there is nothing to make again without one.
+    let found = altered("S79", |s| {
+        s.steps.retain(|step| step.action != "restore_backup");
+    });
+    caught(
+        &found,
+        "replay_calls lacks an argument or names nothing known",
+    );
+}
+
+#[test]
+fn a_share_given_back_before_the_removal_is_made_again_fails() {
+    // The share goes with the push of the resync, before the device has made the call again.
+    let found = altered("S80", |s| {
+        let again = s.steps.last_mut().unwrap();
+        let answers = std::mem::take(&mut again.answers);
+        let resync = s
+            .steps
+            .iter_mut()
+            .find(|step| step.at == "A" && step.action == "pull");
+        resync.unwrap().answers = answers;
+    });
+    caught(
+        &found,
+        "S80: A gives the share sh9 back before it has made again x1, its removal of m-tom \
+         that the restore lost: what took access away goes first (D7)",
+    );
+}
+
+// Four of the eight wrong outcomes that passed when the close-out review ran them (§5: V15,
+// V19, V20, V21). Each follows from the scenario's own steps, so the check refuses it now.
+// V16 is among the examples that pass above; V17, V18 and V22 are a mark only the server sets
+// and an answer, which the check takes from the scenario.
+
+#[test]
+fn closeout_v15_of_two_lost_versions_the_later_one_stays() {
+    // The later version comes back second and is answered `superseded`.
+    let found = altered("S70", |s| {
+        let later = s.steps.last_mut().unwrap();
+        later
+            .answers
+            .insert("s1".to_owned(), "superseded".to_owned());
+    });
+    caught(
+        &found,
+        "S70: A gives a1 of s1 back and is answered superseded, but a1 is later than every \
+         lost version the row has taken in: the later one stays (C18)",
+    );
+    // The later version comes back first, and the earlier one is applied over it.
+    let found = altered("S70", |s| {
+        let later = s.steps.pop().unwrap();
+        let earlier = s.steps.pop().unwrap();
+        s.steps.push(later);
+        s.steps.push(earlier);
+    });
+    caught(
+        &found,
+        "S70: B gives b1 of s1 back over a later version of the history the restore lost, \
+         which the row had taken in already",
+    );
+}
+
+#[test]
+fn closeout_v19_a_revoked_computer_that_holds_what_was_written_since_fails() {
+    // N4 of the follow-up review as it was: the revoked computer registers again.
+    let found = altered("S74", |s| {
+        let device = s.outcome.device.get_mut("B").unwrap();
+        restate(&mut device.rows, row("s1", "live", Some("a1")));
+    });
+    caught(
+        &found,
+        "S74: B was signed out before a1 of s1 reached the server, was not signed in again, \
+         and ends holding it",
+    );
+}
+
+#[test]
+fn closeout_v20_restored_is_shown_only_where_the_server_was_restored() {
+    // N5 of the follow-up review as it was: a client's claim makes other devices resync.
+    let found = altered("S75", |s| {
+        let device = s.outcome.device.get_mut("A").unwrap();
+        device.shown.push("restored".to_owned());
+    });
+    caught(
+        &found,
+        "S75: A shows that the server was restored, and no step of the scenario restores it",
+    );
+}
+
+#[test]
+fn closeout_v21_rows_of_an_account_the_user_shares_nothing_with_fail() {
+    let found = altered("S75", |s| {
+        let device = s.outcome.device.get_mut("C").unwrap();
+        restate(&mut device.rows, row("f1", "live", Some("start")));
+        restate(&mut device.rows, row("s1", "live", Some("a1")));
+    });
+    caught(
+        &found,
+        "S75: C holds f1, a row of p-ines, and no membership or share ever gave tom that \
+         profile",
+    );
+}
+
+#[test]
+fn a_session_opened_with_a_password_receives_nothing() {
+    // K5 of the close-out review as the design was: the new session registers a device.
+    let found = altered("S83", |s| {
+        let device = s.outcome.device.get_mut("X").unwrap();
+        restate(&mut device.rows, row("f1", "live", Some("start")));
+        restate(&mut device.rows, row("s1", "live", Some("a1")));
+    });
+    caught(
+        &found,
+        "S83: X was signed out before a1 of s1 reached the server, was not signed in again, \
+         and ends holding it",
     );
 }
 
