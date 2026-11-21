@@ -355,7 +355,9 @@ fn a_form_is_acknowledged_shown_and_its_text_lands_in_the_target_window() {
             FormEvent::Closed { session },
         ]
     );
-    // Acknowledged: the service did not abandon it.
+    // Acknowledged: the service did not abandon it. What is tested is that a deadline (the
+    // acknowledgement's 2 s) passes without effect, which no event announces: only the clock
+    // can say it has passed.
     std::thread::sleep(Duration::from_millis(2200));
     assert!(!diagnostic_codes(&service).contains(&"form_not_acknowledged".to_owned()));
     host.stop();
@@ -464,9 +466,11 @@ fn a_panel_that_loses_the_keyboard_gives_it_back_to_the_app_and_takes_it_again()
         std::thread::sleep(Duration::from_millis(20));
     }
     assert!(host.panel.visible(), "the panel stays open");
-    // Back into the panel: its keys are dropped again, before the engine sees them.
+    // Back into the panel: its keys are dropped again, before the engine sees them. Wait for the
+    // service to say it took the panel's hold in (its log), not for a time.
+    let holds = service.log_count("worker", "panel has the keyboard");
     host.form.keyboard(true);
-    std::thread::sleep(Duration::from_millis(200));
+    service.wait_log_count("worker", "panel has the keyboard", holds);
     let seen = form_open();
     service.type_text("brb ");
     assert_eq!(form_open(), seen, "the engine did not see the keys");
@@ -482,6 +486,8 @@ fn the_lease_is_renewed_while_the_panel_is_open() {
     });
     service.type_text("hi ");
     let session = host.panel.wait_shown(0);
+    // Longer than twice the lease (600 ms): what is tested is that the hold outlives it
+    // because it is renewed, so the clock is the subject, not a wait for an event.
     std::thread::sleep(Duration::from_millis(1500));
     service.type_text("brb ");
     assert_eq!(service.text(), "hi brb ", "still the panel's keyboard");
@@ -727,6 +733,7 @@ fn the_form_s_lease_is_renewed_while_it_waits() {
     let session = host.panel.wait_shown(0);
     // The user clicks into the app and leaves the form waiting, longer than the lease.
     host.form.keyboard(false);
+    // Longer than twice the form's lease (600 ms): the clock is what is tested (see above).
     std::thread::sleep(Duration::from_millis(1500));
     service.type_text("brb ");
     assert_eq!(service.text(), "hi brb ", "the form is still open");

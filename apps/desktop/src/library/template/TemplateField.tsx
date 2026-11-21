@@ -133,6 +133,9 @@ interface Parsed {
 /** The image types the service keeps (`iamb_store::attachments`). */
 export const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 
+/** The largest image the service keeps (`iamb_store::attachments::MAX_IMAGE_BYTES`). */
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
 /** What the field says when an image cannot be added. */
 export const IMAGE_REFUSED = "Iamb can add PNG, JPEG, GIF and WebP images of up to 5 MB.";
 export const IMAGE_FAILED = "The image could not be added. Try again.";
@@ -726,7 +729,8 @@ export function TemplateField(props: TemplateFieldProps) {
     if (!add || imageFolder === undefined) return;
     setImageError(null);
     for (const file of files) {
-      if (!IMAGE_TYPES.includes(file.type)) {
+      // Refused before a byte is read: a large file is neither read into memory nor sent over.
+      if (!IMAGE_TYPES.includes(file.type) || file.size > MAX_IMAGE_BYTES) {
         setImageError(IMAGE_REFUSED);
         continue;
       }

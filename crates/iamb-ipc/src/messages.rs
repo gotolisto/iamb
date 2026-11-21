@@ -123,6 +123,11 @@ pub struct SnippetSummary {
     /// Its tags.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<Id>,
+    /// Whether expanding it asks for values: a `{field}` or `{if}` anywhere in the template,
+    /// in an included snippet too (the first line alone cannot tell). Absent when it does not;
+    /// an older service never sends it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub has_fields: bool,
     /// Why it does not expand although enabled: `duplicate` or a template error code
     /// (`E_…`), as in [`HealthReport`].
     #[serde(default, skip_serializing_if = "Option::is_none")]

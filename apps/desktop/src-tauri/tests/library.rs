@@ -96,6 +96,7 @@ fn create_edit_and_delete_a_snippet_with_undo() {
         .find(|s| s.id == saved.id)
         .expect("row");
     assert_eq!(row.first_line, format!("Thank you {CANARY}"));
+    assert!(!row.has_fields, "a plain text asks for nothing");
     assert_eq!(row.tags, std::slice::from_ref(&tag));
 
     // Edit: the same id, new text and a new abbreviation; the old one stops expanding.

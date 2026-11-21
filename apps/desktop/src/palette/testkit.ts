@@ -13,6 +13,7 @@ export function row(over: Partial<PaletteRow> = {}): PaletteRow {
     kind: "plain",
     enabled: true,
     broken: null,
+    hasFields: false,
     needsReview: false,
     tags: [],
     ...over,

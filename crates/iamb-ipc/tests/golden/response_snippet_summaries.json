@@ -10,6 +10,7 @@
         "enabled": true,
         "first_line": "be right back",
         "folder": "02020202-0202-0202-0202-020202020202",
+        "has_fields": true,
         "id": "01010101-0101-0101-0101-010101010101",
         "kind": "plain",
         "label": "Back soon",

@@ -142,6 +142,7 @@ fn panel<'a>(
     height: f64,
 ) -> WebviewWindowBuilder<'a, tauri::Wry, AppHandle> {
     WebviewWindowBuilder::new(app, label, page())
+        .general_autofill_enabled(false)
         .title("Iamb")
         .visible(false)
         .focused(false)
@@ -348,6 +349,7 @@ pub fn notice_position(origin: (i32, i32), area: (u32, u32), scale: f64, top: bo
 
 fn notice_builder(app: &AppHandle) -> WebviewWindowBuilder<'_, tauri::Wry, AppHandle> {
     WebviewWindowBuilder::new(app, NOTICE, page())
+        .general_autofill_enabled(false)
         .title("Iamb")
         .visible(false)
         .focused(false)
@@ -446,6 +448,8 @@ pub fn open_library(app: &AppHandle, timer: &OpenTimer) -> tauri::Result<()> {
 
 fn library_builder(app: &AppHandle) -> WebviewWindowBuilder<'_, tauri::Wry, AppHandle> {
     WebviewWindowBuilder::new(app, LIBRARY, page())
+        // The web view's own autofill stays off (specification §9, rule 1).
+        .general_autofill_enabled(false)
         .title("Iamb")
         .inner_size(960.0, 640.0)
         .min_inner_size(640.0, 400.0)
@@ -471,6 +475,41 @@ pub fn dismiss(window: &WebviewWindow) -> tauri::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every window the host creates turns the web view's general autofill off (specification
+    /// §9, rule 1; `WebView2` may not honour `autocomplete="off"`). A builder cannot be read
+    /// back without a running window system, so the sources are read: each place that starts
+    /// a window builder must turn it off right after.
+    #[test]
+    fn every_window_builder_turns_general_autofill_off() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut found = 0;
+        let mut stack = vec![root];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(dir).expect("a source directory") {
+                let path = entry.expect("an entry").path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    let text = std::fs::read_to_string(&path).expect("a source file");
+                    let code = text.split("#[cfg(test)]").next().unwrap_or_default();
+                    let mut rest = code;
+                    while let Some(at) = rest.find("WebviewWindowBuilder::new(") {
+                        rest = &rest[at + 1..];
+                        let window: String = rest.chars().take(400).collect();
+                        let statement = window.split(';').next().unwrap_or_default();
+                        assert!(
+                            statement.contains(".general_autofill_enabled(false)"),
+                            "{}: a window builder without general_autofill_enabled(false): {statement}",
+                            path.display()
+                        );
+                        found += 1;
+                    }
+                }
+            }
+        }
+        assert!(found >= 4, "found only {found} window builders");
+    }
 
     #[test]
     fn a_panel_sits_centred_in_the_upper_third() {

@@ -115,9 +115,17 @@ export function previewLine(source: string): string {
   });
 }
 
-/** Whether the content asks for values when the snippet expands (it has a fill-in field). */
-export function asksForValues(source: string): boolean {
-  return /\{field\b/.test(source);
+/**
+ * Whether the snippet asks for values when it expands: the service says so (`hasFields`), for
+ * a field on any line, in an included snippet or behind an `{if}`.
+ */
+export function asksForValues(row: { hasFields: boolean }): boolean {
+  return row.hasFields;
+}
+
+/** Whether `line` (the first line of a snippet) shows a fill-in field as a ‹name›. */
+export function lineShowsField(line: string): boolean {
+  return /\{field\b/.test(line);
 }
 
 /** What a row shows as its title: the label, or the first line of the content. */

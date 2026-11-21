@@ -862,6 +862,7 @@ fn summaries(
                 trigger: trigger_name(s.trigger).to_owned(),
                 enabled: s.enabled,
                 tags: view.tags_of(s.meta.id).to_vec(),
+                has_fields: matches!(view.snapshot.compiled(s.meta.id), Some(Ok(r)) if r.has_form()),
                 broken,
                 uses: Some(usage.get(&s.meta.id).map_or(0, |u| u.count)),
                 last_used: usage.get(&s.meta.id).and_then(|u| u.last_used),

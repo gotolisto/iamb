@@ -147,6 +147,9 @@ pub struct SummaryView {
     pub enabled: bool,
     /// Its tags.
     pub tags: Vec<String>,
+    /// Expanding it asks for values: a `{field}` or `{if}` anywhere in it, in an included
+    /// snippet too (the first line cannot tell).
+    pub has_fields: bool,
     /// Why it does not expand although enabled: `duplicate` or an `E_…` code.
     pub broken: Option<String>,
     /// How many times it expanded on this computer; `None` when the service does not count.
@@ -613,6 +616,7 @@ pub fn summaries_from(response: ResponseBody) -> Result<SummaryPage, Unexpected>
                     trigger: s.trigger.clone(),
                     enabled: s.enabled,
                     tags: texts(&s.tags),
+                    has_fields: s.has_fields,
                     broken: s.broken.clone(),
                     uses: s.uses,
                     last_used: s.last_used.map(|t| t.0),

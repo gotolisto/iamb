@@ -127,6 +127,7 @@ pub fn open(app: &AppHandle, mode: &str) -> tauri::Result<()> {
         "index.html"
     };
     let window = WebviewWindowBuilder::new(app, ONBOARDING, WebviewUrl::App(page.into()))
+        .general_autofill_enabled(false)
         .title("Welcome to Iamb")
         .inner_size(WIDTH, HEIGHT)
         .resizable(false)

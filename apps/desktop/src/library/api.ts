@@ -56,6 +56,8 @@ export interface Summary {
   trigger: Trigger;
   enabled: boolean;
   tags: string[];
+  /** Expanding it asks for values: a `{field}` or `{if}` anywhere in it, in an included snippet too. */
+  hasFields: boolean;
   /** Why it does not expand although it is on: `duplicate` or an `E_…` code. */
   broken: string | null;
   /** Times it expanded on this computer; null when the service does not count. */
@@ -253,6 +255,7 @@ export function isSummary(v: unknown): v is Summary {
     isTrigger(v.trigger) &&
     isBool(v.enabled) &&
     isStrings(v.tags) &&
+    isBool(v.hasFields) &&
     isStrOrNull(v.broken) &&
     (v.uses === null || isNum(v.uses)) &&
     (v.lastUsed === null || isNum(v.lastUsed)) &&

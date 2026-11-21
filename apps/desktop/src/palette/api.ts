@@ -52,6 +52,8 @@ export interface PaletteRow {
   enabled: boolean;
   /** `duplicate` or a template error code (`E_…`). */
   broken: string | null;
+  /** Expanding it asks for values (a `{field}` or `{if}` anywhere in it). */
+  hasFields: boolean;
   needsReview: boolean;
   tags: string[];
 }
@@ -112,6 +114,7 @@ function isRow(v: unknown): v is PaletteRow {
     isString(v.kind) &&
     typeof v.enabled === "boolean" &&
     (v.broken === null || isString(v.broken)) &&
+    typeof v.hasFields === "boolean" &&
     typeof v.needsReview === "boolean" &&
     Array.isArray(v.tags) &&
     v.tags.every(isString)

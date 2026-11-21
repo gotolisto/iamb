@@ -41,6 +41,7 @@ const row = (id: string, over: Partial<Summary> = {}): Summary => ({
   trigger: "delimiter",
   enabled: true,
   tags: [],
+  hasFields: false,
   broken: null,
   uses: null,
   lastUsed: null,

@@ -38,7 +38,7 @@ function exampleOf(id: string, draft: SnippetDraft): Example {
 export async function pickExample(library: Library): Promise<Example | null> {
   const page = await library.listSummaries(0, READ);
   const usable = page.summaries
-    .filter((s) => s.enabled && s.kind === "plain" && s.broken === null && !s.firstLine.includes("{") && s.abbreviation !== "")
+    .filter((s) => s.enabled && s.kind === "plain" && s.broken === null && !s.hasFields && !s.firstLine.includes("{") && s.abbreviation !== "")
     .sort((a, b) => Number(b.trigger === "delimiter") - Number(a.trigger === "delimiter"));
   for (const s of usable.slice(0, OPENED)) {
     const full = await library.getSnippet(s.id);

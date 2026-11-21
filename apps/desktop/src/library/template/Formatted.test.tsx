@@ -169,6 +169,22 @@ describe("a formatted snippet's toolbar", () => {
     expect(screen.getByRole("alert").textContent).toBe(IMAGE_FAILED);
   });
 
+  it("refuses a file over 5 MB before reading it", async () => {
+    const { s } = service();
+    await setup("", s);
+    const input = screen.getByTestId("image-file") as HTMLInputElement;
+    const big = png("huge.png");
+    Object.defineProperty(big, "size", { value: 5 * 1024 * 1024 + 1 });
+    const read = vi.spyOn(big, "arrayBuffer");
+    await act(async () => {
+      fireEvent.change(input, { target: { files: [big] } });
+    });
+    await flush();
+    expect(screen.getByRole("alert").textContent).toBe(IMAGE_REFUSED);
+    expect(read).not.toHaveBeenCalled();
+    expect(s.addAttachment).not.toHaveBeenCalled();
+  });
+
   it("has no Image button without a folder to keep images in", async () => {
     const { s } = service();
     await setup("", s, null);
@@ -205,5 +221,34 @@ describe("the formatted preview", () => {
     link.dispatchEvent(click);
     expect(click.defaultPrevented).toBe(true);
     expect(preview.querySelector("kbd")).toBeTruthy();
+  });
+
+  it("keeps a column's alignment without inline style, and shows a link as text that cannot be tabbed to", async () => {
+    const { s } = service({
+      parts: [
+        {
+          part: "formatted",
+          html:
+            '<p><a href="https://example.com/a?b=1&amp;c=2">site</a></p>\n<table>\n<thead><tr><th style="text-align:left">a</th><th style="text-align:right">b</th></tr></thead>\n<tr><td style="text-align:center">1</td><td>2</td></tr>\n</table>',
+          plain: "site",
+        },
+      ],
+      cursor: null,
+      fields: [],
+      error: null,
+    });
+    await setup("x", s);
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 200));
+    });
+    await flush();
+    const preview = screen.getByRole("region", { name: "Preview" });
+    expect(preview.querySelector("[style]")).toBeNull();
+    expect(preview.querySelector("th:last-child")?.getAttribute("data-align")).toBe("right");
+    expect(preview.querySelector("td")?.getAttribute("data-align")).toBe("center");
+    const link = preview.querySelector("a") as HTMLAnchorElement;
+    expect(link.hasAttribute("href")).toBe(false);
+    expect(link.getAttribute("title")).toBe("https://example.com/a?b=1&c=2");
+    expect(screen.queryByRole("link")).toBeNull();
   });
 });

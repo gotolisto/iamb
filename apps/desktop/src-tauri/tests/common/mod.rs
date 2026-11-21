@@ -196,7 +196,34 @@ impl Service {
 
     /// The worker's log so far.
     pub fn worker_log(&self) -> String {
-        fs::read_to_string(self.dirs().logs().join("worker.log")).unwrap_or_default()
+        self.log_named("worker")
+    }
+
+    /// The log `<name>.log` so far (`desktop` is the UI host's, `worker` the service's).
+    pub fn log_named(&self, name: &str) -> String {
+        fs::read_to_string(self.dirs().logs().join(format!("{name}.log"))).unwrap_or_default()
+    }
+
+    /// How many lines of the log `name` contain `needle`.
+    pub fn log_count(&self, name: &str, needle: &str) -> usize {
+        self.log_named(name)
+            .lines()
+            .filter(|line| line.contains(needle))
+            .count()
+    }
+
+    /// Waits up to `T` until the log `name` holds more than `seen` lines with `needle`: the
+    /// state-based way to know that something was taken in (or refused), where a negative
+    /// check would otherwise sleep and hope.
+    pub fn wait_log_count(&self, name: &str, needle: &str, seen: usize) {
+        let deadline = Instant::now() + T;
+        while self.log_count(name, needle) <= seen {
+            assert!(
+                Instant::now() < deadline,
+                "the {name} log never said {needle:?} again"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 }
 
