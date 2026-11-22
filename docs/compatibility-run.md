@@ -465,6 +465,24 @@ the focus KPI for that app unless it has an exception record, as for the matrix 
 until the non-activating panel exists (`apps/desktop/README.md`, "The macOS panel"), P1's
 menu-bar check fails by design; record it as a known limitation and check the rest.
 
+## The installed helper and the UI host (macOS; finding 1 of the beta-gap review)
+
+The helper app holds the user's Accessibility and Input Monitoring permissions (ADR-0021), and
+the system judges a program the helper starts as its own child as the helper. So the helper
+never starts the UI host, or anything else, as its child: it has the system open `Iamb.app`
+(`/usr/bin/open -g -W -a`), and a release build refuses `--ui-host`
+([`docs/reviews/beta-gaps-security-review.md`](reviews/beta-gaps-security-review.md), finding 1;
+`crates/iamb-service/src/supervisor.rs`, "The UI host"). These checks need the installed, signed
+app with Start at login on and both permissions granted to "Iamb Service".
+
+| # | Do | Pass when |
+| --- | --- | --- |
+| H1 | Log out and in. Run `ps -o pid,ppid,command -ax \| grep -i iamb` | `iamb-desktop`'s parent (PPID) is 1 (launchd), not the pid of `iamb-service --supervise` |
+| H2 | `sudo launchctl procinfo <pid of iamb-desktop> \| grep -i responsible` | The responsible process is `iamb-desktop` itself, not `Iamb Service` |
+| H3 | Quit Iamb from the menu bar, wait a minute | It stays quit; `logs/supervisor.log` says `ui host … ended (Quit); not restarted`. Start it again, then `kill -SEGV <pid of iamb-desktop>`: it comes back within a few seconds |
+| H4 | `open -n -W -a "/Applications/Iamb.app/Contents/Library/LoginItems/Iamb Service.app" --args --supervise --ui-host /bin/sh --data-dir /tmp/iamb-h4` | The helper exits at once (no new `iamb-service` in `ps`, nothing in `/tmp/iamb-h4/logs`): a release build refuses the switch and a data root other than the default |
+| H5 | The child check itself, with a development helper granted both permissions (a copy of `Iamb Service.app` whose `Contents/MacOS/iamb-service` is a debug build, `cargo build -p iamb-service`, signed ad hoc with `codesign -f -s -`): save as `/tmp/probe.sh` the script `#!/bin/sh` / `/usr/bin/swift -e 'import CoreGraphics; print(CGPreflightListenEventAccess(), CGPreflightPostEventAccess())' > /tmp/probe.txt`, make it executable, and start the development helper with `open -n -W -a <its path> --args --supervise --platform native --ui-host /tmp/probe.sh --data-dir /tmp/iamb-h5` | `/tmp/probe.txt` says `true true`: a child of the helper gets the helper's keyboard access, which is why the release helper starts no child. Then run `open -W -a Terminal /tmp/probe.sh` from a Terminal that has no grant of its own: `false false`. Record both answers; `true` in the second, or `false` in the first, changes the finding and must be reported |
+
 ## Delivering the result
 
 1. Run `iamb-compat report --results compat-<os>.jsonl` for each OS.

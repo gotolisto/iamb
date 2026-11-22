@@ -34,14 +34,35 @@
 //!
 //! §3.2 has the supervisor start the UI host too, so that the menu-bar or tray icon appears after
 //! login (the login item starts the supervisor alone). When [`SupervisorConfig::ui_host`] is set,
-//! [`run`] starts it once it holds the lock, on a thread of its own, and supervises it by its exit
-//! only (no heartbeat): an abnormal exit restarts it after the same backoff as the worker's, with
-//! its own count; status 0 (the user quit it, or another UI host already runs for this data root
-//! and this one stepped aside) ends its supervision. The UI host outlives a supervisor that stops:
-//! it then says "Iamb is not running" and offers to start it again. `main` sets it to the
-//! installed UI host ([`crate::paths::ui_host_beside`]) for the native platform, to the one
-//! `--ui-host` names, and to none with `--no-ui-host` or the mock platform (tests and
-//! development).
+//! [`run`] starts it once it holds the lock, on a thread of its own, and supervises it by its end
+//! only (no heartbeat): an abnormal end restarts it after the same backoff as the worker's, with
+//! its own count. These end its supervision ([`UiHostEnd`]):
+//!
+//! - a quit: the UI host leaves `run/desktop.quit` when it ends on purpose (the tray's "Quit", or
+//!   another UI host already runs for this data root and this one stepped aside). The supervisor
+//!   removes the marker before each start. Where the exit status is the UI host's own, status 0
+//!   counts as a quit as well;
+//! - a usage error, status [`EXIT_USAGE`] (64): the UI host cannot run with what it was given (a
+//!   data root that is not UTF-8), and never will;
+//! - an end by `SIGTERM` (Unix): someone ended it on purpose (a task manager, an installer that
+//!   replaces it), so it is not started again behind their back;
+//! - [`MAX_QUICK_FAILURES`] starts in a row that each failed within [`QUICK_FAILURE`] (it cannot
+//!   start: a missing web view runtime, a broken installation). This is logged as an error.
+//!
+//! On macOS the UI host is never the helper's child (the 2026-11 beta review's finding 1): the
+//! helper holds the user's Accessibility and Input Monitoring permissions, and the system judges
+//! a program the helper spawns as the helper. So there the supervisor has the system start
+//! `Iamb.app`, as the UI host has the system start the helper (`/usr/bin/open -g -W -a <app>
+//! --args --data-dir <root>`; `-W` waits for the app's end), and the app is its own responsible
+//! process. `open` does not pass the app's exit status on ([`Program::launcher`]), so there only
+//! the quit marker tells a quit from a crash. `main` checks the app first
+//! ([`crate::paths::check_main_app`]).
+//!
+//! The UI host outlives a supervisor that stops: it then says "Iamb is not running" and offers
+//! to start it again. `main` sets it to the installed UI host ([`crate::paths::ui_host_beside`],
+//! [`crate::paths::main_app_of_helper`]) for the native platform, to the one `--ui-host` names
+//! (development builds and the mock platform only), and to none with `--no-ui-host` or the mock
+//! platform (tests and development).
 //!
 //! # Hook points
 //!
@@ -117,13 +138,95 @@ pub struct SupervisorConfig {
     pub ui_host: Option<Program>,
 }
 
-/// A program the supervisor starts: its executable and arguments.
+/// A program the supervisor starts: its executable and arguments, and how its end is read
+/// (module docs, "The UI host").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {
     /// The executable.
     pub exe: PathBuf,
     /// Its arguments.
     pub args: Vec<OsString>,
+    /// The file the program leaves when it ends on purpose; removed before each start.
+    pub quit_marker: Option<PathBuf>,
+    /// `exe` is a launcher that starts the program through the system and waits for it
+    /// (`open -W`): its exit status is not the program's, so only the marker tells a quit.
+    pub launcher: bool,
+}
+
+impl Program {
+    /// `exe args…`, started as a child, with no quit marker.
+    #[must_use]
+    pub fn child(exe: PathBuf, args: Vec<OsString>) -> Self {
+        Self {
+            exe,
+            args,
+            quit_marker: None,
+            launcher: false,
+        }
+    }
+}
+
+/// The exit status of a usage error (`EX_USAGE`): the UI host cannot run with the arguments it
+/// was given, so it is not started again (module docs, "The UI host").
+pub const EXIT_USAGE: i32 = 64;
+
+/// A start that ended within this long counts as one that could not start.
+pub const QUICK_FAILURE: Duration = Duration::from_secs(1);
+
+/// After this many such starts in a row, the UI host is given up on (module docs).
+pub const MAX_QUICK_FAILURES: usize = 5;
+
+/// Why the supervision of the UI host ended (module docs, "The UI host").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiHostEnd {
+    /// It quit on purpose.
+    Quit,
+    /// It exited with [`EXIT_USAGE`].
+    UsageError,
+    /// It was ended by `SIGTERM`.
+    Terminated,
+    /// [`MAX_QUICK_FAILURES`] starts in a row failed at once.
+    GaveUp,
+}
+
+/// How one run of a supervised program ended, as [`supervise_by_exit`] reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunEnd {
+    /// Not restarted, for this reason.
+    Final(UiHostEnd),
+    /// An abnormal end: restarted.
+    Failed,
+}
+
+/// Reads the end of one run: `status` (`None`: it could not be started or waited for),
+/// whether the quit marker was found, and whether `status` is a launcher's.
+fn judge(status: Option<ExitStatus>, marker: bool, launcher: bool) -> RunEnd {
+    if marker {
+        return RunEnd::Final(UiHostEnd::Quit);
+    }
+    let Some(status) = status else {
+        return RunEnd::Failed;
+    };
+    if launcher {
+        // `open -W` returns when the app ends, whatever its status: without the marker that
+        // is a crash, and a failing `open` is a failed start.
+        return RunEnd::Failed;
+    }
+    if status.success() {
+        return RunEnd::Final(UiHostEnd::Quit);
+    }
+    if status.code() == Some(EXIT_USAGE) {
+        return RunEnd::Final(UiHostEnd::UsageError);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        // SIGTERM: ended on purpose by someone.
+        if status.signal() == Some(15) {
+            return RunEnd::Final(UiHostEnd::Terminated);
+        }
+    }
+    RunEnd::Failed
 }
 
 impl SupervisorConfig {
@@ -284,23 +387,30 @@ fn start_ui_host(program: Program, cfg: &SupervisorConfig, log: &Arc<Logger>) {
     let thread_log = Arc::clone(log);
     if let Err(e) = thread::Builder::new()
         .name("iamb-ui-host".to_owned())
-        .spawn(move || supervise_by_exit("ui host", &program, &backoff, healthy_after, &thread_log))
+        .spawn(move || {
+            supervise_by_exit("ui host", &program, &backoff, healthy_after, &thread_log);
+        })
     {
         log.error(format_args!("cannot supervise the ui host: {e}"));
     }
 }
 
-/// Starts `program` and starts it again after an abnormal exit, with the backoff `schedule`,
-/// until it exits with status 0. `name` is for the log.
+/// Starts `program` and starts it again after an abnormal end, with the backoff `schedule`,
+/// until one of the ends of [`UiHostEnd`] (module docs, "The UI host"), which it returns.
+/// `name` is for the log.
 pub fn supervise_by_exit(
     name: &str,
     program: &Program,
     schedule: &[Duration],
     healthy_after: Duration,
     log: &Logger,
-) {
+) -> UiHostEnd {
     let mut failures = 0_usize;
+    let mut quick = 0_usize;
     loop {
+        if let Some(marker) = &program.quit_marker {
+            let _ = std::fs::remove_file(marker);
+        }
         let started = Instant::now();
         let spawned = Command::new(&program.exe)
             .args(&program.args)
@@ -308,22 +418,51 @@ pub fn supervise_by_exit(
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
             .spawn();
-        match spawned {
+        let status = match spawned {
             Ok(mut child) => {
                 let pid = child.id();
                 log.info(format_args!("{name} started: pid {pid}"));
                 match child.wait() {
-                    Ok(status) if status.success() => {
-                        log.info(format_args!("{name} {pid} exited; not restarted"));
-                        return;
+                    Ok(status) => Some((pid, status)),
+                    Err(e) => {
+                        log.error(format_args!("cannot wait for {name} {pid}: {e}"));
+                        None
                     }
-                    Ok(status) => {
-                        log.warn(format_args!("{name} {pid} exited abnormally: {status}"));
-                    }
-                    Err(e) => log.error(format_args!("cannot wait for {name} {pid}: {e}")),
                 }
             }
-            Err(e) => log.error(format_args!("cannot start the {name}: {e}")),
+            Err(e) => {
+                log.error(format_args!("cannot start the {name}: {e}"));
+                None
+            }
+        };
+        // Removing it takes it: a file, a link or a FIFO in its place counts, a directory does
+        // not (it cannot be removed this way, and the UI host never makes one).
+        let marker = program
+            .quit_marker
+            .as_ref()
+            .is_some_and(|m| std::fs::remove_file(m).is_ok());
+        let end = judge(status.map(|(_, s)| s), marker, program.launcher);
+        let pid = status.map_or(0, |(pid, _)| pid);
+        match (end, status) {
+            (RunEnd::Final(why), _) => {
+                log.info(format_args!("{name} {pid} ended ({why:?}); not restarted"));
+                return why;
+            }
+            (RunEnd::Failed, Some((_, status))) => {
+                log.warn(format_args!("{name} {pid} exited abnormally: {status}"));
+            }
+            (RunEnd::Failed, None) => {}
+        }
+        if started.elapsed() < QUICK_FAILURE {
+            quick += 1;
+            if quick >= MAX_QUICK_FAILURES {
+                log.error(format_args!(
+                    "the {name} failed {quick} times in a row at its start; not started again"
+                ));
+                return UiHostEnd::GaveUp;
+            }
+        } else {
+            quick = 0;
         }
         if started.elapsed() >= healthy_after {
             failures = 0;
@@ -485,5 +624,114 @@ mod tests {
         .expect("chmod");
         drop(take_lock(&dirs).expect("io"));
         assert_eq!(mode(&dirs), 0o600);
+    }
+
+    /// A stand-in program: appends a line to `starts` in `dir`, then runs `body`.
+    #[cfg(unix)]
+    fn script(dir: &std::path::Path, body: &str) -> Program {
+        use std::os::unix::fs::PermissionsExt;
+        let exe = dir.join("ui-host");
+        std::fs::write(
+            &exe,
+            format!(
+                "#!/bin/sh\necho x >> '{}'\n{body}\n",
+                dir.join("starts").display()
+            ),
+        )
+        .expect("script");
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        Program {
+            exe,
+            args: Vec::new(),
+            quit_marker: Some(dir.join("desktop.quit")),
+            launcher: false,
+        }
+    }
+
+    #[cfg(unix)]
+    fn supervised(program: &Program, dir: &std::path::Path) -> (UiHostEnd, usize) {
+        let log = Logger::open(&dir.join("logs"), "test");
+        let end = supervise_by_exit("ui host", program, &[Duration::ZERO], HEALTHY_AFTER, &log);
+        let starts = std::fs::read_to_string(dir.join("starts"))
+            .unwrap_or_default()
+            .lines()
+            .count();
+        (end, starts)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_ui_host_that_fails_at_every_start_is_given_up_on() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let program = script(dir.path(), "exit 3");
+        assert_eq!(
+            supervised(&program, dir.path()),
+            (UiHostEnd::GaveUp, MAX_QUICK_FAILURES)
+        );
+        // A program that cannot be started at all counts the same.
+        let missing = Program::child(dir.path().join("no-such-program"), Vec::new());
+        assert_eq!(supervised(&missing, dir.path()).0, UiHostEnd::GaveUp);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_usage_error_and_a_sigterm_end_the_supervision_at_once() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let program = script(dir.path(), &format!("exit {EXIT_USAGE}"));
+        assert_eq!(supervised(&program, dir.path()), (UiHostEnd::UsageError, 1));
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let program = script(dir.path(), "kill -TERM $$");
+        assert_eq!(supervised(&program, dir.path()), (UiHostEnd::Terminated, 1));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn behind_a_launcher_only_the_quit_marker_is_a_quit() {
+        // `open -W` exits 0 when the app ends, crashed or not: the first run (no marker) is
+        // restarted, the second (which leaves the marker) is not. A marker left from before
+        // the first start is removed first.
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        std::fs::write(dir.path().join("desktop.quit"), b"").expect("stale marker");
+        let mut program = script(
+            dir.path(),
+            &format!(
+                "if [ \"$(wc -l < '{starts}')\" -ge 2 ]; then : > '{marker}'; fi\nexit 0",
+                starts = dir.path().join("starts").display(),
+                marker = dir.path().join("desktop.quit").display()
+            ),
+        );
+        program.launcher = true;
+        assert_eq!(supervised(&program, dir.path()), (UiHostEnd::Quit, 2));
+        assert!(
+            !dir.path().join("desktop.quit").exists(),
+            "the marker is taken"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_end_of_a_run_is_read_from_the_marker_then_the_status() {
+        use std::os::unix::process::ExitStatusExt;
+        let code = |c: i32| Some(ExitStatus::from_raw(c << 8));
+        let signal = |s: i32| Some(ExitStatus::from_raw(s));
+        assert_eq!(judge(code(0), false, false), RunEnd::Final(UiHostEnd::Quit));
+        assert_eq!(judge(code(1), true, false), RunEnd::Final(UiHostEnd::Quit));
+        assert_eq!(judge(code(1), false, false), RunEnd::Failed);
+        assert_eq!(judge(code(70), false, false), RunEnd::Failed);
+        assert_eq!(
+            judge(code(EXIT_USAGE), false, false),
+            RunEnd::Final(UiHostEnd::UsageError)
+        );
+        assert_eq!(
+            judge(signal(15), false, false),
+            RunEnd::Final(UiHostEnd::Terminated)
+        );
+        assert_eq!(judge(signal(9), false, false), RunEnd::Failed);
+        assert_eq!(judge(signal(11), false, false), RunEnd::Failed);
+        // Behind a launcher the status says nothing about the app.
+        assert_eq!(judge(code(0), false, true), RunEnd::Failed);
+        assert_eq!(judge(code(EXIT_USAGE), false, true), RunEnd::Failed);
+        assert_eq!(judge(code(0), true, true), RunEnd::Final(UiHostEnd::Quit));
+        assert_eq!(judge(None, false, false), RunEnd::Failed);
     }
 }

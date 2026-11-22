@@ -423,6 +423,21 @@ pub fn launch_candidates(ui_exe: &Path, macos: bool) -> Vec<Launch> {
     out
 }
 
+/// The first of [`launch_candidates`] that is there, for a UI host whose resolved path is
+/// `ui_exe`; `None` for a path that is not absolute.
+#[must_use]
+pub fn find_launch(ui_exe: &Path, macos: bool) -> Option<Launch> {
+    if !ui_exe.is_absolute() {
+        return None;
+    }
+    launch_candidates(ui_exe, macos)
+        .into_iter()
+        .find(|l| match l {
+            Launch::Direct(p) => p.is_file(),
+            Launch::Open(p) => p.is_dir(),
+        })
+}
+
 /// The program and the arguments that start the supervisor for the data root `root`.
 #[must_use]
 pub fn launch_command(launch: &Launch, root: &Path) -> (PathBuf, Vec<OsString>) {
@@ -461,16 +476,16 @@ pub struct LaunchSupervisor {
 
 impl LaunchSupervisor {
     /// The supervisor installed with the running UI host, for the data root `root`.
+    ///
+    /// The UI host's own path is resolved first (the 2026-11 beta review's finding 7): on macOS
+    /// `current_exe()` is the path the program was started with, which can be relative or a
+    /// link, and a relative `Launch::Direct` would be looked up in `PATH`.
     #[must_use]
     pub fn installed(root: &Path) -> Self {
-        let launch = std::env::current_exe().ok().and_then(|exe| {
-            launch_candidates(&exe, cfg!(target_os = "macos"))
-                .into_iter()
-                .find(|l| match l {
-                    Launch::Direct(p) => p.is_file(),
-                    Launch::Open(p) => p.is_dir(),
-                })
-        });
+        let launch = std::env::current_exe()
+            .ok()
+            .and_then(|exe| std::fs::canonicalize(exe).ok())
+            .and_then(|exe| find_launch(&exe, cfg!(target_os = "macos")));
         Self {
             launch,
             root: root.to_owned(),
@@ -670,6 +685,20 @@ mod tests {
                 "/data/iamb"
             ]
         );
+    }
+
+    #[test]
+    fn the_supervisor_is_found_by_absolute_paths_only() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        std::fs::write(dir.path().join(SERVICE_EXE), b"").expect("service");
+        let ui = dir.path().join("iamb-desktop");
+        assert_eq!(
+            find_launch(&ui, false),
+            Some(Launch::Direct(dir.path().join(SERVICE_EXE)))
+        );
+        // A relative path would make `Launch::Direct("iamb-service")`, looked up in `PATH`.
+        assert_eq!(find_launch(Path::new("iamb-desktop"), false), None);
+        assert_eq!(find_launch(Path::new("./iamb-desktop"), false), None);
     }
 
     #[test]

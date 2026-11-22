@@ -133,6 +133,16 @@ grants belong to the helper and survive updates. On Windows the supervisor is re
 per-user Run key. Updates are applied by the UI host, which asks the supervisor to stop the worker,
 replaces the files, and asks it to start again ([ADR-0023](decisions/0023-updates.md)).
 
+The UI host is supervised by its end, not by a heartbeat (`iamb_service::supervisor`, "The UI
+host"). On macOS the supervisor never starts it as its own child: the system judges a program the
+helper spawns as the helper, with the helper's keyboard permissions, so the supervisor has the
+system open `Iamb.app` (`/usr/bin/open -g -W -a`), as the UI host has the system open the helper,
+after checking that the app is the bundle around the helper (resolved path, no links, Iamb's
+bundle identifier; a signature check follows with signed builds). `open` does not pass the app's
+exit status on, so the UI host leaves `run/desktop.quit` when it ends on purpose, and only an end
+without it is restarted. Everywhere, a UI host that exits with status 64 (a usage error), is ended
+with `SIGTERM`, or fails five starts in a row within a second each is not started again.
+
 ### 3.3 Files on disk
 
 | Item | macOS | Windows |
@@ -836,6 +846,19 @@ These hold for every phase and are what the Phase 2 privacy review checks
 Threat model: Iamb protects typed text from itself (bugs, logs, sync), from other users on the
 machine, and from other members of shared folders. It does not defend against malware already
 running as the same user, which can observe the keyboard directly.
+
+On macOS a process of the same user cannot observe the keyboard until the user grants it, and the
+grant belongs to the helper app (ADR-0021), so the helper must not lend it out:
+
+- it never starts another program as its own child, which the system would judge as the helper
+  (§3.2): the UI host is opened through the system, and a release build refuses `--ui-host`;
+- any process of the user can have the system start the helper with arguments of its choosing
+  (`open -n … --args …`). A release build of the helper therefore runs for the default data root
+  only (`--data-dir` and `IAMB_DATA_DIR` naming another are refused,
+  `iamb_service::paths::helper_may_use_root`), so a process cannot point a granted helper at a
+  library it wrote elsewhere and have it typed. This does not stop a process that writes into the
+  default data root itself, the user's own folder: that, like other malware of the same user, is
+  outside this threat model. Development builds accept any data root.
 
 **Crash handling (rule 9).** The supervisor and the worker do two things first in `main`
 (`iamb_service::crash`); the UI host does the same (`iamb_desktop::crash`, process name

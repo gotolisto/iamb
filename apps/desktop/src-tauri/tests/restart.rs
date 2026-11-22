@@ -10,6 +10,10 @@ use iamb_desktop::onboarding::{Launch, LaunchSupervisor, RESTART_REQUEST, Superv
 #[test]
 fn the_request_has_the_name_the_supervisor_looks_for() {
     assert_eq!(RESTART_REQUEST, iamb_service::supervisor::RESTART_REQUEST);
+    assert_eq!(
+        iamb_desktop::paths::QUIT_MARKER,
+        iamb_service::paths::UI_HOST_QUIT_MARKER
+    );
     let dirs = iamb_service::paths::DataDirs::new("/data");
     assert_eq!(
         dirs.restart_request(),

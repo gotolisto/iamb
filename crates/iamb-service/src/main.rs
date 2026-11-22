@@ -11,9 +11,16 @@
 //! ```
 //!
 //! The supervisor also starts the UI host (`iamb-desktop`, installed beside it) and restarts it
-//! after an abnormal exit (`iamb_service::supervisor`, "The UI host"); `--ui-host` names another
-//! one, `--no-ui-host` starts none (the UI host passes it when it starts the supervisor itself).
-//! With `--platform mock` none is started unless `--ui-host` names one.
+//! after an abnormal exit (`iamb_service::supervisor`, "The UI host"); `--no-ui-host` starts none
+//! (the UI host passes it when it starts the supervisor itself). With `--platform mock` none is
+//! started unless `--ui-host` names one. `--ui-host` is a switch for tests and development: it
+//! is refused, with the usage error, by a release build on the native platform, because on macOS
+//! the helper holds the user's keyboard permissions and must not start a program of the
+//! caller's choosing (the 2026-11 beta review's finding 1). On macOS the installed helper does
+//! not start the UI host as its child at all: it has the system open `Iamb.app` (`ui_host_plan`).
+//!
+//! A release build of the macOS helper runs for the default data root only (`--data-dir` and
+//! `IAMB_DATA_DIR` naming another are refused; `iamb_service::paths::helper_may_use_root`).
 //!
 //! `--platform mock` runs the worker against the in-memory mock platform: development and CI
 //! only (it is the only choice on Linux). `--heartbeat-stdout` is passed by the supervisor: the
@@ -133,6 +140,24 @@ fn main() -> ExitCode {
         Ok(dirs) => dirs,
         Err(e) => return fail(&e.to_string()),
     };
+    let choice = args
+        .platform
+        .unwrap_or_else(PlatformChoice::default_for_build);
+    if let UiHostChoice::Path(_) = &args.ui_host
+        && !ui_host_switch_allowed(choice, cfg!(debug_assertions))
+    {
+        return fail(&format!(
+            "--ui-host is for development builds and --platform mock; {USAGE}"
+        ));
+    }
+    if !iamb_service::paths::helper_may_use_root(
+        launched_from_helper(),
+        !cfg!(debug_assertions),
+        dirs.root(),
+        |k| std::env::var_os(k),
+    ) {
+        return fail("the installed helper serves the default data root only");
+    }
     // The data root is the user's alone, wherever it is (§3.3; the 2.8 review's finding 20:
     // on Windows a root outside the profile would otherwise keep its parent's permissions).
     if let Err(e) = iamb_service::paths::create_private_dir(dirs.root()) {
@@ -140,9 +165,6 @@ fn main() -> ExitCode {
             "cannot make the data root private to this user: {e}"
         ));
     }
-    let choice = args
-        .platform
-        .unwrap_or_else(PlatformChoice::default_for_build);
     if args.supervise.unwrap_or_else(launched_as_login_item) {
         return supervise(dirs, choice, &args.ui_host, &hardening);
     }
@@ -159,8 +181,18 @@ fn main() -> ExitCode {
 
 /// True when this process is the macOS login-item helper started by the system (module docs).
 fn launched_as_login_item() -> bool {
-    cfg!(target_os = "macos")
-        && std::env::current_exe().is_ok_and(|exe| iamb_service::paths::is_login_item_helper(&exe))
+    cfg!(target_os = "macos") && launched_from_helper()
+}
+
+/// True when this executable lives in the macOS login-item helper's layout (ADR-0021).
+fn launched_from_helper() -> bool {
+    iamb_service::paths::canonical_exe()
+        .is_ok_and(|exe| iamb_service::paths::is_login_item_helper(&exe))
+}
+
+/// Whether `--ui-host` may be used (module docs): development builds and the mock platform.
+fn ui_host_switch_allowed(platform: PlatformChoice, debug: bool) -> bool {
+    platform == PlatformChoice::Mock || debug
 }
 
 /// The panic hook (by location only: a panic message could quote data) and the log line that
@@ -174,16 +206,81 @@ fn crash_handling(log: &Arc<Logger>, dirs: &DataDirs, process: &'static str, h: 
     }
 }
 
-/// The UI host the supervisor starts (`supervisor` module docs, "The UI host"): the one
-/// `--ui-host` names; none with `--no-ui-host`; otherwise, on the native platform, the one
-/// installed with this executable, when it is there.
-fn ui_host(choice: &UiHostChoice, platform: PlatformChoice, exe: &Path) -> Option<PathBuf> {
+/// How the supervisor starts the UI host (`supervisor` module docs, "The UI host").
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum UiHostPlan {
+    /// None is started; the reason, for the log.
+    None(&'static str),
+    /// Started as a child: `--ui-host`, and the installed UI host on Windows and Linux.
+    Child(PathBuf),
+    /// `Iamb.app` opened through the system (macOS): the helper never starts it as its child.
+    Open(PathBuf),
+}
+
+/// The UI host for a supervisor whose executable is `exe` (canonical): the one `--ui-host`
+/// names (already allowed by `ui_host_switch_allowed`); none with `--no-ui-host` or on the mock
+/// platform; otherwise the installed one. On macOS that is the main app around the helper,
+/// opened through the system after `check_main_app`, and a development build outside the
+/// helper layout starts the `iamb-desktop` beside it as a child; a release build outside it
+/// starts none.
+fn ui_host_plan(
+    choice: &UiHostChoice,
+    platform: PlatformChoice,
+    exe: &Path,
+    macos: bool,
+    debug: bool,
+) -> UiHostPlan {
+    use iamb_service::paths::{check_main_app, main_app_of_helper, ui_host_beside};
     match choice {
-        UiHostChoice::Path(p) => Some(p.clone()),
-        UiHostChoice::Default if platform == PlatformChoice::Native => {
-            iamb_service::paths::ui_host_beside(exe).filter(|p| p.is_file())
+        UiHostChoice::Path(p) => UiHostPlan::Child(p.clone()),
+        UiHostChoice::None => UiHostPlan::None("--no-ui-host"),
+        UiHostChoice::Default if platform != PlatformChoice::Native => {
+            UiHostPlan::None("the mock platform")
         }
-        UiHostChoice::None | UiHostChoice::Default => None,
+        UiHostChoice::Default if macos => match main_app_of_helper(exe) {
+            Some(app) => match check_main_app(&app, exe) {
+                Ok(()) => UiHostPlan::Open(app),
+                Err(_) => UiHostPlan::None("the app around the helper failed its check"),
+            },
+            None if debug => ui_host_beside(exe).filter(|p| p.is_file()).map_or(
+                UiHostPlan::None("no ui host beside this executable"),
+                UiHostPlan::Child,
+            ),
+            None => UiHostPlan::None("not the installed helper"),
+        },
+        UiHostChoice::Default => ui_host_beside(exe).filter(|p| p.is_file()).map_or(
+            UiHostPlan::None("no ui host beside this executable"),
+            UiHostPlan::Child,
+        ),
+    }
+}
+
+/// The program that carries out `plan` for the data root of `dirs`.
+fn ui_host_program(plan: UiHostPlan, dirs: &DataDirs) -> Option<supervisor::Program> {
+    let root = dirs.root().as_os_str().to_owned();
+    let marker = Some(dirs.ui_host_quit_marker());
+    match plan {
+        UiHostPlan::None(_) => None,
+        UiHostPlan::Child(exe) => Some(supervisor::Program {
+            exe,
+            args: vec!["--data-dir".into(), root],
+            quit_marker: marker,
+            launcher: false,
+        }),
+        UiHostPlan::Open(app) => Some(supervisor::Program {
+            exe: PathBuf::from("/usr/bin/open"),
+            args: vec![
+                "-g".into(),
+                "-W".into(),
+                "-a".into(),
+                app.into_os_string(),
+                "--args".into(),
+                "--data-dir".into(),
+                root,
+            ],
+            quit_marker: marker,
+            launcher: true,
+        }),
     }
 }
 
@@ -195,7 +292,7 @@ fn supervise(
 ) -> ExitCode {
     let log = Arc::new(Logger::open(&dirs.logs(), "supervisor"));
     crash_handling(&log, &dirs, "supervisor", hardening);
-    let exe = match std::env::current_exe() {
+    let exe = match iamb_service::paths::canonical_exe() {
         Ok(exe) => exe,
         Err(e) => return fail(&format!("cannot find this executable: {e}")),
     };
@@ -207,13 +304,25 @@ fn supervise(
         "--platform".into(),
         choice.as_str().into(),
     ];
-    let ui_host = ui_host(ui, choice, &exe).map(|exe| supervisor::Program {
-        exe,
-        args: vec!["--data-dir".into(), dirs.root().as_os_str().to_owned()],
-    });
-    if ui_host.is_none() {
-        log.info(format_args!("no ui host to start"));
+    let ui = match ui {
+        // Resolved here, so that a relative path or a link names one fixed file.
+        UiHostChoice::Path(p) => match iamb_service::paths::canonical_absolute(p) {
+            Ok(p) if p.is_file() => UiHostChoice::Path(p),
+            _ => return fail(&format!("--ui-host must name a file; {USAGE}")),
+        },
+        other => other.clone(),
+    };
+    let plan = ui_host_plan(
+        &ui,
+        choice,
+        &exe,
+        cfg!(target_os = "macos"),
+        cfg!(debug_assertions),
+    );
+    if let UiHostPlan::None(why) = &plan {
+        log.info(format_args!("no ui host to start: {why}"));
     }
+    let ui_host = ui_host_program(plan, &dirs);
     let mut cfg = SupervisorConfig::new(dirs, exe, worker_args);
     cfg.ui_host = ui_host;
     match supervisor::run(&cfg, &log) {
@@ -334,4 +443,127 @@ fn work(dirs: &DataDirs, choice: PlatformChoice, supervised: bool, hardening: &H
 fn worker_exit_handle(worker: &Worker) -> impl Fn() + Send + 'static {
     let handle = worker.exit_handle();
     move || handle.request(ExitReason::Stop)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HELPER: &str = "/Applications/Iamb.app/Contents/Library/LoginItems/Iamb Service.app/Contents/MacOS/iamb-service";
+
+    #[test]
+    fn the_ui_host_switch_is_refused_by_a_release_build_on_the_native_platform() {
+        assert!(!ui_host_switch_allowed(PlatformChoice::Native, false));
+        assert!(ui_host_switch_allowed(PlatformChoice::Native, true));
+        assert!(ui_host_switch_allowed(PlatformChoice::Mock, false));
+        assert!(ui_host_switch_allowed(PlatformChoice::Mock, true));
+    }
+
+    #[test]
+    fn the_installed_helper_opens_the_app_and_never_spawns_it() {
+        let native = PlatformChoice::Native;
+        let helper = Path::new(HELPER);
+        // The bundle is not on this disk, so its check fails: nothing is started, and in no
+        // case is the program beside the helper started as a child.
+        for debug in [false, true] {
+            assert!(matches!(
+                ui_host_plan(&UiHostChoice::Default, native, helper, true, debug),
+                UiHostPlan::None(_)
+            ));
+        }
+        // A release build outside the helper layout starts none on macOS.
+        assert!(matches!(
+            ui_host_plan(
+                &UiHostChoice::Default,
+                native,
+                Path::new("/opt/iamb/iamb-service"),
+                true,
+                false
+            ),
+            UiHostPlan::None(_)
+        ));
+        assert!(matches!(
+            ui_host_plan(&UiHostChoice::None, native, helper, true, true),
+            UiHostPlan::None(_)
+        ));
+        assert!(matches!(
+            ui_host_plan(
+                &UiHostChoice::Default,
+                PlatformChoice::Mock,
+                helper,
+                true,
+                true
+            ),
+            UiHostPlan::None(_)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_checked_app_is_opened_through_the_system_and_its_end_read_from_the_marker() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let root = iamb_service::paths::canonical_absolute(dir.path()).expect("canonical");
+        let app = root.join("Iamb.app");
+        let helper =
+            app.join("Contents/Library/LoginItems/Iamb Service.app/Contents/MacOS/iamb-service");
+        std::fs::create_dir_all(helper.parent().expect("parent")).expect("helper dir");
+        std::fs::write(&helper, b"").expect("helper");
+        std::fs::create_dir_all(app.join("Contents/MacOS")).expect("dir");
+        std::fs::write(app.join("Contents/MacOS/iamb-desktop"), b"").expect("ui host");
+        std::fs::write(
+            app.join("Contents/Info.plist"),
+            "<key>CFBundleIdentifier</key><string>org.iamb.Iamb</string>",
+        )
+        .expect("plist");
+        let plan = ui_host_plan(
+            &UiHostChoice::Default,
+            PlatformChoice::Native,
+            &helper,
+            true,
+            false,
+        );
+        assert_eq!(plan, UiHostPlan::Open(app.clone()));
+        let dirs = DataDirs::new("/data/iamb");
+        let program = ui_host_program(plan, &dirs).expect("a program");
+        assert_eq!(program.exe, Path::new("/usr/bin/open"));
+        let mut expected: Vec<OsString> = ["-g", "-W", "-a"].map(OsString::from).to_vec();
+        expected.push(app.into_os_string());
+        expected.extend(["--args", "--data-dir", "/data/iamb"].map(OsString::from));
+        assert_eq!(program.args, expected);
+        assert!(program.launcher);
+        assert_eq!(
+            program.quit_marker.as_deref(),
+            Some(Path::new("/data/iamb/run/desktop.quit"))
+        );
+    }
+
+    #[test]
+    fn elsewhere_the_installed_ui_host_beside_the_supervisor_is_a_child() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let exe = dir.path().join("iamb-service");
+        let host = dir.path().join(iamb_service::paths::UI_HOST_EXE);
+        assert!(matches!(
+            ui_host_plan(
+                &UiHostChoice::Default,
+                PlatformChoice::Native,
+                &exe,
+                false,
+                false
+            ),
+            UiHostPlan::None(_)
+        ));
+        std::fs::write(&host, b"").expect("ui host");
+        let plan = ui_host_plan(
+            &UiHostChoice::Default,
+            PlatformChoice::Native,
+            &exe,
+            false,
+            false,
+        );
+        assert_eq!(plan, UiHostPlan::Child(host.clone()));
+        let program = ui_host_program(plan, &DataDirs::new("/d")).expect("a program");
+        assert!(!program.launcher);
+        assert_eq!(program.exe, host);
+        assert_eq!(program.args, ["--data-dir", "/d"].map(OsString::from));
+    }
 }

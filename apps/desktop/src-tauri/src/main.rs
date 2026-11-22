@@ -12,6 +12,10 @@
 //! the fill-in form from the request to its first paint and exits, `--measure-palette` the
 //! search palette from the shortcut to its first paint (`docs/test-strategy.md` §8).
 //!
+//! Exit status: 0 when it ended on purpose (it then also leaves `run/desktop.quit` for the
+//! supervisor, `DataDirs::mark_quit`), 64 for a usage error (the supervisor does not start it
+//! again), 70 after a panic, 1 for any other failure.
+//!
 //! Before anything else the process opts out of the operating system's crash dumps, and its
 //! panic hook writes a heap-free crash report and exits with status 70 (`iamb_desktop::crash`,
 //! architecture §8 rule 9).
@@ -116,17 +120,34 @@ fn fail(message: &str) -> ExitCode {
     ExitCode::FAILURE
 }
 
+/// The exit status of a usage error (`EX_USAGE`), which the supervisor does not restart
+/// (`iamb_service::supervisor::EXIT_USAGE`).
+const EXIT_USAGE: u8 = 64;
+
+fn usage_error(message: &str) -> ExitCode {
+    eprintln!("iamb-desktop: {message}");
+    ExitCode::from(EXIT_USAGE)
+}
+
+/// Ends on purpose: leaves the quit marker for the supervisor first.
+fn quit(dirs: &DataDirs, log: &Logger) -> ExitCode {
+    if let Err(e) = dirs.mark_quit() {
+        log.warn(format_args!("cannot leave the quit marker: {}", e.kind()));
+    }
+    ExitCode::SUCCESS
+}
+
 fn main() -> ExitCode {
     // First, before any other thread exists: no OS crash dump of this process's memory.
     let hardening = crash::harden_process();
     let args = match parse(std::env::args_os().skip(1)) {
         Ok(Some(args)) => args,
         Ok(None) => return ExitCode::SUCCESS,
-        Err(e) => return fail(&e),
+        Err(e) => return usage_error(&e),
     };
     let dirs = match DataDirs::resolve(args.data_dir.as_deref()) {
         Ok(dirs) => dirs,
-        Err(e) => return fail(&e.to_string()),
+        Err(e) => return usage_error(&e.to_string()),
     };
     let log = Arc::new(Logger::open(&dirs.logs(), crash::PROCESS));
     crash::install_panic_hook(&log, &dirs.logs());
@@ -144,7 +165,7 @@ fn main() -> ExitCode {
         Ok(Some(lock)) => lock,
         Ok(None) => {
             log.info(format_args!("another ui host is running; exiting"));
-            return ExitCode::SUCCESS;
+            return quit(&dirs, &log);
         }
         Err(e) => return fail(&format!("cannot take the instance lock: {e}")),
     };
@@ -155,7 +176,8 @@ fn main() -> ExitCode {
         budget_ms: args.budget_ms,
         open_library: args.open_library,
     };
-    match app::run(dirs, &options, &log) {
+    match app::run(dirs.clone(), &options, &log) {
+        Ok(0) => quit(&dirs, &log),
         Ok(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
         Err(e) => {
             log.error(format_args!("the ui host did not start: {e}"));
