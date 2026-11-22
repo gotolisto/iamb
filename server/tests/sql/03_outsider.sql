@@ -98,10 +98,13 @@ begin
     -- C13: the folder the row names is unreadable for the writer.
     perform iamb_test.eq(iamb_test.st(r, 2), 'rejected:parent_gone', 'edit an unreadable snippet');
     perform iamb_test.ok(r -> 'results' -> 1 -> 'row' = 'null'::jsonb, 'no row in the answer');
-    perform iamb_test.eq(iamb_test.st(r, 3), 'rejected:forbidden', 'delete an unreadable snippet');
-    perform iamb_test.eq(iamb_test.st(r, 4), 'rejected:forbidden', 'folder in another''s profile');
-    perform iamb_test.eq(iamb_test.st(r, 5), 'rejected:forbidden', 'tag in another''s profile');
-    perform iamb_test.eq(iamb_test.st(r, 6), 'rejected:forbidden', 'delete another''s folder');
+    -- A delete of a row the caller cannot read answers like one of an id the server does not
+    -- know (security review 4.3, finding 10).
+    perform iamb_test.eq(iamb_test.st(r, 3), 'unchanged', 'delete an unreadable snippet');
+    -- A profile the caller has no grant in: the answers of a profile and a row that do not exist.
+    perform iamb_test.eq(iamb_test.st(r, 4), 'rejected:parent_gone', 'folder in another''s profile');
+    perform iamb_test.eq(iamb_test.st(r, 5), 'rejected:parent_gone', 'tag in another''s profile');
+    perform iamb_test.eq(iamb_test.st(r, 6), 'unchanged', 'delete another''s folder');
     perform iamb_test.eq(iamb_test.st(r, 7), 'rejected:parent_gone', 'share another''s folder');
     perform iamb_test.ok((select deleted_at from iamb.snippet where id = (ids ->> 's1')::uuid) is null
                          and (select body from iamb.snippet where id = (ids ->> 's1')::uuid) = 'Open 9 to 5.',

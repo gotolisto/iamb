@@ -157,4 +157,120 @@ begin
     perform iamb_test.check_all();
 end $$;
 
+-- Security review 4.3, finding 3: two requests that create one id in two profiles. An id is unique
+-- across all profiles and the profile locks are per profile, so the second request holds another
+-- lock than the first; it waits on the lock of the row's id, finds the first one's row when it
+-- gets it, and is answered `blocked: invalid`. It never becomes an update of the first one's row.
+-- (f) An attachment row: request 1 creates row A in Ines's profile with the hash of her private
+-- file (allowed, not backed); request 2 creates "the same" row A in Tom's own profile with the hash
+-- of a file of his own, for which the server computes `backed`.
+do $$
+declare
+    ids jsonb := iamb_test.family('edit');
+begin
+    perform iamb_test.new_device('tom2', 'tom'); perform iamb_test.hello('tom2'); perform iamb_test.pull('tom');
+    insert into iamb.attachment_blob values ((ids ->> 'p_ines')::uuid, repeat('a1', 32), 1000, 'image/png', 1),
+                                            ((ids ->> 'p_tom')::uuid, repeat('70', 32), 10, 'image/png', 1);
+    insert into storage.objects (bucket_id, name) values ('attachments', (ids ->> 'p_ines') || '/' || repeat('a1', 32));
+    perform iamb_test.put('ids', ids || jsonb_build_object('A', gen_random_uuid(), 'X', gen_random_uuid()));
+end $$;
+begin;
+select iamb_test.put('f1', iamb_test.push('tom', jsonb_build_array(iamb_test.op_attachment((iamb_test.get('ids') ->> 'A')::uuid,
+       (iamb_test.get('ids') ->> 'p_ines')::uuid, repeat('a1', 32))))) is not null;
+select extensions.dblink_send_query('c2', format('select iamb_test.push(%L, %L::jsonb)::text', 'tom2',
+       jsonb_build_array(iamb_test.op_attachment((iamb_test.get('ids') ->> 'A')::uuid, (iamb_test.get('ids') ->> 'p_tom')::uuid, repeat('70', 32)))));
+select pg_sleep(0.5);
+select iamb_test.ok(pg_temp.c2_waits(), '(f) the second request waits for the first');
+commit;
+select iamb_test.put('f', pg_temp.c2_result());
+do $$
+declare
+    a uuid := (iamb_test.get('ids') ->> 'A')::uuid; r jsonb; n integer;
+begin
+    perform iamb_test.ok(iamb_test.st(iamb_test.get('f1')) = 'applied' and iamb_test.get('f1') -> 'results' -> 0 ->> 'blob' = 'missing',
+                         '(f) the first request creates the row, not backed: ' || iamb_test.get('f1')::text);
+    perform iamb_test.eq(iamb_test.st(iamb_test.get('f')), 'blocked:invalid', '(f) the second request is refused');
+    perform iamb_test.ok((select profile_id = (iamb_test.get('ids') ->> 'p_ines')::uuid and sha256 = repeat('a1', 32) and not backed
+                          from iamb.attachment where id = a), '(f) the row is the first request''s, and not backed');
+    perform iamb_test.eq((select count(*)::integer from iamb.attachment where id = a), 1, '(f) one row');
+    -- Linked to the shared snippet, it gives Tom no file.
+    perform iamb_test.pull('tom');
+    r := iamb_test.push('tom', jsonb_build_array(iamb_test.op_snippet_attachment(gen_random_uuid(), (iamb_test.get('ids') ->> 's1')::uuid, a)));
+    perform iamb_test.act('tom');
+    select count(*) into n from storage.objects;
+    perform iamb_test.act_owner();
+    perform iamb_test.eq(n, 0, '(f) the private file is not readable for Tom');
+    r := iamb_test.call('tom', format('api.attachment_upload_begin(iamb_test.dev(''tom''), 1, %L, %L, 1000, ''image/png'')',
+                                      iamb_test.get('ids') ->> 'p_ines', repeat('a1', 32)));
+    perform iamb_test.ok(r ->> 'error' is null, '(f) and upload_begin answers him as for a file that does not exist: ' || r::text);
+    perform iamb_test.check_tree();
+    perform iamb_test.check_access();
+end $$;
+-- (g) A folder: request 1 creates X under the shared folder; request 2 creates "the same" X at the
+-- top level of Tom's own profile.
+begin;
+select iamb_test.st(iamb_test.push('tom', jsonb_build_array(iamb_test.op_folder((iamb_test.get('ids') ->> 'X')::uuid,
+       (iamb_test.get('ids') ->> 'p_ines')::uuid, (iamb_test.get('ids') ->> 'f1')::uuid, 'X under the shared folder')))) as g1;
+select extensions.dblink_send_query('c2', format('select iamb_test.push(%L, %L::jsonb)::text', 'tom2',
+       jsonb_build_array(iamb_test.op_folder((iamb_test.get('ids') ->> 'X')::uuid, (iamb_test.get('ids') ->> 'p_tom')::uuid, null, 'X at the top of my own'))));
+select pg_sleep(0.5);
+select iamb_test.ok(pg_temp.c2_waits(), '(g) the second request waits for the first');
+commit;
+select iamb_test.put('g', pg_temp.c2_result());
+do $$
+declare
+    x uuid := (iamb_test.get('ids') ->> 'X')::uuid;
+begin
+    perform iamb_test.eq(iamb_test.st(iamb_test.get('g')), 'blocked:invalid', '(g) the second request is refused');
+    perform iamb_test.ok((select profile_id = (iamb_test.get('ids') ->> 'p_ines')::uuid and parent_id = (iamb_test.get('ids') ->> 'f1')::uuid
+                                 and name = 'X under the shared folder' from iamb.folder where id = x),
+                         '(g) the folder is where the first request put it');
+    perform iamb_test.check_tree();
+    perform iamb_test.check_access();
+    perform iamb_test.check_all();
+end $$;
+
+-- Security review 4.3, finding 6: a request takes no lock on a profile its caller has no grant in.
+-- (h) A stranger's push names Ines's personal profile and her group and stays open; Ines's own
+-- push does not wait for it.
+begin;
+select iamb_test.st(iamb_test.push('stranger', jsonb_build_array(
+       iamb_test.op_tag(gen_random_uuid(), (iamb_test.get('ids') ->> 'p_ines')::uuid, 'x'),
+       iamb_test.op_tag(gen_random_uuid(), (iamb_test.get('ids') ->> 'g')::uuid, 'x'),
+       iamb_test.op_snippet(gen_random_uuid(), (iamb_test.get('ids') ->> 'f2')::uuid, ';x', 'x')))) as h1;
+select extensions.dblink_send_query('c2', format('select iamb_test.push(%L, %L::jsonb)::text', 'ines',
+       jsonb_build_array(iamb_test.op_snippet((iamb_test.get('ids') ->> 's2')::uuid, (iamb_test.get('ids') ->> 'f2')::uuid, ';priv', 'edited while the stranger''s request is open',
+                         iamb_test.rev('snippet', (iamb_test.get('ids') ->> 's2')::uuid)))));
+select pg_sleep(0.7);
+select iamb_test.ok(not pg_temp.c2_waits(), '(h) the owner''s request does not wait for the stranger''s');
+select iamb_test.ok(not exists (select 1 from pg_stat_activity where application_name = 'iamb_c2' and state = 'active'),
+                    '(h) and has been answered while the stranger''s request is still open');
+commit;
+select iamb_test.put('h', pg_temp.c2_result());
+do $$
+begin
+    perform iamb_test.eq(iamb_test.st(iamb_test.get('h')), 'applied', '(h) the owner''s write is applied');
+    perform iamb_test.check_all();
+end $$;
+-- (i) The same for an account call and for an upload: a stranger's `attachment_upload_begin` and
+-- `rename_group` for a profile he has no right in hold no lock.
+begin;
+select iamb_test.call('stranger', format('api.attachment_upload_begin(iamb_test.dev(''stranger''), 1, %L, %L, 10, ''image/png'')',
+       iamb_test.get('ids') ->> 'p_ines', repeat('cd', 32))) ->> 'error' as i1;
+select iamb_test.call('stranger', format('api.rename_group(iamb_test.dev(''stranger''), 1, %L, ''x'')', iamb_test.get('ids') ->> 'g')) ->> 'error' as i2;
+select iamb_test.call('stranger', format('api.withdraw_invitation(iamb_test.dev(''stranger''), 1, %L)',
+       (select id from iamb.invitation where profile_id = (iamb_test.get('ids') ->> 'g')::uuid limit 1))) ->> 'error' as i3;
+select extensions.dblink_send_query('c2', format('select iamb_test.push(%L, %L::jsonb)::text', 'ines',
+       jsonb_build_array(iamb_test.op_folder(gen_random_uuid(), (iamb_test.get('ids') ->> 'g')::uuid, null, 'A folder of the group'),
+                         iamb_test.op_folder(gen_random_uuid(), (iamb_test.get('ids') ->> 'p_ines')::uuid, null, 'A folder of her own'))));
+select pg_sleep(0.7);
+select iamb_test.ok(not pg_temp.c2_waits(), '(i) the owner''s request does not wait for the stranger''s calls');
+commit;
+select iamb_test.put('i', pg_temp.c2_result());
+do $$
+begin
+    perform iamb_test.ok(iamb_test.st(iamb_test.get('i'), 1) = 'applied' and iamb_test.st(iamb_test.get('i'), 2) = 'applied', '(i) the owner''s writes are applied');
+    perform iamb_test.check_all();
+end $$;
+
 select extensions.dblink_disconnect('c2');

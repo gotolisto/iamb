@@ -47,7 +47,8 @@ begin
     r := iamb_test.push('stranger', jsonb_build_array(iamb_test.op_folder(iamb_test.id(), iamb_test.personal('stranger'), null, 'S')));
     r := iamb_test.push('stranger', jsonb_build_array(iamb_test.op_share(
         (select id from iamb.folder where profile_id = iamb_test.personal('stranger') limit 1), g, 'view')));
-    perform iamb_test.eq(iamb_test.st(r), 'rejected:forbidden', 'a share into a group one is not in');
+    -- A group the caller is not in answers like one that does not exist (finding 10).
+    perform iamb_test.eq(iamb_test.st(r), 'rejected:parent_gone', 'a share into a group one is not in');
     -- shared_folders_max counts folders, not shares.
     select limits into lim from iamb.plan where id = 'default-user';
     update iamb.plan set limits = limits || '{"shared_folders_max": 1}' where id = 'default-user';

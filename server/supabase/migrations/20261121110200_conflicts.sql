@@ -1,6 +1,6 @@
 -- Iamb server, migration 13: conflicts after the security review of task 4.3
 -- (docs/reviews/4.3-security-review.md), findings 1, 2 and 4; the design change is in
--- docs/sync-design.md (C3, C20, §5.6) and ADR-0030.
+-- docs/sync-design.md (C3, C20, §5.6) and ADR-0031.
 --
 --  1. A conflict offers a version only to a party who wrote it or could read it while it was the
 --     row: with an access entry for the folder that version was in which began before the version

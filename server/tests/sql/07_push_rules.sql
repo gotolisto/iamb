@@ -149,7 +149,9 @@ begin
         iamb_test.op_folder(m2, pi, m, 'under another profile'),
         iamb_test.op_folder(iamb_test.id(), pt, null, 'in another profile')));
     perform iamb_test.eq(iamb_test.st(r, 1), 'rejected:parent_gone', 'a parent the writer cannot read');
-    perform iamb_test.eq(iamb_test.st(r, 2), 'rejected:forbidden', 'a folder in another profile');
+    -- A profile the caller has no grant in answers like one that does not exist, and is not
+    -- locked (security review 4.3, findings 6 and 10).
+    perform iamb_test.eq(iamb_test.st(r, 2), 'rejected:parent_gone', 'a folder in another profile');
     r := iamb_test.push('ines', jsonb_build_array(
         iamb_test.op_snippet(s, l1, ';s', 's'), iamb_test.op_snippet(sd, l1, ';d', 'd'),
         iamb_test.op_tag(t, pi, 'tag')));

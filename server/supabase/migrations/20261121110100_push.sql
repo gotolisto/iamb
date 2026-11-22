@@ -990,11 +990,11 @@ begin
         end if;
     end loop;
     v := op -> 'follows';
-    if v is not null and (jsonb_typeof(v) <> 'array' or jsonb_array_length(v) > 1000) then
+    if v is not null and jsonb_typeof(v) <> 'null' and (jsonb_typeof(v) <> 'array' or jsonb_array_length(v) > 1000) then
         return 'invalid';
     end if;
     v := op -> 'cascade';
-    if v is not null then
+    if v is not null and jsonb_typeof(v) <> 'null' then
         if jsonb_typeof(v) <> 'array' then
             return 'invalid';
         elsif jsonb_array_length(v) > iamb_private.cascade_list_max() then

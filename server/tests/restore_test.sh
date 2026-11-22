@@ -106,8 +106,20 @@ SQL
 
 # The bucket as the storage interface lists it now: the original database's objects stand in for it.
 q "$db" "select name from storage.objects where bucket_id = 'attachments' order by name" > "$work/objects.txt"
-PSQL="$PG_BIN/psql" python3 -I "$server/restore/restore.py" --dsn "dbname=$rdb user=postgres" \
-    --log "$work/function.log" --backup-at "$backup_at" --objects "$work/objects.txt" > "$work/report.json" 2>"$work/report.err"
+# The listing lacks the one verified file the restored database knows (its object was removed
+# after the backup). A listing that lacks more than half of them could as well be a listing that
+# went wrong, and every file it leaves out would be unbacked: the script refuses it before it
+# changes anything, and takes it with --force (security review 4.3, §7 on correction 7).
+if PSQL="$PG_BIN/psql" python3 -I "$server/restore/restore.py" --dsn "dbname=$rdb user=postgres" \
+    --log "$work/function.log" --backup-at "$backup_at" --objects "$work/objects.txt" > "$work/refused.json" 2>"$work/refused.err"; then
+    echo "restore.py took a bucket listing that lacks every verified file, without --force" >&2; exit 1
+fi
+grep -q -- "--force" "$work/refused.err" || { cat "$work/refused.err" >&2; exit 1; }
+[[ "$(q "$rdb" "select maintenance::text || ' ' || (select count(*) from iamb.epoch) from iamb.server_state")" == "false 1" ]] \
+    || { echo "the refused run changed the database" >&2; exit 1; }
+PSQL="$PG_BIN/psql" python3 -I "$server/restore/restore.py" --dsn "dbname=$rdb user=postgres" --force \
+    --log "$work/function.log" --backup-at "$backup_at" --objects "$work/objects.txt" > "$work/report.json" 2>"$work/report.err" \
+    || { cat "$work/report.err" >&2; exit 1; }
 
 # ------------------------------------------------------------------------------------- the checks
 psql -U postgres -d "$rdb" -v after="$after" -v report="$(cat "$work/report.json")" <<'SQL' >/dev/null
