@@ -450,3 +450,48 @@ fn a_pause_outlives_a_worker_restart() {
     let mut ui = h.client(Role::Ui);
     assert!(!paused(&mut ui));
 }
+
+#[test]
+fn pause_by_shortcut_clears_a_half_typed_abbreviation_and_resume_expands_again() {
+    let h = Harness::start(LIBRARY);
+    let mut ui = h.client(Role::Ui);
+    assert_eq!(put(&mut ui, "pause_hotkey", Some("Ctrl+Shift+P")), Ok(()));
+    h.os.type_text("br");
+    h.settle();
+    assert!(h.os.press_chord(chord("Ctrl+Shift+P")));
+    assert!(h.os.press_chord(chord("Ctrl+Shift+P")));
+    h.settle();
+    assert!(!paused(&mut ui));
+    // The buffer was cleared by the pause: "br" + "b " is not an abbreviation typed whole.
+    h.os.type_text("b ");
+    h.settle();
+    assert_eq!(h.text(h.editor), "brb ");
+    // After the resume a whole abbreviation expands again.
+    h.os.type_text("brb ");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while h.text(h.editor) != "brb be right back " && Instant::now() < deadline {
+        h.settle();
+    }
+    assert_eq!(h.text(h.editor), "brb be right back ");
+}
+
+#[test]
+fn fill_in_again_by_shortcut_is_refused_while_a_panel_of_iambs_has_the_keyboard() {
+    let h = Harness::start(LIBRARY);
+    let mut ui = h.client(Role::Ui);
+    assert_eq!(
+        put(&mut ui, "reopen_form_hotkey", Some("Ctrl+Shift+F")),
+        Ok(())
+    );
+    fill_in_once(&h, &mut ui);
+    ui.call(RequestBody::PanelFocus {
+        panel: iamb_ipc::PanelKind::Palette,
+        shown: true,
+    })
+    .expect("panel");
+    h.settle();
+    assert!(h.os.press_chord(chord("Ctrl+Shift+F")));
+    h.settle();
+    assert_eq!(forms_within(&mut ui, Duration::from_millis(300)), []);
+    assert!(diagnostic_codes(&mut ui).contains(&"refused_own_window".to_owned()));
+}
