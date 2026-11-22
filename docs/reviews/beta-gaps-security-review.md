@@ -468,3 +468,237 @@ panel, roles) and the hand runs above; none is in the tree.
   read.
 - **The front end** was read for the recorder and the three new commands only; the React views
   were not reviewed for anything else.
+
+## 5. Re-verification of the fixes
+
+Date: 2026-11-22 · Commits reviewed: `11d0f77..50c66da` (ten commits, "Fix (A)" 1 to 6 and
+"Fix (B)" 7 to 10) · Same reviewer, same limits: everything was run on Linux, nothing on macOS
+or Windows; each line says whether it was shown by a run or by reading.
+
+### 5.1 Verdict
+
+Not ready yet. Seven of the ten findings are closed (2, 3, 4, 5, 7, 9, 10) and three are partly
+closed (1, 6, 8). Finding 1 is still open in one of its three scenarios, and the fixes brought
+two new problems that should be fixed before the beta:
+
+1. **Finding 1, scenario a, is still open in a release build (shown by a run).** The switch
+   `--ui-host` is refused "in a release build on the native platform", but a release build
+   also accepts `--platform mock`, and with it the switch is allowed. A release build of
+   `iamb-service`, started as `--supervise --platform mock --ui-host <program>`, started the
+   program as its child. **The condition is the one section 2 of this review proposed
+   ("only with `--platform mock` or in debug builds"); that proposal was wrong**, and the fix
+   followed it faithfully.
+2. **New, medium (by reading): the fix for finding 3 can freeze the UI host.** A lock is held
+   while menu calls wait for the main thread, and the main thread takes the same lock in the
+   tray icon's pointer events (5.3, N1).
+3. **New, medium (shown by a run): a quit marker left by another UI host turns a later crash
+   into "quit".** A second start of Iamb while it runs (the Start menu, on Windows) leaves
+   `run/desktop.quit`; when the supervised UI host crashes afterwards it is not started again
+   (5.3, N2).
+
+### 5.2 The ten findings
+
+| # | Finding | Now | Evidence |
+| --- | --- | --- | --- |
+| 1 | The helper starts a program as its child | **Partly** | b and c closed by reading: on macOS the installed helper has the system open the app (`ui_host_plan` and `ui_host_program`, `main.rs:231-292`) and never spawns what is beside it; unit tests pass. a **open**: see below |
+| 2 | "Fill in again" shortcut and the late focus report | **Closed** for the shortcut; the tray's request partly | Scratch tests re-run: in all three races (password field, excluded app, another window) no form is sent while the report is late; `tests/shortcuts.rs` 11 passed. Tray: N4 |
+| 3 | "Never expand in *App*" | **Closed** in its rules, with a new problem | `menu.rs` capture rules read and its unit tests run (23 passed in the desktop unit-test binary built from this tree): one capture, time limit, click refused when the label is not the target's. New: N1 |
+| 4 | Chords | **Closed** | `Chord::new` refuses the editing chords and the chords that type; `PutSetting` answers `invalid` (test passes); recorder tests 81 passed. Notes in 5.4 |
+| 5 | Restart request and what a restart does | **Closed** | a, e: `create_new`, link, FIFO and directory cases pass in the desktop's `restart` test binary (6 passed). b: started anyway (test). c: `open`'s status is read (reading). d: the worker stops in order (test) and the pause is kept (test; edge cases N5). f: Unix shown, Windows by reading. g: the lock is tried for 1 s (unit test). Docs: §3.2, §3.3, §8 and a note in ADR-0023 are there |
+| 6 | Supervising the UI host | **Closed** where the exit status is the UI host's own; partly on macOS | Status 64, SIGTERM and five quick failures end the supervision (unit tests, and `tests/supervisor_ui_host.rs` 6 passed). Behind `open` none of the three statuses can be seen, only the marker and the five quick failures; on Windows an end from the task manager is still restarted at once. N2 and N6 |
+| 7 | `PATH` and relative paths | **Closed** | `/usr/bin/open`, `explorer.exe` in the Windows directory, `current_exe()` resolved in both programs, `--ui-host` resolved and must be a file (tests pass) |
+| 8 | Smaller points | First **closed**, second **open** | A refused or empty "fill in again" no longer renews the 30 minutes (test). The pause toggle still has no sign when the icon is hidden; no decision recorded, and it matters more now that a pause outlives a login (N5) |
+| 9 | Missing tests | **Closed** for the rows listed | All rows of the table have a test now, in the fix commits or in `cd55085` and `50c66da`. What is still untested is in 5.4 |
+| 10 | A worker that never exits | **Closed** on Linux; macOS by reading | By hand again: socket file removed, then the supervisor killed, and the whole data root removed, then the supervisor killed: the worker logged "worker stopped" and was gone within 1.5 s both times. `a_worker_whose_socket_file_is_gone_still_stops` and the endpoint's unit test pass. No worker was left behind by the test runs |
+
+**Finding 1, what is still open.**
+
+- Where: `crates/iamb-service/src/main.rs:199-201` (`ui_host_switch_allowed`: `platform ==
+  Mock || debug`), `main.rs:240` (`UiHostChoice::Path` is always `UiHostPlan::Child`),
+  `crates/iamb-service/src/platform.rs:31-36` (a release build parses `mock`). The unit test
+  `the_ui_host_switch_is_refused_by_a_release_build_on_the_native_platform` asserts that the
+  mock platform with a release build is allowed.
+- Shown: `cargo build -p iamb-service --release --locked` from this tree, then
+  `iamb-service --supervise --platform native --ui-host <program> --data-dir <dir>` is refused
+  with the usage error, and the same line with `--platform mock` logs "ui host started" and
+  the program runs as the supervisor's child.
+- On macOS the release helper also has to pass the data-root rule
+  (`paths.rs:290-297`). That rule compares with a default built from the environment variable
+  `HOME` (`paths.rs:104-107`). The caller of `open` chooses the helper's environment
+  (`open --env HOME=…`), so "the default data root" is a directory of the caller's choosing
+  with a free lock (by reading). Ending the running supervisor first frees the real one too.
+- Fix: allow `--ui-host` in debug builds only, whatever the platform (the tests that use it
+  run debug builds); refuse `--platform mock` in the installed helper of a release build, the
+  mock being "development and tests only"; take the home directory for the data-root rule from
+  the user database (`getpwuid`), not from `HOME`, in `iamb-platform-macos`. Change the unit
+  test to assert the refusal for both platforms, add a test of the release binary
+  (`cargo test --release` in CI, or a build-profile check), and add `--platform mock` to check
+  H4 of `docs/compatibility-run.md`, which today passes with the hole open.
+
+### 5.3 New problems
+
+#### N1. Medium: the tray's capture lock is held across calls that wait for the main thread
+
+Where: `apps/desktop/src-tauri/src/app/tray.rs:334-338` (`refresh_exclusion`), `359-360` and
+`374-377` (`toggle_exclusion`), `288-290` (`render`), against `tray.rs:313-314` called from
+`on_icon_event` (`tray.rs:424`). By reading; the tray needs Windows or macOS.
+
+`MenuItem::set_text`, `text`, `Menu::insert` and `remove` run their work on the main thread and
+wait for the answer (`run_item_main_thread!` in the menu module of the UI toolkit:
+`run_on_main_thread(task)` then `rx.recv()`). The three functions above hold `Tray::capture`
+while they make those calls from a worker thread. Tray icon events are delivered on the main
+thread, and `on_icon_event` takes the same lock there. When a pointer event is handled between
+the worker taking the lock and its last menu call, the main thread waits for the lock and the
+worker waits for the main thread: the UI host stops for good (menu, form panel, palette,
+library). The supervisor does not see it, since it watches the UI host by its end only. The
+moment is likely, not rare: the capture finishes a few milliseconds after the pointer reached
+the icon, while move events keep arriving. Before the fix the main thread took no lock that a
+worker held across a menu call.
+
+Fix: never hold `capture` across a menu call. Decide under the lock, release it, apply the text
+and the insert or removal, then take the lock again and keep the result only if the ticket is
+still the newest (the click already checks the label against the target, which covers the
+gap). Or take the ticket inside the spawned task instead of in `on_icon_event`, so that the
+main thread never takes the lock. A test with a host whose "menu call" waits for a thread that
+takes the lock would have caught it.
+
+#### N2. Medium: `run/desktop.quit` from another UI host hides a crash
+
+Where: `apps/desktop/src-tauri/src/main.rs:165-168` (the UI host that finds the instance lock
+taken leaves the marker), `crates/iamb-service/src/supervisor.rs:217-220` (`judge`: the marker
+wins over every status). Shown by two runs.
+
+- The UI host binary of this tree, started for a data root whose `desktop.lock` was held,
+  logged "another ui host is running; exiting" and left `run/desktop.quit`.
+- A supervisor with a stand-in UI host: `run/desktop.quit` created while the UI host ran, the
+  UI host then killed with SIGKILL. Log: `ui host … ended (Quit); not restarted`.
+
+So after any second start of Iamb while it runs (the Start-menu entry on Windows, where a
+second process is started; a second copy or `open -n` on macOS), the next crash of the
+supervised UI host is taken for a quit. The marker is removed only before a start. The same
+holds for any process of the user that creates the file, and removing it at the right moment
+brings a quit UI host back; both are same-user actions and no more than starting or ending the
+UI host by hand.
+
+Fix: the UI host that steps aside leaves no marker (status 0 is enough where the supervisor
+sees it; behind `open` no second process arises, the system brings the running app forward).
+Where the status is the UI host's own, read the status first and let the marker matter only
+for a launcher. To make the marker say who quit, write the process id into it and, behind a
+launcher, compare with the holder of `desktop.lock` noted at the start.
+
+#### N3. Low: what is left of the data-root rule and of the bundle check (macOS, by reading)
+
+- `HOME`: see finding 1 above.
+- `check_main_app` (`paths.rs:249-275`) looks for `Contents/MacOS/iamb-desktop`, but `open -a`
+  starts whatever `CFBundleExecutable` names; `plist_string` takes the first textual
+  `<key>CFBundleIdentifier</key>`, also inside a comment, and reads no binary property list
+  (the app would then never be started at login: check the real bundle in the smoke test).
+  None of this is a boundary: a program the system opens is its own responsible process
+  whatever the check says, and the comment says it is not a signature check. Until the
+  signature comparison exists the check should not be counted as a protection anywhere.
+- `-W` with an app that already runs waits for that app, which is what the supervision needs
+  (the manual of `open`; not run).
+
+#### N4. Low: the tray's "Fill in again" still runs for the wrong window when the shell was in front
+
+Where: `crates/iamb-service/src/worker/engine.rs:895-911`. Shown by a scratch test.
+
+The request is parked only when the last focus delivered is one of Iamb's windows. When it is
+another program's (on Windows the click on the icon can bring the shell's taskbar to the front
+before the menu), the request runs at once: with the taskbar's window reported last and the
+hand-back to the editor not yet reported, `FormRequested` named the taskbar's window. Parked,
+the request is released by the next window that is not Iamb's, whichever it is: a password
+field next was refused (`refused_secure_field`), an unrelated third window got the form. No
+text reaches a secure field in any of these; the form can open for a window the menu was not
+for. The one-second wait itself does no harm: a request that nobody releases ends with
+`request_focus_timeout` instead of `refused_own_window`. The fix is still the optional `focus`
+on `ReopenLastForm` (the UI host knows the tray's target), which the commit left out to avoid
+a protocol change; an optional field does not raise the protocol version (§6.1).
+
+#### N5. Low: the pause file
+
+Where: `engine.rs:349-371` (`keep_pause`), `engine.rs:376` (the start). Shown by scratch tests.
+
+- Who can create it: only the user's processes (`run/` is 0700; the file is created new with
+  mode 0644 inside it). A process of the user that creates or removes it changes the pause at
+  the next worker start, and with a restart request at once. That is no more than `SetPaused`,
+  but it does not pass the endpoint's peer check; architecture §8 should list `run/paused`
+  with the two signal files.
+- A dangling link in its place: pausing counts it as kept (`AlreadyExists`), but the start
+  looks with `exists()`, which follows the link: the worker started **not paused** after a
+  pause. A directory in its place: the worker starts paused, a resume cannot remove it (only a
+  warning in the log), and the next start is paused again although the user resumed. Fix: at
+  the start count anything that is there (`symlink_metadata`); when pausing and something is
+  already there that is not a regular file, remove it and create the file; when resuming,
+  remove a directory too.
+- A stale file and a user paused without knowing: the file outlives a quit, a logout and a
+  restart of the machine, which a pause did not before. With the icon shown the menu says
+  "Iamb is paused". With the icon hidden (`ui.tray_icon`) or no UI host nothing says so and
+  nothing expands; "Why didn't it expand?" has no entry for a pause. This is the fail-safe
+  direction and what finding 5d asked for, but it is a behaviour the user guide does not
+  mention (`docs/user/`), and it makes the open half of finding 8 (no sign of the toggle) an
+  owner decision that should be taken now.
+- When creating the file fails (a full disk) the pause is lost at the next restart with a
+  warning in the log only; the status event could carry it.
+
+#### N6. Not checked: the end of the UI host that the supervisor cannot read (macOS)
+
+Behind `open -W` the supervisor sees only the marker. The marker is left when `app::run`
+returns 0. Whether a quit by the system (logout, restart, a "quit" Apple event) returns through
+that path was not checked; if it does not, the supervisor opens Iamb again during logout, at
+once (the first delay is 0), which can hold a logout up. A SIGTERM from an installer or
+`killall` cannot be told from a crash there either, so on macOS the "ended on purpose" rule of
+finding 6 does not apply. Add both to the Mac checks beside H3.
+
+### 5.4 Answers to the points asked about, and smaller notes
+
+- **`create_new` for the restart file.** Holds: a link is neither followed nor truncated, a
+  FIFO is not opened, a directory is an error and the supervisor is started anyway (run).
+  "Something already there counts as given" is right, since the supervisor takes it by
+  removing it.
+- **The wake in `Listener::close`.** Linux: the `O_PATH` descriptor and the connect through
+  `/proc/self/fd` work with the name and the directory gone (run). The descriptor is opened by
+  path right after the bind, so a process of the user that swaps the file in between gets the
+  wake-up; the 5 s limit in `main.rs` then ends the process. macOS poll pair, by reading: the
+  listening socket is non-blocking, an accepted stream is made blocking again, the wake byte is
+  never drained so every later `accept` returns "closed", and an error on the socket leads to
+  `accept`'s own error, not to a loop. Its test (`tests/endpoint_socket.rs`) was not run.
+- **The chord rules.** Both paste chords the injector can send are covered: Ctrl+V and Cmd+V
+  are refused, Shift+Insert was never a valid chord. AltGr: letters and digits are covered on
+  Windows (Ctrl+Alt with or without Shift, unless the Windows key is held) and in the recorder
+  (`AltGraph`); the punctuation keys that AltGr also uses cannot be named in a chord at all;
+  Ctrl+Alt+Space stays allowed, which is a no-break space on a few layouts. What a user may
+  miss: on Windows every Ctrl+Alt+letter is refused, also on layouts without AltGr, where it
+  is the customary pattern; the message says what to use instead. Alt with a letter or digit
+  is refused on both systems, rightly on macOS; Option+Space stays allowed. Not refused, by
+  choice: Cmd+Q, Cmd+W, Ctrl+S and the like. A chord stored before the rule and refused now is
+  logged at the start and not registered, while Settings still shows it; there are no users
+  yet, so a note is enough.
+- **Windows without a console (`73c5872`).** By reading only. `iamb-service --version` and its
+  usage errors print nothing in a console window now; the smoke check with redirected output
+  still works.
+- **Smaller.** `reopen_waiting` (`engine.rs:923-926`) stays set after a "fill in again" that
+  ended with `request_cancelled` or `form_open`, so the next form with remembered answers
+  renews the 30 minutes once; clear it on every outcome. `GetWindowsDirectoryW` gives a
+  per-user directory to a program that is not marked as aware of Terminal Services;
+  `GetSystemWindowsDirectoryW` has no such case.
+- **Still untested.** The glue in `tray.rs` (N1 is there); a release build's refusal of
+  `--ui-host` (the unit test asserts the opposite for the mock); the marker left by a second
+  UI host (N2); a link or a directory in the pause file's place (N5); the tray's request with
+  another program's window reported last (N4).
+
+### 5.5 What was run
+
+All passing: `cargo test -p iamb-service --test shortcuts --test supervisor_restart --test
+supervisor_ui_host --test supervisor` (11, 6, 6, 6); `cargo test -p iamb-service --lib --bins`
+filtered to the supervisor, paths and `main` tests (50 and 4); `cargo test -p iamb-ipc --lib --
+linux` (1); `cargo test -p iamb-platform --lib -- hotkeys` (8); the desktop's `restart` test
+binary (6) and its unit-test binary filtered to `menu`, `paths`, `onboarding`, `settings` (23),
+both as built from this tree at 07:50, not rebuilt; the recorder's front-end tests (81). The
+ten scratch tests of the first review again, five new ones (the tray's request, the pause
+file), a release build of `iamb-service` for finding 1, and the hand runs named above. The
+scratch tests are outside the tree; the release binary and the scratch test binaries were
+removed from the shared target directory afterwards.
+
+Not run: anything on macOS or Windows; the other desktop integration tests; the macOS
+endpoint test.
