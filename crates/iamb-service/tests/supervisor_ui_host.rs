@@ -257,3 +257,59 @@ fn a_ui_host_switch_that_names_no_file_is_refused() {
     // The worker of a supervisor that was wrongly accepted would follow it out.
     thread::sleep(Duration::from_millis(300));
 }
+
+#[test]
+fn the_ui_host_inherits_no_descriptor_and_the_worker_still_follows_the_supervisor() {
+    // The stand-in lists its open descriptors; the worker's pipes and the supervisor's lock must
+    // not be among them (the UI host is not part of the worker's supervision).
+    let mut s = Supervisor::start(&["--ui-host", "HOST"], &[]);
+    let fds = s.bin.path().join("fds.txt");
+    s.wait_for("the ui host's start", Duration::from_secs(10), |s| {
+        !s.starts().is_empty()
+    });
+    s.wait_for("the worker's start", Duration::from_secs(10), |s| {
+        s.log().contains("worker started: pid")
+    });
+    let pid = s.starts()[0].split(' ').next().expect("pid").to_owned();
+    // `/proc` is Linux's; elsewhere only the second half runs.
+    if cfg!(target_os = "linux") {
+        let listing = Command::new("ls")
+            .args(["-l", &format!("/proc/{pid}/fd")])
+            .output()
+            .expect("ls");
+        let listing = String::from_utf8_lossy(&listing.stdout).into_owned();
+        fs::write(&fds, &listing).expect("kept for the log");
+        assert!(
+            !listing.contains("pipe:"),
+            "a pipe reached the ui host:\n{listing}"
+        );
+        assert!(
+            !listing.contains("supervisor.lock"),
+            "the lock reached the ui host:\n{listing}"
+        );
+        assert!(
+            !listing.contains("socket:"),
+            "a socket reached the ui host:\n{listing}"
+        );
+    }
+
+    // The supervisor is killed while the UI host lives: the worker still stops by itself.
+    let worker = s
+        .log()
+        .split("worker started: pid ")
+        .nth(1)
+        .and_then(|rest| rest.split(',').next())
+        .expect("worker pid")
+        .to_owned();
+    let _ = s.child.kill();
+    let _ = s.child.wait();
+    let start = Instant::now();
+    while alive(&worker) {
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "the worker outlived its supervisor while the ui host lives"
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert!(alive(&pid), "the ui host outlives the supervisor");
+}

@@ -208,3 +208,44 @@ fn a_worker_replaced_on_request_stops_in_order() {
     assert!(status(s.path()).is_some());
     assert!(!s.log().contains("supervisor exits"), "{}", s.log());
 }
+
+#[test]
+fn a_second_supervisor_leaves_the_request_to_the_running_one() {
+    // The real flow of "Start it again" while a supervisor runs: the request, then a second
+    // supervisor, which finds the lock taken and exits; the first replaces its worker.
+    let s = Supervisor::start(&[]);
+    let (first, _) = wait_for_worker(s.path(), None, Duration::from_secs(15));
+    s.ask_for_restart();
+    let status = Command::new(BIN)
+        .args(["--supervise", "--platform", "mock", "--data-dir"])
+        .arg(s.path())
+        .env_remove("IAMB_DATA_DIR")
+        .env_remove("IAMB_TEST_FAULT")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("second supervisor runs");
+    assert!(status.success(), "the second supervisor: {status:?}");
+    let (_, took) = wait_for_worker(s.path(), Some(first.pid), Duration::from_secs(10));
+    assert!(took < Duration::from_secs(3), "took {took:?}");
+    assert_eq!(s.log().matches("another supervisor is running").count(), 1);
+}
+
+#[test]
+fn a_directory_in_the_requests_place_stalls_nothing() {
+    let s = Supervisor::start(&[]);
+    let (first, _) = wait_for_worker(s.path(), None, Duration::from_secs(15));
+    let request = s.path().join("run").join("restart-worker");
+    fs::create_dir(&request).expect("dir");
+    thread::sleep(Duration::from_millis(800));
+    assert_eq!(
+        status(s.path()).map(|st| st.pid),
+        Some(first.pid),
+        "a directory is no request"
+    );
+    // Gone again, a real request works as before.
+    fs::remove_dir(&request).expect("rmdir");
+    s.ask_for_restart();
+    wait_for_worker(s.path(), Some(first.pid), Duration::from_secs(10));
+}
