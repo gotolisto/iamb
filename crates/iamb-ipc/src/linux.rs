@@ -30,6 +30,13 @@
 //!
 //! A thread blocked in `accept` is woken by [`LocalListener::close`], which sets a flag and
 //! connects to the socket once; `accept` sees the flag and returns `Closed`. No polling.
+//!
+//! The wake-up must not depend on the socket's path (the 2026-11 beta review's finding 10): a
+//! data folder or `run/` removed while the service runs would leave `accept` blocked and the
+//! worker's stop waiting for it for ever. So `bind` keeps an `O_PATH` descriptor of the socket
+//! file it created, and `close` connects through `/proc/self/fd/<n>`, which reaches the bound
+//! socket whatever became of its name. Where that descriptor could not be had, `close` connects
+//! by the path, as before.
 
 use std::fs::{self, DirBuilder, File, OpenOptions, TryLockError};
 use std::io::{self, Read, Write};
@@ -139,9 +146,11 @@ impl LocalEndpoint for LinuxEndpoint {
         };
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
             .map_err(|e| os(&e, "chmod socket"))?;
+        let handle = socket_handle(&path);
         Ok(Box::new(Listener {
             socket: listener,
             path,
+            handle,
             uid,
             closed: AtomicBool::new(false),
             lock: Mutex::new(Some(lock)),
@@ -177,9 +186,53 @@ impl LocalEndpoint for LinuxEndpoint {
     }
 }
 
+/// `O_PATH` (`fcntl.h`): a descriptor that names a file without opening it, which is how a
+/// socket file can be held at all. The same value on the architectures listed.
+#[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "x86",
+    target_arch = "aarch64",
+    target_arch = "arm",
+    target_arch = "riscv64"
+))]
+const O_PATH: i32 = 0o10_000_000;
+
+/// A descriptor of the socket file at `path`, which reaches the bound socket through
+/// `/proc/self/fd` even after its name is gone (module docs, "Closing").
+fn socket_handle(path: &Path) -> Option<File> {
+    #[cfg(any(
+        target_arch = "x86_64",
+        target_arch = "x86",
+        target_arch = "aarch64",
+        target_arch = "arm",
+        target_arch = "riscv64"
+    ))]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        OpenOptions::new()
+            .read(true)
+            .custom_flags(O_PATH)
+            .open(path)
+            .ok()
+    }
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "x86",
+        target_arch = "aarch64",
+        target_arch = "arm",
+        target_arch = "riscv64"
+    )))]
+    {
+        let _ = path;
+        None
+    }
+}
+
 struct Listener {
     socket: UnixListener,
     path: PathBuf,
+    /// The socket file, held (module docs, "Closing").
+    handle: Option<File>,
     uid: u32,
     closed: AtomicBool,
     /// The exclusive lock on `<socket>.lock`, released on close.
@@ -208,8 +261,15 @@ impl LocalListener for Listener {
 
     fn close(&self) -> Result<()> {
         if !self.closed.swap(true, Ordering::SeqCst) {
-            // Wake a blocked accept.
-            let _ = UnixStream::connect(&self.path);
+            // Wake a blocked accept, through the held socket file if there is one, so that a
+            // name removed meanwhile does not leave it blocked (module docs, "Closing").
+            let woken = self.handle.as_ref().is_some_and(|handle| {
+                use std::os::fd::AsRawFd;
+                UnixStream::connect(format!("/proc/self/fd/{}", handle.as_raw_fd())).is_ok()
+            });
+            if !woken {
+                let _ = UnixStream::connect(&self.path);
+            }
             let _ = fs::remove_file(&self.path);
             self.lock
                 .lock()
@@ -283,5 +343,40 @@ impl LocalStream for Stream {
             Err(e) if e.kind() == io::ErrorKind::NotConnected => Ok(()),
             Err(e) => Err(os(&e, "shutdown")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use iamb_platform::{EndpointKind, EndpointName, LocalEndpoint, PeerPolicy, PlatformError};
+
+    use super::LinuxEndpoint;
+
+    #[test]
+    fn close_wakes_accept_after_the_run_directory_is_gone() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let run = dir.path().join("run");
+        let name = EndpointName::new(EndpointKind::Service, &run);
+        let listener: std::sync::Arc<dyn iamb_platform::LocalListener> = LinuxEndpoint
+            .bind(&name, PeerPolicy::SameUser)
+            .expect("bound")
+            .into();
+        let (tx, rx) = mpsc::channel();
+        let accepting = std::sync::Arc::clone(&listener);
+        std::thread::spawn(move || {
+            let _ = tx.send(accepting.accept().err());
+        });
+        std::thread::sleep(Duration::from_millis(100));
+        // A data folder removed while the service runs (a reset by hand, a cleanup tool).
+        std::fs::remove_dir_all(&run).expect("removed");
+        listener.close().expect("closed");
+        let woken = rx.recv_timeout(Duration::from_secs(5));
+        assert!(
+            matches!(woken, Ok(Some(PlatformError::Closed))),
+            "accept was not woken: {woken:?}"
+        );
     }
 }

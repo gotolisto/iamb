@@ -106,15 +106,42 @@ impl Supervisor {
     }
 }
 
+/// True while process `pid` exists.
+fn alive(pid: &str) -> bool {
+    Command::new("kill")
+        .args(["-0", pid])
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
 impl Drop for Supervisor {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
-        // The stand-ins that stay up, and the worker, which follows the supervisor by itself.
+        // The stand-ins that stay up.
         for line in self.starts() {
             if let Some(pid) = line.split(' ').next() {
                 let _ = Command::new("kill").arg(pid).stderr(Stdio::null()).status();
             }
+        }
+        // The worker follows the supervisor by itself; the data root it uses is removed only
+        // once it is gone (the beta-gap review's finding 10), or it is killed after a while.
+        let log = self.log();
+        let workers: Vec<&str> = log
+            .split("worker started: pid ")
+            .skip(1)
+            .filter_map(|rest| rest.split(',').next())
+            .collect();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while workers.iter().any(|pid| alive(pid)) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(50));
+        }
+        for pid in workers.iter().filter(|pid| alive(pid)) {
+            let _ = Command::new("kill")
+                .args(["-9", pid])
+                .stderr(Stdio::null())
+                .status();
         }
     }
 }

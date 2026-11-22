@@ -17,8 +17,12 @@
 //!   then `SecCodeCheckValidity`; no network access). An unsigned development build therefore
 //!   trusts no one under that policy; debug builds use [`PeerPolicy::SameUser`].
 //! - Streams are the socket itself: clones are duplicated descriptors, the read timeout is the
-//!   socket's, `shutdown` shuts both directions down. A blocked `accept` is woken by `close`,
-//!   which sets a flag and connects once.
+//!   socket's, `shutdown` shuts both directions down. A blocked `accept` waits in `poll` on the
+//!   socket and on a private socket pair; `close` sets a flag and writes one byte to the pair,
+//!   which wakes it. The wake-up does not go through the socket's path, so a data folder or
+//!   `run/` removed while the service runs cannot leave `accept` blocked and the worker's stop
+//!   waiting for it for ever (the 2026-11 beta review's finding 10). The listening socket is
+//!   non-blocking; an accepted stream is made blocking again.
 
 use std::ffi::c_void;
 use std::fs::{self, DirBuilder, File, OpenOptions, TryLockError};
@@ -250,12 +254,18 @@ impl LocalEndpoint for Platform {
         };
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
             .map_err(|e| os(&e, "chmod socket"))?;
+        socket
+            .set_nonblocking(true)
+            .map_err(|e| os(&e, "non-blocking socket"))?;
+        let (wake_rx, wake_tx) = UnixStream::pair().map_err(|e| os(&e, "wake pair"))?;
         Ok(Box::new(Listener {
             socket,
             path,
             policy,
             closed: AtomicBool::new(false),
             lock: Mutex::new(Some(lock)),
+            wake_rx,
+            wake_tx,
         }))
     }
 
@@ -288,12 +298,55 @@ struct Listener {
     policy: PeerPolicy,
     closed: AtomicBool,
     lock: Mutex<Option<File>>,
+    /// Polled beside the socket; `close` writes to `wake_tx` (module docs).
+    wake_rx: UnixStream,
+    wake_tx: UnixStream,
+}
+
+impl Listener {
+    /// Waits until the socket has a connection to accept (`true`) or `close` was called
+    /// (`false`).
+    fn wait_readable(&self) -> Result<bool> {
+        loop {
+            if self.closed.load(Ordering::SeqCst) {
+                return Ok(false);
+            }
+            let mut fds = [
+                libc::pollfd {
+                    fd: self.socket.as_raw_fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                },
+                libc::pollfd {
+                    fd: self.wake_rx.as_raw_fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                },
+            ];
+            // SAFETY: `fds` is an array of two initialised `pollfd`s whose descriptors are
+            // owned by `self` and open; the length passed is the array's.
+            let rc = unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) };
+            if rc < 0 {
+                let e = io::Error::last_os_error();
+                if e.kind() == io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(os(&e, "poll"));
+            }
+            if fds[1].revents != 0 || self.closed.load(Ordering::SeqCst) {
+                return Ok(false);
+            }
+            if fds[0].revents != 0 {
+                return Ok(true);
+            }
+        }
+    }
 }
 
 impl LocalListener for Listener {
     fn accept(&self) -> Result<Box<dyn LocalStream>> {
         loop {
-            if self.closed.load(Ordering::SeqCst) {
+            if !self.wait_readable()? {
                 return Err(PlatformError::Closed);
             }
             match self.socket.accept() {
@@ -301,6 +354,11 @@ impl LocalListener for Listener {
                     if self.closed.load(Ordering::SeqCst) {
                         let _ = stream.shutdown(std::net::Shutdown::Both);
                         return Err(PlatformError::Closed);
+                    }
+                    // Accepted from a non-blocking socket, it inherited the flag.
+                    if let Err(e) = stream.set_nonblocking(false) {
+                        let _ = stream.shutdown(std::net::Shutdown::Both);
+                        return Err(os(&e, "blocking stream"));
                     }
                     return match verify(&stream, self.policy) {
                         Ok(peer) => Ok(Box::new(Stream::new(stream, peer))),
@@ -310,7 +368,12 @@ impl LocalListener for Listener {
                         }
                     };
                 }
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                // Another look found the connection gone, or a signal: wait again.
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
+                    ) => {}
                 Err(e) => return Err(os(&e, "accept")),
             }
         }
@@ -318,7 +381,8 @@ impl LocalListener for Listener {
 
     fn close(&self) -> Result<()> {
         if !self.closed.swap(true, Ordering::SeqCst) {
-            let _ = UnixStream::connect(&self.path);
+            // Wakes a blocked accept whatever became of the socket's path (module docs).
+            let _ = (&self.wake_tx).write(&[1]);
             let _ = fs::remove_file(&self.path);
             self.lock
                 .lock()

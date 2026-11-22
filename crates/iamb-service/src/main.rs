@@ -435,11 +435,34 @@ fn work(dirs: &DataDirs, choice: PlatformChoice, supervised: bool, hardening: &H
         worker.hang_engine();
     }
     let reason = worker.wait_exit(None).unwrap_or(ExitReason::Stop);
-    worker.stop();
+    if !stop_within(worker, STOP_LIMIT) {
+        // A thread that never ends must not keep the process (the 2026-11 beta review's
+        // finding 10): the listener and the endpoint are stopped first, so nothing is read or
+        // answered any more, and the process's memory goes back to the system with its exit.
+        log.warn(format_args!(
+            "the worker did not stop within {} s; exiting",
+            STOP_LIMIT.as_secs()
+        ));
+    }
     match reason {
         ExitReason::Stop => 0,
         ExitReason::ListenerDead => EXIT_RESTART,
     }
+}
+
+/// How long the worker's orderly stop may take before the process exits without it.
+const STOP_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Stops `worker` on a thread of its own; false when that has not finished within `limit`.
+fn stop_within(worker: Worker, limit: std::time::Duration) -> bool {
+    let (done, finished) = std::sync::mpsc::channel();
+    let stopping = thread::Builder::new()
+        .name("iamb-stop".to_owned())
+        .spawn(move || {
+            worker.stop();
+            let _ = done.send(());
+        });
+    stopping.is_ok() && finished.recv_timeout(limit).is_ok()
 }
 
 /// A closure that asks `worker` to stop, usable from another thread.
