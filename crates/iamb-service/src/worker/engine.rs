@@ -128,6 +128,14 @@
 //! (`Engine::forget_form_values`, whose values overwrite themselves when dropped) and the
 //! hand-off is disturbed, which overwrites what it captured.
 //!
+//! # Pause across a restart (the beta-gap review's finding 5)
+//!
+//! The pause lives in this thread, so a worker started afresh (a crash, "Restart the helper",
+//! "Start it again") would expand again although the user paused Iamb. So a pause is also kept
+//! as the empty file [`PAUSED_FILE`] in `run/`, created when Iamb is paused and removed when it
+//! resumes; a worker that starts with the file there starts paused. The file carries nothing; a
+//! process of the user that removes it does what it could do with `SetPaused`.
+//!
 //! # Why an injection stopped
 //!
 //! Every outcome but `Finished` becomes `InjectionCancelled`, whose diagnostic is
@@ -166,6 +174,9 @@ use super::{
     EngineMsg, EngineStatus, Explicit, FocusMsg, PALETTE_HOTKEY, PAUSE_HOTKEY, REOPEN_FORM_HOTKEY,
     Shared, WakeCounters, coded,
 };
+
+/// The file in `run/` that says Iamb is paused (module docs, "Pause across a restart").
+pub const PAUSED_FILE: &str = "paused";
 
 /// How long a parked request waits for the focus change of its window: the UI host's
 /// `restore_focus` limit (500 ms) and some margin.
@@ -257,6 +268,12 @@ pub(crate) struct EngineThread {
     form_lease: Option<(FormSessionId, Instant)>,
     form_lease_for: Duration,
     values_touched: Option<Instant>,
+    /// How long the answers are kept after their last use (normally [`FORM_VALUES_TTL`]).
+    values_ttl: Duration,
+    /// A `ReopenLastForm` went to the engine and has not been answered with a form or a
+    /// refusal yet: only the form it opens renews the answers' time (the beta-gap review's
+    /// finding 8).
+    reopen_waiting: bool,
     paused: bool,
     /// The code the next `injection_cancelled` diagnostic is given instead (module docs).
     cancel_code: Option<&'static str>,
@@ -292,6 +309,7 @@ impl EngineThread {
         heartbeat_every: Duration,
         panel_lease: Duration,
         form_lease: Duration,
+        values_ttl: Duration,
     ) -> Self {
         Self {
             shared,
@@ -312,6 +330,8 @@ impl EngineThread {
             form_lease: None,
             form_lease_for: form_lease,
             values_touched: None,
+            values_ttl,
+            reopen_waiting: false,
             paused: false,
             cancel_code: None,
             watcher_down: false,
@@ -324,8 +344,42 @@ impl EngineThread {
         }
     }
 
+    /// Writes or removes `run/paused` (module docs, "Pause across a restart"). Created new, so
+    /// a link in its place is not followed.
+    fn keep_pause(&self, on: bool) {
+        let path = self.shared.data_root.join("run").join(PAUSED_FILE);
+        let kept = if on {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => Err(e),
+                _ => Ok(()),
+            }
+        } else {
+            match std::fs::remove_file(&path) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+                _ => Ok(()),
+            }
+        };
+        if let Err(e) = kept {
+            self.shared.logger.warn(format_args!(
+                "cannot keep the pause for a restart: {}",
+                e.kind()
+            ));
+        }
+    }
+
     /// The thread's loop.
     pub(crate) fn run(mut self, rx: &Receiver<EngineMsg>) {
+        if self.shared.data_root.join("run").join(PAUSED_FILE).exists() {
+            // Paused before this worker started (module docs, "Pause across a restart").
+            self.set_paused(true);
+            self.shared
+                .logger
+                .info(format_args!("paused, as the worker before was"));
+        }
         loop {
             let now = Instant::now();
             if now >= self.next_heartbeat {
@@ -362,7 +416,7 @@ impl EngineThread {
         consider(self.parked.as_ref().map(|p| p.deadline));
         consider(self.ack_deadline.map(|(_, t)| t));
         consider(self.form_lease.map(|(_, t)| t));
-        consider(self.values_touched.map(|t| t + FORM_VALUES_TTL));
+        consider(self.values_touched.map(|t| t + self.values_ttl));
         consider(self.panel.as_ref().map(|p| p.until));
         next
     }
@@ -492,7 +546,7 @@ impl EngineThread {
         }
         if self
             .values_touched
-            .is_some_and(|t| now >= t + FORM_VALUES_TTL)
+            .is_some_and(|t| now >= t + self.values_ttl)
         {
             self.values_touched = None;
             self.engine.forget_form_values();
@@ -694,12 +748,14 @@ impl EngineThread {
         }
     }
 
-    /// Global pause on or off (`SetPaused`, and the "Pause or resume" shortcut).
+    /// Global pause on or off (`SetPaused`, and the "Pause or resume" shortcut). Kept in
+    /// `run/paused` (module docs, "Pause across a restart").
     fn set_paused(&mut self, on: bool) {
         self.handoff.disturb();
         self.handle(Event::Paused(on));
         if self.paused != on {
             self.paused = on;
+            self.keep_pause(on);
             let status = self.shared.status(self.status());
             self.shared
                 .clients
@@ -865,7 +921,8 @@ impl EngineThread {
                 Event::FormSubmitted { session, values }
             }
             Explicit::Reopen => {
-                self.values_touched = Some(Instant::now());
+                // Renewed only by the form it opens (`handle`), not by a refusal.
+                self.reopen_waiting = true;
                 Event::ReopenLastForm
             }
         };
@@ -926,6 +983,9 @@ impl EngineThread {
                     {
                         code.clone_into(&mut wire.code);
                     }
+                    if wire.code.starts_with("refused_") || wire.code == "no_last_form" {
+                        self.reopen_waiting = false;
+                    }
                     self.shared.diagnostic(wire);
                 }
                 Action::ShowForm {
@@ -933,7 +993,15 @@ impl EngineThread {
                     snippet,
                     spec,
                     last_values,
-                } => self.show_form(session, snippet, &spec, last_values),
+                } => {
+                    if std::mem::take(&mut self.reopen_waiting)
+                        && last_values.is_some()
+                        && self.shared.clients.ui_connected()
+                    {
+                        self.values_touched = Some(Instant::now());
+                    }
+                    self.show_form(session, snippet, &spec, last_values);
+                }
                 _ => {}
             }
         }

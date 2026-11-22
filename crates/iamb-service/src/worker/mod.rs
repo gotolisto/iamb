@@ -160,6 +160,9 @@ pub struct WorkerConfig {
     /// How long an acknowledged form stays open without another `FormAck`: normally
     /// [`FORM_LEASE`](iamb_ipc::FORM_LEASE).
     pub form_lease: Duration,
+    /// How long a submitted form's answers are kept for `ReopenLastForm` after their last use:
+    /// normally [`FORM_VALUES_TTL`](engine::FORM_VALUES_TTL).
+    pub form_values_ttl: Duration,
 }
 
 impl WorkerConfig {
@@ -185,6 +188,7 @@ impl WorkerConfig {
             logger: Arc::new(Logger::disabled()),
             panel_focus_lease: iamb_ipc::PANEL_FOCUS_LEASE,
             form_lease: iamb_ipc::FORM_LEASE,
+            form_values_ttl: engine::FORM_VALUES_TTL,
         }
     }
 }
@@ -619,6 +623,7 @@ impl Worker {
             logger,
             panel_focus_lease,
             form_lease,
+            form_values_ttl,
         } = config;
         logger.info(format_args!(
             "worker {} starting, pid {}",
@@ -708,6 +713,7 @@ impl Worker {
                 heartbeat_interval,
                 panel_focus_lease,
                 form_lease,
+                form_values_ttl,
             );
             spawn("engine", &mut threads, move || state.run(&engine_rx))?;
         }
@@ -854,6 +860,18 @@ impl Worker {
     #[must_use]
     pub fn wait_exit(&self, timeout: Option<Duration>) -> Option<ExitReason> {
         self.shared.exit.wait(timeout)
+    }
+
+    /// A closure that zeroes the typed-characters hand-off and the key queue, usable from any
+    /// thread: for a process that exits without [`stop`](Self::stop) having finished (`main`,
+    /// the beta-gap review's finding 10).
+    pub fn scrubber(&self) -> impl Fn() + Send + 'static {
+        let handoff = Arc::clone(&self.handoff);
+        let keys = Arc::clone(&self.keys);
+        move || {
+            handoff.clear();
+            keys.clear();
+        }
     }
 
     /// Test fault: the engine thread stops (and with it the heartbeat). Debug builds only.

@@ -66,6 +66,7 @@ iamb-platform = { path = "../iamb-platform" }
 #   System_DataExchange            clipboard
 #   System_Memory                  clipboard (global memory), memory (VirtualLock)
 #   System_Registry                login_item (per-user Run key)
+#   System_SystemInformation       files (the Windows directory, for File Explorer's path)
 #   System_Pipes, System_IO,
 #   Storage_FileSystem             endpoint (named pipe, overlapped I/O)
 #   Security, Security_Authorization
@@ -92,6 +93,7 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_System_Memory",
     "Win32_System_Pipes",
     "Win32_System_Registry",
+    "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_UI_Accessibility",
     "Win32_UI_Input_Ime",

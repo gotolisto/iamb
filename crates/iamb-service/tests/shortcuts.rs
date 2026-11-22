@@ -184,6 +184,20 @@ fn the_fill_in_again_shortcut_reopens_the_last_form_in_the_focused_window() {
 
 /// Fills in the form of `hi ` once in the editor, so that there are answers to reopen.
 fn fill_in_once(h: &Harness, ui: &mut Client) {
+    // Typed only once the editor's verdict is in: before it, the engine is suspended and the
+    // abbreviation would not be matched (the focus thread can be slow under load).
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        h.settle();
+        let suspended = match ui.call(RequestBody::GetStatus {}).expect("status") {
+            ResponseBody::Status { status } => status.suspended,
+            other => panic!("unexpected {other:?}"),
+        };
+        if !suspended || Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
     h.os.type_text("hi ");
     let EventBody::FormRequested { session, .. } =
         wait_event(ui, |e| matches!(e, EventBody::FormRequested { .. }))
@@ -363,4 +377,76 @@ fn editing_chords_and_chords_that_type_are_refused_by_the_service() {
         }
     }
     assert!(h.os.registered_hotkeys().is_empty());
+}
+
+#[test]
+fn a_refused_fill_in_again_does_not_keep_the_answers_longer() {
+    // The answers are kept for a while after their last use (30 minutes; here 1.5 s). A press
+    // in a password field is refused there and must not count as a use (the beta-gap review's
+    // finding 8): only a form that opens with them does.
+    let ttl = Duration::from_millis(1500);
+    let h = Harness::start_with(LIBRARY, |c| c.form_values_ttl = ttl);
+    let mut ui = h.client(Role::Ui);
+    assert_eq!(
+        put(&mut ui, "reopen_form_hotkey", Some("Ctrl+Shift+F")),
+        Ok(())
+    );
+    fill_in_once(&h, &mut ui);
+    let submitted = Instant::now();
+
+    std::thread::sleep(Duration::from_millis(700));
+    let bank =
+        h.os.open_window(MockWindow::new("org.example.bank", 200).secure());
+    h.os.focus(bank).expect("window is open");
+    h.settle();
+    assert!(h.os.press_chord(chord("Ctrl+Shift+F")));
+    h.settle();
+    assert_eq!(forms_within(&mut ui, Duration::from_millis(200)), []);
+    assert!(diagnostic_codes(&mut ui).contains(&"refused_secure_field".to_owned()));
+
+    // Past the time from the submit, within it from the refused press: the answers are gone.
+    h.os.focus(h.editor).expect("window is open");
+    h.settle();
+    std::thread::sleep(
+        (submitted + ttl + Duration::from_millis(200)).saturating_duration_since(Instant::now()),
+    );
+    h.settle();
+    assert!(h.os.press_chord(chord("Ctrl+Shift+F")));
+    h.settle();
+    assert_eq!(
+        forms_within(&mut ui, Duration::from_millis(300)),
+        [],
+        "the refused press kept the answers"
+    );
+    assert!(diagnostic_codes(&mut ui).contains(&"no_last_form".to_owned()));
+}
+
+#[test]
+fn a_pause_outlives_a_worker_restart() {
+    let h = Harness::start(LIBRARY);
+    let mut ui = h.client(Role::Ui);
+    ui.call(RequestBody::SetPaused { paused: true })
+        .expect("paused");
+    assert!(paused(&mut ui));
+    drop(ui);
+    let dir = h.stop();
+    assert!(dir.path().join("run").join("paused").is_file());
+
+    // A worker started afresh (a crash, "Restart the helper") is still paused.
+    let h = Harness::start_in(dir, |_| {});
+    let mut ui = h.client(Role::Ui);
+    assert!(paused(&mut ui), "the pause was lost with the worker");
+    h.os.type_text("brb ");
+    h.settle();
+    assert_eq!(h.text(h.editor), "brb ");
+
+    // Resumed, it stays resumed after the next restart.
+    ui.call(RequestBody::SetPaused { paused: false })
+        .expect("resumed");
+    drop(ui);
+    let dir = h.stop();
+    assert!(!dir.path().join("run").join("paused").exists());
+    let h = Harness::start_in(dir, |_| {});
+    let mut ui = h.client(Role::Ui);
+    assert!(!paused(&mut ui));
 }

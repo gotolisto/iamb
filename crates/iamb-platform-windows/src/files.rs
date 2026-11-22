@@ -14,7 +14,7 @@
 
 use std::ffi::c_void;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use windows_sys::Win32::Foundation::{ERROR_SUCCESS, LocalFree};
 use windows_sys::Win32::Security::Authorization::{
@@ -28,6 +28,25 @@ use windows_sys::Win32::Security::{
 };
 
 use crate::endpoint::own_sid;
+
+/// The Windows directory (`GetWindowsDirectoryW`, normally `C:\Windows`), so that the UI host
+/// starts `explorer.exe` by its full path rather than through `PATH` (the beta-gap review's
+/// finding 7). `None` when the system does not say.
+#[must_use]
+pub fn windows_directory() -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::SystemInformation::GetWindowsDirectoryW;
+    let mut units = [0_u16; 520];
+    let capacity = u32::try_from(units.len()).unwrap_or(0);
+    // SAFETY: the buffer holds `capacity` units; the call writes at most that many and returns
+    // the number written (without the terminating null), or the size needed when it is larger.
+    let count = unsafe { GetWindowsDirectoryW(units.as_mut_ptr(), capacity) };
+    let count = usize::try_from(count)
+        .ok()
+        .filter(|n| *n > 0 && *n < units.len())?;
+    let dir = PathBuf::from(std::ffi::OsString::from_wide(&units[..count]));
+    dir.is_absolute().then_some(dir)
+}
 
 /// Memory the system allocated with `LocalAlloc`, freed when dropped.
 struct LocalMemory(*mut c_void);

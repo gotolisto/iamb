@@ -471,10 +471,12 @@ fn work(dirs: &DataDirs, choice: PlatformChoice, supervised: bool, hardening: &H
         worker.hang_engine();
     }
     let reason = worker.wait_exit(None).unwrap_or(ExitReason::Stop);
+    let scrub = worker.scrubber();
     if !stop_within(worker, STOP_LIMIT) {
         // A thread that never ends must not keep the process (the 2026-11 beta review's
         // finding 10): the listener and the endpoint are stopped first, so nothing is read or
-        // answered any more, and the process's memory goes back to the system with its exit.
+        // answered any more; the two buffers of typed characters are zeroed here instead.
+        scrub();
         log.warn(format_args!(
             "the worker did not stop within {} s; exiting",
             STOP_LIMIT.as_secs()

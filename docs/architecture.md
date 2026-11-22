@@ -164,6 +164,7 @@ with `SIGTERM`, or fails five starts in a row within a second each is not starte
 | Locks | `run/supervisor.lock`, `run/store.lock`, `run/desktop.lock` (one UI host per data root) | same |
 | Signals between processes | `run/restart-worker` (UI host to supervisor: restart the worker, §3.2), `run/desktop.quit` (the UI host ended on purpose, §3.2); empty files, taken by removing them | same |
 | Endpoints | `run/service.sock`, `run/sync.sock` | `\\.\pipe\iamb-service-<user SID>-<secret>`, `\\.\pipe\iamb-sync-<user SID>-<secret>`; each secret (128 random bits, new for every bind) in `run/service.pipe`, `run/sync.pipe`; `run/service.pipe.lock`, `run/sync.pipe.lock` |
+| Pause | `run/paused` while Iamb is paused, so that a worker started afresh (a crash, a restart) starts paused (`iamb_service::worker::engine`, "Pause across a restart") | same |
 
 On Linux (development and the command-line tool only) the data root is `$XDG_DATA_HOME/iamb/`.
 Setting `IAMB_DATA_DIR` overrides the data root on every OS; tests always set it.
