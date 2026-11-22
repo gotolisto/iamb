@@ -1087,7 +1087,7 @@ fn a_shortcut_the_user_chose_is_left_alone_and_a_refused_default_is_tried_again_
     host.bridge
         .call(RequestBody::PutSetting {
             key: "palette_hotkey".to_owned(),
-            value: Some("Ctrl+Alt+J".to_owned()),
+            value: Some("Ctrl+Shift+J".to_owned()),
         })
         .expect("chosen");
     assert!(!seed_default_shortcut(&host.bridge, run.path(), &logger));

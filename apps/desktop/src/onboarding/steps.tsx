@@ -3,7 +3,7 @@ import { type FormEvent, type KeyboardEvent, type ReactNode, useCallback, useEff
 import type { StatusView } from "../ipc";
 import { isCommandError } from "../ipc";
 import { Icon } from "../library/Icon";
-import { chordBadges, chordSpoken, recordChord } from "../library/settings/model";
+import { chordBadges, chordSpoken, recordChord, refusedText } from "../library/settings/model";
 import type { Finished, LoginState, PermissionKind, Permissions } from "./api";
 import type { Example } from "./example";
 import {
@@ -757,7 +757,7 @@ export function DoneStep(props: { heading: ReactNode; env: OnboardingEnv; snippe
       e.currentTarget.blur();
       return;
     }
-    const result = recordChord(e.nativeEvent);
+    const result = recordChord(e.nativeEvent, mac);
     if (result.kind === "chord") {
       setChordProblem(null);
       void env.settings.putSetting("palette_hotkey", result.chord).then(
@@ -770,7 +770,11 @@ export function DoneStep(props: { heading: ReactNode; env: OnboardingEnv; snippe
           ),
       );
     } else if (result.kind === "refused") {
-      setChordProblem("Choose a shortcut with Ctrl, Alt or ⌘ and one other key.");
+      setChordProblem(
+        result.reason === "reserved" || result.reason === "types"
+          ? `${refusedText(result.reason, mac)}.`
+          : "Choose a shortcut with Ctrl, Alt or ⌘ and one other key.",
+      );
     }
   };
 

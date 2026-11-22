@@ -342,7 +342,7 @@ mod tests {
         let mut registry = Registry::default();
         let old = register(&mut registry, 1, "Ctrl+Shift+Space", true);
         let Ok(Plan::Register { new, replaces }) =
-            registry.plan(HotkeyId(1), chord("Ctrl+Alt+K"), true)
+            registry.plan(HotkeyId(1), chord("Ctrl+Alt+Meta+K"), true)
         else {
             panic!("expected a registration");
         };

@@ -310,9 +310,9 @@ fn a_shortcut_the_system_refuses_is_reported_and_onboarding_is_still_done() {
     assert_eq!(view.palette_hotkey, None);
     assert!(onboarding::is_done(&bridge).expect("settings"));
     // The recorder's choice is stored as any other shortcut.
-    settings::put_setting(&bridge, "palette_hotkey", Some("Ctrl+Alt+J")).expect("stored");
+    settings::put_setting(&bridge, "palette_hotkey", Some("Ctrl+Shift+J")).expect("stored");
     let view = onboarding::finish(&bridge).expect("finished");
-    assert_eq!(view.palette_hotkey.as_deref(), Some("Ctrl+Alt+J"));
+    assert_eq!(view.palette_hotkey.as_deref(), Some("Ctrl+Shift+J"));
     bridge.stop();
 }
 
@@ -321,9 +321,9 @@ fn a_shortcut_that_is_already_set_is_kept() {
     let service = Service::start(Endpoint::Mock);
     let (bridge, seen) = service.bridge();
     seen.wait_connected();
-    settings::put_setting(&bridge, "palette_hotkey", Some("Ctrl+Alt+K")).expect("stored");
+    settings::put_setting(&bridge, "palette_hotkey", Some("Ctrl+Shift+K")).expect("stored");
     let view = onboarding::finish(&bridge).expect("finished");
-    assert_eq!(view.palette_hotkey.as_deref(), Some("Ctrl+Alt+K"));
+    assert_eq!(view.palette_hotkey.as_deref(), Some("Ctrl+Shift+K"));
     bridge.stop();
 }
 

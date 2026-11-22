@@ -1,5 +1,6 @@
 import { Row } from "./controls";
 import { HotkeyRecorder } from "./HotkeyRecorder";
+import { refusedText } from "./model";
 import type { SectionProps } from "./section";
 import { useMessages } from "./useMessages";
 
@@ -78,17 +79,7 @@ function ShortcutRow({
             describedBy={ids.describedBy}
             onChord={(c) => write(c)}
             onClear={() => write(null)}
-            onRefused={(reason) =>
-              set("hotkey", {
-                kind: "error",
-                text:
-                  reason === "modifier"
-                    ? mac
-                      ? "Add Control, Option or Command"
-                      : "Add Ctrl, Alt or the Windows key"
-                    : "That key cannot be part of a shortcut",
-              })
-            }
+            onRefused={(reason) => set("hotkey", { kind: "error", text: refusedText(reason, mac) })}
           />
           {fallback !== null && chord !== fallback && (
             <button type="button" className="button" disabled={offline} onClick={() => write(fallback)}>

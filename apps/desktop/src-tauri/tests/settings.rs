@@ -112,17 +112,17 @@ fn persists_locale() {
 
 #[test]
 fn persists_palette_hotkey() {
-    persists("palette_hotkey", "Ctrl+Alt+K");
+    persists("palette_hotkey", "Ctrl+Shift+K");
 }
 
 #[test]
 fn persists_reopen_form_hotkey() {
-    persists("reopen_form_hotkey", "Ctrl+Alt+F");
+    persists("reopen_form_hotkey", "Ctrl+Shift+F");
 }
 
 #[test]
 fn persists_pause_hotkey() {
-    persists("pause_hotkey", "Ctrl+Alt+P");
+    persists("pause_hotkey", "Ctrl+Shift+P");
 }
 
 #[test]
@@ -325,12 +325,12 @@ fn a_chord_another_app_holds_is_a_conflict_and_the_old_one_stays() {
     settings::put_setting(&bridge, "palette_hotkey", Some("Ctrl+Shift+Space")).expect("registered");
     service
         .os
-        .reserve_chord(Chord::parse("Ctrl+Alt+J").expect("chord"));
+        .reserve_chord(Chord::parse("Ctrl+Shift+J").expect("chord"));
     assert_eq!(
         code(settings::put_setting(
             &bridge,
             "palette_hotkey",
-            Some("Ctrl+Alt+J")
+            Some("Ctrl+Shift+J")
         )),
         "conflict"
     );

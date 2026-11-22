@@ -48,37 +48,40 @@ fn both_shortcuts_are_registered_refused_and_removed_like_the_palettes() {
     );
 
     assert_eq!(
-        put(&mut ui, "reopen_form_hotkey", Some("Ctrl+Alt+F")),
+        put(&mut ui, "reopen_form_hotkey", Some("Ctrl+Shift+F")),
         Ok(())
     );
-    assert_eq!(put(&mut ui, "pause_hotkey", Some("Ctrl+Alt+P")), Ok(()));
+    assert_eq!(put(&mut ui, "pause_hotkey", Some("Ctrl+Shift+P")), Ok(()));
     let mut registered = h.os.registered_hotkeys();
     registered.sort_by_key(|(id, _)| *id);
     assert_eq!(
         registered,
-        [(REOPEN, chord("Ctrl+Alt+F")), (PAUSE, chord("Ctrl+Alt+P"))]
+        [
+            (REOPEN, chord("Ctrl+Shift+F")),
+            (PAUSE, chord("Ctrl+Shift+P"))
+        ]
     );
 
     // Another application holds it: refused, not stored, and the old chord stays.
-    h.os.reserve_chord(chord("Ctrl+Alt+Q"));
+    h.os.reserve_chord(chord("Ctrl+Shift+Q"));
     assert_eq!(
-        put(&mut ui, "pause_hotkey", Some("Ctrl+Alt+Q")),
+        put(&mut ui, "pause_hotkey", Some("Ctrl+Shift+Q")),
         Err(Some(ErrorCode::Conflict))
     );
     assert!(
         h.os.registered_hotkeys()
-            .contains(&(PAUSE, chord("Ctrl+Alt+P")))
+            .contains(&(PAUSE, chord("Ctrl+Shift+P")))
     );
     match ui.call(RequestBody::GetSettings {}).expect("settings") {
         ResponseBody::Settings { settings } => assert_eq!(
             settings.get("pause_hotkey").map(String::as_str),
-            Some("Ctrl+Alt+P")
+            Some("Ctrl+Shift+P")
         ),
         other => panic!("unexpected {other:?}"),
     }
     // The palette's chord is taken by the pause shortcut: the system refuses it too.
     assert_eq!(
-        put(&mut ui, "palette_hotkey", Some("Ctrl+Alt+P")),
+        put(&mut ui, "palette_hotkey", Some("Ctrl+Shift+P")),
         Err(Some(ErrorCode::Conflict))
     );
     assert_eq!(
@@ -95,22 +98,22 @@ fn both_shortcuts_are_registered_refused_and_removed_like_the_palettes() {
 fn the_shortcuts_are_registered_again_when_the_worker_starts() {
     let h = Harness::start(LIBRARY);
     let mut ui = h.client(Role::Ui);
-    assert_eq!(put(&mut ui, "pause_hotkey", Some("Ctrl+Alt+P")), Ok(()));
+    assert_eq!(put(&mut ui, "pause_hotkey", Some("Ctrl+Shift+P")), Ok(()));
     drop(ui);
     let dir = h.stop();
     let h = Harness::start_in(dir, |_| {});
-    assert_eq!(h.os.registered_hotkeys(), [(PAUSE, chord("Ctrl+Alt+P"))]);
+    assert_eq!(h.os.registered_hotkeys(), [(PAUSE, chord("Ctrl+Shift+P"))]);
 }
 
 #[test]
 fn the_pause_shortcut_pauses_and_resumes() {
     let h = Harness::start(LIBRARY);
     let mut ui = h.client(Role::Ui);
-    assert_eq!(put(&mut ui, "pause_hotkey", Some("Ctrl+Alt+P")), Ok(()));
+    assert_eq!(put(&mut ui, "pause_hotkey", Some("Ctrl+Shift+P")), Ok(()));
     assert!(!paused(&mut ui));
 
     assert!(
-        h.os.press_chord(chord("Ctrl+Alt+P")),
+        h.os.press_chord(chord("Ctrl+Shift+P")),
         "consumed as a hotkey"
     );
     h.settle();
@@ -124,7 +127,7 @@ fn the_pause_shortcut_pauses_and_resumes() {
     h.settle();
     assert_eq!(h.text(h.editor), "brb ");
 
-    assert!(h.os.press_chord(chord("Ctrl+Alt+P")));
+    assert!(h.os.press_chord(chord("Ctrl+Shift+P")));
     h.settle();
     assert!(!paused(&mut ui));
 }
@@ -134,12 +137,12 @@ fn the_fill_in_again_shortcut_reopens_the_last_form_in_the_focused_window() {
     let h = Harness::start(LIBRARY);
     let mut ui = h.client(Role::Ui);
     assert_eq!(
-        put(&mut ui, "reopen_form_hotkey", Some("Ctrl+Alt+F")),
+        put(&mut ui, "reopen_form_hotkey", Some("Ctrl+Shift+F")),
         Ok(())
     );
 
     // Nothing to reopen yet: the log says so, as for `ReopenLastForm`.
-    assert!(h.os.press_chord(chord("Ctrl+Alt+F")));
+    assert!(h.os.press_chord(chord("Ctrl+Shift+F")));
     h.settle();
     assert!(diagnostic_codes(&mut ui).contains(&"no_last_form".to_owned()));
 
@@ -160,7 +163,7 @@ fn the_fill_in_again_shortcut_reopens_the_last_form_in_the_focused_window() {
     assert_eq!(h.text(h.editor), "Hello Ada! ");
 
     // The shortcut asks for the same form again, with the last answers.
-    assert!(h.os.press_chord(chord("Ctrl+Alt+F")));
+    assert!(h.os.press_chord(chord("Ctrl+Shift+F")));
     h.settle();
     match wait_event(&mut ui, |e| matches!(e, EventBody::FormRequested { .. })) {
         EventBody::FormRequested {
@@ -193,7 +196,11 @@ fn fill_in_once(h: &Harness, ui: &mut Client) {
         values: Secret::new(BTreeMap::from([("Name".to_owned(), "Ada".to_owned())])),
     })
     .expect("submit");
-    h.settle();
+    // Typed by the injector; under load that can take longer than one settle.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while h.text(h.editor) != "Hello Ada! " && Instant::now() < deadline {
+        h.settle();
+    }
     assert_eq!(h.text(h.editor), "Hello Ada! ");
 }
 
@@ -227,7 +234,7 @@ fn press_right_after_a_switch(target: Target) -> (Harness, Client, FocusToken) {
     let h = Harness::start(LIBRARY);
     let mut ui = h.client(Role::Ui);
     assert_eq!(
-        put(&mut ui, "reopen_form_hotkey", Some("Ctrl+Alt+F")),
+        put(&mut ui, "reopen_form_hotkey", Some("Ctrl+Shift+F")),
         Ok(())
     );
     fill_in_once(&h, &mut ui);
@@ -250,7 +257,7 @@ fn press_right_after_a_switch(target: Target) -> (Harness, Client, FocusToken) {
 
     h.os.hold_focus_reports(true);
     h.os.focus(token).expect("window is open");
-    assert!(h.os.press_chord(chord("Ctrl+Alt+F")));
+    assert!(h.os.press_chord(chord("Ctrl+Shift+F")));
     h.settle();
     (h, ui, token)
 }
@@ -331,4 +338,29 @@ fn the_trays_fill_in_again_waits_for_the_focus_to_come_back_from_iambs_window() 
     assert_eq!(forms_within(&mut ui, Duration::from_millis(1500)), []);
     assert!(diagnostic_codes(&mut ui).contains(&"request_focus_timeout".to_owned()));
     h.os.hold_focus_reports(false);
+}
+
+#[test]
+fn editing_chords_and_chords_that_type_are_refused_by_the_service() {
+    // Not only the recorder: the service refuses them for every shortcut setting (the beta-gap
+    // review's finding 4). Iamb's own paste sends Ctrl+V or Cmd+V.
+    let h = Harness::start(LIBRARY);
+    let mut ui = h.client(Role::Ui);
+    for key in ["palette_hotkey", "reopen_form_hotkey", "pause_hotkey"] {
+        for chord in [
+            "Ctrl+V",
+            "Meta+V",
+            "Ctrl+C",
+            "Ctrl+Z",
+            "Ctrl+Backspace",
+            "Alt+Q",
+        ] {
+            assert_eq!(
+                put(&mut ui, key, Some(chord)),
+                Err(Some(ErrorCode::Invalid)),
+                "{key} = {chord}"
+            );
+        }
+    }
+    assert!(h.os.registered_hotkeys().is_empty());
 }

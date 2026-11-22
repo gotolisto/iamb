@@ -186,15 +186,28 @@ export interface KeyLike {
   altKey: boolean;
   shiftKey: boolean;
   metaKey: boolean;
+  /** `KeyboardEvent.getModifierState`: whether AltGr is down. */
+  getModifierState?: (key: string) => boolean;
 }
+
+/** Why the recorder refused a press. */
+export type RefusedReason =
+  /** A letter, digit or named key without Ctrl, Alt or Meta. */
+  | "modifier"
+  /** A key the service has no name for. */
+  | "key"
+  /** A clipboard, undo or deletion chord every application uses (Ctrl+V, ⌘Z, …). */
+  | "reserved"
+  /** A chord that types a character: AltGr, Option with a letter or digit, Ctrl+Alt on Windows. */
+  | "types";
 
 export type Recorded =
   /** Only modifiers are down. */
   | { kind: "waiting" }
   /** A chord the service reads (`Ctrl+Shift+Space`). */
   | { kind: "chord"; chord: string }
-  /** A key that cannot be a shortcut, or a chord that would swallow typing. */
-  | { kind: "refused"; reason: "modifier" | "key" };
+  /** A key that cannot be a shortcut, or a chord that would swallow typing or editing. */
+  | { kind: "refused"; reason: RefusedReason };
 
 const NAMED: Record<string, string> = {
   Space: "Space",
@@ -223,8 +236,16 @@ function keyOf(e: KeyLike): string | null {
 
 const MODIFIER_CODES = /^(Control|Shift|Alt|Meta|AltGraph|OS)(Left|Right)?$/;
 
-/** What a key press means to the recorder: the chord in the form the service stores. */
-export function recordChord(e: KeyLike): Recorded {
+const EDITING_KEYS = ["C", "V", "X", "Z", "A", "Y", "Delete"];
+
+/**
+ * What a key press means to the recorder: the chord in the form the service stores. The service
+ * refuses the same chords (`Chord::new` in iamb-platform, the beta-gap review's finding 4): the
+ * editing chords every application uses, and chords that type a character. `mac` selects the
+ * system's rule: on Windows Ctrl+Alt is AltGr, so Ctrl+Alt (with or without Shift) and a letter
+ * or digit needs the Windows key too.
+ */
+export function recordChord(e: KeyLike, mac = false): Recorded {
   if (MODIFIER_CODES.test(e.code) || ["Control", "Shift", "Alt", "Meta", "AltGraph"].includes(e.key)) {
     return { kind: "waiting" };
   }
@@ -232,10 +253,32 @@ export function recordChord(e: KeyLike): Recorded {
   if (key === null) return { kind: "refused", reason: "key" };
   const strong = e.ctrlKey || e.altKey || e.metaKey;
   if (!strong && !/^F[0-9]+$/.test(key)) return { kind: "refused", reason: "modifier" };
+  const textKey = /^[A-Z0-9]$/.test(key);
+  if (e.getModifierState?.("AltGraph") === true && textKey) return { kind: "refused", reason: "types" };
+  const onlyCtrlOrMeta = !e.altKey && !e.shiftKey && e.ctrlKey !== e.metaKey;
+  if (onlyCtrlOrMeta && EDITING_KEYS.includes(key)) return { kind: "refused", reason: "reserved" };
+  if (textKey && e.altKey && !e.ctrlKey && !e.metaKey) return { kind: "refused", reason: "types" };
+  if (!mac && textKey && e.ctrlKey && e.altKey && !e.metaKey) return { kind: "refused", reason: "types" };
   const parts = [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Meta", key].filter(
     (p): p is string => typeof p === "string",
   );
   return { kind: "chord", chord: parts.join("+") };
+}
+
+/** The sentence for a refused press, for the system the recorder runs on. */
+export function refusedText(reason: RefusedReason, mac: boolean): string {
+  switch (reason) {
+    case "modifier":
+      return mac ? "Add Control, Option or Command" : "Add Ctrl, Alt or the Windows key";
+    case "key":
+      return "That key cannot be part of a shortcut";
+    case "reserved":
+      return "Every app uses that shortcut for editing. Choose another";
+    case "types":
+      return mac
+        ? "That shortcut types a character. Add Control or Command"
+        : "That shortcut types a character on some keyboards. Use Ctrl+Shift, or add the Windows key";
+  }
 }
 
 const MAC_SYMBOL: Record<string, string> = { Ctrl: "⌃", Alt: "⌥", Shift: "⇧", Meta: "⌘" };

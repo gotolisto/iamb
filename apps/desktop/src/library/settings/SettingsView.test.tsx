@@ -60,14 +60,14 @@ const CASES: Record<SettingKey, (r: Rig) => Promise<void>> = {
   reopen_form_hotkey: async (r) => {
     const user = await open(r, "Shortcuts");
     await user.click(screen.getByRole("button", { name: /^Fill in the last form again/ }));
-    await user.keyboard("{Control>}{Alt>}f{/Alt}{/Control}");
-    await waitFor(() => expect(stored(r, "reopen_form_hotkey")).toBe("Ctrl+Alt+F"));
+    await user.keyboard("{Control>}{Shift>}f{/Shift}{/Control}");
+    await waitFor(() => expect(stored(r, "reopen_form_hotkey")).toBe("Ctrl+Shift+F"));
   },
   pause_hotkey: async (r) => {
     const user = await open(r, "Shortcuts");
     await user.click(screen.getByRole("button", { name: /^Pause or resume/ }));
-    await user.keyboard("{Control>}{Alt>}p{/Alt}{/Control}");
-    await waitFor(() => expect(stored(r, "pause_hotkey")).toBe("Ctrl+Alt+P"));
+    await user.keyboard("{Control>}{Shift>}p{/Shift}{/Control}");
+    await waitFor(() => expect(stored(r, "pause_hotkey")).toBe("Ctrl+Shift+P"));
   },
   injection_overrides: async (r) => {
     const user = await open(r, "Apps");
@@ -411,7 +411,7 @@ describe("Shortcuts", () => {
     };
     const user = await open(r, "Shortcuts");
     await user.click(screen.getByRole("button", { name: /^Pause or resume/ }));
-    await user.keyboard("{Control>}{Alt>}p{/Alt}{/Control}");
+    await user.keyboard("{Control>}{Shift>}p{/Shift}{/Control}");
     expect((await screen.findByRole("alert")).textContent).toBe("Another app already uses this shortcut");
   });
 
@@ -466,10 +466,10 @@ describe("Shortcuts", () => {
 
   it("says Another app already uses this shortcut, and keeps the old one", async () => {
     const r = rig({ palette_hotkey: "Ctrl+Shift+Space" });
-    r.settings.takeChord("Ctrl+Alt+J");
+    r.settings.takeChord("Ctrl+Shift+J");
     const user = await open(r, "Shortcuts");
     await user.click(screen.getByRole("button", { name: /^Search snippets/ }));
-    await user.keyboard("{Control>}{Alt>}j{/Alt}{/Control}");
+    await user.keyboard("{Control>}{Shift>}j{/Shift}{/Control}");
     expect((await screen.findByRole("alert")).textContent).toBe("Another app already uses this shortcut");
     expect(stored(r, "palette_hotkey")).toBe("Ctrl+Shift+Space");
   });

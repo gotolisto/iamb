@@ -1,7 +1,7 @@
 import { useState } from "react";
 
 import { Badges } from "./controls";
-import { chordBadges, chordSpoken, recordChord } from "./model";
+import { chordBadges, chordSpoken, recordChord, type RefusedReason } from "./model";
 
 /**
  * The hotkey recorder (design system §4.2): a field that says "Press the keys" while it has the
@@ -25,7 +25,7 @@ export function HotkeyRecorder({
   busy?: boolean;
   onChord: (chord: string) => void;
   onClear: () => void;
-  onRefused: (reason: "modifier" | "key") => void;
+  onRefused: (reason: RefusedReason) => void;
 }) {
   const [listening, setListening] = useState(false);
   const [held, setHeld] = useState<string[]>([]);
@@ -44,7 +44,7 @@ export function HotkeyRecorder({
       onClear();
       return;
     }
-    const result = recordChord(e.nativeEvent);
+    const result = recordChord(e.nativeEvent, mac);
     if (result.kind === "waiting") {
       setHeld(
         [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Meta"].filter(

@@ -212,7 +212,7 @@ fn hotkeys_are_delivered_through_the_listener_and_consumed() {
     let window = editor(&os);
     let seen = listening(&os);
     let palette = Chord::parse("Ctrl+Shift+Space").expect("chord");
-    let other = Chord::parse("Alt+K").expect("chord");
+    let other = Chord::parse("Alt+F7").expect("chord");
 
     os.register(HotkeyId(1), palette).expect("free chord");
     assert_eq!(os.registered_hotkeys(), [(HotkeyId(1), palette)]);

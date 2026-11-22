@@ -10,6 +10,7 @@ import {
   languageOf,
   readOverrides,
   recordChord,
+  refusedText,
   sameApp,
   unknownFormatCode,
   withGroup,
@@ -104,6 +105,43 @@ describe("the shortcut recorder", () => {
     expect(recordChord(key("F9", {}, "F9"))).toEqual({ kind: "chord", chord: "F9" });
     expect(recordChord(key("KeyK", { shiftKey: true }, "K"))).toEqual({ kind: "refused", reason: "modifier" });
     expect(recordChord(key("Space", {}, " "))).toEqual({ kind: "refused", reason: "modifier" });
+  });
+
+  it("refuses the editing chords every app uses, as the service does", () => {
+    for (const [code, mods] of [
+      ["KeyV", { ctrlKey: true }],
+      ["KeyV", { metaKey: true }],
+      ["KeyC", { ctrlKey: true }],
+      ["KeyX", { metaKey: true }],
+      ["KeyZ", { ctrlKey: true }],
+      ["KeyA", { ctrlKey: true }],
+      ["KeyY", { ctrlKey: true }],
+      ["Delete", { ctrlKey: true }],
+    ] as const) {
+      expect(recordChord(key(code, mods, "x")), code).toEqual({ kind: "refused", reason: "reserved" });
+      expect(recordChord(key(code, mods, "x"), true), code).toEqual({ kind: "refused", reason: "reserved" });
+    }
+    // With another modifier they are ordinary chords.
+    expect(recordChord(key("KeyV", { ctrlKey: true, shiftKey: true }, "V"))).toEqual({ kind: "chord", chord: "Ctrl+Shift+V" });
+    expect(recordChord(key("KeyZ", { metaKey: true, shiftKey: true }, "Z"), true)).toEqual({ kind: "chord", chord: "Shift+Meta+Z" });
+  });
+
+  it("refuses a chord that types a character: AltGr, Option and a letter, Ctrl+Alt on Windows", () => {
+    const altGr = { getModifierState: (k: string) => k === "AltGraph" };
+    expect(recordChord({ ...key("KeyQ", { ctrlKey: true, altKey: true }, "@"), ...altGr })).toEqual({ kind: "refused", reason: "types" });
+    expect(recordChord(key("KeyE", { altKey: true }, "é"), true)).toEqual({ kind: "refused", reason: "types" });
+    expect(recordChord(key("Digit2", { altKey: true, shiftKey: true }, "€"), true)).toEqual({ kind: "refused", reason: "types" });
+    expect(recordChord(key("KeyQ", { altKey: true }, "q"))).toEqual({ kind: "refused", reason: "types" });
+    // Windows: Ctrl+Alt is AltGr, also with Shift; the Windows key makes it a shortcut.
+    expect(recordChord(key("KeyA", { ctrlKey: true, altKey: true }, "ą"))).toEqual({ kind: "refused", reason: "types" });
+    expect(recordChord(key("KeyA", { ctrlKey: true, altKey: true, shiftKey: true }, "Ą"))).toEqual({ kind: "refused", reason: "types" });
+    expect(recordChord(key("KeyK", { ctrlKey: true, altKey: true, metaKey: true }, "k"))).toEqual({ kind: "chord", chord: "Ctrl+Alt+Meta+K" });
+    // macOS: Control+Option and a letter types nothing.
+    expect(recordChord(key("KeyK", { ctrlKey: true, altKey: true }, "k"), true)).toEqual({ kind: "chord", chord: "Ctrl+Alt+K" });
+    // Option with a key that is not a letter or digit is fine.
+    expect(recordChord(key("ArrowUp", { altKey: true }, "ArrowUp"), true)).toEqual({ kind: "chord", chord: "Alt+Up" });
+    expect(refusedText("types", true)).toMatch(/types a character/);
+    expect(refusedText("reserved", false)).toMatch(/editing/);
   });
 
   it("refuses a key the service has no name for", () => {
