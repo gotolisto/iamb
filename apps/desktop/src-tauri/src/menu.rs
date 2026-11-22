@@ -25,7 +25,22 @@
 //! menu opened, named by its id as the focus inspector reports it (the bundle identifier on
 //! macOS, the executable's file name on Windows): [`app_name`] makes the name shown from it, as
 //! the platform cannot give a display name yet (specification §11.2, entry 13). The item is
-//! hidden when that application is Iamb or cannot be named ([`exclusion_item`]).
+//! hidden when that application is Iamb or cannot be named ([`exclusion_item`]), and on Windows
+//! when the window in front is the shell's taskbar or notification-area window
+//! ([`is_shell_tray_class`]).
+//!
+//! When the application is taken, and what a click acts on ([`ExclusionCapture`]; the 2026-11
+//! beta review's finding 3): one capture for the whole menu, taken under the rules of the
+//! palette's tray target (`crate::palette`, "The tray menu takes the foreground") — on the
+//! pointer's arrival on the icon, and on a move over it only when the last capture is older than
+//! [`TRAY_CAPTURE_TTL`](crate::palette::TRAY_CAPTURE_TTL). A capture that takes longer than
+//! [`CAPTURE_LIMIT`] to name its application (one request to the service) is dropped and the
+//! item hidden: the front may have changed meanwhile. A click acts on exactly what the item
+//! showed, or on nothing: it is refused while a newer capture is in flight, when the capture is
+//! older than the time limit (the item is then hidden), and when the item's text is not the
+//! label of the target kept with it.
+
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -177,6 +192,141 @@ impl ExclusionTarget {
     }
 }
 
+/// The window classes of the Windows shell's taskbar and notification area (the overflow
+/// flyout included): while one of them is in front, the "application in front" is the shell,
+/// not the one the user was in, so the exclusion item is hidden.
+pub const SHELL_TRAY_CLASSES: [&str; 4] = [
+    "Shell_TrayWnd",
+    "Shell_SecondaryTrayWnd",
+    "NotifyIconOverflowWindow",
+    "TopLevelWindowForOverflowXamlIsland",
+];
+
+/// True when `class` is one of [`SHELL_TRAY_CLASSES`].
+#[must_use]
+pub fn is_shell_tray_class(class: &str) -> bool {
+    SHELL_TRAY_CLASSES.contains(&class)
+}
+
+/// How long a capture of the exclusion item's application may take (module docs).
+pub const CAPTURE_LIMIT: Duration = Duration::from_secs(2);
+
+/// Why a click on the exclusion item did nothing (module docs); the code is logged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExclusionRefusal {
+    /// No application was captured.
+    Nothing,
+    /// A newer capture is in flight.
+    Refreshing,
+    /// The capture is older than the time limit.
+    Stale,
+    /// The item's text is not the target's label.
+    LabelChanged,
+}
+
+impl ExclusionRefusal {
+    /// The code for the log.
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Nothing => "exclusion_no_target",
+            Self::Refreshing => "exclusion_refreshing",
+            Self::Stale => "exclusion_stale",
+            Self::LabelChanged => "exclusion_label_changed",
+        }
+    }
+}
+
+/// The exclusion item's capture (module docs): what it shows and when it was taken.
+#[derive(Debug, Default)]
+pub struct ExclusionCapture {
+    /// The last capture begun.
+    ticket: u64,
+    /// The capture in flight, and when it began.
+    pending: Option<(u64, Instant)>,
+    /// What the item shows, and when its capture began.
+    shown: Option<(Instant, ExclusionTarget)>,
+}
+
+impl ExclusionCapture {
+    /// The pointer reached the icon (`entered`) or moved over it, at `now`: a ticket when a
+    /// capture is to be taken (always on arrival; on a move only when there is no capture
+    /// younger than `ttl` and none in flight).
+    pub fn begin(&mut self, entered: bool, now: Instant, ttl: Duration) -> Option<u64> {
+        if !entered
+            && (self.pending.is_some()
+                || self
+                    .shown
+                    .as_ref()
+                    .is_some_and(|(at, _)| now.saturating_duration_since(*at) < ttl))
+        {
+            return None;
+        }
+        self.ticket += 1;
+        self.pending = Some((self.ticket, now));
+        Some(self.ticket)
+    }
+
+    /// The capture `ticket` named `target` at `now`. `None` when it was overtaken by a newer
+    /// one (leave the item as it is); otherwise what the item is to show from now on, `None`
+    /// inside meaning hidden (also when the capture took longer than [`CAPTURE_LIMIT`]). The
+    /// caller sets the item from it while it holds the lock around this capture, so that text
+    /// and target change together.
+    pub fn finish(
+        &mut self,
+        ticket: u64,
+        target: Option<ExclusionTarget>,
+        now: Instant,
+    ) -> Option<Option<ExclusionTarget>> {
+        let (pending, began) = self.pending?;
+        if pending != ticket {
+            return None;
+        }
+        self.pending = None;
+        let target = target.filter(|_| now.saturating_duration_since(began) <= CAPTURE_LIMIT);
+        self.shown = target.clone().map(|t| (began, t));
+        Some(target)
+    }
+
+    /// What a click at `now` acts on, given the item's text as the menu has it now.
+    ///
+    /// # Errors
+    ///
+    /// Why it acts on nothing (module docs).
+    pub fn for_click(
+        &self,
+        item_text: Option<&str>,
+        now: Instant,
+        ttl: Duration,
+    ) -> Result<ExclusionTarget, ExclusionRefusal> {
+        if self.pending.is_some() {
+            return Err(ExclusionRefusal::Refreshing);
+        }
+        let (at, target) = self.shown.as_ref().ok_or(ExclusionRefusal::Nothing)?;
+        if now.saturating_duration_since(*at) >= ttl {
+            return Err(ExclusionRefusal::Stale);
+        }
+        if item_text != Some(target.label().as_str()) {
+            return Err(ExclusionRefusal::LabelChanged);
+        }
+        Ok(target.clone())
+    }
+
+    /// The exclusion of the target was toggled: the item now shows the other direction, for
+    /// the same capture. Returns the new target, `None` when the capture changed meanwhile.
+    pub fn toggled(&mut self, app_id: &str) -> Option<ExclusionTarget> {
+        let (_, target) = self.shown.as_mut().filter(|(_, t)| t.app_id == app_id)?;
+        target.excluded = !target.excluded;
+        Some(target.clone())
+    }
+
+    /// Forgets the capture (the service went away, or the capture went stale): the item is
+    /// hidden.
+    pub fn clear(&mut self) {
+        self.shown = None;
+    }
+}
+
 /// The exclusion item for the application in front (`app_id`, `own` when it is part of Iamb),
 /// given the ids excluded now; `None` hides the item: no application, Iamb itself, or one that
 /// cannot be named.
@@ -265,6 +415,160 @@ pub fn add_dot(rgba: &mut [u8], width: u32, height: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TTL: Duration = Duration::from_mins(1);
+
+    fn mail(excluded: bool) -> ExclusionTarget {
+        ExclusionTarget {
+            app_id: "com.apple.mail".to_owned(),
+            name: "Mail".to_owned(),
+            excluded,
+        }
+    }
+
+    fn notes() -> ExclusionTarget {
+        ExclusionTarget {
+            app_id: "com.apple.notes".to_owned(),
+            name: "Notes".to_owned(),
+            excluded: false,
+        }
+    }
+
+    #[test]
+    fn a_click_acts_on_exactly_what_the_item_showed() {
+        let t0 = Instant::now();
+        let mut c = ExclusionCapture::default();
+        assert_eq!(c.for_click(None, t0, TTL), Err(ExclusionRefusal::Nothing));
+        let ticket = c.begin(true, t0, TTL).expect("captures on arrival");
+        // A click while the capture is in flight acts on nothing.
+        assert_eq!(
+            c.for_click(Some("Never expand in Mail"), t0, TTL),
+            Err(ExclusionRefusal::Refreshing)
+        );
+        let shown = c.finish(ticket, Some(mail(false)), t0 + Duration::from_millis(50));
+        assert_eq!(shown, Some(Some(mail(false))));
+        let label = mail(false).label();
+        assert_eq!(
+            c.for_click(Some(&label), t0 + Duration::from_secs(1), TTL),
+            Ok(mail(false))
+        );
+        // The menu still shows another app's name: nothing is toggled.
+        assert_eq!(
+            c.for_click(
+                Some("Never expand in Notes"),
+                t0 + Duration::from_secs(1),
+                TTL
+            ),
+            Err(ExclusionRefusal::LabelChanged)
+        );
+        // Toggled: the next click goes the other way, for the same capture.
+        assert_eq!(c.toggled("com.apple.mail"), Some(mail(true)));
+        assert_eq!(
+            c.for_click(
+                Some("Expand in Mail again"),
+                t0 + Duration::from_secs(2),
+                TTL
+            ),
+            Ok(mail(true))
+        );
+        assert_eq!(c.toggled("com.apple.notes"), None);
+    }
+
+    #[test]
+    fn a_refresh_that_ends_between_drawing_and_click_is_refused() {
+        // The menu was drawn for Mail; a new capture (Notes) starts and finishes before the
+        // click, while the open menu may still show Mail.
+        let t0 = Instant::now();
+        let mut c = ExclusionCapture::default();
+        let first = c.begin(true, t0, TTL).expect("ticket");
+        c.finish(first, Some(mail(false)), t0);
+        let drawn = mail(false).label();
+        let second = c
+            .begin(true, t0 + Duration::from_millis(10), TTL)
+            .expect("ticket");
+        assert_eq!(
+            c.for_click(Some(&drawn), t0 + Duration::from_millis(20), TTL),
+            Err(ExclusionRefusal::Refreshing)
+        );
+        c.finish(second, Some(notes()), t0 + Duration::from_millis(30));
+        assert_eq!(
+            c.for_click(Some(&drawn), t0 + Duration::from_millis(40), TTL),
+            Err(ExclusionRefusal::LabelChanged)
+        );
+        // An overtaken capture changes nothing.
+        let third = c
+            .begin(true, t0 + Duration::from_millis(50), TTL)
+            .expect("ticket");
+        let fourth = c
+            .begin(true, t0 + Duration::from_millis(60), TTL)
+            .expect("ticket");
+        assert_eq!(
+            c.finish(third, Some(mail(false)), t0 + Duration::from_millis(70)),
+            None
+        );
+        assert_eq!(
+            c.finish(fourth, Some(notes()), t0 + Duration::from_millis(80)),
+            Some(Some(notes()))
+        );
+    }
+
+    #[test]
+    fn a_stale_or_slow_capture_offers_nothing() {
+        let t0 = Instant::now();
+        let mut c = ExclusionCapture::default();
+        let ticket = c.begin(true, t0, TTL).expect("ticket");
+        c.finish(ticket, Some(mail(false)), t0);
+        let label = mail(false).label();
+        // The menu opened without a new arrival, long after the last hover.
+        assert_eq!(
+            c.for_click(Some(&label), t0 + TTL, TTL),
+            Err(ExclusionRefusal::Stale)
+        );
+        // A move over the icon takes a new capture only once the old one is stale.
+        assert_eq!(c.begin(false, t0 + Duration::from_secs(5), TTL), None);
+        let again = c
+            .begin(false, t0 + TTL, TTL)
+            .expect("stale: captured again");
+        // That capture took too long to name its app: hidden, nothing to click.
+        assert_eq!(
+            c.finish(
+                again,
+                Some(notes()),
+                t0 + TTL + CAPTURE_LIMIT + Duration::from_millis(1)
+            ),
+            Some(None)
+        );
+        assert_eq!(
+            c.for_click(
+                Some("Never expand in Notes"),
+                t0 + TTL + CAPTURE_LIMIT * 2,
+                TTL
+            ),
+            Err(ExclusionRefusal::Nothing)
+        );
+        // No second capture on a move while one is in flight.
+        let t1 = t0 + TTL * 3;
+        assert!(c.begin(false, t1, TTL).is_some());
+        assert_eq!(c.begin(false, t1, TTL), None);
+        c.clear();
+        assert_eq!(
+            c.for_click(Some(&label), t1, TTL),
+            Err(ExclusionRefusal::Refreshing)
+        );
+    }
+
+    #[test]
+    fn the_shells_tray_windows_are_not_an_app_to_exclude() {
+        for class in SHELL_TRAY_CLASSES {
+            assert!(is_shell_tray_class(class));
+        }
+        assert!(
+            !is_shell_tray_class("CabinetWClass"),
+            "a File Explorer window"
+        );
+        assert!(!is_shell_tray_class("Notepad"));
+        assert!(!is_shell_tray_class(""));
+    }
     use crate::contract::ServiceView;
 
     fn connected(paused: bool, listener: bool, snippets: u64) -> StatusView {

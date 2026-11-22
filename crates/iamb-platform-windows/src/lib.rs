@@ -77,6 +77,8 @@ mod session;
 #[cfg(windows)]
 pub use files::restrict_to_current_user;
 #[cfg(windows)]
+pub use focus::window_class;
+#[cfg(windows)]
 pub use hardening::harden_process;
 
 /// The Windows platform: implements every trait of `iamb-platform`

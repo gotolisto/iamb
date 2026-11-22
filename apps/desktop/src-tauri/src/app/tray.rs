@@ -29,12 +29,14 @@
 //! window that was in front before the menu opened, which on Windows is no longer in front when
 //! they run (the menu takes the foreground): the icon's pointer events note it first
 //! (`crate::palette`, "The tray menu takes the foreground"), and the exclusion item is named
-//! then, when the pointer reaches the icon. "Quit Iamb" asks the library window first, when it is
+//! then, under the same rules, with a time limit, and a click acts on exactly the app its label
+//! named or on nothing (`crate::menu::ExclusionCapture`). "Quit Iamb" asks the library window first, when it is
 //! open, so that unsaved edits are guarded as its close guards them (spec §4.3); the window then
 //! ends Iamb (`commands::app_quit`).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Instant;
 
 use iamb_platform::FocusInspector;
 use tauri::image::Image;
@@ -48,8 +50,8 @@ use super::onboarding_commands::{self, MenuEntries};
 use super::{Ui, palette_panel, windows};
 use crate::bridge::Bridge;
 use crate::contract::{ConnectionState, StatusView};
-use crate::menu::{self, ExclusionTarget, IconState};
-use crate::palette::{LibraryRequest, LibraryView};
+use crate::menu::{self, ExclusionCapture, ExclusionRefusal, ExclusionTarget, IconState};
+use crate::palette::{LibraryRequest, LibraryView, TRAY_CAPTURE_TTL};
 use crate::settings;
 
 const STATUS: &str = "status";
@@ -155,7 +157,8 @@ pub struct Tray {
     search: MenuItem<Wry>,
     pause: CheckMenuItem<Wry>,
     exclusion: Optional,
-    target: Mutex<Option<ExclusionTarget>>,
+    /// What the exclusion item shows and when it was taken (`crate::menu::ExclusionCapture`).
+    capture: Mutex<ExclusionCapture>,
     icon: TrayIcon<Wry>,
     icons: Option<Icons>,
     shown_icon: Mutex<Option<IconState>>,
@@ -224,7 +227,7 @@ impl Tray {
             search,
             pause,
             exclusion: Optional::new(exclusion, PAUSE),
-            target: Mutex::new(None),
+            capture: Mutex::new(ExclusionCapture::default()),
             icon,
             icons,
             shown_icon: Mutex::new(Some(IconState::On)),
@@ -282,6 +285,8 @@ impl Tray {
         let _ = self.pause.set_enabled(connected);
         let _ = self.pause.set_checked(view.paused());
         if !connected {
+            let mut capture = lock(&self.capture);
+            capture.clear();
             self.exclusion.follow(&self.menu, false);
         }
         let mut shown = lock(&self.shown_icon);
@@ -302,50 +307,89 @@ impl Tray {
         }
     }
 
+    /// The pointer reached the icon (`entered`) or moved over it: a ticket when the exclusion
+    /// item's application is to be captured now (`crate::menu::ExclusionCapture::begin`).
+    /// Never blocks for long: one lock.
+    pub fn begin_exclusion_capture(&self, entered: bool) -> Option<u64> {
+        lock(&self.capture).begin(entered, Instant::now(), TRAY_CAPTURE_TTL)
+    }
+
     /// Names the exclusion item for the app in front now, or hides it (Iamb itself, an app that
-    /// cannot be named, no service). Blocks on one request to the service: call it off the main
-    /// thread.
-    pub fn refresh_exclusion(&self, bridge: &Bridge) {
+    /// cannot be named, the shell's taskbar or notification area, no service), for the capture
+    /// `ticket`. Blocks on one request to the service: call it off the main thread.
+    pub fn refresh_exclusion(&self, bridge: &Bridge, ticket: u64) {
         let front = self
             .focus
             .as_deref()
-            .and_then(|f| f.focused_app().ok())
-            .filter(|a| a.pid != std::process::id());
-        let target = front.and_then(|app| {
+            .and_then(|f| f.focus_now().ok())
+            .filter(|change| change.app.pid != std::process::id())
+            .filter(|change| !shell_tray_window(change.token.window()));
+        let target = front.and_then(|change| {
             let excluded = settings::exclusions(bridge).ok()?;
             menu::exclusion_item(
-                Some((app.app.0.as_str(), app.own)),
+                Some((change.app.app.0.as_str(), change.app.own)),
                 excluded.iter().map(|e| e.app_id.as_str()),
             )
         });
-        self.show_exclusion(target);
+        let mut capture = lock(&self.capture);
+        if let Some(shown) = capture.finish(ticket, target, Instant::now()) {
+            self.show_exclusion(shown.as_ref());
+        }
     }
 
-    fn show_exclusion(&self, target: Option<ExclusionTarget>) {
-        if let Some(t) = &target {
+    /// Sets the item's text and whether it is shown; called with the capture locked, so that
+    /// text and target change together.
+    fn show_exclusion(&self, target: Option<&ExclusionTarget>) {
+        if let Some(t) = target {
             let _ = self.exclusion.item.set_text(t.label());
         }
         self.exclusion.follow(&self.menu, target.is_some());
-        *lock(&self.target) = target;
     }
 
     /// "Never expand in *App*" / "Expand in *App* again" was chosen: adds or removes the
-    /// exclusion. Blocks on the service: call it off the main thread.
+    /// exclusion of exactly the app the item named, or does nothing
+    /// (`crate::menu::ExclusionCapture::for_click`). Blocks on the service: call it off the
+    /// main thread.
     ///
     /// # Errors
     ///
-    /// The service's error code.
+    /// The refusal's code, or the service's error code.
     pub fn toggle_exclusion(&self, bridge: &Bridge) -> Result<(), String> {
-        let Some(target) = lock(&self.target).clone() else {
-            return Ok(());
+        let target = {
+            let mut capture = lock(&self.capture);
+            let text = self.exclusion.item.text().ok();
+            match capture.for_click(text.as_deref(), Instant::now(), TRAY_CAPTURE_TTL) {
+                Ok(target) => target,
+                Err(refusal) => {
+                    if refusal == ExclusionRefusal::Stale {
+                        capture.clear();
+                        self.show_exclusion(None);
+                    }
+                    return Err(refusal.code().to_owned());
+                }
+            }
         };
         settings::put_exclusion(bridge, &target.app_id, &target.name, !target.excluded)
             .map_err(|e| e.code)?;
-        self.show_exclusion(Some(ExclusionTarget {
-            excluded: !target.excluded,
-            ..target
-        }));
+        let mut capture = lock(&self.capture);
+        if let Some(now) = capture.toggled(&target.app_id) {
+            self.show_exclusion(Some(&now));
+        }
         Ok(())
+    }
+}
+
+/// True when `window` is the Windows shell's taskbar or notification-area window (the item is
+/// then hidden: the shell is in front, not the app the user was in).
+fn shell_tray_window(window: u64) -> bool {
+    #[cfg(windows)]
+    {
+        iamb_platform_windows::window_class(window).is_some_and(|c| menu::is_shell_tray_class(&c))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = window;
+        false
     }
 }
 
@@ -373,11 +417,16 @@ fn on_icon_event(app: &AppHandle, event: &TrayIconEvent) {
         return;
     };
     ui.palette.controller.tray_pointer(entered);
-    if entered && ui.bridge.status().connection == ConnectionState::Connected {
+    if ui.bridge.status().connection == ConnectionState::Connected
+        && let Some(ticket) = ui
+            .tray
+            .get()
+            .and_then(|t| t.begin_exclusion_capture(entered))
+    {
         let ui: Arc<Ui> = Arc::clone(&ui);
         tauri::async_runtime::spawn_blocking(move || {
             if let Some(tray) = ui.tray.get() {
-                tray.refresh_exclusion(&ui.bridge);
+                tray.refresh_exclusion(&ui.bridge, ticket);
             }
         });
     }

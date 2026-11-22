@@ -24,11 +24,11 @@ use windows_sys::Win32::System::Threading::{
 use windows_sys::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, DispatchMessageW, EVENT_OBJECT_FOCUS, EVENT_SYSTEM_FOREGROUND,
-    FindWindowExW, GA_ROOTOWNER, GUITHREADINFO, GWL_STYLE, GetAncestor, GetForegroundWindow,
-    GetGUIThreadInfo, GetMessageW, GetWindowLongW, GetWindowThreadProcessId, IsIconic, IsWindow,
-    KillTimer, MSG, PM_NOREMOVE, PeekMessageW, PostThreadMessageW, RealGetWindowClassW, SW_RESTORE,
-    SetForegroundWindow, SetTimer, ShowWindowAsync, WINEVENT_OUTOFCONTEXT, WM_APP, WM_QUIT,
-    WM_TIMER, WM_USER,
+    FindWindowExW, GA_ROOTOWNER, GUITHREADINFO, GWL_STYLE, GetAncestor, GetClassNameW,
+    GetForegroundWindow, GetGUIThreadInfo, GetMessageW, GetWindowLongW, GetWindowThreadProcessId,
+    IsIconic, IsWindow, KillTimer, MSG, PM_NOREMOVE, PeekMessageW, PostThreadMessageW,
+    RealGetWindowClassW, SW_RESTORE, SetForegroundWindow, SetTimer, ShowWindowAsync,
+    WINEVENT_OUTOFCONTEXT, WM_APP, WM_QUIT, WM_TIMER, WM_USER,
 };
 
 use super::classify::{self, ControlKind};
@@ -108,6 +108,22 @@ pub(crate) fn keyboard_focus() -> Option<(u64, u32, u64)> {
 /// foreground window at the moment a foreground event is handled.
 pub(super) fn window_of_event(window: u64) -> Option<Front> {
     front_of(handle(window))
+}
+
+/// The class name `window` was registered under, as the window system keeps it (`None` for a
+/// handle that names no window). The UI host asks it of the window in front to tell the
+/// shell's taskbar and notification-area windows from an application's (`iamb-desktop`'s tray
+/// menu). One read of what the system keeps; no message is sent to the window.
+#[must_use]
+pub fn window_class(window: u64) -> Option<String> {
+    let window = handle(window);
+    owner(window)?;
+    let mut units = [0_u16; 256];
+    // SAFETY: the buffer holds the number of units passed. The call reads what the system
+    // keeps about the window and sends it no message.
+    let count = unsafe { GetClassNameW(window, units.as_mut_ptr(), 256) };
+    let count = usize::try_from(count).unwrap_or(0).min(units.len());
+    (count > 0).then(|| String::from_utf16_lossy(&units[..count]))
 }
 
 /// The class `window` is built on: for a control that a toolkit registered under its own
