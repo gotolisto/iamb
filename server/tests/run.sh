@@ -52,7 +52,11 @@ max_connections = 40
 fsync = off
 synchronous_commit = off
 full_page_writes = off
+temp_file_limit = '256MB'
 EOF
+# `temp_file_limit`: no statement of the suite needs more than a few MB of temporary files. With
+# the limit, a function that starts to write them without bound (re-verification N2: one cascade
+# list wrote gigabytes) fails its test here instead of filling the disk of whoever runs the suite.
 # On the platform the role the REST interface connects with loads `safeupdate`, which refuses an
 # UPDATE or DELETE without a WHERE clause, also inside a definer function (security review 4.3,
 # finding 14). Where the library is installed (`make install` of pg-safeupdate, or the file

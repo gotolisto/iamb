@@ -89,7 +89,7 @@ It checks this together with the other invariants:
 | I4 | **No access leak.** After a device has synced past the end of an access, it holds none of the rows that access gave it, and no tag, attachment or file that only those rows made readable (D6, D16). A device that is signed out cannot sync; one that was signed out without the server's word holds such rows set aside, where nothing uses or shows them, until the sync after its next sign-in and for 30 days at most (D14) |
 | I5 | **Exactly once.** A change that is sent several times makes one revision |
 | I6 | **Same answer everywhere.** Which snippet holds an abbreviation, and what a user may do in a folder, is the same on all devices of that user that have finished syncing. (Which snippets wait for review is per device by design, D10) |
-| I7 | **A valid tree, always.** After every commit the server holds no folder cycle, no tree deeper than four levels, no live row under a deleted folder, and no access entry without the share or membership that gives it (C24) |
+| I7 | **A valid tree, always.** After every commit the server holds no folder cycle, no live folder below the fourth level (a deleted folder can lie deeper after a folder above it was moved, and is held to four levels when it comes back, C8), no live row under a deleted folder, and no access entry without the share or membership that gives it (C24) |
 
 ## 2. The main choices
 
@@ -433,13 +433,19 @@ user's access root for the folder, and `granted_at` is the server's clock at the
 user's access to that root began: the time its entry was first written, kept for as long as the
 access lasts without a break, whichever grants come and go meanwhile. It is never taken from a
 row a device wrote, so no device clock can move it (D13 orders shared folders by it).
-`since_rev` is the value of the server's revision counter when this entry, for this user and this
-folder, began; an entry that ends and begins again begins with a new value, and a folder that
+`since_rev` is the value of the server's revision counter **when the request that made this entry,
+for this user and this folder, had ended**: at or above every revision that request drew. An entry
+that ends and begins again begins with a new value, and a folder that
 comes into a tree the user already reads gets the value of that moment, not the tree's. Every
 write of a profile draws its revision under the profile's lock, and so does the change that makes
 an entry, so the number says exactly which versions of a row the user could read through the
-entry: a version that a later write replaced with a revision above `since_rev` was the row while
-the entry existed; one replaced at or below it was not (C20). No clock is involved.
+entry: a version that a later request replaced, with a revision above `since_rev`, was the row in
+a state of the server the user could have seen; one replaced at or below it was not (C20). That
+includes a version replaced in the very request that made the entry: a push applies its ops in
+dependency order, folders before snippets (§6.3), so "she emptied the snippet, then moved its
+folder into the shared tree", sent as one push, is applied as "moved, then emptied", and the entry
+must not count as older than the emptying (S88, S89). Until its request has ended an entry is
+"not begun" and offers no version to anyone. No clock is involved.
 
 A deleted folder keeps exactly the entries it would have if it were live, computed from the
 shares and memberships that are live now, until the purge removes them. So the owner of a
@@ -507,14 +513,15 @@ Rules for task 4.2:
 ### 5.6 History and conflicts
 
 `history (entity, row_id, rev, row jsonb, deleted, written_at, written_by, written_device,
-replaced_at, replaced_by_rev)`, primary key `(entity, row_id, rev)`: every version a write replaced,
-as it was, tombstones included; a snippet's version with its `content_by` and `content_at`. A
+replaced_at, replaced_by_rev, within_request)`, primary key `(entity, row_id, rev)`: every version a write replaced,
+as it was, tombstones included; a snippet's version with its `content_by` and `content_at`.
+`within_request` marks a version that the same request wrote and replaced (below). A
 version that a device gave back after a restore of the server, and that a later one had already
 replaced, is kept under the lost revision it had (C18). Invitations are not synced rows and have no
 history.
 
 `conflict (id, entity, row_id, profile_id, kind, winner_rev, winner_user, winner_device,
-created_at, state, resolved_at, resolved_by, resolution)` and `conflict_version (conflict_id,
+created_at, state, resolved_at, resolved_by, resolution, parties, closed_for)` and `conflict_version (conflict_id,
 rev, user_id, device_id, taken_over)`: the versions the conflict offers back. The first is the
 version the conflict's write replaced; the others, marked `taken_over`, are the versions of the
 conflict it replaced (C3). `kind` is `edit_edit`, `edit_over_delete`, `delete_over_edit`,
@@ -525,12 +532,18 @@ offered version is the history row `(entity, row_id, rev)`; the winner's is the 
 it changes again. The parties of a conflict are the winner's author and the author of every
 version it offers. A party **takes part** in a conflict only while they can read its row: only
 then is it in their list, in their feed and theirs to close (C20). And a party is **offered** a
-version only when they wrote it or could read it while it was the row: they read now, and have
-read without a break since before the version was replaced, the folder that version was in (for a
-folder's version, the folder itself; §5.4 `since_rev`); for a tag's version, they own the tag's
-personal profile or have been a member of its group since before the version was replaced. A
+version only when they wrote it or could read it while it was the row, **in a state of the server
+they could have seen**: they read now, and have
+read without a break since before the request that replaced the version, the folder that version
+was in (for a folder's version, the folder itself; §5.4 `since_rev`); for a tag's version, they own
+the tag's personal profile or have been a member of its group since before the version was
+replaced. A version that was written and replaced within one request (a request can name a row
+twice) was never the row in such a state: the history marks it (`within_request`), and only its
+writer is offered it. A
 version that is not offered to a party is, for that party, not a version of the conflict: it is
-not listed and cannot be restored by them. So a conflict never shows a member a version from the
+not listed and cannot be restored by them. Because parties can be offered different versions, an
+answer by one of them does not always close the conflict for the others: `closed_for` on the
+conflict lists the parties for whom it is closed while it is still open for somebody else (C20). So a conflict never shows a member a version from the
 owner's private folder or from before the folder was shared, and never tells a removed member
 anything (§4.4, §4.5, §11.3).
 
@@ -637,7 +650,7 @@ server; the device's copy only decides what the interface offers.
 D12), `retention_days` (30), `history_days` (90), `cascade_max` (2,000), `attachment_bytes_max`,
 `sign_in_methods` (the ways a session may have been opened for Iamb to accept it, as the token's
 `amr` claim names them; never `password`; C25), and `maintenance` (while it is set, `enter` answers
-every call with `maintenance`; C18), and where the retention job stopped (`job_after`, §5.12). `epoch (id, started_at, first_rev)` has one row per epoch the
+every call with `maintenance`; C18), where the retention job stopped (`job_after`, §5.12), and the seed of the locks on row ids (`lock_seed`, C24). `epoch (id, started_at, first_rev)` has one row per epoch the
 database has had: `first_rev` is where the epoch's own revisions start: a time in milliseconds times
 1,024, where the time is the later of the server's clock and a time the operator passes
 (`not_before`, C18), and in any case above every revision the restored database knows of (the
@@ -795,7 +808,7 @@ still the one it has been in step with (D14).
 | `rate_limited` | Too many calls; `retry_after_ms` says when | Waits that long, then goes on (§6.8) |
 | `reset_required` | `pull` and `push`: the position presented cannot be continued; `reason` is `expired` or `epoch`. A push answered so has written nothing (C25) | Resyncs (D7) |
 | `server_behind` | `hello` and `pull`: the device holds a revision or a position this server never issued. The server may have been restored without its procedure, or the client is not what it says; the server changes nothing (C18) | Stops syncing, keeps its library and its outbox, and tries `hello` again every hour (D12) |
-| `too_large` | The request is over a size or count limit | Halves the batch and repeats |
+| `too_large` | The request is over a size or count limit, or a `push` cost the server more time or space than one request may (§6.3) | Halves the batch and repeats; a batch of one that is still refused is set aside (D17) |
 | `plan` | The plan does not include sync | Stops syncing; the library stays local; keeps the access check (D12) |
 | `maintenance` | The server is being restored or migrated (C18) | Waits and retries as after a network error |
 
@@ -870,7 +883,11 @@ as after `reset_required: epoch` (D7).
 - `position` is the device's current position (C25). A push whose position cannot be continued is
   answered `reset_required` like a pull, and writes nothing.
 - A request has at most 200 ops; a cascade list may name up to 20,000 rows and counts as one
-  (a longer one is `blocked: too_large`, before any work).
+  (a longer one is `blocked: too_large`, and one that names a row twice `blocked: invalid`, before
+  any work). The whole rows in the cascade answers of one request stay within 4 MiB between them;
+  which rows come whole is decided from the sizes the server has stored, before any content is
+  read, so the work for a list is bounded by its length and by that allowance, not by what it
+  names.
   The device builds the request under D1, so it never names a parent the server cannot know.
 - **Nothing a device sends ends a request in an error of the database.** Every op is looked at
   before any lock is taken: an op that is not an object, a `base_rev` or `repush_rev` that is not a
@@ -878,6 +895,9 @@ as after `reset_required: epoch` (D7).
   column can hold, are `blocked: invalid` for that op alone (a key whose value is JSON null counts
   as absent). Should an op fail all the same, the request's writes are undone and the answer is the
   error `invalid`, as data: a request that fails must still be counted by the rate limiter (§6.8).
+  A request that is cut off (the function's time-out, or the database out of temporary file space,
+  disk or memory for it) is caught the same way: its writes are undone, the answer is `too_large`
+  as data, so that the device halves the batch (§6.1), and the request is counted as ten.
 - The server applies the ops in dependency order whatever order they were sent in: folders with
   parents first, tags, attachments, snippets, links, shares; deletes last, children first.
 - One request is one transaction, under the locks of C24. Each op is judged by itself under §8,
@@ -1050,9 +1070,10 @@ device that gave rows back first could put a folder on the device of a person it
   `hello` 10 calls; account calls 30 per account; `revoke_device` and `sign_out_everywhere` 10 per
   calling device, in a counter of their own that no other device can use up; invitations 20 an
   hour per group and 50 a day per account. Over the limit the call answers `rate_limited` with
-  `retry_after_ms`, having written nothing else. A call that is refused is counted like any other;
-  one that the database cuts off at its time-out is not, which is why nothing a device sends may
-  make a request run long (§6.3). The first upload of a library of 10,000 snippets takes about two minutes
+  `retry_after_ms`, having written nothing else. A call that is refused is counted like any other,
+  and a `push` that is cut off at its time-out or for want of space is counted as ten (§6.3). Of the
+  other calls, one that the database cuts off is not counted: none of them does work that grows
+  with what the caller sends beyond the bounds of §6.5. The first upload of a library of 10,000 snippets takes about two minutes
   at these values. The values are settings of the server, not of the protocol (§13).
 
 ### 6.9 Partial failures
@@ -1287,8 +1308,10 @@ is offered the version the write replaced, which the writer could read to replac
 taken-over version only when the writer had access to the folder it was in since before it was
 replaced. Three people who shared the folder throughout are each offered every version (S57); a
 member whose stale write lands on a snippet that came out of the owner's private folder, or on a
-folder that was shared after the older versions were replaced, is offered none of those (S85).
-(S01, S08, S22, S49, S50, S57, S60, S85)
+folder that was shared after the older versions were replaced, is offered none of those (S85),
+and it makes no difference whether the owner's device sent the replacement and the sharing in two
+requests or in one (S88, S89).
+(S01, S08, S22, S49, S50, S57, S60, S85, S88, S89)
 
 **C4.** *Nothing new, nothing written.* When what was sent equals the row in every field and in
 whether it is deleted, the answer is `unchanged` with the row's revision: no revision, no
@@ -1333,7 +1356,12 @@ Under C24 this holds for requests that arrive together as for those that arrive 
 **C8.** *Structure is put right, not refused.* A folder `put` that would make the folder its own
 ancestor, or make any tree deeper than four levels, keeps the folder's current parent; a new
 folder that would be a fifth level is put under the nearest folder above the requested parent
-that keeps four levels, or at the top. Everything else of the row is applied, `adjusted` names
+that keeps four levels, or at the top. **So is a deleted folder that comes back**: the folders
+below a folder that is moved count only while they are live, so a deleted sub-folder can come to
+lie on a fifth level; when it is restored (a `put`, a conflict's version, or the folders C7
+restores on the way up) it goes under the nearest folder above that keeps four levels, if the
+writer may write there, and otherwise the restore is refused like any other write the writer may
+not make. Everything else of the row is applied, `adjusted` names
 `parent_id`, and the device takes the server's row. A row whose profile would change (a folder
 under a parent of another profile, a snippet moved to a folder of another profile, a link across
 profiles) is `blocked: invalid`. (S13, S14, S53)
@@ -1605,9 +1633,13 @@ snippet has linked to for 90 days (§5.12). (S19, S20, S21, S73, S84)
 only then: the conflict is in their list and in their feed, and theirs to read and to close. For a
 party who cannot read the row (a removed member, a member whose share ended) the conflict is not
 there: every call about it answers `not_found`, also "Keep", and nothing about it reaches their
-feed, in the same transaction that ended their access (G13). Any party who takes part may close a
-conflict. "Keep the current version" closes
-it. "Restore this version", for one of the versions the conflict offers to the caller (§5.6; any
+feed, in the same transaction that ended their access (G13). Any party who takes part may answer
+a conflict. **An answer closes the conflict for everybody when the party who gives it is offered
+every version the conflict holds; otherwise it closes it for that party alone**: the conflict
+leaves their list and reads as resolved for them, and it stays open, with every version, for the
+parties who are offered more. (A member whose stale write took over the owner's open conflict
+about a private version cannot answer that conflict away for her.) Once nobody who takes part is
+left for whom it is open, it is closed. "Keep the current version" is such an answer. "Restore this version", for one of the versions the conflict offers to the caller (§5.6; any
 other answers `invalid`), **is a write of that version by that user and is judged as a push of it
 would be** (§4.3, C8, C12): the place the version puts the row in counts as the place the row would
 move to, so restoring a version that puts a folder at the top level, back under another parent or
@@ -1617,8 +1649,8 @@ The server writes the version as a new revision by that user (a live version mak
 restores the folders above it, C7; a tombstone deletes the row, a folder with its subtree under the
 conditions and the bound of C6: at most `cascade_max` rows per call, with `partial` and a repeated
 call for more), keeps the author its content had (C17), records no conflict for that write, and
-closes the conflict as resolved. The version it replaces goes to the history like any other. A
-version whose history row has been purged answers `gone`. (S07, S85, S86, S87)
+closes the conflict as an answer does (above). The version it replaces goes to the history like any other. A
+version whose history row has been purged answers `gone`. (S07, S85, S86, S87, S88)
 
 **C21.** *Visibility.* What a user may read follows from `folder_access` (§5.4), which the server
 keeps equal to §4.2 inside every transaction that changes a folder's place, a share or a
@@ -1660,17 +1692,24 @@ decides on:
    gets an entry, in the order of the user ids (§5.5).
 
 A `push` takes one more kind of lock, after the profiles and before it reads a row: **the id of
-every row its ops name** (an advisory lock on entity and id, all of them in one order). An id is
+every row its ops may write** (an advisory lock whose 64-bit key is made from entity and id with a
+seed only the server holds, so that nobody can choose an id that shares another row's lock; all
+of them in one order). An id is
 unique across all profiles, and two requests can name one new id in two profiles, whose locks are
 different locks; under the id's lock, "is there a row with this id" and the write that follows are
 one step for both. The second request finds the first one's row and is answered `blocked: invalid`:
 a create inserts or fails, and never becomes a change to a row another request made, in whatever
 profile (S53 covers one profile; the two-connection tests of G21 cover two).
 
-**A request locks only what its caller has a part in.** Before any lock, an op whose profile the
+**A request locks only what its caller can write in.** Before any lock, an op whose profile the
 caller has no grant in (not its owner, not a member, no access entry for a folder of it), and a
 share whose group the caller is not in, lose their profile: they are answered as for a profile that
-does not exist (C12, C13) and lock nothing. An account call checks the caller's membership, and
+does not exist (C12, C13) and lock nothing. An op in a profile the caller can read and write
+nothing in (no `edit` or `manage` on any of its folders, and not its manager) locks nothing
+either: it is judged by the same rules without the lock, which refuse it, and it could not write
+if they did not, because a revision is drawn only under a lock. Whoever can write in a profile can
+hold its lock for as long as a request of theirs runs; that is what "one writer at a time" means,
+and the bounds on a request (§6.3) are what keeps it short. An account call checks the caller's membership, and
 `attachment_upload_begin` the caller's right in the profile, before it locks, and again under the
 lock. Otherwise whoever knows a profile's id could hold its lock, and every write of its owner
 would wait, for as long as a request of his runs.
@@ -2323,7 +2362,7 @@ tokens; what it writes to disk is attachment files and its log.
 | Someone who holds a member's unlocked device | Read the library on it, and act as that member | The owner of the account revokes the device from another device, or signs out everywhere. The device row is marked revoked, and because every call and every policy checks it, access stops with that commit and not when a token expires. The platform cannot end one other session, so the revoked row is kept for as long as that session exists: the computer is refused whether it is switched on the next day or the next year, and the session cannot register another device (C25; S74). "Sign out everywhere" ends the sessions themselves. At the authentication service a revoked session is still a session: its holder can set a password there, and that opens nothing, because Iamb accepts only sessions opened by a link or code to the account's address or by an identity provider, and where the project has the hook no token is issued for a password at all; it cannot change the address without the old mailbox, nor link another identity (C25, the settings below; S83). Then they change what must change | The library on that device stays readable to whoever holds it; malware running as the user is outside the model (architecture §8). The holder of a revoked session can end the user's other sessions, which costs a sign-in on each and nothing else (D14). A computer that "sign out everywhere" reaches while it is switched off has no word from the server when it comes back, and sets shared folders aside for up to 30 days before it removes them (D14) |
 | Someone who stole a refresh token | Read and write as the user, from a session that is the user's own | Tokens are in the keychain and only `iamb-sync` reads them; sign-in uses PKCE and a loopback address open for seconds (ADR-0020). Refresh tokens rotate, but rotation does not reliably expose a thief: the authentication service honours the token before the active one, and any token for ten seconds, so a thief and the user can go on side by side; only the use of a token older than that ends the session. A stolen token used from another installation with the same device id is noticed by its position (C25); used with a device id of its own it cannot register, because the session already has a device. Access tokens live one hour at most; the device list shows each device's last call; "sign out everywhere" revokes every device row and ends all sessions | Until the user notices, the thief has what the session can do. The remedy is the device list and "sign out everywhere". A restore of the server brings back sessions and device rows as the backup had them; the restore script revokes again, from the function log, what was revoked since, before the server opens, and the device that had revoked them does so again when it syncs (C18, D7) |
 | A signed-in client that lies about what it holds | Send `hello` with a revision the server never gave out, or a position ahead of the feed | The server changes nothing on a client's word: that client is answered `server_behind` and stops itself, and the operator sees a line in the log. No call by a device begins an epoch, empties a feed or touches another device's row (C18; S75) | Every account can learn how many revisions the server has given out, by asking with rising numbers: the counter is public to accounts, and says how busy the whole server is and nothing about anyone. Each such try writes the log line, so the operator's instructions must not read a few such lines as a restore that went wrong |
-| A signed-in client that sends what no device sends | Ops of the wrong shape, lists far longer than a device builds, requests made to fail or to run long, calls that name other people's profiles | Every op is checked before any lock and refused as data (§6.3); the work and the answer of one request are bounded (a cascade list, a page, a request); a request locks nothing its caller has no part in (C24); refusals are data, so the rate limiter counts them (§6.8) | A request that the database itself cuts off at its time-out is not counted: the limits above keep such a request rare and short, and a limit in front of the database, where the hosting plan has one, is the owner's to switch on (§11.6) |
+| A signed-in client that sends what no device sends | Ops of the wrong shape, lists far longer than a device builds, requests made to fail or to run long, calls that name other people's profiles | Every op is checked before any lock and refused as data (§6.3); the work and the answer of one request are bounded (a cascade list, a page, a request); a request locks nothing its caller has no part in (C24); refusals are data, so the rate limiter counts them (§6.8) | A `push` that is cut off is counted, as ten calls; another call that the database cuts off is not. Nothing in the database limits the temporary files one statement may write: on the hosting platform that limit (`temp_file_limit`) cannot be set by a migration and is the owner's to set, so the bounds above are the only ones until it is (§11.6). A reader holds no lock; whoever may write in a profile holds its lock while a request of theirs runs, 20 seconds at most |
 | Someone on the network | See that a device talks to the server | TLS; the live channel carries a number, no content | — |
 | Another user of the same computer | Nothing | The data root is the user's alone; the endpoints check the peer (architecture §3.3, §6.1) | — |
 | The server's operator, or someone who breaks into the server | Read every synced row; change rows, including who is recorded as an author | Hosting controls, and task 4.3 | In version 1 the server is trusted, for reading and for the author it reports. End-to-end encryption with signed content would end that trust (§13) |
@@ -2380,7 +2419,7 @@ member with `view`, former member, stranger, signed out).
 | G2 | A user reads a folder, a snippet, a link, a share only under §5.13; every table of §4.5 returns exactly the rows listed there, and nothing after the share ends |
 | G3 | A tag or an attachment row of someone else's profile is readable only while a readable snippet has a live link to it, or by the user who wrote the row last while that user has `edit` on a folder of the profile; after the share ends or the user is removed, not at all |
 | G4 | No role a device can have may insert, update or delete in any table of `iamb`. Nothing in `iamb_private` or `api_service` can be called through the REST interface with a device's token. The gate helpers and the two reader helpers of §5.1 are the only functions of `iamb_private` that `authenticated` may execute; no gate helper returns a fact about anyone but the caller or changes anything but the caller's device row and rate counters, and the reader helpers change nothing and return the addresses of a group's members to its owner and admins, and the history rows of a conflict's versions to a party they are on offer to, and nothing to anyone else: whatever a device sends, `server_state`, `epoch`, every feed and every other device's row are as they were. `anon` can read nothing and call nothing |
-| G5 | `history` is unreadable directly; a history version is returned only by `get_conflict`, to a party of the conflict who can read the row now and who wrote that version or could read it while it was the row: a version from a folder the party could not read then, or replaced before the party's access to its folder began, is not returned, not listed and not restorable by that party, also when a later conflict took it over. The base version of a write (C3, C17) is found under the same rule |
+| G5 | `history` is unreadable directly; a history version is returned only by `get_conflict`, to a party of the conflict who can read the row now and who wrote that version or could read it while it was the row: a version from a folder the party could not read then, or replaced before the party's access to its folder began, is not returned, not listed and not restorable by that party, also when a later conflict took it over. "Could read" means in a state of the server the party could have seen: a version replaced in the request that began the party's access, and a version written and replaced within one request, are not such versions. The base version of a write (C3, C17) is found under the same rule |
 | G6 | `feed`, `feed_head`, `device` and `folder_access` rows are readable by their user only; a `conflict` by a party who can read its row; an `attachment_upload` by its uploader and by who manages the profile it is for |
 | G7 | Every write of §4.3 succeeds for the users that table allows and is `rejected: forbidden` for all others, judged at arrival (C12): after a membership, role or share change commits, the next push sees it. A member with `edit` cannot rename, move or delete the root of the share that gives the access, at any depth, nor delete a folder above the root of another live share. "Restore this version" is one of these writes and is judged as the push of that version would be: it puts no folder at the top level, under another parent or out of the access root for a user who may not move it there |
 | G8 | Every account call of §4.1 succeeds for the roles that table allows and fails for all others with the code of §5.14; a group always has exactly one owner, and nobody becomes one without `accept_ownership`, which accepts an offer only for the membership it was made to: an offer ends when that membership ends |
@@ -2393,10 +2432,10 @@ member with `view`, former member, stranger, signed out).
 | G15 | A revoked device, a session without a device row, and a session that no longer exists are refused by every function and read no row through any policy; a revoked session cannot register a device again, however long after the revocation and however often its token was refreshed: its revoked row is there for as long as the session is, also after the daily job has run. A session that was not opened by one of Iamb's ways of signing in is refused in the same way (`session_refused`), a session opened with a password among them: with the tokens of a revoked session, and again after `sign_out_everywhere`, nothing that can be asked of the authentication service opens a session that Iamb accepts |
 | G16 | The live channel delivers to a user only the topic of their own id and accepts no message from a client. The right to receive is checked when a socket joins: a socket that joined before its device was revoked receives pokes (two numbers) until it closes or its token ends; a join after the revocation is refused |
 | G17 | Functions that write are `security definer` with a fixed `search_path`, take the user and the session from the token only, and build no statement from their arguments |
-| G18 | Size, count and rate limits are enforced by the server whatever the client sends (§5.2, §6.8); no request deletes more than `cascade_max` rows by cascade; a cascade list names at most 20,000 rows and its answer stays within 4 MiB; a page of a whole read ends at about 4 MiB; an op of the wrong shape is refused as data and the request is counted; `revoke_device` and `sign_out_everywhere` cannot be kept from being made by another device of the account using up a counter; the retention job gives every profile its share of each run |
+| G18 | Size, count and rate limits are enforced by the server whatever the client sends (§5.2, §6.8); no request deletes more than `cascade_max` rows by cascade; a cascade list names at most 20,000 rows, each once, and the cascade answers of one request stay within 4 MiB, as does the content read for them; a push that is cut off is undone, answered as data and counted; a page of a whole read ends at about 4 MiB; an op of the wrong shape is refused as data and the request is counted; `revoke_device` and `sign_out_everywhere` cannot be kept from being made by another device of the account using up a counter; the retention job gives every profile its share of each run |
 | G19 | A repeated push writes once (C15), also when two copies arrive at the same time |
 | G20 | No function's log line and no error text contains row content |
-| G21 | Two requests at the same moment end as some order of the two (C24). Tested with two connections, the second started while the first holds its locks: folders moved into each other; a create in a folder being deleted; a sub-folder created while its share ends; a push into a group's folder while a member is removed. After each, I7 holds and G1 holds. Every writing function holds its profile locks before its first read of a row it decides on. Two requests that create one id in two profiles (an attachment row, a folder) are serial as well: the second is `blocked: invalid` and the first one's row is unchanged, not backed and where the first put it. A request waits for no lock on a profile its caller has no grant in: an owner's write is answered while a stranger's request that names her profile is still open |
+| G21 | Two requests at the same moment end as some order of the two (C24). Tested with two connections, the second started while the first holds its locks: folders moved into each other; a create in a folder being deleted; a sub-folder created while its share ends; a push into a group's folder while a member is removed. After each, I7 holds and G1 holds. Every writing function holds its profile locks before its first read of a row it decides on. Two requests that create one id in two profiles (an attachment row, a folder) are serial as well: the second is `blocked: invalid` and the first one's row is unchanged, not backed and where the first put it. A request waits for no lock on a profile its caller has no grant in, or can only read in: an owner's write is answered while a stranger's or a reader's request that names her profile is still open, and while a stranger creates a row under any id of his choosing |
 | G22 | A call is accepted with the position the server issued last or with the one that was presented for it, and with the second as often as it is presented; a call with any other position of the current epoch is answered `device_conflict` and writes nothing; a position of an older epoch or below the floor is answered `reset_required` before its token is looked at, by `pull` and `push` alike, and such a push writes nothing; a device row to which no position was issued yet accepts its first `snapshot` whatever position is presented (C25) |
 | G23 | After a restore, no row of a profile has a revision above the profile's `backup_rev`, and every write of the profile committed after the backup's moment had one; the epoch's `first_rev` is above every revision given out before; a `repush` is honoured only for a revision above the `backup_rev` and below the `first_rev`, creates a row only then, and never without the permission of C12; onto a row written since, it records the conflict of C18. The first revision is above every revision given out before also when the server's clock is behind the floor the operator passed. No call by a device runs `begin_epoch` or `replay_call`. After the restore script has run, nothing that a logged call took away after the backup is there again (a membership, an invitation, an admin's role, a share, a device that is not revoked), except where the log shows it given back; and the script has made no call that gives access (C18) |
 
@@ -2628,6 +2667,8 @@ How to read one:
 | S85 | A conflict does not hand a member a version from the owner's private folder | sharing | conflict-version-audience |
 | S86 | A removed member is told of no conflict and can close none | membership | conflict-after-removal |
 | S87 | A member cannot restore a version that puts a folder where a push may not | structure | restore-version-permission |
+| S88 | A version replaced in the same push that shares its folder is not handed to a member | sharing | conflict-version-same-push |
+| S89 | A folder name replaced in the same push that shares the folder above it is not handed to a member | sharing | folder-name-same-push |
 
 #### S01 · Two devices change the same field of one snippet
 
@@ -6825,6 +6866,130 @@ top level was refused and changed nothing.
 
 - History (replaced versions the server keeps): `gx` start, a1, b1, a2.
 - Conflicts: `gx` edit_edit, winner b1, loser a1, shown to ines, replaced; `gx` edit_edit, winner
+c1, loser a2 (and, taken over, a1), shown to tom and ines, open.
+- A: shown conflict.
+- B: shown conflict.
+- C: shown conflict.
+
+#### S88 · A version replaced in the same push that shares its folder is not handed to a member
+
+Category: sharing. Covers: conflict-version-same-push. Rules: C3, C20, C21, C24, D2.
+
+**Start.** Ines shares f1 with the family, to change; f2 is private and holds the snippet s2. On her
+first device she writes a door code into s2. Her second device, which was offline, replaces the text
+of s2 and then moves the whole folder f2 into the shared folder; it sends both changes in one push.
+Tom edits s2 offline, Ines edits it once more, and Tom's edit arrives last.
+
+Devices: A (ines), B (ines), C (tom). Profiles: `p-ines` (personal, ines), `p-tom` (personal, tom),
+`g-fam` (family, ines).
+
+| Row | Kind | Refers to | Rev | Fields |
+| --- | --- | --- | --- | --- |
+| `m-ines` | membership | group `g-fam`, user `ines` | 2 | role `owner` |
+| `m-tom` | membership | group `g-fam`, user `tom` | 6 | role `member` |
+| `f1` | folder | profile `p-ines` | 3 | name `Shop replies` |
+| `f2` | folder | profile `p-ines` | 4 | name `Private` |
+| `s2` | snippet | folder `f2` | 8 | abbreviation `;door`, body `The door code changes on Friday.` |
+| `sh1` | folder share | folder `f1`, group `g-fam` | 7 | permission `edit` |
+
+**Steps.**
+
+1. B goes offline.
+2. `a1` · A edits `s2`: body `The door code is 4711 until Friday, then 2468.`. Answer: `s2`
+   `applied`.
+3. `b1` · B edits `s2`: body `Ask me for the door code.`.
+4. `b2` · B moves `f2` to `f1`.
+5. B comes back online and syncs. Answer: `s2` `applied+conflict`, `f2` `applied`. *One push with
+   both changes. The server applies folders before snippets (§6.3), so it moves f2 under the shared
+   folder first and replaces the text of s2 second; Ines made them in the other order. b1 replaced
+   a1 unseen: her own conflict, which offers a1. For Tom the folder and the snippet become readable
+   as this request leaves them, with b1's text (C21). His access to f2 begins when the request has
+   ended (§5.4): a1 was replaced inside it, and no state of the server ever showed it to him.*
+6. C goes offline.
+7. `c1` · C edits `s2`: body `Ask Ines for the door code.`.
+8. `a2` · A edits `s2`: body `Ask me or Tom for the door code.`. Answer: `s2` `applied`.
+9. C comes back online and syncs. Answer: `s2` `applied+conflict`. *c1 replaces a2 unseen: a new
+   conflict, which takes over a1 from the open one (C3). Tom is offered a2, which was the row while
+   he could read the folder. a1 is not offered to him and he cannot restore it, although the folder
+   was already 'his' when the server replaced it: the replacement and the move were one request
+   (C20). Ines is offered both. A guess of a1's text, sent by a changed client with a1's revision as
+   its base, is answered like any other write (C17).*
+
+**Outcome.** The folder is in the shared tree and the snippet has Tom's content. One conflict is
+open on it. Ines's devices offer her a2 and a1 back; Tom's device offers him a2 only. The door code
+that Ines took out of the snippet before she moved the folder has reached no device of Tom's,
+whether her device sent the two changes apart or together.
+
+| Row | Server | A | B | C |
+| --- | --- | --- | --- | --- |
+| `m-ines` | live · start | = | = | = |
+| `m-tom` | live · start | = | = | = |
+| `f1` | live · start | = | = | = |
+| `f2` | live · b2 (parent `f1`) | = | = | = |
+| `s2` | live · c1 | = | = | = |
+| `sh1` | live · start | = | = | = |
+
+- History (replaced versions the server keeps): `f2` start; `s2` start, a1, b1, a2.
+- Conflicts: `s2` edit_edit, winner b1, loser a1, shown to ines, replaced; `s2` edit_edit, winner
+c1, loser a2 (and, taken over, a1), shown to tom and ines, open.
+- A: shown conflict.
+- B: shown conflict.
+- C: shown conflict.
+
+#### S89 · A folder name replaced in the same push that shares the folder above it is not handed to a member
+
+Category: sharing. Covers: folder-name-same-push. Rules: C3, C20, C21, C24.
+
+**Start.** Ines shares f1 with the family, to change; f2 is private and has a sub-folder f3. On her
+first device she gives f3 a name that says what it holds. Her second device, which was offline,
+renames f3 to something plain and then moves f2 into the shared folder; it sends both changes in one
+push. Tom renames f3 offline, Ines renames it once more, and Tom's rename arrives last.
+
+Devices: A (ines), B (ines), C (tom). Profiles: `p-ines` (personal, ines), `p-tom` (personal, tom),
+`g-fam` (family, ines).
+
+| Row | Kind | Refers to | Rev | Fields |
+| --- | --- | --- | --- | --- |
+| `m-ines` | membership | group `g-fam`, user `ines` | 2 | role `owner` |
+| `m-tom` | membership | group `g-fam`, user `tom` | 6 | role `member` |
+| `f1` | folder | profile `p-ines` | 3 | name `Shop replies` |
+| `f2` | folder | profile `p-ines` | 4 | name `Private` |
+| `f3` | folder | profile `p-ines`, parent `f2` | 8 | name `Letters` |
+| `sh1` | folder share | folder `f1`, group `g-fam` | 7 | permission `edit` |
+
+**Steps.**
+
+1. B goes offline.
+2. `a1` · A edits `f3`: name `Letters to the landlord about the arrears`. Answer: `f3` `applied`.
+3. `b1` · B edits `f3`: name `Misc`.
+4. `b2` · B moves `f2` to `f1`.
+5. B comes back online and syncs. Answer: `f2` `applied`, `f3` `applied+conflict`. *One push. The
+   server applies a folder before the folders below it (§6.3): f2 moves under the shared folder,
+   then f3 is renamed. b1 replaced a1 unseen: Ines's own conflict, which offers a1. Tom's access to
+   f2 and f3 begins when the request has ended (§5.4).*
+6. C goes offline.
+7. `c1` · C edits `f3`: name `Misc letters`.
+8. `a2` · A edits `f3`: name `Miscellaneous`. Answer: `f3` `applied`.
+9. C comes back online and syncs. Answer: `f3` `applied+conflict`. *Tom may rename a sub-folder of a
+   tree he may change (§4.3). His rename replaces a2 unseen and takes a1 over from the open conflict
+   (C3). He is offered a2; the name f3 had before the folder above it was shared is not offered to
+   him (C20).*
+
+**Outcome.** The folders are in the shared tree and f3 has the name Tom gave it. One conflict is
+open on it: Ines is offered a2 and a1, Tom a2 only. The name that said what the folder held has
+reached no device of Tom's.
+
+| Row | Server | A | B | C |
+| --- | --- | --- | --- | --- |
+| `m-ines` | live · start | = | = | = |
+| `m-tom` | live · start | = | = | = |
+| `f1` | live · start | = | = | = |
+| `f2` | live · b2 (parent `f1`) | = | = | = |
+| `f3` | live · c1 (name `Misc letters`) | = | = | = |
+| `sh1` | live · start | = | = | = |
+
+- History (replaced versions the server keeps): `f2` start; `f3` start, a1, b1, a2.
+- Conflicts: `f3` edit_edit, winner b1, loser a1, shown to ines, replaced; `f3` edit_edit, winner
 c1, loser a2 (and, taken over, a1), shown to tom and ines, open.
 - A: shown conflict.
 - B: shown conflict.

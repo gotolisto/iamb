@@ -97,20 +97,20 @@ begin
     perform iamb_test.put('cascade_20000_ms', to_jsonb(round(ms)));
     -- The answer stays within the 4 MiB of a request: 30 of the caller's own snippets of 390 kB,
     -- named with a base they do not have, would be 11.7 MB of whole rows. The first ones come
-    -- whole, the others in the short form with `fetch`, and a list that names them many times
-    -- over is no larger.
+    -- whole, the others in the short form with `fetch`. (A list that names a row twice is refused
+    -- since the re-verification: `29_reverify_push`.)
     sn := array(select gen_random_uuid() from generate_series(1, 30));
     for i in 0..2 loop
         perform iamb_test.push('ines', (select jsonb_agg(iamb_test.op_snippet(x, big, ';b' || o, repeat('y', 390000)))
                                         from unnest(sn[i * 10 + 1 : i * 10 + 10]) with ordinality as t(x, o)));
     end loop;
     select jsonb_agg(jsonb_build_object('entity', 'snippet', 'id', x, 'base_rev', 1)) into list
-    from generate_series(1, 20) g, unnest(sn) x;
+    from unnest(sn) x;
     r := iamb_test.push('ines', jsonb_build_array(iamb_test.op_delete('folder', df, 0, jsonb_build_object('cascade', list))));
-    perform iamb_test.eq(jsonb_array_length(r -> 'results' -> 0 -> 'cascade'), 600, '600 answers');
+    perform iamb_test.eq(jsonb_array_length(r -> 'results' -> 0 -> 'cascade'), 30, '30 answers');
     select count(*) filter (where e ? 'row'), count(*) filter (where (e ->> 'fetch')::boolean and not e ? 'row')
     into whole, short from jsonb_array_elements(r -> 'results' -> 0 -> 'cascade') e;
-    perform iamb_test.ok(whole between 1 and 10 and whole + short = 600, whole || ' whole rows and ' || short || ' short ones');
+    perform iamb_test.ok(whole between 1 and 10 and whole + short = 30, whole || ' whole rows and ' || short || ' short ones');
     perform iamb_test.ok(octet_length(r::text) < 4194304, 'the answer has ' || octet_length(r::text) || ' bytes');
     perform iamb_test.ok(not exists (select 1 from jsonb_array_elements(r -> 'results' -> 0 -> 'cascade') e
                                      where (e ->> 'fetch')::boolean and ((e ->> 'deleted')::boolean or not e ? 'rev')),

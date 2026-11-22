@@ -273,4 +273,71 @@ begin
     perform iamb_test.check_all();
 end $$;
 
+-- Re-verification N3 (docs/reviews/4.3-security-reverify.md): two ways that were left to stall
+-- somebody else's writes.
+-- (j) A reader holds no lock. Tom may only read the shared folder; his push into it is refused,
+-- and while his request is still open Ines saves a snippet in her private folder without waiting.
+do $$
+declare
+    ids jsonb := iamb_test.family('view');
+begin
+    perform iamb_test.pull('tom'); perform iamb_test.pull('ines'); perform iamb_test.pull('stranger');
+    perform iamb_test.put('ids', ids);
+end $$;
+begin;
+select iamb_test.put('j1', iamb_test.push('tom', jsonb_build_array(
+       iamb_test.op_snippet(gen_random_uuid(), (iamb_test.get('ids') ->> 'f1')::uuid, ';x', 'x'),
+       iamb_test.op_delete('snippet', (iamb_test.get('ids') ->> 's1')::uuid, iamb_test.rev('snippet', (iamb_test.get('ids') ->> 's1')::uuid))))) is not null;
+select extensions.dblink_send_query('c2', format('select iamb_test.push(%L, %L::jsonb)::text', 'ines',
+       jsonb_build_array(iamb_test.op_snippet((iamb_test.get('ids') ->> 's2')::uuid, (iamb_test.get('ids') ->> 'f2')::uuid, ';priv', 'edited while the reader''s request is open',
+                         iamb_test.rev('snippet', (iamb_test.get('ids') ->> 's2')::uuid)))));
+select pg_sleep(0.7);
+select iamb_test.ok(not pg_temp.c2_waits(), '(j) the owner''s request does not wait for the reader''s');
+select iamb_test.ok(not exists (select 1 from pg_stat_activity where application_name = 'iamb_c2' and state = 'active'),
+                    '(j) and has been answered while the reader''s request is still open');
+commit;
+select iamb_test.put('j', pg_temp.c2_result());
+do $$
+begin
+    perform iamb_test.ok(iamb_test.st(iamb_test.get('j1'), 1) = 'rejected:forbidden' and iamb_test.st(iamb_test.get('j1'), 2) = 'rejected:forbidden',
+                         '(j) the reader''s ops are refused as before: ' || iamb_test.st(iamb_test.get('j1'), 1) || ', ' || iamb_test.st(iamb_test.get('j1'), 2));
+    perform iamb_test.eq(iamb_test.st(iamb_test.get('j')), 'applied', '(j) the owner''s write is applied');
+    perform iamb_test.check_all();
+end $$;
+-- (k) The lock on a row's id cannot be shared by an id somebody else chose. Two ids that had one
+-- key under the 32-bit hash of the first form (found among 400,000 random ids): Ines's private
+-- snippet has the first; a stranger creates a snippet with the second in his own folder and his
+-- request stays open; Ines's edit of her snippet does not wait.
+do $$
+declare
+    a uuid; b uuid; sf uuid := gen_random_uuid(); r jsonb;
+begin
+    with c as (select gen_random_uuid() as id from generate_series(1, 400000)),
+         h as (select id, hashtext('snippet:' || id::text) as k from c),
+         d as (select k from h group by k having count(*) > 1 limit 1)
+    select (array_agg(h.id order by h.id))[1], (array_agg(h.id order by h.id))[2] into a, b from h join d using (k);
+    perform iamb_test.ok(a is not null and b is not null and a <> b, '(k) two ids with one 32-bit key');
+    r := iamb_test.push('ines', jsonb_build_array(iamb_test.op_snippet(a, (iamb_test.get('ids') ->> 'f2')::uuid, ';a', 'private row A')));
+    perform iamb_test.eq(iamb_test.st(r), 'applied', '(k) her row');
+    r := iamb_test.push('stranger', jsonb_build_array(iamb_test.op_folder(sf, iamb_test.personal('stranger'), null, 'own')));
+    perform iamb_test.eq(iamb_test.st(r), 'applied', '(k) his folder');
+    perform iamb_test.put('ids', iamb_test.get('ids') || jsonb_build_object('ka', a, 'kb', b, 'sf', sf));
+end $$;
+begin;
+select iamb_test.put('k1', iamb_test.push('stranger', jsonb_build_array(
+       iamb_test.op_snippet((iamb_test.get('ids') ->> 'kb')::uuid, (iamb_test.get('ids') ->> 'sf')::uuid, ';b', 'b')))) is not null;
+select extensions.dblink_send_query('c2', format('select iamb_test.push(%L, %L::jsonb)::text', 'ines',
+       jsonb_build_array(iamb_test.op_snippet((iamb_test.get('ids') ->> 'ka')::uuid, (iamb_test.get('ids') ->> 'f2')::uuid, ';a', 'edited',
+                         iamb_test.rev('snippet', (iamb_test.get('ids') ->> 'ka')::uuid)))));
+select pg_sleep(0.7);
+select iamb_test.ok(not pg_temp.c2_waits(), '(k) the owner''s request does not wait for a stranger''s create of another id');
+commit;
+select iamb_test.put('k', pg_temp.c2_result());
+do $$
+begin
+    perform iamb_test.eq(iamb_test.st(iamb_test.get('k1')), 'applied', '(k) the stranger''s create in his own folder');
+    perform iamb_test.eq(iamb_test.st(iamb_test.get('k')), 'applied', '(k) the owner''s edit');
+    perform iamb_test.check_all();
+end $$;
+
 select extensions.dblink_disconnect('c2');

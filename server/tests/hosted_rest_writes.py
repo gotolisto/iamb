@@ -15,7 +15,8 @@ What it does, with throwaway accounts (`iamb-rest-…@example.test`) that it rem
   - through `POST /rest/v1/rpc/<function>` with those tokens: `hello`, `snapshot`,
     `set_display_name`, `create_group`, `invite`, `accept_invitation`, `push` (folders, snippets, a
     share, a stale write that records a conflict, a folder delete with a cascade list, a put that is
-    refused), `pull`, `get_conflict`, `resolve_conflict`, `members`, `attachment_upload_begin`,
+    refused, and one request with an edit and the move of its folder into the shared tree, for the
+    re-verification's N1), `pull`, `get_conflict`, `resolve_conflict`, `members`, `attachment_upload_begin`,
     `attachment_upload_cancel`, `remove_member`, `revoke_device`, `sign_out_everywhere`;
   - checks every answer (HTTP 200 and the expected `error` or status), and that a revoked device is
     refused at once;
@@ -341,6 +342,42 @@ def run(pk):
     out = ok200("attachment_upload_begin (member, in the owner's profile)",
                 t.call("attachment_upload_begin", profile=p_owner, sha256="ab" * 32, size=1000, mime="image/png"))
     ok200("attachment_upload_cancel (owner ends the member's upload)", a.call("attachment_upload_cancel", upload=out.get("upload")))
+
+    # Re-verification N1, end to end: the owner's second device replaces private content and
+    # moves its folder into the shared tree in ONE push. The member is not offered the version
+    # that was replaced, and cannot restore it.
+    fp, sp = str(uuid.uuid4()), str(uuid.uuid4())
+    out = ok200("push (owner: another private folder with a snippet)", a.push([
+        folder(fp, p_owner, None, "Private two"), snippet(sp, fp, ";pin", "Nothing yet.")]))
+    fp_rev = ((out.get("results") or [{}])[0].get("row") or {}).get("rev")
+    sp_rev = ((out.get("results") or [{}] * 2)[1].get("row") or {}).get("rev")
+    ok200("pull (owner, second device)", b.pull())
+    out = ok200("push (owner, first device: private content)", a.push([snippet(sp, fp, ";pin", "PIN of the safe: 4711", sp_rev)]))
+    rev_private = ((out.get("results") or [{}])[0].get("row") or {}).get("rev")
+    out = ok200("push (owner, second device: the edit and the folder's move in one request)", b.push([
+        snippet(sp, fp, ";pin", "Ask me.", sp_rev), folder(fp, p_owner, f1, "Private two", fp_rev)]))
+    check("both applied, the edit with a conflict of her own",
+          statuses(out) == ["applied", "applied"] and bool((out.get("results") or [{}])[0].get("conflict")), str(statuses(out)))
+    ok200("pull (member)", t.pull())
+    out = ok200("push (member: a stale edit of the snippet that came into the shared tree)", t.push([snippet(sp, fp, ";pin", "Member's edit", 0)]))
+    conflict2 = ((out.get("results") or [{}])[0]).get("conflict")
+    check("applied, with a conflict", statuses(out) == ["applied"] and bool(conflict2), str(statuses(out)))
+    out = ok200("get_conflict (member)", t.call("get_conflict", id=conflict2))
+    bodies = [(v.get("row") or {}).get("body") for v in out.get("versions") or []]
+    check("the version replaced in the push that shared the folder is not offered to the member",
+          bodies == ["Ask me."] and "4711" not in json.dumps(out), str(len(bodies)))
+    ok200("resolve_conflict restore of that version (member)", t.call("resolve_conflict", id=conflict2, action="restore", rev=rev_private), "invalid")
+    out = ok200("get_conflict (owner)", a.call("get_conflict", id=conflict2))
+    check("the owner is offered it", "4711" in json.dumps(out))
+    # N6: the member's "keep" closes the conflict for him and leaves it open for the owner.
+    out = ok200("resolve_conflict keep (member)", t.call("resolve_conflict", id=conflict2, action="keep"))
+    check("resolved for him", out.get("state") == "resolved")
+    out = ok200("conflicts (owner)", a.call("conflicts"))
+    check("still in the owner's list", any(c.get("id") == conflict2 for c in out.get("conflicts") or []))
+    # N2: a cascade list that names a row twice is refused as data.
+    out = ok200("push (a cascade list that names a row twice)", a.push([
+        delete("folder", str(uuid.uuid4()), 0, cascade=[{"entity": "snippet", "id": sp, "base_rev": 0}] * 2)]))
+    check("blocked:invalid", statuses(out) == ["blocked:invalid"], str(statuses(out)))
 
     # A folder's delete with a cascade list (the largest scratch use of task 4.2).
     out = ok200("push (owner deletes the private folder with its snippet)", a.push([

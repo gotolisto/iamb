@@ -8,14 +8,18 @@ and tests it. Where the implementation had to differ, the difference is a propos
 
 The security review of task 4.3 ([`docs/reviews/4.3-security-review.md`](../docs/reviews/4.3-security-review.md))
 found 20 points; its follow-up changed the design where the design itself was the cause (C3, C20,
-C24, §5.4, §5.6; ADR-0031) and the functions in migrations 11 to 18. The review's last section,
-"Resolution", says for each finding what was done, which test holds it and what is left.
+C24, §5.4, §5.6; ADR-0031) and the functions in migrations 11 to 18. The review's section
+"Resolution" says for each finding what was done, which test holds it and what is left. The
+reviewer then checked the fixes ([`docs/reviews/4.3-security-reverify.md`](../docs/reviews/4.3-security-reverify.md))
+and found seven more points, one of them a way into another account's data that the first fix had
+left open; migrations 19 to 21 and the review's last section, "After the re-verification", are
+about those.
 
 ## Layout
 
 | Path | What |
 | --- | --- |
-| `supabase/migrations/` | Eighteen timestamped migrations, applied in order, each safe to apply again |
+| `supabase/migrations/` | Twenty-one timestamped migrations, applied in order, each safe to apply again |
 | `supabase/apply.sh` | Applies the migrations to a hosted project through the Management API |
 | `restore/restore.py` | The operator's restore script (C18) |
 | `tests/run.sh` | The local test runner: a throwaway Postgres cluster, the stand-in, the migrations (applied twice), every test |
@@ -51,6 +55,9 @@ The migrations:
 | `…110500_retention` | Review 9: a share of each run per profile, a run goes on where the last stopped (`server_state.job_after`) |
 | `…110600_reads_and_grants` | Review 18, 16: a page of `fetch_folder` and `snapshot` ends at about 4 MiB; `search_path = pg_catalog, pg_temp` on every function; the final grants |
 | `…110700_steady_plans` | Found while measuring on the hosted project: `feed_flush`, `store_row` and `refresh_access` written so that their cost does not depend on a plan a pooled session made while a table was empty |
+| `…120000_access_begins_after_the_request` | Re-verification N1: an access entry gets `since_rev` when its request has ended (`access_begin`, called by `feed_flush`); `history.within_request` for a version one request wrote and replaced |
+| `…120100_push_bounds_and_locks` | Re-verification N2, N3, N4: a cascade list names a row once, and whole rows are chosen from stored sizes before content is read, within one allowance per request; a push that is cut off is caught and counted; a profile is locked only for a caller who can write in it, and the id lock has a seeded 64-bit key (`server_state.lock_seed`); a restored folder is held to four levels |
+| `…120200_conflict_answers` | Re-verification N6: an answer closes a conflict for everybody only when the party is offered every version; otherwise for that party (`conflict.closed_for`) |
 
 ## The schema in brief
 
@@ -84,9 +91,11 @@ The migrations:
   `enter`; `revoke_device` and `sign_out_everywhere` lock all theirs together by id), the group
   profiles by id, the personal profiles by id (`lock_profiles` sorts groups first), and last the
   feed heads by user id (`feed_flush`). Revisions are drawn under the profile locks and recorded
-  as `head_rev`. A `push` locks only the profiles its caller has a grant in, and after them the id
-  of every row its ops name (an advisory lock on entity and id), then reads the rows again; an
-  account call checks the caller's membership before it locks and again under the lock.
+  as `head_rev`. A `push` locks only the profiles its caller can write something in (`writes_in`;
+  an op in a profile the caller can only read is judged without the lock and cannot write, because
+  `next_rev` draws no revision then), and after them the id of every row its ops may write (an
+  advisory lock whose 64-bit key is made with `server_state.lock_seed`), then reads the rows again;
+  an account call checks the caller's membership before it locks and again under the lock.
 - **Feed.** Entries are collected during the call (in `iamb_private.tx_feed`) and written last by `feed_flush`, which gives
   each user's entries `head + 1, …`, replaces an older `row` entry for the same row, and pokes
   `feed:<user>` with `{epoch, head}` through `realtime.send`.
@@ -99,9 +108,9 @@ The migrations:
 | G2 | One read policy per table (§5.13), each requiring `session_ok()`; the wire view masks an unreadable parent | `03_outsider`, `04_viewer`, `05_removed_member`; `check_readers` compares the policies with `iamb_private.readers` for every actor and row after every step |
 | G3 | The `tag` and `attachment` policies (readable snippet with a live link, or writer with `edit` now) | `04_viewer`, `05_removed_member`, `12_attachments` |
 | G4 | No write privilege anywhere; `anon` has no schema; exactly the gate helpers granted; helpers check the caller's own session and device | `02_grants` (catalog and by trying; a device feeding other devices' ids to the helpers changes nothing) |
-| G5 | `history` has no grant and a false policy; `get_conflict` reads it through `conflict_history`, which returns a version only to a party who can read the row now and who wrote the version or could read it while it was the row (`version_readable`: an access entry for the version's folder whose `since_rev` is below the revision that replaced it). `push` finds a base version under the same rule | `05_removed_member`, `15_conflicts`, `22_review_conflicts` |
+| G5 | `history` has no grant and a false policy; `get_conflict` reads it through `conflict_history`, which returns a version only to a party who can read the row now and who wrote the version or could read it while it was the row (`version_readable`: an access entry for the version's folder whose `since_rev` is below the revision that replaced it). `push` finds a base version under the same rule. `since_rev` is taken when the request that made the entry has ended (`access_begin`), and a version one request wrote and replaced is its writer's alone (`within_request`): "could read" means in a state the reader could have seen | `05_removed_member`, `15_conflicts`, `22_review_conflicts`, `28_same_request` (the replacement and the sharing in one push); `check_access` also checks after every step that no entry was left without its starting revision |
 | G6 | Own-rows policies on `feed`, `feed_head`, `device`, `folder_access`; `conflict` and `conflict_version` by a party who can read the conflict's row; `attachment_upload` by its uploader and by who manages its profile | `03_outsider`, `22_review_conflicts`, `25_review_uploads` |
-| G7 | `push_op` checks §4.3 against `folder_access` after the locks; share roots and the roots of shares below need `manage`. `resolve_conflict` makes a restore through `push_op`, so it allows what a push allows | `04_viewer`, `08_folder_delete`, `09_shares`, `22_review_conflicts` |
+| G7 | `push_op` checks §4.3 against `folder_access` after the locks; share roots and the roots of shares below need `manage`. `resolve_conflict` makes a restore through `push_op`, so it allows what a push allows; a party's answer closes a conflict for the others only when that party is offered every version (`offered_all`, `closed_for`) | `04_viewer`, `08_folder_delete`, `09_shares`, `22_review_conflicts`, `30_reverify_conflicts` |
 | G8 | `acct_*` check the role after locking the group; one live owner by a unique index; ownership only by `accept_ownership`, for an offer made to the caller's present membership; `end_membership` withdraws an offer | `10_account_calls`, `23_review_account` |
 | G9 | `push` builds the stored row from the op's fields only; C17's four cases | `07_push_rules` |
 | G10 | `profile` and `membership` ops answer `rejected: not_pushable` | `07_push_rules` |
@@ -112,15 +121,17 @@ The migrations:
 | G15 | `enter` and `session_ok()` require a live `auth.sessions` row that is not past its `not_after`, an accepted `amr` and an unrevoked device row; revoked rows are kept while their sessions exist | `11_sessions`, `16_daily_job`, `23_review_account`; on the hosted project `hosted_auth_probe.py` and `hosted_rest_writes.py` |
 | G16 | One select policy on `realtime.messages` for `feed:<own id>`; no insert policy; private channels only. The realtime service applies the policy when a socket joins (review 17) | `03_outsider`, `05_removed_member`, `13_feed` |
 | G17 | Definer functions with `search_path` pinned to `pg_catalog, pg_temp`; no dynamic SQL; caller from the token; no temporary table; no `UPDATE` or `DELETE` without a `WHERE` | `02_grants` (catalog), `21_where_clauses` (catalog, and a caller's own temporary table with a trigger) |
-| G18 | Sizes in `normalize`, counts in `push_core` and `rows`, rate limits in `enter` and `rate_take`, `cascade_max` in the cascade; `op_shape` before any lock; the cascade list and its answer, and the pages of whole reads, bounded; a counter of their own for the two revoking calls; a share of each retention run per profile | `07_push_rules`, `08_folder_delete`, `14_limits`, `24_review_push`, `23_review_account`, `26_review_retention`, `27_review_reads` |
+| G18 | Sizes in `normalize`, counts in `push_core` and `rows`, rate limits in `enter` and `rate_take`, `cascade_max` in the cascade; `op_shape` before any lock; the cascade list and its answer, and the pages of whole reads, bounded; a counter of their own for the two revoking calls; a share of each retention run per profile. A cascade list names a row once, and `cascade_answer` reads content only of the rows it will return, within one allowance per request; a push that is cut off (time, temporary file space, disk, memory) is caught in `api.push`, undone and counted as ten | `07_push_rules`, `08_folder_delete`, `14_limits`, `24_review_push`, `23_review_account`, `26_review_retention`, `27_review_reads`, `29_reverify_push` |
 | G19 | Receipts under the device row's lock | `07_push_rules`, `20_concurrency` (e) |
 | G20 | `iamb_private.log` writes ids, counts and codes only | `run.sh` scans every function log line for the bodies, names and addresses the tests wrote |
-| G21 | The lock order of C24 | `20_concurrency`: folders moved into each other, a create in a folder being deleted (both orders), a sub-folder created while its share ends, a push into a group's folder while a member is removed; each second request is seen waiting on the first's lock; I7 and G1 after each. Since the review: one id created in two profiles by two requests (an attachment row, a folder), where the second is refused; and an owner's write that is answered while a stranger's request naming her profile is still open |
+| G21 | The lock order of C24 | `20_concurrency`: folders moved into each other, a create in a folder being deleted (both orders), a sub-folder created while its share ends, a push into a group's folder while a member is removed; each second request is seen waiting on the first's lock; I7 and G1 after each. Since the review: one id created in two profiles by two requests (an attachment row, a folder), where the second is refused; an owner's write that is answered while a stranger's request naming her profile is still open; the same while a reader's refused request is open (j); and while a stranger creates a row whose id shared a 32-bit lock key with hers (k) |
 | G22 | `iamb_private.position` | `11_sessions` |
 | G23 | `begin_epoch` (first revision from the operator's floor and above every known revision), `epoch_profile`, the re-push span of C18, `replay_call` and `restore_replay` | `restore_test.sh`, `12_attachments` |
 
-I7 (`check_tree`: no cycle, at most four levels, no live row under a deleted folder) runs after every
-step too.
+I7 (`check_tree`: no cycle, no live folder below the fourth level, no live row under a deleted folder)
+runs after every step too. A deleted folder can lie deeper after a folder above it was moved; when it
+comes back, `push_op` and `restore_chain` put it under the nearest folder above that keeps four levels
+(C8; `29_reverify_push`).
 
 ## Running the tests
 
@@ -133,6 +144,9 @@ its library directory; it is built from the `pg-safeupdate` sources with `make i
 session of the test cluster loads it, as the REST interface's role does on the platform, and the
 runner's last lines say so; without it the catalog check of `21_where_clauses` is the guard
 against an `UPDATE` or `DELETE` without a `WHERE`. The CI job does not install the library today.
+The test cluster has `temp_file_limit = 256MB`: no statement of the suite needs more than a few MB of
+temporary files, and a function that starts to write them without bound fails its test instead of
+filling the disk of whoever runs the suite.
 
 **In CI**: the `server` job of `.github/workflows/ci.yml` (Linux) installs Postgres and runs the same
 script; `ci-ok` requires it.
@@ -154,7 +168,9 @@ device could succeed on the project (review 14). The test that does go the devic
 accounts by SQL, has the authentication service open real sessions for them with a one-time code
 (`amr: otp`, no mailbox and no mail), and calls `hello`, `snapshot`, `push`, `pull`, `fetch_folder`,
 the account calls, the conflict calls, the upload calls, `revoke_device` and `sign_out_everywhere`
-through `POST /rest/v1/rpc/…` with those tokens. It commits, so it removes every row it made
+through `POST /rest/v1/rpc/…` with those tokens; among the pushes, one that replaces private content
+and moves its folder into the shared tree in one request, after which the member reads the conflict
+(re-verification N1). It commits, so it removes every row it made
 afterwards, and compares the row counts of every table of `iamb` and `iamb_private`, of the
 authentication service's tables and of `storage.objects` with those taken before. It cannot take
 back the values drawn from `rev_seq` and its function log lines.
@@ -189,7 +205,7 @@ through `POST /v1/projects/<ref>/database/migrations`, one named migration per f
 already applied, with a pause between files (the API names each version after the current second).
 The migrations must run as `postgres` and say so if they do not. With the Supabase command-line tool,
 `supabase db push` from `server/` does the same. A new change is a new migration file: the hosted
-project already holds these eighteen.
+project already holds these twenty-one.
 
 Besides the migrations, a project needs these settings (the hosted project has them; see below): the
 REST interface exposes `api,api_service` and nothing else; Realtime allows private channels only; the
@@ -253,9 +269,9 @@ lines are a reason to look (was the database restored? what does `rev_seq` hold 
 Project `gemyckdldyzcvrvwuivk` (`iamb`, Postgres 17, us-east-1), set up on 2026-11-21 through the
 Management API only.
 
-**Migrations applied**: the eighteen files above, in order (`supabase_migrations.schema_migrations`;
+**Migrations applied**: the twenty-one files above, in order (`supabase_migrations.schema_migrations`;
 the first ten as versions 20261121131746 to 20261121133446, the eight of the review's follow-up on
-2026-11-21 and 22). The last one was changed twice while its effect was measured there, and its
+2026-11-21 and 22, the three after the re-verification on 2026-11-22). The last one was changed twice while its effect was measured there, and its
 statements were run again each time; the project holds the file as it is here.
 
 **Row-level security**: on for 29 of the 29 tables of `iamb` and for the two scratch tables of `iamb_private`; the exposed schemas `api` and `api_service`
@@ -309,19 +325,31 @@ off, secure email change on, email confirmation required (`mailer_autoconfirm` o
 rotation on with a reuse interval of 10 s, access tokens of 3,600 s, no identity provider enabled.
 Not changed: TOTP enrolment, which is on by default (correction 11); the mail sender (open question 8).
 
+**For the owner to set: a limit on temporary files** (`temp_file_limit`; the database has none,
+`-1`). Without it one statement can write temporary files until the disk is full, whatever function
+it runs in; the re-verification showed a push that did (N2). The functions are bounded now, and the
+limit is what holds if one of them is ever wrong again. A migration cannot set it: the platform
+refuses the parameter to the migrations' role in every form (`ALTER ROLE authenticator SET …`,
+`ALTER DATABASE`, `ALTER FUNCTION … SET`, `SET LOCAL`: "permission denied to set parameter
+temp_file_limit"; tried in transactions that were rolled back). It is a setting of the database
+itself, for the owner through the platform's database configuration, or through its support if the
+plan's settable parameters do not include it; that was not tried here. A value of 1 GB leaves room
+for everything Iamb does (a request needs some tens of MB at most) and for the platform's own jobs.
+
 **For the owner to switch, in the project's authentication settings** (the review's follow-up changed
 no setting): **TOTP enrolment off** (Authentication, Multi-Factor, TOTP). Iamb never asks for a second factor;
 an account that enrols and verifies one through the authentication service gets sessions whose `amr`
 holds `totp`, which Iamb refuses, until it signs in again without the factor (review 19).
 
-**Tests on the hosted project**: `hosted.sh`, 24 of 24 files passed (all but `20_concurrency`), each in a
+**Tests on the hosted project**: `hosted.sh`, 27 of 27 files passed (all but `20_concurrency`), each in a
 rolled-back transaction, through the Management API. Through the REST interface, as a device calls:
-`hosted_rest_writes.py`, 52 of 52 checks, after migrations 11 to 18; before them the same script
-failed in its first call (`hello`: HTTP 400, "DELETE requires a WHERE clause") and in all that
-depend on it (2 of 49 passed). `hosted_auth_probe.py --enable-hook` as below; `perf.sql` rolled
+`hosted_rest_writes.py`, 71 of 71 checks, after migrations 11 to 21; before migration 11 the same
+script failed in its first call (`hello`: HTTP 400, "DELETE requires a WHERE clause") and in all
+that depend on it, and before migration 19 in the four checks of the re-verification's N1, N2 and
+N6 (the member was offered, and restored, the private version). `hosted_auth_probe.py --enable-hook` as below; `perf.sql` rolled
 back: a push of 200 ops 0.42 to 0.55 s, a cascade of 2,000 rows 3.4 to 6.5 s over sixteen runs
 (before migration 18 the same delete took between 3 and 21 s, depending on the plan the pooled
-session had kept). Throwaway accounts left afterwards: 0; the row counts of every table equal
+session had kept); after migration 21, 0.45 to 0.49 s and 3.5 to 4.4 s over three. Throwaway accounts left afterwards: 0; the row counts of every table equal
 those before the runs (2 plans, 1 epoch, 1 `server_state`). The rolled-back
 runs advanced `rev_seq` (one early run moved it to the clock times 1,024 through `begin_epoch`; with no
 committed revision on the project it was set back to 1, and `begin_epoch` is no longer run there).
@@ -375,6 +403,10 @@ Done on the hosted project:
 12. **The live channel checks the right to receive at the join** — a socket that joined before its
     device was revoked received the next poke; a join after the revocation was refused (review 17;
     §6.6 and G16 now say so).
+13. **A migration cannot limit temporary files** — `temp_file_limit` is refused to the role the
+    migrations run as (above, "For the owner to set"). The same role may set a function's
+    `statement_timeout`, which is what bounds a request in time; `api.push` catches the time-out
+    and the errors of the class "insufficient resources" and answers them as data.
 
 Left, with what each needs:
 
@@ -477,6 +509,14 @@ follow-up to the security review edited the design itself where the review's fin
   (`api_service.attachment_verified`, `api_service.delete_account_data`) and `api.check` are here.
 - Removing stored objects through the storage interface after the retention job's log lines (4.6).
 - The checks of §11.6 listed as left above.
+- **A decision of the owner's** (re-verification N5; the options and a recommendation are in the
+  review's §12.3): a deleted row keeps its content for 30 days, and `snapshot` and `rows` hand it
+  to whoever can read its folder now, also to somebody the folder was shared with after the
+  delete. Nothing was changed.
+- **For task 4.6** (re-verification N7): an upload stays open when its uploader's right to write in
+  the profile ends, and `api_service.attachment_verified` commits it without asking. The edge
+  function must not be able to commit such an upload: end the uploads with the right, or refuse
+  the commit when `edits_in_profile(uploaded_by, profile_id)` is false.
 - From the security review, with the reasons in its Resolution: an allowance in bytes per profile
   and a bound in bytes on `rows` and on the rows in a push's results (review 18; both need a
   decision on the plans or a short form in the protocol); a table instead of log lines for the

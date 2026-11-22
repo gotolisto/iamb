@@ -7190,3 +7190,243 @@ shown = ["conflict"]
 [scenario.outcome.device.C]
 same_as = "server"
 shown = ["conflict"]
+
+# ---------------------------------------------------------------------------------------------
+# An access entry begins when its request has ended (the re-verification of task 4.3's fixes, N1)
+# ---------------------------------------------------------------------------------------------
+
+[[scenario]]
+id = "S88"
+title = "A version replaced in the same push that shares its folder is not handed to a member"
+category = "sharing"
+covers = ["conflict-version-same-push"]
+rules = ["C3", "C20", "C21", "C24", "D2"]
+given = "Ines shares f1 with the family, to change; f2 is private and holds the snippet s2. On her first device she writes a door code into s2. Her second device, which was offline, replaces the text of s2 and then moves the whole folder f2 into the shared folder; it sends both changes in one push. Tom edits s2 offline, Ines edits it once more, and Tom's edit arrives last."
+
+[scenario.start]
+users = ["ines", "tom"]
+devices = [{ id = "A", user = "ines" }, { id = "B", user = "ines" }, { id = "C", user = "tom" }]
+profiles = [
+  { id = "p-ines", kind = "personal", owner = "ines" },
+  { id = "p-tom", kind = "personal", owner = "tom" },
+  { id = "g-fam", kind = "family", owner = "ines" },
+]
+rows = [
+  { id = "m-ines", entity = "membership", group = "g-fam", user = "ines", rev = 2, fields = { role = "owner" } },
+  { id = "m-tom", entity = "membership", group = "g-fam", user = "tom", rev = 6, fields = { role = "member" } },
+  { id = "f1", entity = "folder", profile = "p-ines", rev = 3, fields = { name = "Shop replies" } },
+  { id = "f2", entity = "folder", profile = "p-ines", rev = 4, fields = { name = "Private" } },
+  { id = "s2", entity = "snippet", folder = "f2", rev = 8, fields = { abbreviation = ";door", body = "The door code changes on Friday." } },
+  { id = "sh1", entity = "folder_share", folder = "f1", group = "g-fam", rev = 7, fields = { permission = "edit" } },
+]
+
+[[scenario.step]]
+at = "B"
+do = "offline"
+
+[[scenario.step]]
+id = "a1"
+at = "A"
+do = "edit"
+row = "s2"
+fields = { body = "The door code is 4711 until Friday, then 2468." }
+answers = { s2 = "applied" }
+
+[[scenario.step]]
+id = "b1"
+at = "B"
+do = "edit"
+row = "s2"
+fields = { body = "Ask me for the door code." }
+
+[[scenario.step]]
+id = "b2"
+at = "B"
+do = "move"
+row = "f2"
+to = "f1"
+
+[[scenario.step]]
+at = "B"
+do = "online"
+answers = { s2 = "applied+conflict", f2 = "applied" }
+note = "One push with both changes. The server applies folders before snippets (§6.3), so it moves f2 under the shared folder first and replaces the text of s2 second; Ines made them in the other order. b1 replaced a1 unseen: her own conflict, which offers a1. For Tom the folder and the snippet become readable as this request leaves them, with b1's text (C21). His access to f2 begins when the request has ended (§5.4): a1 was replaced inside it, and no state of the server ever showed it to him."
+
+[[scenario.step]]
+at = "C"
+do = "offline"
+
+[[scenario.step]]
+id = "c1"
+at = "C"
+do = "edit"
+row = "s2"
+fields = { body = "Ask Ines for the door code." }
+
+[[scenario.step]]
+id = "a2"
+at = "A"
+do = "edit"
+row = "s2"
+fields = { body = "Ask me or Tom for the door code." }
+answers = { s2 = "applied" }
+
+[[scenario.step]]
+at = "C"
+do = "online"
+answers = { s2 = "applied+conflict" }
+note = "c1 replaces a2 unseen: a new conflict, which takes over a1 from the open one (C3). Tom is offered a2, which was the row while he could read the folder. a1 is not offered to him and he cannot restore it, although the folder was already 'his' when the server replaced it: the replacement and the move were one request (C20). Ines is offered both. A guess of a1's text, sent by a changed client with a1's revision as its base, is answered like any other write (C17)."
+
+[scenario.outcome]
+summary = "The folder is in the shared tree and the snippet has Tom's content. One conflict is open on it. Ines's devices offer her a2 and a1 back; Tom's device offers him a2 only. The door code that Ines took out of the snippet before she moved the folder has reached no device of Tom's, whether her device sent the two changes apart or together."
+
+[scenario.outcome.server]
+rows = [
+  { row = "m-ines", state = "live", version = "start" },
+  { row = "m-tom", state = "live", version = "start" },
+  { row = "f1", state = "live", version = "start" },
+  { row = "f2", state = "live", version = "b2", fields = { parent = "f1" } },
+  { row = "s2", state = "live", version = "c1" },
+  { row = "sh1", state = "live", version = "start" },
+]
+history = [
+  { row = "f2", version = "start" },
+  { row = "s2", version = "start" },
+  { row = "s2", version = "a1" },
+  { row = "s2", version = "b1" },
+  { row = "s2", version = "a2" },
+]
+conflicts = [
+  { row = "s2", kind = "edit_edit", winner = "b1", loser = "a1", parties = ["ines"], state = "replaced" },
+  { row = "s2", kind = "edit_edit", winner = "c1", loser = "a2", carried = ["a1"], parties = ["tom", "ines"], state = "open" },
+]
+
+[scenario.outcome.device.A]
+same_as = "server"
+shown = ["conflict"]
+
+[scenario.outcome.device.B]
+same_as = "server"
+shown = ["conflict"]
+
+[scenario.outcome.device.C]
+same_as = "server"
+shown = ["conflict"]
+
+[[scenario]]
+id = "S89"
+title = "A folder name replaced in the same push that shares the folder above it is not handed to a member"
+category = "sharing"
+covers = ["folder-name-same-push"]
+rules = ["C3", "C20", "C21", "C24"]
+given = "Ines shares f1 with the family, to change; f2 is private and has a sub-folder f3. On her first device she gives f3 a name that says what it holds. Her second device, which was offline, renames f3 to something plain and then moves f2 into the shared folder; it sends both changes in one push. Tom renames f3 offline, Ines renames it once more, and Tom's rename arrives last."
+
+[scenario.start]
+users = ["ines", "tom"]
+devices = [{ id = "A", user = "ines" }, { id = "B", user = "ines" }, { id = "C", user = "tom" }]
+profiles = [
+  { id = "p-ines", kind = "personal", owner = "ines" },
+  { id = "p-tom", kind = "personal", owner = "tom" },
+  { id = "g-fam", kind = "family", owner = "ines" },
+]
+rows = [
+  { id = "m-ines", entity = "membership", group = "g-fam", user = "ines", rev = 2, fields = { role = "owner" } },
+  { id = "m-tom", entity = "membership", group = "g-fam", user = "tom", rev = 6, fields = { role = "member" } },
+  { id = "f1", entity = "folder", profile = "p-ines", rev = 3, fields = { name = "Shop replies" } },
+  { id = "f2", entity = "folder", profile = "p-ines", rev = 4, fields = { name = "Private" } },
+  { id = "f3", entity = "folder", profile = "p-ines", parent = "f2", rev = 8, fields = { name = "Letters" } },
+  { id = "sh1", entity = "folder_share", folder = "f1", group = "g-fam", rev = 7, fields = { permission = "edit" } },
+]
+
+[[scenario.step]]
+at = "B"
+do = "offline"
+
+[[scenario.step]]
+id = "a1"
+at = "A"
+do = "edit"
+row = "f3"
+fields = { name = "Letters to the landlord about the arrears" }
+answers = { f3 = "applied" }
+
+[[scenario.step]]
+id = "b1"
+at = "B"
+do = "edit"
+row = "f3"
+fields = { name = "Misc" }
+
+[[scenario.step]]
+id = "b2"
+at = "B"
+do = "move"
+row = "f2"
+to = "f1"
+
+[[scenario.step]]
+at = "B"
+do = "online"
+answers = { f2 = "applied", f3 = "applied+conflict" }
+note = "One push. The server applies a folder before the folders below it (§6.3): f2 moves under the shared folder, then f3 is renamed. b1 replaced a1 unseen: Ines's own conflict, which offers a1. Tom's access to f2 and f3 begins when the request has ended (§5.4)."
+
+[[scenario.step]]
+at = "C"
+do = "offline"
+
+[[scenario.step]]
+id = "c1"
+at = "C"
+do = "edit"
+row = "f3"
+fields = { name = "Misc letters" }
+
+[[scenario.step]]
+id = "a2"
+at = "A"
+do = "edit"
+row = "f3"
+fields = { name = "Miscellaneous" }
+answers = { f3 = "applied" }
+
+[[scenario.step]]
+at = "C"
+do = "online"
+answers = { f3 = "applied+conflict" }
+note = "Tom may rename a sub-folder of a tree he may change (§4.3). His rename replaces a2 unseen and takes a1 over from the open conflict (C3). He is offered a2; the name f3 had before the folder above it was shared is not offered to him (C20)."
+
+[scenario.outcome]
+summary = "The folders are in the shared tree and f3 has the name Tom gave it. One conflict is open on it: Ines is offered a2 and a1, Tom a2 only. The name that said what the folder held has reached no device of Tom's."
+
+[scenario.outcome.server]
+rows = [
+  { row = "m-ines", state = "live", version = "start" },
+  { row = "m-tom", state = "live", version = "start" },
+  { row = "f1", state = "live", version = "start" },
+  { row = "f2", state = "live", version = "b2", fields = { parent = "f1" } },
+  { row = "f3", state = "live", version = "c1", fields = { name = "Misc letters" } },
+  { row = "sh1", state = "live", version = "start" },
+]
+history = [
+  { row = "f2", version = "start" },
+  { row = "f3", version = "start" },
+  { row = "f3", version = "a1" },
+  { row = "f3", version = "b1" },
+  { row = "f3", version = "a2" },
+]
+conflicts = [
+  { row = "f3", kind = "edit_edit", winner = "b1", loser = "a1", parties = ["ines"], state = "replaced" },
+  { row = "f3", kind = "edit_edit", winner = "c1", loser = "a2", carried = ["a1"], parties = ["tom", "ines"], state = "open" },
+]
+
+[scenario.outcome.device.A]
+same_as = "server"
+shown = ["conflict"]
+
+[scenario.outcome.device.B]
+same_as = "server"
+shown = ["conflict"]
+
+[scenario.outcome.device.C]
+same_as = "server"
+shown = ["conflict"]
