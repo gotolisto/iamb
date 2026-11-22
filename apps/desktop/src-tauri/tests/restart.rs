@@ -5,7 +5,9 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use iamb_desktop::onboarding::{Launch, LaunchSupervisor, RESTART_REQUEST, Supervisor};
+use iamb_desktop::onboarding::{
+    Launch, LaunchSupervisor, RESTART_REQUEST, Supervisor, start_supervisor, supervisor_running,
+};
 
 #[test]
 fn the_request_has_the_name_the_supervisor_looks_for() {
@@ -19,6 +21,17 @@ fn the_request_has_the_name_the_supervisor_looks_for() {
         dirs.restart_request(),
         Path::new("/data").join("run").join(RESTART_REQUEST)
     );
+}
+
+/// Held by each test that writes a script and runs it: a script written while another thread of
+/// this process forks can fail to start with "text file busy" (the child holds the write end
+/// until it execs).
+static SCRIPTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    SCRIPTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// A stand-in for `iamb-service` that writes the arguments it was given to a file.
@@ -40,6 +53,7 @@ fn fake_service(dir: &Path) -> std::path::PathBuf {
 #[test]
 fn a_restart_leaves_the_request_and_starts_the_supervisor_for_the_data_root() {
     use std::os::unix::fs::PermissionsExt;
+    let _serial = serial();
     let bin = tempfile::TempDir::new().expect("temp dir");
     let data = tempfile::TempDir::new().expect("temp dir");
     let supervisor = LaunchSupervisor {
@@ -73,6 +87,7 @@ fn a_restart_leaves_the_request_and_starts_the_supervisor_for_the_data_root() {
 
 #[test]
 fn a_supervisor_that_cannot_start_is_unavailable() {
+    let _serial = serial();
     let data = tempfile::TempDir::new().expect("temp dir");
     let supervisor = LaunchSupervisor {
         launch: Some(Launch::Direct(data.path().join("no-such-service"))),
@@ -80,4 +95,98 @@ fn a_supervisor_that_cannot_start_is_unavailable() {
     };
     let e = supervisor.restart_worker().expect_err("cannot start");
     assert_eq!(e.code, "unavailable");
+}
+
+/// Waits until the fake service wrote its arguments: it was started.
+#[cfg(unix)]
+fn started(bin: &Path) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if std::fs::read_to_string(bin.join("args.txt")).is_ok_and(|t| t.lines().count() >= 4) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    false
+}
+
+#[cfg(unix)]
+#[test]
+fn a_request_that_cannot_be_written_still_starts_a_supervisor_that_does_not_run() {
+    let _serial = serial();
+    let bin = tempfile::TempDir::new().expect("temp dir");
+    let data = tempfile::TempDir::new().expect("temp dir");
+    // A directory in the request's place: the request cannot be made.
+    std::fs::create_dir_all(data.path().join("run").join(RESTART_REQUEST)).expect("dir");
+    let supervisor = LaunchSupervisor {
+        launch: Some(Launch::Direct(fake_service(bin.path()))),
+        root: data.path().to_owned(),
+    };
+    supervisor
+        .restart_worker()
+        .expect("no supervisor runs: starting one is the restart");
+    assert!(started(bin.path()), "the supervisor was not started");
+
+    // With a supervisor running, the failed request is reported (after the start was tried).
+    let bin = tempfile::TempDir::new().expect("temp dir");
+    let lock =
+        std::fs::File::create(data.path().join("run").join("supervisor.lock")).expect("lock");
+    lock.lock().expect("locked");
+    assert!(supervisor_running(&data.path().join("run")));
+    let supervisor = LaunchSupervisor {
+        launch: Some(Launch::Direct(fake_service(bin.path()))),
+        root: data.path().to_owned(),
+    };
+    let e = supervisor
+        .restart_worker()
+        .expect_err("the request is missing");
+    assert_eq!(e.code, "unavailable");
+    assert!(started(bin.path()), "the supervisor was not started");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_request_never_follows_a_link_or_waits_on_a_fifo() {
+    let _serial = serial();
+    let bin = tempfile::TempDir::new().expect("temp dir");
+    let data = tempfile::TempDir::new().expect("temp dir");
+    let run = data.path().join("run");
+    std::fs::create_dir_all(&run).expect("run");
+    let precious = data.path().join("precious");
+    std::fs::write(&precious, b"keep me").expect("file");
+    std::os::unix::fs::symlink(&precious, run.join(RESTART_REQUEST)).expect("link");
+    let supervisor = LaunchSupervisor {
+        launch: Some(Launch::Direct(fake_service(bin.path()))),
+        root: data.path().to_owned(),
+    };
+    supervisor.restart_worker().expect("asked");
+    assert_eq!(std::fs::read(&precious).expect("read"), b"keep me");
+
+    std::fs::remove_file(run.join(RESTART_REQUEST)).expect("remove link");
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(run.join(RESTART_REQUEST))
+            .status()
+            .expect("mkfifo")
+            .success()
+    );
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(supervisor.restart_worker().is_ok());
+    });
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(5)),
+        Ok(true),
+        "the request waited on a FIFO"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_launcher_that_fails_is_unavailable() {
+    let _serial = serial();
+    // `open` returns at once with the system's answer: its status is waited for.
+    let e = start_supervisor("/bin/false".into(), &[], true).expect_err("it failed");
+    assert_eq!(e.code, "unavailable");
+    start_supervisor("/bin/true".into(), &[], true).expect("it worked");
 }

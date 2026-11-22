@@ -502,37 +502,84 @@ impl Supervisor for LaunchSupervisor {
             ));
         };
         let run = self.root.join("run");
-        crate::paths::create_private_dir(&run)
-            .and_then(|()| std::fs::write(run.join(RESTART_REQUEST), b""))
-            .map_err(|e| {
-                CommandError::new("unavailable", format!("cannot ask for a restart: {e}"))
-            })?;
+        // Created new: a link in its place is neither followed nor truncated, and a FIFO is not
+        // opened (the 2026-11 beta review's finding 5).
+        let asked = crate::paths::create_private_dir(&run)
+            .and_then(|()| crate::paths::create_flag_file(&run.join(RESTART_REQUEST)));
+        // A supervisor that does not run needs no request: starting it is the restart. One that
+        // runs needs it, so its failure is reported then, after the start was tried anyway.
+        let running = asked.is_err() && supervisor_running(&run);
         let (program, args) = launch_command(launch, &self.root);
-        let mut command = std::process::Command::new(program);
-        command
-            .args(args)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            // CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP: no console window, and the supervisor
-            // is not part of the UI host's group.
-            command.creation_flags(0x0800_0000 | 0x0000_0200);
+        start_supervisor(program, &args, matches!(launch, Launch::Open(_)))?;
+        match asked {
+            Err(e) if running => Err(CommandError::new(
+                "unavailable",
+                format!("cannot ask for a restart: {e}"),
+            )),
+            _ => Ok(()),
         }
-        let mut child = command.spawn().map_err(|e| {
+    }
+}
+
+/// True when a supervisor holds `run/supervisor.lock` (`iamb-service`'s `supervisor::take_lock`).
+#[must_use]
+pub fn supervisor_running(run: &Path) -> bool {
+    let Ok(file) = std::fs::OpenOptions::new()
+        .write(true)
+        .open(run.join("supervisor.lock"))
+    else {
+        return false;
+    };
+    matches!(file.try_lock(), Err(std::fs::TryLockError::WouldBlock))
+}
+
+/// Starts the supervisor as `program args…`. With `wait` (`open`, which returns as soon as the
+/// system has started the helper or refused to) its exit status is waited for, and a failure is
+/// `unavailable`; otherwise the process is reaped on a thread of its own, since the supervisor
+/// may run as long as the session does.
+///
+/// # Errors
+///
+/// `unavailable` when it cannot be started, or `open` fails.
+pub fn start_supervisor(program: PathBuf, args: &[OsString], wait: bool) -> Res<()> {
+    let mut command = std::process::Command::new(program);
+    command
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP: no console window, and the supervisor
+        // is not part of the UI host's group.
+        command.creation_flags(0x0800_0000 | 0x0000_0200);
+    }
+    let mut child = command.spawn().map_err(|e| {
+        CommandError::new(
+            "unavailable",
+            format!("cannot start the background service: {e}"),
+        )
+    })?;
+    if wait {
+        let status = child.wait().map_err(|e| {
             CommandError::new(
                 "unavailable",
                 format!("cannot start the background service: {e}"),
             )
         })?;
-        // Reaped on a thread of its own: the supervisor may run as long as the session does.
-        std::thread::spawn(move || {
-            let _ = child.wait();
-        });
-        Ok(())
+        if !status.success() {
+            return Err(CommandError::new(
+                "unavailable",
+                format!("the system did not start the background service ({status})"),
+            ));
+        }
+        return Ok(());
     }
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
 }
 
 /// The supervisor of a host that has no way to reach one (tests, and a host whose data root is

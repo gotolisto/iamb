@@ -126,6 +126,16 @@ is started again, whose first report brings the next verdict.
 
 Single instance is guaranteed by an exclusive lock on `run/supervisor.lock`.
 
+"Start it again" and "Restart the helper" reach the supervisor through a file, not yet through
+the control pipe of ADR-0023: the UI host creates the empty file `run/restart-worker` (created
+new, so a link or a FIFO in its place is neither followed nor opened) and starts the supervisor,
+which exits when one already runs. The running supervisor looks for the file every 200 ms,
+removes it, asks the worker to stop by closing its standard input (killed after a second) and
+starts a new one at once. The file has no peer verification: only the user can create it in
+`run/` (§3.3), and it can do nothing a process of the user cannot already do by ending the
+worker. It means "restart the worker" only; a stop, and what updates need, wait for the pipe
+(`iamb_service::supervisor`, "Restart requests"; §8).
+
 Packaging ([ADR-0021](decisions/0021-packaging-and-permissions.md)): on macOS the service is a
 signed helper app with a stable bundle identifier inside `Iamb.app`, registered as a login item
 through the system's login-item API by the main app, so that Accessibility and Input Monitoring
@@ -152,6 +162,7 @@ with `SIGTERM`, or fails five starts in a row within a second each is not starte
 | Attachments | `attachments/<profile id>/<sha256>` | same |
 | Logs | `logs/<process>.log` (rotated, 5 × 1 MB) | same |
 | Locks | `run/supervisor.lock`, `run/store.lock`, `run/desktop.lock` (one UI host per data root) | same |
+| Signals between processes | `run/restart-worker` (UI host to supervisor: restart the worker, §3.2), `run/desktop.quit` (the UI host ended on purpose, §3.2); empty files, taken by removing them | same |
 | Endpoints | `run/service.sock`, `run/sync.sock` | `\\.\pipe\iamb-service-<user SID>-<secret>`, `\\.\pipe\iamb-sync-<user SID>-<secret>`; each secret (128 random bits, new for every bind) in `run/service.pipe`, `run/sync.pipe`; `run/service.pipe.lock`, `run/sync.pipe.lock` |
 
 On Linux (development and the command-line tool only) the data root is `$XDG_DATA_HOME/iamb/`.
@@ -859,6 +870,12 @@ grant belongs to the helper app (ADR-0021), so the helper must not lend it out:
   library it wrote elsewhere and have it typed. This does not stop a process that writes into the
   default data root itself, the user's own folder: that, like other malware of the same user, is
   outside this threat model. Development builds accept any data root.
+
+The UI host and the supervisor talk through two empty files in `run/` until the control pipe of
+ADR-0023 exists (§3.2, §3.3): `run/restart-worker` and `run/desktop.quit`. Neither has the peer
+verification of §6.1; both rest on `run/` being the user's alone, and on what they can do: restart
+the worker, and keep a UI host that ended from being started again. Neither may grow another
+meaning (a stop, an update) without the pipe.
 
 **Crash handling (rule 9).** The supervisor and the worker do two things first in `main`
 (`iamb_service::crash`); the UI host does the same (`iamb_desktop::crash`, process name

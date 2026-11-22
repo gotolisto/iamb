@@ -413,7 +413,8 @@ fn work(dirs: &DataDirs, choice: PlatformChoice, supervised: bool, hardening: &H
         }
     };
     if supervised {
-        // The supervisor never writes to our input: its end means the supervisor is gone.
+        // The supervisor never writes to our input: its end means the supervisor is gone, or
+        // asked for a stop (a restart request, `supervisor` module docs).
         let watcher = Arc::clone(&log);
         let exit = worker_exit_handle(&worker);
         let _ = thread::Builder::new()
@@ -422,7 +423,9 @@ fn work(dirs: &DataDirs, choice: PlatformChoice, supervised: bool, hardening: &H
                 let mut buf = [0_u8; 64];
                 let mut input = io::stdin().lock();
                 while matches!(input.read(&mut buf), Ok(n) if n > 0) {}
-                watcher.info(format_args!("the supervisor is gone; stopping"));
+                watcher.info(format_args!(
+                    "standard input ended (the supervisor is gone or asked for a stop); stopping"
+                ));
                 exit();
             });
     }

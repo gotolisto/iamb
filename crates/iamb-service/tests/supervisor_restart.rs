@@ -183,3 +183,28 @@ fn a_request_left_from_before_is_dropped_at_start() {
         thread::sleep(Duration::from_millis(50));
     }
 }
+
+#[test]
+fn a_worker_replaced_on_request_stops_in_order() {
+    // Asked to stop through its input, the worker ends as on any orderly stop (it restores the
+    // clipboard and releases what it holds) instead of being killed outright.
+    let s = Supervisor::start(&[]);
+    let (first, _) = wait_for_worker(s.path(), None, Duration::from_secs(15));
+    let worker_log =
+        || fs::read_to_string(s.path().join("logs").join("worker.log")).unwrap_or_default();
+    assert_eq!(worker_log().matches("worker stopped").count(), 0);
+
+    s.ask_for_restart();
+    let (_, took) = wait_for_worker(s.path(), Some(first.pid), Duration::from_secs(10));
+    assert!(took < Duration::from_secs(3), "took {took:?}");
+    assert_eq!(
+        worker_log().matches("worker stopped").count(),
+        1,
+        "the old worker did not stop in order: {}",
+        worker_log()
+    );
+    // Its status 0 was asked for: the supervisor stays and so does the new worker.
+    thread::sleep(Duration::from_millis(500));
+    assert!(status(s.path()).is_some());
+    assert!(!s.log().contains("supervisor exits"), "{}", s.log());
+}

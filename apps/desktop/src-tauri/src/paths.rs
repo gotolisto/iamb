@@ -169,22 +169,32 @@ fn default_root(get: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
     }
 }
 
-/// Creates `dir` (and its parents) readable by the user only, as the service does: the Linux
-/// endpoint refuses a `run` directory with a looser mode.
+/// Creates `dir` (and its parents) readable by the user only, and makes an existing `dir` so,
+/// as the service does (`iamb_service::paths::create_private_dir`; the 2026-11 beta review's
+/// finding 5): mode `0700` on Unix, where the Linux endpoint refuses a `run` directory with a
+/// looser mode; on Windows a protected DACL for the user alone
+/// (`iamb_platform_windows::restrict_to_current_user`). The UI host can be the first to create
+/// `run/`.
 ///
 /// # Errors
 ///
-/// I/O errors.
+/// I/O errors, and the system's error when the permissions cannot be set.
 pub fn create_private_dir(dir: &Path) -> io::Result<()> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::DirBuilderExt;
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
         std::fs::DirBuilder::new()
             .recursive(true)
             .mode(0o700)
-            .create(dir)
+            .create(dir)?;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        std::fs::create_dir_all(dir)?;
+        iamb_platform_windows::restrict_to_current_user(dir)
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         std::fs::create_dir_all(dir)
     }
@@ -280,5 +290,18 @@ mod tests {
         create_flag_file(&new).expect("created");
         let mode = std::fs::metadata(&new).expect("meta").permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_existing_run_directory_is_made_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let run = dir.path().join("run");
+        std::fs::create_dir(&run).expect("dir");
+        std::fs::set_permissions(&run, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        create_private_dir(&run).expect("private");
+        let mode = std::fs::metadata(&run).expect("meta").permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
     }
 }

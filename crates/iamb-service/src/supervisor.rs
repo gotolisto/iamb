@@ -21,14 +21,21 @@
 //! a worker started afresh now, without waiting for a backoff or a heartbeat timeout. The UI host
 //! creates the empty file [`RESTART_REQUEST`] in `run/`, the directory only the user can open
 //! (0700 on Unix, a DACL for the user alone on Windows; architecture §3.3), and then starts the
-//! supervisor, which exits at once when one is already running. The running supervisor looks for
-//! the file every [`REQUEST_POLL`]: it removes it, stops the worker it watches (killed: a worker
-//! asked over IPC to stop could not be told apart from one that exits for good) and starts a new
-//! one at once, without counting a failure; while it waits out a backoff, it starts the worker at
-//! once. A supervisor that starts removes a request left over from before. The file carries
-//! nothing: the worst a process of the same user can do with it is what it can already do by
-//! killing the worker. This is the minimal stand-in for the control pipe of ADR-0023, which
-//! updates still need.
+//! supervisor, which exits when one is already running (it tries for the lock for
+//! [`LOCK_PATIENCE`] first, so that a request made while an old supervisor is still exiting finds
+//! a new one). The running supervisor looks for the file every [`REQUEST_POLL`]: it removes it,
+//! stops the worker it watches in order (it closes the worker's standard input, on which the
+//! worker stops as when the supervisor is gone, restoring the clipboard and releasing what it
+//! holds; it is killed only if it has not exited after [`STOP_GRACE`]) and starts a new one at
+//! once, without counting a failure, whatever the old one's exit status: the supervisor asked,
+//! so a status 0 here is not "stopped for good". While it waits out a backoff, it starts the
+//! worker at once. A supervisor that starts removes a request left over from before. The file
+//! carries nothing: the worst a process of the same user can do with it is what it can already
+//! do by killing the worker.
+//!
+//! This is the minimal stand-in for the control pipe of ADR-0023, without that pipe's peer
+//! verification (architecture §3.2, §8). It means "restart the worker" and nothing else; a stop,
+//! or anything an update needs, waits for the pipe.
 //!
 //! # The UI host
 //!
@@ -106,6 +113,13 @@ pub const RESTART_REQUEST: &str = "restart-worker";
 
 /// How often the supervisor looks for [`RESTART_REQUEST`].
 pub const REQUEST_POLL: Duration = Duration::from_millis(200);
+
+/// How long a worker asked to stop (module docs, "Restart requests") has before it is killed.
+pub const STOP_GRACE: Duration = Duration::from_secs(1);
+
+/// How long a starting supervisor tries for the lock before it leaves it to the one that
+/// holds it (module docs, "Restart requests").
+pub const LOCK_PATIENCE: Duration = Duration::from_secs(1);
 
 /// The delay before restart number `failures` (1 for the first restart).
 #[must_use]
@@ -284,11 +298,49 @@ pub fn take_lock(dirs: &DataDirs) -> io::Result<Option<File>> {
     }
 }
 
+/// Takes the lock as [`take_lock`] does, trying again for up to `patience` while another
+/// supervisor holds it (module docs, "Restart requests").
+///
+/// # Errors
+///
+/// As [`take_lock`].
+pub fn take_lock_within(dirs: &DataDirs, patience: Duration) -> io::Result<Option<File>> {
+    let until = Instant::now() + patience;
+    loop {
+        if let Some(lock) = take_lock(dirs)? {
+            return Ok(Some(lock));
+        }
+        if Instant::now() >= until {
+            return Ok(None);
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
 /// One supervised process.
 struct Child {
     process: Process,
-    /// Held open so the child does not read the end of its input while we live.
-    _stdin: Option<ChildStdin>,
+    /// Held open so the child does not read the end of its input while we live; closed to ask
+    /// it to stop.
+    stdin: Option<ChildStdin>,
+}
+
+impl Child {
+    /// Asks the worker to stop by closing its input, and kills it if it has not exited after
+    /// `grace` (module docs, "Restart requests").
+    fn stop_in_order(&mut self, grace: Duration) {
+        drop(self.stdin.take());
+        let until = Instant::now() + grace;
+        while Instant::now() < until {
+            match self.process.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) => thread::sleep(Duration::from_millis(20)),
+                Err(_) => break,
+            }
+        }
+        let _ = self.process.kill();
+        let _ = self.process.wait();
+    }
 }
 
 /// Why a worker run ended.
@@ -342,13 +394,7 @@ fn start_worker(cfg: &SupervisorConfig) -> io::Result<(Child, std::sync::mpsc::R
                 }
             }
         })?;
-    Ok((
-        Child {
-            process,
-            _stdin: stdin,
-        },
-        beats,
-    ))
+    Ok((Child { process, stdin }, beats))
 }
 
 fn watch(
@@ -368,8 +414,7 @@ fn watch(
             }
             Err(RecvTimeoutError::Timeout) => {
                 if take_request(&cfg.dirs) {
-                    let _ = child.process.kill();
-                    let _ = child.process.wait();
+                    child.stop_in_order(STOP_GRACE);
                     return Ok(Ended::Asked);
                 }
             }
@@ -483,7 +528,7 @@ pub fn supervise_by_exit(
 ///
 /// I/O errors taking the lock.
 pub fn run(cfg: &SupervisorConfig, log: &Arc<Logger>) -> io::Result<Outcome> {
-    let Some(_lock) = take_lock(&cfg.dirs)? else {
+    let Some(_lock) = take_lock_within(&cfg.dirs, LOCK_PATIENCE)? else {
         log.info(format_args!("another supervisor is running; exiting"));
         return Ok(Outcome::AlreadyRunning);
     };
@@ -626,6 +671,18 @@ mod tests {
         assert_eq!(mode(&dirs), 0o600);
     }
 
+    /// Held by each test that writes a script and runs it: a script written while another
+    /// thread forks can fail to start with "text file busy".
+    #[cfg(unix)]
+    static SCRIPTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[cfg(unix)]
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        SCRIPTS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// A stand-in program: appends a line to `starts` in `dir`, then runs `body`.
     #[cfg(unix)]
     fn script(dir: &std::path::Path, body: &str) -> Program {
@@ -662,6 +719,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_ui_host_that_fails_at_every_start_is_given_up_on() {
+        let _serial = serial();
         let dir = tempfile::TempDir::new().expect("temp dir");
         let program = script(dir.path(), "exit 3");
         assert_eq!(
@@ -676,6 +734,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_usage_error_and_a_sigterm_end_the_supervision_at_once() {
+        let _serial = serial();
         let dir = tempfile::TempDir::new().expect("temp dir");
         let program = script(dir.path(), &format!("exit {EXIT_USAGE}"));
         assert_eq!(supervised(&program, dir.path()), (UiHostEnd::UsageError, 1));
@@ -687,6 +746,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn behind_a_launcher_only_the_quit_marker_is_a_quit() {
+        let _serial = serial();
         // `open -W` exits 0 when the app ends, crashed or not: the first run (no marker) is
         // restarted, the second (which leaves the marker) is not. A marker left from before
         // the first start is removed first.
@@ -733,5 +793,31 @@ mod tests {
         assert_eq!(judge(code(EXIT_USAGE), false, true), RunEnd::Failed);
         assert_eq!(judge(code(0), true, true), RunEnd::Final(UiHostEnd::Quit));
         assert_eq!(judge(None, false, false), RunEnd::Failed);
+    }
+
+    #[test]
+    fn a_starting_supervisor_waits_a_moment_for_the_lock() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let dirs = DataDirs::new(dir.path());
+        let held = take_lock(&dirs).expect("io").expect("free");
+        // Held for good: given up after the patience.
+        let start = Instant::now();
+        assert!(
+            take_lock_within(&dirs, Duration::from_millis(300))
+                .expect("io")
+                .is_none()
+        );
+        assert!(start.elapsed() >= Duration::from_millis(300));
+        // Released while it waits (an old supervisor exiting): taken.
+        let releaser = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(200));
+            drop(held);
+        });
+        assert!(
+            take_lock_within(&dirs, Duration::from_secs(2))
+                .expect("io")
+                .is_some()
+        );
+        releaser.join().expect("joined");
     }
 }
