@@ -35,6 +35,11 @@
 //! their panic hook writes a heap-free crash report and exits with `EXIT_PANIC` instead of
 //! aborting (`iamb_service::crash`, architecture §8 rule 9).
 
+// No console window on Windows in release builds: the supervisor is the login item (the Run
+// key starts it at every login, where a console window would show, and closing it would end the
+// supervisor). The worker's heartbeat pipes are handed over explicitly and work without one.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};

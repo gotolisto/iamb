@@ -53,6 +53,10 @@ key.
    target\release\iamb-service.exe --supervise --data-dir C:\iamb-compat
    ```
 
+   A release build has no console window (it is the login item): the command returns at once and
+   the service runs in the background, logging to `C:\iamb-compat\logs\`. Stop it with
+   `taskkill /im iamb-service.exe /t /f`.
+
 5. In a second Command Prompt, check that it answers:
 
    ```bat
@@ -352,7 +356,7 @@ refuse the whole text; the previous overrides stay in force. Older texts written
 builds (`default`, `typing`, `shift_enter`, `return`) are refused too.
 
 There is no settings screen yet. Write the setting with any SQLite tool while the service is
-stopped (Ctrl+C in its window), then start it again (step 4 on Windows, step 5 on macOS):
+stopped (Ctrl+C in its window; on Windows `taskkill /im iamb-service.exe /t /f`), then start it again (step 4 on Windows, step 5 on macOS):
 
 ```sh
 sqlite3 ~/iamb-compat/library.db
