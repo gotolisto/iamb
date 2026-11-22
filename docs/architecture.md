@@ -35,7 +35,7 @@ All Rust crates live in one Cargo workspace under `crates/`, all named `iamb-*`
 | `iamb-platform-windows` | library | platform | Windows implementations of the platform traits | Anything not behind the traits |
 | `iamb-platform-macos` | library | platform | macOS implementations of the platform traits | Anything not behind the traits |
 | `iamb-service` | binary | core, store, ipc, platform(+os) | The background service: listener → engine → injector, owns the store, serves IPC, supervises | Network code of any kind |
-| `iamb-sync` | library + thin binary | core, ipc | Sync agent: account session, push, pull, live updates, media transfer, account endpoint | Access to key events |
+| `iamb-sync` | library + thin binary | core, ipc, platform (the service endpoint's name and the peer policy only); networking through `rustls`, `ureq` and `tungstenite` (task 4.4, `crates/iamb-sync/README.md`) | Sync agent: account session, push, pull, live updates, media transfer, account endpoint | Access to key events |
 | `iamb-cli` | binary `iamb` | core, store, ipc, platform | Command-line tool: add, list, remove, import, dry-run expand | — |
 | `iamb-desktop` | binary | core (model types only), ipc, platform(+os) | Tauri shell (`apps/desktop/src-tauri`): tray icon, windows, focus hand-back, bridges UI commands to `iamb-ipc` | Engine or store logic |
 | `iamb-testkit` | library (dev) | core, platform | Scripted typing sessions, fake clock, fixture libraries, the spec example loader, compatibility harness | — |
@@ -936,7 +936,7 @@ real machines:
 The architecture fixes the frame ([ADR-0016](decisions/0016-sync-frame.md)). Task 4.1 fills it in:
 [`sync-design.md`](sync-design.md) has the server's tables and policies, the protocol, the rules for
 every conflict (`C1` to `C25` on the server, `D1` to `D17` on the device), the threat model for
-sharing and 87 conflict scenarios with their outcomes, which are also in `spec/sync/scenarios.toml`
+sharing and 89 conflict scenarios with their outcomes, which are also in `spec/sync/scenarios.toml`
 for the simulation of task 4.4 ([ADR-0027](decisions/0027-sync-protocol-and-conflict-rules.md),
 [ADR-0028](decisions/0028-data-model-for-sync.md),
 [ADR-0029](decisions/0029-server-readable-content.md)). In short: the last write is the one the

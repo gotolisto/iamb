@@ -1,0 +1,8 @@
+{
+  "id": 23,
+  "kind": "response",
+  "result": {
+    "token": "0011",
+    "type": "reconcile_token"
+  }
+}

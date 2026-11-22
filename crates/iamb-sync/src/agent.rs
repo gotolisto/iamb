@@ -14,8 +14,8 @@ use std::fmt;
 
 use iamb_core::model::Id;
 use iamb_core::sync::{
-    AccessRemoval, AnyRow, ApplyMode, Change, LostLine, OpStatus, OutboxPhase, ReconcileScope,
-    RemoteRow, RowKind, RowRef,
+    AccessRemoval, AnyRow, ApplyMode, ApplyStatus, Change, LostLine, OpStatus, OutboxPhase,
+    ReconcileScope, RemoteRow, RowKind, RowRef,
 };
 use serde_json::{Value, json};
 
@@ -236,7 +236,10 @@ impl<T: Transport, D: Device> Agent<T, D> {
 
     fn api(&mut self) -> Api<'_, T> {
         let device = self.device_id.unwrap_or_else(|| Id::from_bytes([0; 16]));
-        let protocol = self.hello.as_ref().map_or(self.config.protocols.1, |h| h.protocol);
+        let protocol = self
+            .hello
+            .as_ref()
+            .map_or(self.config.protocols.1, |h| h.protocol);
         Api::new(&mut self.transport, device, protocol)
     }
 
@@ -327,15 +330,13 @@ impl<T: Transport, D: Device> Agent<T, D> {
             return Ok(());
         }
         let info = self.device.info()?;
-        let device = match info.device {
-            Some(d) => d,
-            None => {
-                let d = (self.new_id)();
-                self.device.set_device_id(d)?;
-                d
-            }
+        let mut device = if let Some(d) = info.device {
+            d
+        } else {
+            let d = (self.new_id)();
+            self.device.set_device_id(d)?;
+            d
         };
-        let mut device = device;
         let mut conflicts = 0;
         let hello = loop {
             let desc = DeviceInfo {
@@ -344,20 +345,25 @@ impl<T: Transport, D: Device> Agent<T, D> {
                 platform: self.config.platform.clone(),
                 app_version: self.config.app_version.clone(),
             };
-            match Api::hello(&mut self.transport, &desc, self.config.protocols, info.max_rev) {
+            match Api::hello(
+                &mut self.transport,
+                &desc,
+                self.config.protocols,
+                info.max_rev,
+            ) {
                 Ok(h) => break h,
                 Err(Failure::Refused(r)) if r.code == "device_conflict" => {
                     conflicts += 1;
                     if conflicts > 1 {
                         // The session itself is the other installation's (C25, D14).
-                        self.position = info.position.clone();
+                        self.position.clone_from(&info.position);
                         return Err(self.sign_out(&r));
                     }
                     device = (self.new_id)();
                     self.device.set_device_id(device)?;
                 }
                 Err(f) => {
-                    self.position = info.position.clone();
+                    self.position.clone_from(&info.position);
                     return Err(self.fail(f));
                 }
             }
@@ -372,10 +378,13 @@ impl<T: Transport, D: Device> Agent<T, D> {
             ));
         }
         self.device_id = Some(device);
-        self.position = info.position.clone();
+        self.position.clone_from(&info.position);
         self.resync = match &info.position {
             None => Some(Resync::Initial),
             Some(p) if epoch_of(Some(p)) != Some(hello.epoch.as_str()) => Some(Resync::Epoch),
+            // D14: signing in again resyncs; it is what brings back what a confirmed sign-out
+            // removed and settles what an unconfirmed one set aside.
+            Some(_) if info.signed_out_at.is_some() => self.resync.or(Some(Resync::Expired)),
             Some(_) => self.resync,
         };
         if conflicts > 0 && self.resync.is_none() {
@@ -439,7 +448,7 @@ impl<T: Transport, D: Device> Agent<T, D> {
                     ) {
                         access_rows = true;
                     }
-                    rows.push(r.clone());
+                    rows.push((**r).clone());
                 }
             }
             if !rows.is_empty() {
@@ -542,7 +551,9 @@ impl<T: Transport, D: Device> Agent<T, D> {
             .clone()
             .ok_or_else(|| RoundError::Protocol("snapshot without start".into()))?;
         let lost: Option<LostLine> = first.lost.clone().map(|mut l| {
-            l.device_epoch = epoch_of(old.as_deref()).unwrap_or_default().to_owned();
+            epoch_of(old.as_deref())
+                .unwrap_or_default()
+                .clone_into(&mut l.device_epoch);
             l
         });
         let mode = if lost.is_some() {
@@ -673,7 +684,11 @@ impl<T: Transport, D: Device> Agent<T, D> {
                     self.run_resync(reason, report)?;
                 }
                 let limit = self.push_limit.min(limit_cap).max(1);
-                let changes = self.device.outbox_read(limit, phase)?;
+                let batch = self.device.outbox_read(limit, phase)?;
+                if !batch.behind.is_empty() {
+                    self.fetch_rows(&batch.behind)?;
+                }
+                let changes = batch.changes;
                 if changes.is_empty() {
                     break;
                 }
@@ -687,7 +702,11 @@ impl<T: Transport, D: Device> Agent<T, D> {
         Ok(())
     }
 
-    fn push_once(&mut self, changes: &[Change], report: &mut RoundReport) -> Result<(), RoundError> {
+    fn push_once(
+        &mut self,
+        changes: &[Change],
+        report: &mut RoundReport,
+    ) -> Result<(), RoundError> {
         let Some(pos) = self.position.clone() else {
             self.resync = Some(Resync::Initial);
             return Ok(());
@@ -724,6 +743,19 @@ impl<T: Transport, D: Device> Agent<T, D> {
                 self.push_limit = (changes.len() / 2).max(1);
                 Ok(())
             }
+            // An op failed in the database and the whole request was undone (4.3): half the
+            // request next, and a single change that fails so is set aside as blocked (D17), so
+            // that the rest of the outbox is not held up by it.
+            Err(Failure::Refused(r)) if r.code == "invalid" => {
+                if changes.len() <= 1 {
+                    let seqs: Vec<i64> = changes.iter().flat_map(|c| c.seqs.clone()).collect();
+                    self.device.set_blocked(&seqs, "invalid")?;
+                    self.push_limit = self.config.push_ops;
+                } else {
+                    self.push_limit = (changes.len() / 2).max(1);
+                }
+                Ok(())
+            }
             Err(Failure::Call(e)) if is_narrowable(&e) => {
                 // D17: after three failures of the same request, send half; a single change that
                 // fails three times is set aside as blocked.
@@ -753,7 +785,54 @@ impl<T: Transport, D: Device> Agent<T, D> {
                 Ok(r) => r,
                 Err(f) => return Err(self.fail(f)),
             };
-            self.device.apply(&rows, None, ApplyMode::Feed)?;
+            self.apply_following(rows, 3)?;
+        }
+        Ok(())
+    }
+
+    /// Applies rows read with `rows`; a row refused because a row it refers to is missing (a
+    /// link whose tag the clean-up of D16 removed meanwhile) is applied again in one batch with
+    /// what it refers to, read too, up to `depth` levels (in one batch, so that the clean-up at
+    /// its end does not take the tag away again before the link is there).
+    fn apply_following(&mut self, rows: Vec<RemoteRow>, depth: u8) -> Result<(), RoundError> {
+        let status = self.device.apply(&rows, None, ApplyMode::Feed)?;
+        let mut refused: Vec<RemoteRow> = rows
+            .into_iter()
+            .zip(status)
+            .filter(|(_, st)| *st == ApplyStatus::Refused)
+            .map(|(r, _)| r)
+            .collect();
+        for _ in 0..depth {
+            let have: BTreeSet<RowRef> = refused.iter().map(|r| r.key).collect();
+            let wanted: Vec<RowRef> = refused
+                .iter()
+                .filter_map(|r| r.row.as_ref())
+                .flat_map(AnyRow::references)
+                .filter(|k| !have.contains(k))
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            if wanted.is_empty() {
+                break;
+            }
+            let mut batch = Vec::new();
+            for chunk in wanted.chunks(500) {
+                match self.api().rows(chunk) {
+                    Ok(r) => batch.extend(r),
+                    Err(f) => return Err(self.fail(f)),
+                }
+            }
+            batch.append(&mut refused);
+            let status = self.device.apply(&batch, None, ApplyMode::Feed)?;
+            refused = batch
+                .into_iter()
+                .zip(status)
+                .filter(|(_, st)| *st == ApplyStatus::Refused)
+                .map(|(r, _)| r)
+                .collect();
+            if refused.is_empty() {
+                break;
+            }
         }
         Ok(())
     }
@@ -858,5 +937,8 @@ impl<T: Transport, D: Device> Agent<T, D> {
 /// The rows of a set of changes by key, for diagnostics.
 #[must_use]
 pub fn change_keys(changes: &[Change]) -> BTreeMap<RowRef, Option<&AnyRow>> {
-    changes.iter().map(|c| (c.row_ref(), c.row.as_ref())).collect()
+    changes
+        .iter()
+        .map(|c| (c.row_ref(), c.row.as_ref()))
+        .collect()
 }

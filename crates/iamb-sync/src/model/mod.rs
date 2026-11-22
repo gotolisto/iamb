@@ -29,6 +29,21 @@
 //! After every call it checks I7 (no cycle, at most four levels, no live row under a deleted
 //! folder) and records a violation in [`Server::violations`].
 
+#![allow(
+    clippy::too_many_lines,
+    clippy::too_many_arguments,
+    clippy::many_single_char_names,
+    clippy::unused_self,
+    clippy::type_complexity,
+    clippy::struct_field_names,
+    clippy::field_reassign_with_default,
+    clippy::single_match_else,
+    clippy::manual_let_else,
+    clippy::collapsible_match,
+    clippy::needless_pass_by_value,
+    reason = "test support: one function per rule of the design, kept close to its text"
+)]
+
 mod account;
 mod device;
 mod push;
@@ -221,6 +236,8 @@ pub struct State {
     pub offers: BTreeMap<Id, Id>,
     /// When each user's access to each folder began (`granted_at`).
     pub granted: BTreeMap<(Id, Id), i64>,
+    /// The revision at which that access began (`since_rev`, §5.4; ADR-0031).
+    pub granted_rev: BTreeMap<(Id, Id), u64>,
     /// Each profile's `head_rev` (C18).
     pub head_rev: BTreeMap<Id, u64>,
     /// Protocol range.
@@ -849,7 +866,10 @@ impl Server {
             .keys()
             .filter(|k| k.kind == RowKind::Snippet)
             .map(|k| k.id)
-            .filter(|id| self.snippet(*id).is_some_and(|s| s.meta.deleted_at.is_none()))
+            .filter(|id| {
+                self.snippet(*id)
+                    .is_some_and(|s| s.meta.deleted_at.is_none())
+            })
             .collect();
         for sid in snippets {
             let links: Vec<RowRef> = self
@@ -858,13 +878,22 @@ impl Server {
                 .values()
                 .filter(|s| match &s.row {
                     AnyRow::SnippetTag(l) => l.snippet_id == sid && l.meta.deleted_at.is_none(),
-                    AnyRow::SnippetAttachment(l) => l.snippet_id == sid && l.meta.deleted_at.is_none(),
+                    AnyRow::SnippetAttachment(l) => {
+                        l.snippet_id == sid && l.meta.deleted_at.is_none()
+                    }
                     _ => false,
                 })
                 .map(|s| s.row.key())
                 .collect();
             for k in links {
-                let readers: BTreeSet<Id> = tx.before.get(&RowRef { kind: RowKind::Snippet, id: sid }).cloned().unwrap_or_default();
+                let readers: BTreeSet<Id> = tx
+                    .before
+                    .get(&RowRef {
+                        kind: RowKind::Snippet,
+                        id: sid,
+                    })
+                    .cloned()
+                    .unwrap_or_default();
                 tx.before.entry(k).or_insert(readers);
             }
         }
@@ -927,15 +956,26 @@ impl Server {
             }
             // granted_at: the start of each continuous access.
             let now = self.now;
+            let since = self.st.rev_seq;
             for f in after.keys() {
                 self.st.granted.entry((*u, *f)).or_insert(now);
+                self.st.granted_rev.entry((*u, *f)).or_insert(since);
             }
             self.st
                 .granted
                 .retain(|(uu, ff), _| uu != u || after.contains_key(ff));
+            self.st
+                .granted_rev
+                .retain(|(uu, ff), _| uu != u || after.contains_key(ff));
         }
         for (cid, parties, key) in &tx.conflicts {
-            for p in parties {
+            // A party takes part only while they can read the row (ADR-0031).
+            let readers: Vec<Id> = parties
+                .iter()
+                .copied()
+                .filter(|p| self.can_read(*p, *key))
+                .collect();
+            for p in &readers {
                 self.queue(*p, FeedItem::Conflict(*cid, *key));
                 touched_users.insert(*p);
             }
@@ -960,7 +1000,11 @@ impl Server {
                 AnyRow::Folder(f) => {
                     let chain = self.chain(f.meta.id);
                     if chain.len() > 4 {
-                        problems.push(format!("folder {} is {} levels deep", f.meta.id, chain.len()));
+                        problems.push(format!(
+                            "folder {} is {} levels deep",
+                            f.meta.id,
+                            chain.len()
+                        ));
                     }
                     if let Some(p) = f.parent_id
                         && self.chain(p).contains(&f.meta.id)
@@ -980,7 +1024,10 @@ impl Server {
                             .folder(sn.folder_id)
                             .is_none_or(|x| x.meta.deleted_at.is_some())
                     {
-                        problems.push(format!("live snippet {} under a deleted folder", sn.meta.id));
+                        problems.push(format!(
+                            "live snippet {} under a deleted folder",
+                            sn.meta.id
+                        ));
                     }
                 }
                 _ => {}
@@ -1009,11 +1056,7 @@ impl Server {
         if call == "hello" {
             return None;
         }
-        let row = self
-            .st
-            .devices
-            .iter()
-            .find(|(_, d)| d.session == c.session);
+        let row = self.st.devices.iter().find(|(_, d)| d.session == c.session);
         match row {
             None => Some(self.err("device_unknown")),
             Some((_, d)) if d.revoked => Some(self.err("device_revoked")),
@@ -1049,13 +1092,19 @@ impl Server {
         let ok = match call {
             "pull" | "push" => {
                 let Some((pe, ps)) = &parsed else {
-                    return Err(json!({"error": "reset_required", "reason": "expired", "epoch": epoch}));
+                    return Err(
+                        json!({"error": "reset_required", "reason": "expired", "epoch": epoch}),
+                    );
                 };
                 if *pe != epoch {
-                    return Err(json!({"error": "reset_required", "reason": "epoch", "epoch": epoch}));
+                    return Err(
+                        json!({"error": "reset_required", "reason": "epoch", "epoch": epoch}),
+                    );
                 }
                 if *ps < feed.floor || d.position.is_none() {
-                    return Err(json!({"error": "reset_required", "reason": "expired", "epoch": epoch}));
+                    return Err(
+                        json!({"error": "reset_required", "reason": "expired", "epoch": epoch}),
+                    );
                 }
                 if *ps > feed.head {
                     return Err(self.err("server_behind"));
@@ -1064,7 +1113,9 @@ impl Server {
             }
             _ => {
                 d.position.is_none()
-                    || parsed.as_ref().is_none_or(|(pe, ps)| *pe != epoch || *ps < feed.floor)
+                    || parsed
+                        .as_ref()
+                        .is_none_or(|(pe, ps)| *pe != epoch || *ps < feed.floor)
                     || presented == d.position.as_deref()
                     || presented == d.position_before.as_deref()
             }
@@ -1173,7 +1224,9 @@ impl Server {
         for _ in 0..8 {
             let mut next = Vec::new();
             for key in &frontier {
-                let Some(s) = self.st.rows.get(key) else { continue };
+                let Some(s) = self.st.rows.get(key) else {
+                    continue;
+                };
                 if !self.can_read(c.user, *key) {
                     continue;
                 }
@@ -1199,7 +1252,12 @@ impl Server {
 
     fn rows_call(&self, c: Caller, args: &Value) -> Value {
         let mut out = Vec::new();
-        for r in args.get("refs").and_then(Value::as_array).into_iter().flatten() {
+        for r in args
+            .get("refs")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let (Some(kind), Some(id)) = (
                 r.get("entity")
                     .and_then(Value::as_str)
@@ -1217,7 +1275,10 @@ impl Server {
         let Some(folder) = arg_id(args, "folder") else {
             return self.err("invalid");
         };
-        if self.folder(folder).is_none_or(|f| f.meta.deleted_at.is_some()) {
+        if self
+            .folder(folder)
+            .is_none_or(|f| f.meta.deleted_at.is_some())
+        {
             return self.err("not_found");
         }
         let map = self.access_map(c.user);
@@ -1227,7 +1288,9 @@ impl Server {
             .rows
             .values()
             .filter_map(|s| match &s.row {
-                AnyRow::Folder(f) if f.meta.deleted_at.is_none() && self.chain(f.meta.id).contains(&folder) => {
+                AnyRow::Folder(f)
+                    if f.meta.deleted_at.is_none() && self.chain(f.meta.id).contains(&folder) =>
+                {
                     Some(f.meta.id)
                 }
                 _ => None,
@@ -1249,10 +1312,14 @@ impl Server {
         }
         for s in self.st.rows.values() {
             match &s.row {
-                AnyRow::FolderShare(x) if x.meta.deleted_at.is_none() && tree.contains(&x.folder_id) => {
+                AnyRow::FolderShare(x)
+                    if x.meta.deleted_at.is_none() && tree.contains(&x.folder_id) =>
+                {
                     keys.push(s.row.key());
                 }
-                AnyRow::Snippet(sn) if sn.meta.deleted_at.is_none() && tree.contains(&sn.folder_id) => {
+                AnyRow::Snippet(sn)
+                    if sn.meta.deleted_at.is_none() && tree.contains(&sn.folder_id) =>
+                {
                     keys.push(s.row.key());
                 }
                 _ => {}
@@ -1266,14 +1333,22 @@ impl Server {
         let mut links = Vec::new();
         for s in self.st.rows.values() {
             match &s.row {
-                AnyRow::SnippetTag(l) if l.meta.deleted_at.is_none() && snippets.contains(&l.snippet_id) => {
-                    links.push(RowRef { kind: RowKind::Tag, id: l.tag_id });
+                AnyRow::SnippetTag(l)
+                    if l.meta.deleted_at.is_none() && snippets.contains(&l.snippet_id) =>
+                {
+                    links.push(RowRef {
+                        kind: RowKind::Tag,
+                        id: l.tag_id,
+                    });
                     links.push(s.row.key());
                 }
                 AnyRow::SnippetAttachment(l)
                     if l.meta.deleted_at.is_none() && snippets.contains(&l.snippet_id) =>
                 {
-                    links.push(RowRef { kind: RowKind::Attachment, id: l.attachment_id });
+                    links.push(RowRef {
+                        kind: RowKind::Attachment,
+                        id: l.attachment_id,
+                    });
                     links.push(s.row.key());
                 }
                 _ => {}
@@ -1294,7 +1369,10 @@ impl Server {
         let Some(device) = arg_id(args, "device") else {
             return self.err("invalid");
         };
-        let presented = args.get("position").and_then(Value::as_str).map(str::to_owned);
+        let presented = args
+            .get("position")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         if args.get("cursor").is_some_and(|v| !v.is_null()) {
             return json!({ "error": null, "epoch": self.epoch().id, "rows": [], "cursor": null });
         }
@@ -1371,7 +1449,10 @@ impl Server {
         let groups: Vec<Value> = self
             .own_profiles(c.user)
             .into_iter()
-            .filter_map(|g| self.role(c.user, g).map(|r| json!({ "group": g, "role": r })))
+            .filter_map(|g| {
+                self.role(c.user, g)
+                    .map(|r| json!({ "group": g, "role": r }))
+            })
             .collect();
         json!({ "error": null, "epoch": self.epoch().id, "roots": roots, "groups": groups })
     }
@@ -1468,7 +1549,9 @@ impl Server {
 }
 
 pub(crate) fn arg_id(v: &Value, key: &str) -> Option<Id> {
-    v.get(key).and_then(Value::as_str).and_then(|s| s.parse().ok())
+    v.get(key)
+        .and_then(Value::as_str)
+        .and_then(|s| s.parse().ok())
 }
 
 /// A transport that calls the model in process as one caller.
@@ -1483,7 +1566,8 @@ impl Transport for ModelTransport<'_> {
     fn call(&mut self, function: &str, args: Value) -> Result<Value, CallError> {
         // Through the JSON text, as on the wire.
         let text = args.to_string();
-        let args: Value = serde_json::from_str(&text).map_err(|e| CallError::Malformed(e.to_string()))?;
+        let args: Value =
+            serde_json::from_str(&text).map_err(|e| CallError::Malformed(e.to_string()))?;
         let answer = self.server.call(self.caller, function, &args);
         let text = answer.to_string();
         serde_json::from_str(&text).map_err(|e| CallError::Malformed(e.to_string()))

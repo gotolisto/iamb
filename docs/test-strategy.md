@@ -1033,3 +1033,56 @@ Results (2026-11-21):
 | Hosted tests | all pass | 17 of 17 SQL files (all but the concurrency file, which needs a superuser), rolled back; the authentication checks as listed in the README |
 | Push of 200 ops | < 20 s | 0.21-0.31 s locally, 0.44 s on the hosted project |
 | Cascade of 2,000 rows | < 20 s | 1.4 s locally, 4.6 s on the hosted project |
+
+## 10. Sync client (task 4.4)
+
+The sync agent (`crates/iamb-sync`, README there) is tested against a model of the server written
+in Rust (`iamb_sync::model`, feature `model`): revisions and the feed, the twelve places of a
+change, LWW with history and conflicts (C3, with ADR-0031: a party sees only the versions it may
+read, and only while it can read the row), deletes and the folder cascade (C5 to C7) with the
+restored folder, the tree rules (C8), shares and access (§5.4, `folder_visible` and
+`folder_revoked`), receipts and repeats (C15), positions and `device_conflict` (C25), sessions and
+sign-outs, the plan limits that are set, backups and restores with epochs, lost lines and the
+operator's replay of what took access away (C18), and the refusals of §6. The model checks I7
+after every commit. The agent runs against it through the same `Transport` trait as the HTTPS
+transport, and the device side is the real store (`iamb_store::Store`, in memory or on disk).
+
+- **Scenario replay** (`crates/iamb-testkit/tests/sync_replay.rs`): every scenario of
+  `spec/sync/scenarios.toml` runs through the real store and agent against the model, from its
+  start state through its steps, and the outcome is derived, not taken from the file: the server's
+  rows, versions, history and conflicts, and each device's rows, kept changes and outbox are
+  compared with the stated outcome field by field (a device may hold a tombstone or nothing for a
+  server tombstone, as I1 says). The scenarios that reach their outcome are listed in the test, so
+  that a change that breaks one fails. CI: every PR (the `Test` step).
+- **Two-device simulation** (`crates/iamb-sync/tests/simulation.rs`): seeded, deterministic runs
+  on a simulated clock with the design's cadence (250 ms debounce, the poke 50 to 400 ms after the
+  commit, polling every 2 s or 60 s while the channel is down, backoff), random edits of every kind
+  (snippets, folders, tags, links, shares and edits by a member of a family group in about a third
+  of the runs), offline periods (some longer than 30 days), lost requests and answers, restarts
+  between the outbox write and the push and between the commit and the receipt, clock skew of up
+  to an hour either way, live-channel outages, sessions that end at the authentication service,
+  sign-outs by hand (online and offline) and sign-ins again, a copied data directory used beside
+  the original (about one run in ten, C25), and a backup and a restore of the server in about one
+  run in eight. After each run every device signs in, comes online and syncs, and the run checks
+  I1 to I7, with the twelve places of §1 as the definition of a lost edit. It measures, for each
+  write made while the writer and another device of the account were online and signed in, the
+  time until that device holds it. CI: 120 runs in every PR (`cargo test -p iamb-sync --features
+  model`, Linux), 1,000 in the nightly workflow (`IAMB_SYNC_SIM_RUNS=1000`).
+
+Results (2026-11-22, 1,000 runs, seeds 1 to 1,000):
+
+| KPI or check | Target | Result |
+| --- | --- | --- |
+| Lost edits (I2, the twelve places) | 0 | 0 of 57,469 local changes (place 1: 24,147, place 2: 18,385, place 4: 1,799, place 5: 476, place 6: 199, place 7: 11,787, place 9: 308, place 12: 368) |
+| Invariants I1 to I7 | 0 violations | 0 |
+| Online devices agree | p95 within 5 s | p95 4.18 s, p50 0.99 s, p90 2.08 s, p99 15.1 s, max 227 s; 16,245 of 17,048 writes (95.3%) within 5 s; 26 never settled (the other device never held that revision, mostly because the row left it first: a delete whose tombstone it may drop, I1, or the end of a share) |
+| Runs with a restore of the server / with shares / with a copied data directory | some | 114 / 352 / 114; 682 sign-outs and as many sign-ins |
+| Scenario replay | every scenario reaches its outcome | 81 of 87; 0 differ; 6 not replayed: another protocol version (S44), a first sign-in with a local library (S48, D9), copying a held snippet (S56, a review of D10), rows on some devices only at the start (S83), attachment rows written locally (S73, S84, task 4.6) |
+
+The tail of the agreement times comes from the injected faults and the design's own exception
+(§6.7): lost requests and answers retried with backoff, a live channel that is down (polling every
+2 s), and a resync after a sign-in or a restore. One stated outcome was wrong and was corrected:
+S60 (with the second pull of §6.7 step 4 the copy that is behind is the installation C25 catches,
+not the original). Against the hosted project nothing was run in this task: the 4.3 probe
+`server/tests/hosted_rest_writes.py` now opens real sessions without a mailbox, which is what a
+short two-device run of the real agent there needs.

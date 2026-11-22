@@ -52,6 +52,7 @@ mod injection;
 mod ipc;
 mod keys;
 mod store;
+mod sync;
 mod threads;
 
 use std::collections::VecDeque;

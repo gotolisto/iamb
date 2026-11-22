@@ -227,7 +227,9 @@ impl AuthClient {
         let expires_at = v
             .get("expires_at")
             .and_then(Value::as_i64)
-            .unwrap_or_else(|| now_secs + v.get("expires_in").and_then(Value::as_i64).unwrap_or(3_600));
+            .unwrap_or_else(|| {
+                now_secs + v.get("expires_in").and_then(Value::as_i64).unwrap_or(3_600)
+            });
         Refresh::Renewed(Tokens {
             access_token: access.to_owned(),
             refresh_token: refresh.to_owned(),

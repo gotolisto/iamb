@@ -25,6 +25,8 @@ model = ["dep:iamb-store"]
 getrandom = "0.4.3"
 iamb-core = { path = "../iamb-core" }
 iamb-ipc = { path = "../iamb-ipc" }
+# The service endpoint's name and the peer policy (the binary connects with the role `sync`).
+iamb-platform = { path = "../iamb-platform" }
 iamb-store = { path = "../iamb-store", optional = true }
 rustls = { version = "0.23.37", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-native-certs = "0.8.3"

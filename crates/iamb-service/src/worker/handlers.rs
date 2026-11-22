@@ -4,9 +4,9 @@
 //! without touching the store thread; writes go to the store thread; engine control goes to
 //! the engine thread. The role check has already happened in `iamb-ipc`.
 //!
-//! Templates are answered from the snapshot too ([`crate::templates`]). Not implemented in this
-//! build (answered with `not_implemented`): the Sync group (the sync agent arrives with task
-//! 4.4).
+//! Templates are answered from the snapshot too ([`crate::templates`]). The Sync group is in
+//! `super::sync` (task 4.4); attachment files (`AttachmentAvailable`, `MissingAttachments`)
+//! arrive with task 4.6 and are answered `not_implemented`.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::mpsc::channel;
@@ -53,7 +53,7 @@ fn err(code: ErrorCode, message: impl Into<String>) -> ErrorBody {
     ErrorBody::new(code, message)
 }
 
-fn unavailable() -> ErrorBody {
+pub(super) fn unavailable() -> ErrorBody {
     err(ErrorCode::Unavailable, "the service is shutting down")
 }
 
@@ -65,7 +65,7 @@ fn not_implemented(what: &str) -> ErrorBody {
 }
 
 /// A store error as the client sees it.
-fn store_error(e: &StoreError) -> ErrorBody {
+pub(super) fn store_error(e: &StoreError) -> ErrorBody {
     match e {
         StoreError::AbbreviationConflict { .. } => err(ErrorCode::Conflict, e.to_string()),
         StoreError::NotFound { .. } => err(ErrorCode::NotFound, e.to_string()),
@@ -104,6 +104,10 @@ fn done() -> Answer {
 /// Answers one request.
 #[allow(clippy::too_many_lines, reason = "one arm per request of §6.2")]
 pub(crate) fn handle(shared: &Arc<Shared>, _role: Role, body: RequestBody) -> Answer {
+    let body = match super::sync::handle(shared, body) {
+        Ok(answer) => return answer,
+        Err(body) => body,
+    };
     let view = shared.view.get();
     match body {
         // ---- Library ------------------------------------------------------------------------
@@ -425,15 +429,12 @@ pub(crate) fn handle(shared: &Arc<Shared>, _role: Role, body: RequestBody) -> An
             excluded,
         } => put_exclusion(shared, &app_id, display_name, excluded),
 
-        // ---- Sync ---------------------------------------------------------------------------
-        RequestBody::OutboxRead { .. }
-        | RequestBody::OutboxAck { .. }
-        | RequestBody::ApplyRemote { .. }
-        | RequestBody::PurgeFolder { .. }
-        | RequestBody::AttachmentAvailable { .. }
-        | RequestBody::MissingAttachments {}
-        | RequestBody::SetSyncStatus { .. }
-        | RequestBody::SetEntitlements { .. } => Err(not_implemented("sync")),
+        // ---- Sync (the rest is in `super::sync`) ----------------------------------------------
+        RequestBody::SetSyncStatus { .. } => done(),
+        RequestBody::AttachmentAvailable { .. } | RequestBody::MissingAttachments {} => {
+            Err(not_implemented("attachment files"))
+        }
+        _ => Err(not_implemented("sync")),
     }
 }
 

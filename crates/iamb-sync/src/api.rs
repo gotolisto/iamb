@@ -139,7 +139,9 @@ fn str_of(v: &Value, key: &str) -> Option<String> {
 }
 
 fn id_of(v: &Value, key: &str) -> Option<Id> {
-    v.get(key).and_then(Value::as_str).and_then(|s| s.parse().ok())
+    v.get(key)
+        .and_then(Value::as_str)
+        .and_then(|s| s.parse().ok())
 }
 
 fn u64_of(v: &Value, key: &str) -> u64 {
@@ -199,8 +201,7 @@ fn remote_row(item: &Value) -> Reply<RemoteRow> {
 
 fn remote_rows(v: Option<&Value>) -> Reply<Vec<RemoteRow>> {
     v.and_then(Value::as_array)
-        .map(|a| a.iter().map(remote_row).collect())
-        .unwrap_or_else(|| Ok(Vec::new()))
+        .map_or_else(|| Ok(Vec::new()), |a| a.iter().map(remote_row).collect())
 }
 
 /// The device as `hello` describes it.
@@ -237,7 +238,7 @@ pub struct Hello {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Entry {
     /// A row changed, or became readable or unreadable.
-    Row(RemoteRow),
+    Row(Box<RemoteRow>),
     /// A tree became readable.
     FolderVisible(Id),
     /// A tree stopped being readable, except the listed parts.
@@ -404,10 +405,15 @@ impl<'a, T: Transport + ?Sized> Api<'a, T> {
     pub fn pull(&mut self, after: &str, limit: u32) -> Reply<Page> {
         let v = self.call("pull", json!({ "after": after, "limit": limit }))?;
         let mut entries = Vec::new();
-        for e in v.get("entries").and_then(Value::as_array).into_iter().flatten() {
+        for e in v
+            .get("entries")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let kind = e.get("kind").and_then(Value::as_str).unwrap_or("");
             entries.push(match kind {
-                "row" => Entry::Row(remote_row(e)?),
+                "row" => Entry::Row(Box::new(remote_row(e)?)),
                 "folder_visible" => Entry::FolderVisible(
                     id_of(e, "folder").ok_or_else(|| malformed("folder_visible"))?,
                 ),
@@ -457,7 +463,10 @@ impl<'a, T: Transport + ?Sized> Api<'a, T> {
     ///
     /// [`Failure`].
     pub fn fetch_folder(&mut self, folder: Id, cursor: Option<&str>) -> Reply<WholePage> {
-        let v = self.call("fetch_folder", json!({ "folder": folder, "cursor": cursor }))?;
+        let v = self.call(
+            "fetch_folder",
+            json!({ "folder": folder, "cursor": cursor }),
+        )?;
         whole_page(&v)
     }
 
@@ -467,7 +476,10 @@ impl<'a, T: Transport + ?Sized> Api<'a, T> {
     ///
     /// [`Failure`].
     pub fn snapshot(&mut self, position: Option<&str>, cursor: Option<&str>) -> Reply<WholePage> {
-        let v = self.call("snapshot", json!({ "position": position, "cursor": cursor }))?;
+        let v = self.call(
+            "snapshot",
+            json!({ "position": position, "cursor": cursor }),
+        )?;
         whole_page(&v)
     }
 
@@ -653,7 +665,12 @@ pub fn result_from_wire(r: &Value, c: &Change) -> Reply<OpResult> {
         Some(v) => Some(row_from_wire(c.kind.as_str(), v).map_err(|e| malformed(&e))?),
     };
     let mut cascade = Vec::new();
-    for item in r.get("cascade").and_then(Value::as_array).into_iter().flatten() {
+    for item in r
+        .get("cascade")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         let entity = item.get("entity").and_then(Value::as_str).unwrap_or("");
         let kind = RowKind::parse(entity).ok_or_else(|| malformed("cascade entity"))?;
         let id = id_of(item, "id").ok_or_else(|| malformed("cascade id"))?;
@@ -664,7 +681,10 @@ pub fn result_from_wire(r: &Value, c: &Change) -> Reply<OpResult> {
         cascade.push(CascadeResult {
             key: RowRef { kind, id },
             rev: item.get("rev").and_then(Value::as_u64),
-            deleted: item.get("deleted").and_then(Value::as_bool).unwrap_or(false),
+            deleted: item
+                .get("deleted")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             gone: item.get("gone").and_then(Value::as_bool).unwrap_or(false),
             fetch: item.get("fetch").and_then(Value::as_bool).unwrap_or(false),
             row,
@@ -680,7 +700,11 @@ pub fn result_from_wire(r: &Value, c: &Change) -> Reply<OpResult> {
         adjusted: r
             .get("adjusted")
             .and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(str::to_owned))
+                    .collect()
+            })
             .unwrap_or_default(),
         replayed: r.get("replayed").and_then(Value::as_bool).unwrap_or(false),
         row,

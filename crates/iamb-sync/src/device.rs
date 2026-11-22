@@ -10,7 +10,7 @@ use std::fmt;
 
 use iamb_core::model::Id;
 use iamb_core::sync::{
-    AccessRemoval, AccessRoot, AckOutcome, ApplyMode, ApplyStatus, Change, LostLine, OpResult,
+    AccessRemoval, AccessRoot, AckOutcome, ApplyMode, ApplyStatus, LostLine, OpResult, OutboxBatch,
     OutboxPhase, ReconcileScope, RemoteRow, SyncInfo,
 };
 use iamb_ipc::{RequestBody, ResponseBody, SyncStatus};
@@ -62,7 +62,7 @@ pub trait Device {
     /// # Errors
     ///
     /// [`DeviceError`].
-    fn outbox_read(&mut self, limit: usize, phase: OutboxPhase) -> DeviceResult<Vec<Change>>;
+    fn outbox_read(&mut self, limit: usize, phase: OutboxPhase) -> DeviceResult<OutboxBatch>;
     /// `OutboxAck` (D4, D5, D15).
     ///
     /// # Errors
@@ -233,12 +233,12 @@ impl Device for IpcDevice {
         .map(drop)
     }
 
-    fn outbox_read(&mut self, limit: usize, phase: OutboxPhase) -> DeviceResult<Vec<Change>> {
+    fn outbox_read(&mut self, limit: usize, phase: OutboxPhase) -> DeviceResult<OutboxBatch> {
         match self.call(RequestBody::OutboxRead {
             limit: u32::try_from(limit).unwrap_or(u32::MAX),
             phase: Some(phase),
         })? {
-            ResponseBody::Changes { changes } => Ok(changes),
+            ResponseBody::Changes { changes, behind } => Ok(OutboxBatch { changes, behind }),
             r => Err(unexpected(&r)),
         }
     }

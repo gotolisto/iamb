@@ -33,7 +33,7 @@ use iamb_core::engine::{Action, Diagnostic};
 use iamb_core::model::{Folder, Id, Sha256, Snippet, SyncMeta, Tag, Timestamp};
 use iamb_core::sync::{
     AccessRemoval, AccessRoot, AckOutcome, ApplyMode, ApplyStatus, Change, KeptChange, LostLine,
-    OpResult, OutboxPhase, ReconcileScope, RemoteRow, SyncInfo,
+    OpResult, OutboxPhase, ReconcileScope, RemoteRow, RowRef, SyncInfo,
 };
 use iamb_core::template::{FieldKind, FieldSpec, KeyName};
 use iamb_platform::FocusToken;
@@ -1576,6 +1576,9 @@ pub enum ResponseBody {
     Changes {
         /// The changes, in dependency order.
         changes: Vec<Change>,
+        /// Rows whose last entry was dropped and that are behind what a pull skipped (D15).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        behind: Vec<RowRef>,
     },
     /// What `OutboxAck` did (D15, D7).
     SyncAcked {

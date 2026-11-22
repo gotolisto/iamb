@@ -23,8 +23,8 @@ use iamb_core::model::{
     SnippetAttachment, SnippetTag, Tag, Timestamp,
 };
 use iamb_core::sync::{
-    AccessRemoval, AccessRoot, AckOutcome, Adoption, AnyRow, ApplyMode, ApplyStatus,
-    CascadeItem, CascadeResult, Change, KeptChange, LostLine, OpResult, OpStatus, Origin,
+    AccessRemoval, AccessRoot, AckOutcome, Adoption, AnyRow, ApplyMode, ApplyStatus, CascadeItem,
+    CascadeResult, Change, KeptChange, LostLine, OpResult, OpStatus, Origin, OutboxBatch,
     OutboxPhase, ReconcileScope, RemoteRow, Repush, RepushKind, RowKind, RowRef, SyncInfo,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
@@ -154,7 +154,10 @@ fn all_of(conn: &Connection, kind: RowKind) -> Result<Vec<AnyRow>, StoreError> {
 }
 
 fn exists(conn: &Connection, key: RowRef) -> Result<bool, StoreError> {
-    let sql = format!("SELECT EXISTS (SELECT 1 FROM {} WHERE id = ?1)", key.kind.as_str());
+    let sql = format!(
+        "SELECT EXISTS (SELECT 1 FROM {} WHERE id = ?1)",
+        key.kind.as_str()
+    );
     Ok(conn
         .prepare_cached(&sql)?
         .query_row([key.id.as_bytes()], |r| r.get(0))?)
@@ -176,7 +179,10 @@ fn set_deleted(
     key: RowRef,
     deleted_at: Option<Timestamp>,
 ) -> Result<(), StoreError> {
-    let sql = format!("UPDATE {} SET deleted_at = ?1 WHERE id = ?2", key.kind.as_str());
+    let sql = format!(
+        "UPDATE {} SET deleted_at = ?1 WHERE id = ?2",
+        key.kind.as_str()
+    );
     conn.prepare_cached(&sql)?
         .execute(params![deleted_at.map(|t| t.0), key.id.as_bytes()])?;
     Ok(())
@@ -214,7 +220,11 @@ fn get_origin(conn: &Connection, snippet: Id) -> Result<Option<Origin>, StoreErr
 }
 
 /// Writes a row from the server, with its origin.
-fn write_remote(conn: &Connection, row: &AnyRow, origin: Option<&Origin>) -> Result<(), StoreError> {
+fn write_remote(
+    conn: &Connection,
+    row: &AnyRow,
+    origin: Option<&Origin>,
+) -> Result<(), StoreError> {
     put_any(conn, row)?;
     if let (AnyRow::Snippet(s), Some(o)) = (row, origin) {
         put_origin(conn, s.meta.id, o)?;
@@ -332,7 +342,9 @@ fn read_entries(conn: &Connection, key: Option<RowRef>) -> Result<Vec<Entry>, St
                 Some("base") => Some(RepushKind::Base),
                 _ => None,
             },
-            repush_rev: r.get::<_, Option<i64>>(10)?.and_then(|v| u64::try_from(v).ok()),
+            repush_rev: r
+                .get::<_, Option<i64>>(10)?
+                .and_then(|v| u64::try_from(v).ok()),
             repush_epoch: r.get(11)?,
             created_at: r.get(12)?,
         })
@@ -422,7 +434,11 @@ fn personal_profile(conn: &Connection) -> Result<Option<Id>, StoreError> {
         .flatten())
 }
 
-fn set_position(conn: &Connection, position: Option<&str>, now: Timestamp) -> Result<(), StoreError> {
+fn set_position(
+    conn: &Connection,
+    position: Option<&str>,
+    now: Timestamp,
+) -> Result<(), StoreError> {
     ensure_state(conn)?;
     conn.prepare_cached("UPDATE sync_state SET position = ?1, updated_at = ?2 WHERE id = 1")?
         .execute(params![position, now.0])?;
@@ -668,10 +684,15 @@ fn keep_unsent(
         }
         let row = get_any(conn, key)?;
         let only_repush = entries.iter().all(|e| e.repush.is_some());
-        let own_version = row.as_ref().is_some_and(|r| r.meta().updated_by == me && me.is_some());
+        let own_version = row
+            .as_ref()
+            .is_some_and(|r| r.meta().updated_by == me && me.is_some());
         // A cascade entry of a folder that leaves with it is part of the folder's change.
         let only_cascade = entries.iter().all(|e| e.cascade_of.is_some());
-        if !discard && !(only_repush && !own_version) && !(only_cascade && key.kind != RowKind::Folder) {
+        if !discard
+            && (!only_repush || own_version)
+            && (!only_cascade || key.kind == RowKind::Folder)
+        {
             let deleted = row.as_ref().is_none_or(|r| r.meta().is_deleted());
             let made = entries.last().map_or(now.0, |e| e.created_at);
             keep(conn, key, row.as_ref(), deleted, reason, made, now)?;
@@ -695,7 +716,18 @@ fn purge_tree(
     let rows = rows_of_folders(conn, &folders)?;
     keep_unsent(conn, &rows, reason, discard, now)?;
     for key in rows {
+        // A row a pull skipped for an unsent change may be readable elsewhere by now (moved out
+        // of the tree on the server): its note stays, and the row is read with `rows` (D15).
+        let note: Option<(i64, bool)> = conn
+            .prepare_cached("SELECT rev, gone FROM skipped WHERE entity = ?1 AND row_id = ?2")?
+            .query_row(params![key.kind.as_str(), key.id.as_bytes()], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .optional()?;
         hard_delete(conn, key)?;
+        if let Some((rev, false)) = note {
+            note_skipped(conn, key, u64::try_from(rev).unwrap_or(0), false)?;
+        }
     }
     for e in except {
         // A part that stays readable becomes an access root of its own: shown at the top.
@@ -715,7 +747,9 @@ fn purge_tree(
 }
 
 /// D16: the tags, attachment rows and profile rows of profiles the user neither owns nor belongs
-/// to that nothing the device still holds uses.
+/// to that nothing the device still holds uses. A link with an unsent change keeps its tag or
+/// attachment until the change is answered: the link's row refers to it, and the change must not
+/// leave with it.
 fn cleanup_unused(conn: &Connection) -> Result<(), StoreError> {
     let own = own_profiles(conn)?;
     let mut profiles: Vec<Id> = Vec::new();
@@ -734,7 +768,10 @@ fn cleanup_unused(conn: &Connection) -> Result<(), StoreError> {
             "SELECT t.id FROM tag t WHERE t.profile_id = ?1
                AND NOT EXISTS (SELECT 1 FROM snippet_tag l JOIN snippet s ON s.id = l.snippet_id
                                WHERE l.tag_id = t.id AND l.deleted_at IS NULL AND s.deleted_at IS NULL)
-               AND NOT EXISTS (SELECT 1 FROM outbox o WHERE o.entity = 'tag' AND o.row_id = t.id)",
+               AND NOT EXISTS (SELECT 1 FROM outbox o WHERE o.entity = 'tag' AND o.row_id = t.id)
+               AND NOT EXISTS (SELECT 1 FROM snippet_tag l JOIN outbox o
+                                   ON o.entity = 'snippet_tag' AND o.row_id = l.id
+                               WHERE l.tag_id = t.id)",
             p,
         )?;
         for t in tags {
@@ -751,7 +788,10 @@ fn cleanup_unused(conn: &Connection) -> Result<(), StoreError> {
             "SELECT a.id FROM attachment a WHERE a.profile_id = ?1
                AND NOT EXISTS (SELECT 1 FROM snippet_attachment l JOIN snippet s ON s.id = l.snippet_id
                                WHERE l.attachment_id = a.id AND l.deleted_at IS NULL AND s.deleted_at IS NULL)
-               AND NOT EXISTS (SELECT 1 FROM outbox o WHERE o.entity = 'attachment' AND o.row_id = a.id)",
+               AND NOT EXISTS (SELECT 1 FROM outbox o WHERE o.entity = 'attachment' AND o.row_id = a.id)
+               AND NOT EXISTS (SELECT 1 FROM snippet_attachment l JOIN outbox o
+                                   ON o.entity = 'snippet_attachment' AND o.row_id = l.id
+                               WHERE l.attachment_id = a.id)",
             p,
         )?;
         for a in atts {
@@ -772,7 +812,17 @@ fn cleanup_unused(conn: &Connection) -> Result<(), StoreError> {
                      OR EXISTS (SELECT 1 FROM folder_share WHERE profile_id = ?1)",
             )?
             .query_row([p.as_bytes()], |r| r.get(0))?;
-        if !used {
+        // The user's own membership of a group that ended stays as a tombstone, with the group's
+        // row it refers to (D6).
+        let mine: bool = match account(conn)? {
+            Some(u) => conn
+                .prepare_cached(
+                    "SELECT EXISTS (SELECT 1 FROM membership WHERE profile_id = ?1 AND user_id = ?2)",
+                )?
+                .query_row(params![p.as_bytes(), u.as_bytes()], |r| r.get(0))?,
+            None => false,
+        };
+        if !used && !mine {
             hard_delete(
                 conn,
                 RowRef {
@@ -787,6 +837,27 @@ fn cleanup_unused(conn: &Connection) -> Result<(), StoreError> {
 
 /// Removes a row the server no longer shows the user: a folder with its tree (D3), anything else
 /// by itself.
+/// The rows of a folder's subtree (the folder included) that the server once gave (`rev > 0`).
+fn synced_in_tree(conn: &Connection, folder: Id) -> Result<Vec<RowRef>, StoreError> {
+    let except = self_shared_inside(conn, folder)?;
+    let folders = subtree(conn, folder, &except)?;
+    let mut keys: Vec<RowRef> = folders
+        .iter()
+        .map(|f| RowRef {
+            kind: RowKind::Folder,
+            id: *f,
+        })
+        .collect();
+    keys.extend(rows_of_folders(conn, &folders)?);
+    let mut out = Vec::new();
+    for k in keys {
+        if get_any(conn, k)?.is_some_and(|r| r.meta().rev > 0) {
+            out.push(k);
+        }
+    }
+    Ok(out)
+}
+
 fn remove_row(conn: &Connection, key: RowRef, now: Timestamp) -> Result<(), StoreError> {
     if key.kind == RowKind::Folder {
         let except = self_shared_inside(conn, key.id)?;
@@ -949,7 +1020,8 @@ impl Store {
         let c = &self.conn;
         let mut info = c
             .query_row(
-                "SELECT account_user_id, device_id, personal_profile_id, position, adoption, set_aside_at
+                "SELECT account_user_id, device_id, personal_profile_id, position, adoption, set_aside_at,
+                        signed_out_at
                  FROM sync_state WHERE id = 1",
                 [],
                 |r| {
@@ -964,6 +1036,7 @@ impl Store {
                             _ => None,
                         },
                         set_aside_at: r.get::<_, Option<i64>>(5)?.map(Timestamp),
+                        signed_out_at: r.get::<_, Option<i64>>(6)?.map(Timestamp),
                         ..SyncInfo::default()
                     })
                 },
@@ -1051,7 +1124,7 @@ impl Store {
         &mut self,
         limit: usize,
         phase: OutboxPhase,
-    ) -> Result<Vec<Change>, StoreError> {
+    ) -> Result<OutboxBatch, StoreError> {
         let tx = self.sync_tx()?;
         let me = account(&tx)?;
         let entries = read_entries(&tx, None)?;
@@ -1074,22 +1147,32 @@ impl Store {
         // handed out, place 7; entries of rows that no longer exist).
         let mut rows: HashMap<RowRef, AnyRow> = HashMap::new();
         let mut dropped: BTreeSet<RowRef> = BTreeSet::new();
+        let mut garbage: Vec<RowRef> = Vec::new();
         for key in &order {
             let es = &groups[key];
             let row = get_any(&tx, *key)?;
             let never_out = es.iter().all(|e| !e.handed_out && e.repush.is_none());
             let drop = key.kind.server_only()
                 || row.is_none()
-                || row.as_ref().is_some_and(|r| {
-                    r.meta().rev == 0 && r.meta().is_deleted() && never_out
-                });
+                || row
+                    .as_ref()
+                    .is_some_and(|r| r.meta().rev == 0 && r.meta().is_deleted() && never_out);
             if drop {
                 delete_row_entries(&tx, *key)?;
                 dropped.insert(*key);
+                if row
+                    .as_ref()
+                    .is_some_and(|r| r.meta().rev == 0 && r.meta().is_deleted())
+                {
+                    garbage.push(*key);
+                }
             } else if let Some(r) = row {
                 rows.insert(*key, r);
             }
         }
+        // A row created and deleted before any entry was handed out leaves nothing behind (D1,
+        // place 7 of §1): the tombstone goes, leaves first.
+        drop_garbage(&tx, &garbage)?;
         // The folder entries' seqs, to find cascade children.
         let mut folder_of_seq: HashMap<i64, RowRef> = HashMap::new();
         for key in &order {
@@ -1124,7 +1207,7 @@ impl Store {
                 OutboxPhase::All => true,
                 OutboxPhase::ShareDeletes => k.kind == RowKind::FolderShare && deleted(k),
                 OutboxPhase::Folders => k.kind == RowKind::Folder,
-                OutboxPhase::NotShares => !(k.kind == RowKind::FolderShare && !deleted(k)),
+                OutboxPhase::NotShares => k.kind != RowKind::FolderShare || deleted(k),
             }
         };
         let build = |key: RowRef| -> Result<Change, StoreError> {
@@ -1279,8 +1362,39 @@ impl Store {
         let mut keyed: Vec<((u8, usize, usize), Change)> =
             out.iter().map(|c| (rank(c), c.clone())).collect();
         keyed.sort_by_key(|(r, _)| *r);
+        // D15: a row without entries that is behind what a pull skipped (one dropped here, one
+        // whose read failed before) is read with `rows`.
+        let mut behind = Vec::new();
+        let notes: Vec<(String, Id, i64, bool)> = {
+            let mut stmt = tx.prepare_cached("SELECT entity, row_id, rev, gone FROM skipped")?;
+            let rows =
+                stmt.query_map([], |r| Ok((r.get(0)?, id_at(r, 1)?, r.get(2)?, r.get(3)?)))?;
+            rows.collect::<Result<_, _>>()?
+        };
+        for (entity, id, rev, gone) in notes {
+            let Some(kind) = RowKind::parse(&entity) else {
+                continue;
+            };
+            let key = RowRef { kind, id };
+            if has_entries(&tx, key)? {
+                continue;
+            }
+            let local = get_any(&tx, key)?;
+            // A row the device no longer holds (dropped here) that a pull brought is behind too.
+            let is_behind = match &local {
+                Some(l) => gone || i64_of(l.meta().rev) < rev,
+                None => !gone,
+            };
+            if is_behind {
+                behind.push(key);
+            } else {
+                clear_skipped(&tx, key)?;
+            }
+        }
+        let _ = &dropped;
         tx.commit()?;
-        Ok(keyed.into_iter().map(|(_, c)| c).collect())
+        let changes = keyed.into_iter().map(|(_, c)| c).collect();
+        Ok(OutboxBatch { changes, behind })
     }
 
     /// Acts on the server's result for each change (D4, D5) in one transaction; answers the rows
@@ -1309,7 +1423,10 @@ impl Store {
                 .filter(|e| covered.contains(&e.seq))
                 .map(|e| e.seq)
                 .collect();
-            let newer: Vec<&Entry> = entries.iter().filter(|e| !covered.contains(&e.seq)).collect();
+            let newer: Vec<&Entry> = entries
+                .iter()
+                .filter(|e| !covered.contains(&e.seq))
+                .collect();
             match res.status {
                 OpStatus::Partial => {}
                 OpStatus::Blocked => {
@@ -1366,7 +1483,7 @@ impl Store {
                     let own_version = current
                         .as_ref()
                         .is_some_and(|r| me.is_some() && r.meta().updated_by == me);
-                    if !share && !(res.repush && !own_version) {
+                    if !share && (!res.repush || own_version) {
                         let deleted = current.as_ref().is_none_or(|r| r.meta().is_deleted());
                         let made = entries.last().map_or(now.0, |e| e.created_at);
                         let reason = res.reason.clone().unwrap_or_else(|| "forbidden".into());
@@ -1384,6 +1501,18 @@ impl Store {
                         }
                         None => {
                             if current.is_some() {
+                                // The device's tree under a folder need not be the server's: a
+                                // folder the server moved out may still hang under it here,
+                                // held by an unsent change, with rows a pull just brought. What
+                                // the purge takes that the server once gave is read again with
+                                // `rows` (D15); what the server no longer has stays away.
+                                if key.kind == RowKind::Folder {
+                                    for k in synced_in_tree(&tx, key.id)? {
+                                        if k != key {
+                                            behind.insert(k);
+                                        }
+                                    }
+                                }
                                 remove_row(&tx, key, now)?;
                             }
                         }
@@ -1437,6 +1566,7 @@ impl Store {
             }
         }
         let removed = remove_left_alone(&tx, now)?;
+        cleanup_unused(&tx)?;
         tx.commit()?;
         Ok(AckOutcome {
             behind: behind.into_iter().collect(),
@@ -1495,7 +1625,10 @@ impl Store {
         };
         order.sort_by_key(|&i| {
             let r = &rows[i];
-            let k = RowKind::ALL.iter().position(|x| *x == r.key.kind).unwrap_or(9);
+            let k = RowKind::ALL
+                .iter()
+                .position(|x| *x == r.key.kind)
+                .unwrap_or(9);
             (r.row.is_none(), k, folder_depth(r))
         });
         let mut seen = tx.prepare_cached(
@@ -1522,6 +1655,10 @@ impl Store {
                         note_skipped(&tx, key, 0, true)?;
                         ApplyStatus::Shadowed
                     }
+                    // A profile goes once nothing the device holds refers to it (the clean-up
+                    // of D16 at the end of the batch): its folders and shares leave through
+                    // their own rows and `folder_revoked`, in whatever order they arrive.
+                    Some(_) if key.kind == RowKind::Profile => ApplyStatus::Removed,
                     Some(_) => {
                         hard_delete(&tx, key)?;
                         ApplyStatus::Removed
@@ -1589,8 +1726,10 @@ impl Store {
                 user,
             )?;
             for g in ended {
-                tx.prepare_cached("DELETE FROM membership WHERE profile_id = ?1")?
-                    .execute([g.as_bytes()])?;
+                tx.prepare_cached(
+                    "DELETE FROM membership WHERE profile_id = ?1 AND user_id <> ?2",
+                )?
+                .execute(params![g.as_bytes(), user.as_bytes()])?;
             }
         }
         cleanup_unused(&tx)?;
@@ -1608,7 +1747,12 @@ impl Store {
     /// # Errors
     ///
     /// `SQLite` errors.
-    pub fn purge_folder(&mut self, id: Id, except: &[Id], now: Timestamp) -> Result<(), StoreError> {
+    pub fn purge_folder(
+        &mut self,
+        id: Id,
+        except: &[Id],
+        now: Timestamp,
+    ) -> Result<(), StoreError> {
         let tx = self.sync_tx()?;
         tx.execute_batch("PRAGMA defer_foreign_keys = ON")?;
         if exists(
@@ -1744,14 +1888,18 @@ impl Store {
         for r in &scope_rows {
             let key = r.key();
             let synced = r.meta().rev > 0;
+            // A tombstone the server never saw, with no entry left, is nothing to keep (D8).
+            let local_garbage = !synced && r.meta().is_deleted() && !has_entries(&tx, key)?;
+            if local_garbage && !folder_scope {
+                remove.push(key);
+                continue;
+            }
             if !synced || was_seen(key) {
                 continue;
             }
             // A whole read of a tree (`fetch_folder`) holds its live rows only: tombstones, and
             // links whose snippet is a tombstone, are not judged by it.
-            if folder_scope
-                && (r.meta().is_deleted() || !link_ends_live(&tx, r)?)
-            {
+            if folder_scope && (r.meta().is_deleted() || !link_ends_live(&tx, r)?) {
                 continue;
             }
             if epoch
@@ -1789,9 +1937,10 @@ impl Store {
                 }
             }
         }
+        let mut busy_folders = Vec::new();
         for key in &remove {
             if key.kind == RowKind::Folder && keep_folders.contains(&key.id) {
-                left.push(*key);
+                busy_folders.push(*key);
                 continue;
             }
             if !exists(&tx, *key)? {
@@ -1805,9 +1954,13 @@ impl Store {
                             "SELECT EXISTS (SELECT 1 FROM folder WHERE profile_id = ?1)
                                  OR EXISTS (SELECT 1 FROM tag WHERE profile_id = ?1)
                                  OR EXISTS (SELECT 1 FROM attachment WHERE profile_id = ?1)
-                                 OR EXISTS (SELECT 1 FROM folder_share WHERE profile_id = ?1)",
+                                 OR EXISTS (SELECT 1 FROM folder_share WHERE profile_id = ?1)
+                                 OR EXISTS (SELECT 1 FROM membership WHERE profile_id = ?1 AND user_id = ?2)",
                         )?
-                        .query_row([key.id.as_bytes()], |r| r.get(0))?;
+                        .query_row(
+                            params![key.id.as_bytes(), me.map(|u| u.as_bytes().to_vec())],
+                            |r| r.get(0),
+                        )?;
                 if referenced {
                     continue;
                 }
@@ -1817,8 +1970,11 @@ impl Store {
                 // remains under it was seen, and keeps its place at the top.
                 tx.prepare_cached("UPDATE folder SET parent_id = NULL WHERE parent_id = ?1")?
                     .execute([key.id.as_bytes()])?;
-                let snippets = ids_where(&tx, "SELECT id FROM snippet WHERE folder_id = ?1", key.id)?;
+                let snippets =
+                    ids_where(&tx, "SELECT id FROM snippet WHERE folder_id = ?1", key.id)?;
                 if !snippets.is_empty() {
+                    // Something the device keeps is still in it: left alone until that goes.
+                    busy_folders.push(*key);
                     continue;
                 }
             }
@@ -1828,7 +1984,7 @@ impl Store {
             let mut stmt = tx.prepare_cached(
                 "INSERT INTO left_alone (entity, row_id) VALUES (?1, ?2) ON CONFLICT DO NOTHING",
             )?;
-            for key in &left {
+            for key in left.iter().chain(busy_folders.iter()) {
                 stmt.execute(params![key.kind.as_str(), key.id.as_bytes()])?;
             }
         }
@@ -1852,7 +2008,10 @@ impl Store {
             tx.execute("DELETE FROM attachment_state", [])?;
         }
         if scope.is_none() {
-            tx.execute("UPDATE sync_state SET set_aside_at = NULL WHERE id = 1", [])?;
+            tx.execute(
+                "UPDATE sync_state SET set_aside_at = NULL, signed_out_at = NULL WHERE id = 1",
+                [],
+            )?;
         }
         tx.execute(
             "UPDATE sync_state SET reconcile_token = NULL, reconcile_scope = NULL, reconcile_epoch = 0
@@ -1966,7 +2125,10 @@ impl Store {
         let tx = self.sync_tx()?;
         let n = match reason {
             Some(r) => tx.execute("UPDATE outbox SET blocked = NULL WHERE blocked = ?1", [r])?,
-            None => tx.execute("UPDATE outbox SET blocked = NULL WHERE blocked IS NOT NULL", [])?,
+            None => tx.execute(
+                "UPDATE outbox SET blocked = NULL WHERE blocked IS NOT NULL",
+                [],
+            )?,
         };
         tx.commit()?;
         Ok(n)
@@ -2088,10 +2250,17 @@ impl Store {
     /// # Errors
     ///
     /// `SQLite` errors.
-    pub fn note_access_removal(&mut self, entry: &AccessRemoval, refused: bool) -> Result<(), StoreError> {
+    pub fn note_access_removal(
+        &mut self,
+        entry: &AccessRemoval,
+        refused: bool,
+    ) -> Result<(), StoreError> {
         let tx = self.sync_tx()?;
         if refused {
-            tx.execute("DELETE FROM access_removal WHERE id = ?1", [entry.id.as_bytes()])?;
+            tx.execute(
+                "DELETE FROM access_removal WHERE id = ?1",
+                [entry.id.as_bytes()],
+            )?;
         } else {
             tx.execute(
                 "INSERT INTO access_removal (id, call, profile_id, subject, mark, made_at)
@@ -2147,10 +2316,20 @@ impl Store {
     /// # Errors
     ///
     /// `SQLite` errors.
-    pub fn signed_out(&mut self, confirmed: bool, keep: bool, now: Timestamp) -> Result<(), StoreError> {
+    pub fn signed_out(
+        &mut self,
+        confirmed: bool,
+        keep: bool,
+        now: Timestamp,
+    ) -> Result<(), StoreError> {
         let tx = self.sync_tx()?;
         tx.execute_batch("PRAGMA defer_foreign_keys = ON")?;
         ensure_state(&tx)?;
+        // Whichever kind of sign-out, the next sign-in resyncs (D14).
+        tx.execute(
+            "UPDATE sync_state SET signed_out_at = coalesce(signed_out_at, ?1) WHERE id = 1",
+            [now.0],
+        )?;
         if confirmed {
             remove_foreign(&tx, !keep, now)?;
             tx.execute("UPDATE sync_state SET set_aside_at = NULL WHERE id = 1", [])?;
@@ -2175,7 +2354,11 @@ impl Store {
         let tx = self.sync_tx()?;
         tx.execute_batch("PRAGMA defer_foreign_keys = ON")?;
         let at: Option<i64> = tx
-            .query_row("SELECT set_aside_at FROM sync_state WHERE id = 1", [], |r| r.get(0))
+            .query_row(
+                "SELECT set_aside_at FROM sync_state WHERE id = 1",
+                [],
+                |r| r.get(0),
+            )
             .optional()?
             .flatten();
         let Some(at) = at else {
@@ -2197,7 +2380,15 @@ impl Store {
                     && r.meta().updated_at.0 >= at - RETENTION_MS
                     && !has_entries(&tx, r.key())?
                 {
-                    keep(&tx, r.key(), Some(&r), r.meta().is_deleted(), "signed_out", r.meta().updated_at.0, now)?;
+                    keep(
+                        &tx,
+                        r.key(),
+                        Some(&r),
+                        r.meta().is_deleted(),
+                        "signed_out",
+                        r.meta().updated_at.0,
+                        now,
+                    )?;
                 }
             }
         }
@@ -2253,7 +2444,14 @@ impl Store {
             }
         }
         // Tombstones go; every row never synced gets an entry.
-        for table in ["snippet_tag", "snippet_attachment", "folder_share", "snippet", "tag", "attachment"] {
+        for table in [
+            "snippet_tag",
+            "snippet_attachment",
+            "folder_share",
+            "snippet",
+            "tag",
+            "attachment",
+        ] {
             tx.execute(
                 &format!(
                     "DELETE FROM {table} WHERE deleted_at IS NOT NULL AND rev = 0
@@ -2262,7 +2460,10 @@ impl Store {
                 [],
             )?;
         }
-        tx.execute("DELETE FROM outbox WHERE handed_out = 0 AND entity IN ('profile', 'membership')", [])?;
+        tx.execute(
+            "DELETE FROM outbox WHERE handed_out = 0 AND entity IN ('profile', 'membership')",
+            [],
+        )?;
         for kind in [
             RowKind::Folder,
             RowKind::Tag,
@@ -2340,8 +2541,15 @@ impl Store {
                 params![target.as_bytes(), local.as_bytes()],
             )?;
             // The moved rows are changes like any other.
-            for s in ids_where(&tx, "SELECT id FROM snippet WHERE folder_id = ?1 AND rev = 0", target)? {
-                let key = RowRef { kind: RowKind::Snippet, id: s };
+            for s in ids_where(
+                &tx,
+                "SELECT id FROM snippet WHERE folder_id = ?1 AND rev = 0",
+                target,
+            )? {
+                let key = RowRef {
+                    kind: RowKind::Snippet,
+                    id: s,
+                };
                 if !has_entries(&tx, key)? {
                     ops::outbox_push(&tx, EntityKind::Snippet, s, crate::OutboxOp::Put, 0, now)?;
                 }
@@ -2475,16 +2683,82 @@ impl Store {
     }
 }
 
+/// Removes local tombstones the server never saw, rows that nothing still refers to first.
+fn drop_garbage(conn: &Connection, keys: &[RowRef]) -> Result<(), StoreError> {
+    let mut left: Vec<RowRef> = keys.to_vec();
+    loop {
+        let mut progress = false;
+        let mut next = Vec::new();
+        for key in left {
+            let busy: bool = match key.kind {
+                RowKind::Folder => conn
+                    .prepare_cached(
+                        "SELECT EXISTS (SELECT 1 FROM folder WHERE parent_id = ?1)
+                             OR EXISTS (SELECT 1 FROM snippet WHERE folder_id = ?1)",
+                    )?
+                    .query_row([key.id.as_bytes()], |r| r.get(0))?,
+                RowKind::Snippet => conn
+                    .prepare_cached(
+                        "SELECT EXISTS (SELECT 1 FROM snippet_tag WHERE snippet_id = ?1)
+                             OR EXISTS (SELECT 1 FROM snippet_attachment WHERE snippet_id = ?1)",
+                    )?
+                    .query_row([key.id.as_bytes()], |r| r.get(0))?,
+                RowKind::Tag => conn
+                    .prepare_cached("SELECT EXISTS (SELECT 1 FROM snippet_tag WHERE tag_id = ?1)")?
+                    .query_row([key.id.as_bytes()], |r| r.get(0))?,
+                RowKind::Attachment => conn
+                    .prepare_cached(
+                        "SELECT EXISTS (SELECT 1 FROM snippet_attachment WHERE attachment_id = ?1)",
+                    )?
+                    .query_row([key.id.as_bytes()], |r| r.get(0))?,
+                _ => false,
+            };
+            if busy {
+                next.push(key);
+            } else {
+                // A pull's note on the row stays: the server's version is read afterwards (D15).
+                let note: Option<(i64, bool)> = conn
+                    .prepare_cached(
+                        "SELECT rev, gone FROM skipped WHERE entity = ?1 AND row_id = ?2",
+                    )?
+                    .query_row(params![key.kind.as_str(), key.id.as_bytes()], |r| {
+                        Ok((r.get(0)?, r.get(1)?))
+                    })
+                    .optional()?;
+                hard_delete(conn, key)?;
+                if let Some((rev, gone)) = note {
+                    note_skipped(conn, key, u64::try_from(rev).unwrap_or(0), gone)?;
+                }
+                progress = true;
+            }
+        }
+        if !progress || next.is_empty() {
+            return Ok(());
+        }
+        left = next;
+    }
+}
+
 /// Whether both ends of a link are live on the device (true for rows that are not links).
 fn link_ends_live(conn: &Connection, row: &AnyRow) -> Result<bool, StoreError> {
     let live = |k: RowRef| -> Result<bool, StoreError> {
         Ok(get_any(conn, k)?.is_some_and(|r| !r.meta().is_deleted()))
     };
     match row {
-        AnyRow::SnippetTag(l) => Ok(live(RowRef { kind: RowKind::Snippet, id: l.snippet_id })?
-            && live(RowRef { kind: RowKind::Tag, id: l.tag_id })?),
-        AnyRow::SnippetAttachment(l) => Ok(live(RowRef { kind: RowKind::Snippet, id: l.snippet_id })?
-            && live(RowRef { kind: RowKind::Attachment, id: l.attachment_id })?),
+        AnyRow::SnippetTag(l) => Ok(live(RowRef {
+            kind: RowKind::Snippet,
+            id: l.snippet_id,
+        })? && live(RowRef {
+            kind: RowKind::Tag,
+            id: l.tag_id,
+        })?),
+        AnyRow::SnippetAttachment(l) => Ok(live(RowRef {
+            kind: RowKind::Snippet,
+            id: l.snippet_id,
+        })? && live(RowRef {
+            kind: RowKind::Attachment,
+            id: l.attachment_id,
+        })?),
         _ => Ok(true),
     }
 }
@@ -2505,16 +2779,19 @@ fn apply_cascade(
         .map(|e| e.seq)
         .collect();
     let newer = entries.iter().any(|e| !covered.contains(&e.seq));
+    // A change of its own the row had before the folder took it (a move into the folder, an
+    // edit): the device does not hold the content of the base the cascade list named.
+    let changed_before = entries
+        .iter()
+        .any(|e| covered.contains(&e.seq) && e.cascade_of.is_none());
     delete_entries(tx, &mine)?;
     if newer {
         // The user undid the delete while the push was under way: keep the content, take the
         // revision; its own change follows (D4).
         if let Some(rev) = c.rev {
             set_rev(tx, key, rev)?;
-            tx.prepare_cached(
-                "UPDATE outbox SET base_rev = ?1 WHERE entity = ?2 AND row_id = ?3",
-            )?
-            .execute(params![i64_of(rev), key.kind.as_str(), key.id.as_bytes()])?;
+            tx.prepare_cached("UPDATE outbox SET base_rev = ?1 WHERE entity = ?2 AND row_id = ?3")?
+                .execute(params![i64_of(rev), key.kind.as_str(), key.id.as_bytes()])?;
         }
         return Ok(None);
     }
@@ -2538,6 +2815,14 @@ fn apply_cascade(
     if let Some(rev) = c.rev
         && get_any(tx, key)?.is_some()
     {
+        if !c.deleted && changed_before {
+            // Live on the server in a version the device does not hold: read it with `rows`
+            // (D15). Until then the row counts as never synced, so the read writes it.
+            set_rev(tx, key, 0)?;
+            note_skipped(tx, key, rev, false)?;
+            behind.insert(key);
+            return Ok(Some(key));
+        }
         set_rev(tx, key, rev)?;
         if c.deleted {
             tx.prepare_cached(&format!(
@@ -2589,7 +2874,9 @@ fn remove_left_alone(tx: &Connection, now: Timestamp) -> Result<Vec<RowRef>, Sto
                 .execute(params![key.kind.as_str(), key.id.as_bytes()])?;
             // The server's answer may have brought the row back (it is then synced and stays).
             let skipped: bool = tx
-                .prepare_cached("SELECT EXISTS (SELECT 1 FROM skipped WHERE entity = ?1 AND row_id = ?2)")?
+                .prepare_cached(
+                    "SELECT EXISTS (SELECT 1 FROM skipped WHERE entity = ?1 AND row_id = ?2)",
+                )?
                 .query_row(params![key.kind.as_str(), key.id.as_bytes()], |r| r.get(0))?;
             if !skipped && exists(tx, key)? {
                 remove_row(tx, key, now)?;
@@ -2640,9 +2927,22 @@ fn remove_foreign(tx: &Connection, discard: bool, now: Timestamp) -> Result<(), 
                 hard_delete(tx, key)?;
             }
         }
-        let ids = ids_where(tx, "SELECT id FROM profile WHERE id <> ?1", p)?;
+        // The profile of a group the user shares a folder of their own with stays: the share is
+        // part of the user's own library.
+        let ids = ids_where(
+            tx,
+            "SELECT id FROM profile WHERE id <> ?1
+                 AND NOT EXISTS (SELECT 1 FROM folder_share WHERE folder_share.profile_id = profile.id)",
+            p,
+        )?;
         for id in ids {
-            hard_delete(tx, RowRef { kind: RowKind::Profile, id })?;
+            hard_delete(
+                tx,
+                RowRef {
+                    kind: RowKind::Profile,
+                    id,
+                },
+            )?;
         }
     }
     Ok(())
@@ -2658,7 +2958,9 @@ fn read_access_removals(conn: &Connection) -> Result<Vec<AccessRemoval>, StoreEr
             call: r.get(1)?,
             profile_id: opt_id_at(r, 2)?,
             subject: opt_id_at(r, 3)?,
-            mark: r.get::<_, Option<i64>>(4)?.and_then(|v| u64::try_from(v).ok()),
+            mark: r
+                .get::<_, Option<i64>>(4)?
+                .and_then(|v| u64::try_from(v).ok()),
             made_at: Timestamp(r.get(5)?),
         })
     })?;

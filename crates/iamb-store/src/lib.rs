@@ -25,8 +25,8 @@ mod entity;
 mod error;
 pub mod health;
 pub mod migrations;
-pub mod sync;
 mod ops;
+pub mod sync;
 pub mod transfer;
 
 pub use attachments::AttachmentError;

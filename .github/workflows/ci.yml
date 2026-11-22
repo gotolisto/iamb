@@ -113,6 +113,11 @@ jobs:
       - name: Test
         if: runner.os != 'Windows'
         run: cargo test --workspace --exclude iamb-desktop --locked
+      # Task 4.4: the sync agent's tests with the model of the server (120 simulation runs; the
+      # nightly workflow runs 1,000).
+      - name: Test (sync agent with the model of the server)
+        if: runner.os == 'Linux'
+        run: cargo test -p iamb-sync --features model --locked
       # Hosted Windows runners have an interactive desktop, so keyboard tests that need one
       # must run there: IAMB_REQUIRE_DESKTOP turns their "skipped, no desktop" into a failure.
       - name: Test (Windows, desktop required)

@@ -143,6 +143,35 @@ impl Drop for Supervisor {
                 .stderr(Stdio::null())
                 .status();
         }
+        // Anything else still running for this data root (a worker the log does not name yet).
+        reap(self.data.path());
+    }
+}
+
+/// Waits for every process started for `dir` (the worker follows its supervisor when its input
+/// ends; a UI host stand-in is killed by its test) and kills what is left after five seconds, so
+/// that no test leaves a process behind, also when it panics (`Drop` runs while unwinding). It
+/// runs before the data directory is removed, so that a worker always finds its own socket file
+/// when it stops (before the beta-gap review's finding 10 was fixed, one without it never exited).
+fn reap(dir: &Path) {
+    let pattern = dir.display().to_string();
+    let alive = || {
+        Command::new("pgrep")
+            .args(["-f", &pattern])
+            .stdout(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while alive() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(50));
+    }
+    if alive() {
+        let _ = Command::new("pkill").args(["-9", "-f", &pattern]).status();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while alive() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
     }
 }
 

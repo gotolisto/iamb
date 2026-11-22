@@ -141,7 +141,7 @@ fn connect_tcp(host: &str) -> std::io::Result<TcpStream> {
     let mut reader = BufReader::new(s.try_clone()?);
     let mut status = String::new();
     reader.read_line(&mut status)?;
-    if !status.split_whitespace().nth(1).is_some_and(|c| c == "200") {
+    if status.split_whitespace().nth(1).is_none_or(|c| c != "200") {
         return Err(std::io::Error::other("the proxy refused the tunnel"));
     }
     loop {
@@ -232,7 +232,9 @@ impl LiveChannel {
             &json!({ "access_token": access_token }),
             r,
         );
-        self.socket.send(Message::text(f)).map_err(|e| e.to_string())
+        self.socket
+            .send(Message::text(f))
+            .map_err(|e| e.to_string())
     }
 
     /// Waits up to `wait` for something to happen, sending the heartbeat when it is due.

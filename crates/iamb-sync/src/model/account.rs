@@ -3,7 +3,9 @@
 
 use std::collections::BTreeMap;
 
-use iamb_core::model::{Id, Membership, Permission, Profile, ProfileKind, Role, SyncMeta, Timestamp};
+use iamb_core::model::{
+    Id, Membership, Permission, Profile, ProfileKind, Role, SyncMeta, Timestamp,
+};
 use iamb_core::sync::{AnyRow, RowKind, RowRef};
 use serde_json::{Value, json};
 
@@ -26,7 +28,14 @@ impl Server {
         json!({ "error": null, "epoch": self.epoch().id, "mark": mark })
     }
 
-    fn logged(&mut self, call: &str, user: Id, group: Option<Id>, subject: Option<Id>, args: &Value) {
+    fn logged(
+        &mut self,
+        call: &str,
+        user: Id,
+        group: Option<Id>,
+        subject: Option<Id>,
+        args: &Value,
+    ) {
         self.log.push(LogLine {
             at: self.now,
             call: call.to_owned(),
@@ -46,10 +55,19 @@ impl Server {
     }
 
     /// Writes a membership row (new, changed or ended) under the group's lock.
-    fn put_membership(&mut self, tx: &mut Tx, by: Id, group: Id, user: Id, role: Option<Role>) -> u64 {
+    fn put_membership(
+        &mut self,
+        tx: &mut Tx,
+        by: Id,
+        group: Id,
+        user: Id,
+        role: Option<Role>,
+    ) -> u64 {
         let rev = self.next_rev(group);
         let existing = self.membership(group, user);
-        let id = existing.as_ref().map_or_else(|| self.new_id(), |s| s.row.id());
+        let id = existing
+            .as_ref()
+            .map_or_else(|| self.new_id(), |s| s.row.id());
         let key = RowRef {
             kind: RowKind::Membership,
             id,
@@ -120,7 +138,11 @@ impl Server {
             .filter_map(|s| match &s.row {
                 AnyRow::FolderShare(x) if x.profile_id == group && x.meta.deleted_at.is_none() => {
                     let owner = self.folder(x.folder_id).and_then(|f| {
-                        self.st.users.iter().find(|(_, (p, _))| *p == f.profile_id).map(|(u, _)| *u)
+                        self.st
+                            .users
+                            .iter()
+                            .find(|(_, (p, _))| *p == f.profile_id)
+                            .map(|(u, _)| *u)
                     });
                     (owner == Some(user)).then(|| s.row.key())
                 }
@@ -142,8 +164,12 @@ impl Server {
         }
         self.touch(tx, key);
         let profile = match &cur.row {
-            AnyRow::FolderShare(x) => self.folder(x.folder_id).map_or(x.profile_id, |f| f.profile_id),
-            AnyRow::Snippet(s) => self.folder(s.folder_id).map_or(s.folder_id, |f| f.profile_id),
+            AnyRow::FolderShare(x) => self
+                .folder(x.folder_id)
+                .map_or(x.profile_id, |f| f.profile_id),
+            AnyRow::Snippet(s) => self
+                .folder(s.folder_id)
+                .map_or(s.folder_id, |f| f.profile_id),
             r => r.own_profile().unwrap_or(key.id),
         };
         let rev = self.next_rev(profile);
@@ -171,7 +197,11 @@ impl Server {
     }
 
     fn email_of(&self, user: Id) -> String {
-        self.st.users.get(&user).map(|u| u.1.clone()).unwrap_or_default()
+        self.st
+            .users
+            .get(&user)
+            .map(|u| u.1.clone())
+            .unwrap_or_default()
     }
 
     /// Account calls (§5.14) as `c.user`.
@@ -179,19 +209,38 @@ impl Server {
     pub(super) fn account_call(&mut self, c: Caller, function: &str, args: &Value) -> Value {
         let group = arg_id(args, "group");
         let target = arg_id(args, "user");
-        let manager = |s: &Self, g: Id| matches!(s.role(c.user, g).as_deref(), Some("owner" | "admin"));
+        let manager =
+            |s: &Self, g: Id| matches!(s.role(c.user, g).as_deref(), Some("owner" | "admin"));
         match function {
             "create_group" => {
-                let (Some(id), kind) = (arg_id(args, "id"), args.get("kind").and_then(Value::as_str)) else {
+                let (Some(id), kind) =
+                    (arg_id(args, "id"), args.get("kind").and_then(Value::as_str))
+                else {
                     return self.err("invalid");
                 };
-                if let Some(p) = self.st.rows.get(&RowRef { kind: RowKind::Profile, id }) {
-                    let mark = self.st.head_rev.get(&id).copied().unwrap_or(p.row.meta().rev);
+                if let Some(p) = self.st.rows.get(&RowRef {
+                    kind: RowKind::Profile,
+                    id,
+                }) {
+                    // A repeat answers as the first call did, for a member only: after leaving,
+                    // the id is in use (4.3).
+                    if self.role(c.user, id).is_none() {
+                        return self.err("invalid");
+                    }
+                    let mark = self
+                        .st
+                        .head_rev
+                        .get(&id)
+                        .copied()
+                        .unwrap_or(p.row.meta().rev);
                     return self.ok(Some(mark));
                 }
                 let mut tx = self.begin();
                 let rev = self.next_rev(id);
-                let key = RowRef { kind: RowKind::Profile, id };
+                let key = RowRef {
+                    kind: RowKind::Profile,
+                    id,
+                };
                 self.touch(&mut tx, key);
                 let row = AnyRow::Profile(Profile {
                     meta: SyncMeta {
@@ -202,20 +251,31 @@ impl Server {
                         rev,
                         deleted_at: None,
                     },
-                    kind: if kind == Some("company") { ProfileKind::Company } else { ProfileKind::Family },
-                    name: args.get("name").and_then(Value::as_str).unwrap_or_default().to_owned(),
+                    kind: if kind == Some("company") {
+                        ProfileKind::Company
+                    } else {
+                        ProfileKind::Family
+                    },
+                    name: args
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
                     owner_user_id: c.user,
                 });
-                self.st.rows.insert(key, Stored {
-                    row,
-                    created_rev: rev,
-                    updated_device: None,
-                    updated_op: None,
-                    lost_rev: None,
-                    content_by: None,
-                    content_at: None,
-                    backed: false,
-                });
+                self.st.rows.insert(
+                    key,
+                    Stored {
+                        row,
+                        created_rev: rev,
+                        updated_device: None,
+                        updated_op: None,
+                        lost_rev: None,
+                        content_by: None,
+                        content_at: None,
+                        backed: false,
+                    },
+                );
                 let mark = self.put_membership(&mut tx, c.user, id, c.user, Some(Role::Owner));
                 self.commit(tx);
                 self.logged(function, c.user, Some(id), None, args);
@@ -225,31 +285,57 @@ impl Server {
                 let (Some(id), Some(g)) = (arg_id(args, "id"), group) else {
                     return self.err("invalid");
                 };
+                if self.role(c.user, g).is_none() {
+                    // Not a member: one answer for a group that exists and one that does not.
+                    return self.err("not_found");
+                }
                 if !manager(self, g) {
                     return self.err("forbidden");
                 }
-                let email = args.get("email").and_then(Value::as_str).unwrap_or_default().to_lowercase();
+                let email = args
+                    .get("email")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_lowercase();
                 if self.st.invitations.contains_key(&id) {
                     return self.ok(self.st.head_rev.get(&g).copied());
                 }
-                let member = self.st.users.iter().any(|(u, (_, e))| *e == email && self.role(*u, g).is_some());
+                let member = self
+                    .st
+                    .users
+                    .iter()
+                    .any(|(u, (_, e))| *e == email && self.role(*u, g).is_some());
                 if member {
                     return self.err("already_member");
                 }
-                if self.st.invitations.values().any(|i| i.group == g && i.email == email && i.status == "pending") {
+                if self
+                    .st
+                    .invitations
+                    .values()
+                    .any(|i| i.group == g && i.email == email && i.status == "pending")
+                {
                     return self.err("already_invited");
                 }
-                self.st.invitations.insert(id, super::Invitation {
-                    group: g,
-                    email,
-                    role: args.get("role").and_then(Value::as_str).unwrap_or("member").to_owned(),
-                    status: "pending".into(),
-                });
+                self.st.invitations.insert(
+                    id,
+                    super::Invitation {
+                        group: g,
+                        email,
+                        role: args
+                            .get("role")
+                            .and_then(Value::as_str)
+                            .unwrap_or("member")
+                            .to_owned(),
+                        status: "pending".into(),
+                    },
+                );
                 let mark = self.next_rev(g);
                 self.ok(Some(mark))
             }
             "accept_invitation" => {
-                let Some(id) = arg_id(args, "id") else { return self.err("invalid") };
+                let Some(id) = arg_id(args, "id") else {
+                    return self.err("invalid");
+                };
                 let my = self.email_of(c.user);
                 let Some(inv) = self.st.invitations.get(&id).cloned() else {
                     return self.err("invitation_invalid");
@@ -257,14 +343,22 @@ impl Server {
                 if inv.email != my || inv.status == "withdrawn" || inv.status == "declined" {
                     return self.err("invitation_invalid");
                 }
-                if inv.status == "accepted" || self.role(c.user, inv.group).is_some() {
+                if inv.status == "accepted" && self.role(c.user, inv.group).is_none() {
+                    // Accepted before, and the membership has ended since (4.3).
+                    return self.err("invitation_invalid");
+                }
+                if self.role(c.user, inv.group).is_some() {
                     if let Some(i) = self.st.invitations.get_mut(&id) {
                         i.status = "accepted".into();
                     }
                     return self.ok(self.st.head_rev.get(&inv.group).copied());
                 }
                 let mut tx = self.begin();
-                let role = if inv.role == "admin" { Role::Admin } else { Role::Member };
+                let role = if inv.role == "admin" {
+                    Role::Admin
+                } else {
+                    Role::Member
+                };
                 let mark = self.put_membership(&mut tx, c.user, inv.group, c.user, Some(role));
                 if let Some(i) = self.st.invitations.get_mut(&id) {
                     i.status = "accepted".into();
@@ -274,7 +368,9 @@ impl Server {
                 self.ok(Some(mark))
             }
             "decline_invitation" => {
-                let Some(id) = arg_id(args, "id") else { return self.err("invalid") };
+                let Some(id) = arg_id(args, "id") else {
+                    return self.err("invalid");
+                };
                 match self.st.invitations.get_mut(&id) {
                     Some(i) if i.status == "pending" => {
                         i.status = "declined".into();
@@ -284,10 +380,16 @@ impl Server {
                 }
             }
             "withdraw_invitation" => {
-                let Some(id) = arg_id(args, "id") else { return self.err("invalid") };
+                let Some(id) = arg_id(args, "id") else {
+                    return self.err("invalid");
+                };
                 let Some(inv) = self.st.invitations.get(&id).cloned() else {
                     return self.err("not_found");
                 };
+                if self.role(c.user, inv.group).is_none() {
+                    // Not a member: one answer for a group that exists and one that does not.
+                    return self.err("not_found");
+                }
                 if !manager(self, inv.group) {
                     return self.err("forbidden");
                 }
@@ -305,7 +407,13 @@ impl Server {
                 }
             }
             "remove_member" => {
-                let (Some(g), Some(u)) = (group, target) else { return self.err("invalid") };
+                let (Some(g), Some(u)) = (group, target) else {
+                    return self.err("invalid");
+                };
+                if self.role(c.user, g).is_none() {
+                    // Not a member: one answer for a group that exists and one that does not.
+                    return self.err("not_found");
+                }
                 if !manager(self, g) {
                     return self.err("forbidden");
                 }
@@ -327,7 +435,9 @@ impl Server {
                 }
             }
             "leave_group" => {
-                let Some(g) = group else { return self.err("invalid") };
+                let Some(g) = group else {
+                    return self.err("invalid");
+                };
                 match self.role(c.user, g).as_deref() {
                     None => self.err("not_a_member"),
                     Some("owner") => self.err("owner_cannot_leave"),
@@ -341,7 +451,13 @@ impl Server {
                 }
             }
             "set_member_role" => {
-                let (Some(g), Some(u)) = (group, target) else { return self.err("invalid") };
+                let (Some(g), Some(u)) = (group, target) else {
+                    return self.err("invalid");
+                };
+                if self.role(c.user, g).is_none() {
+                    // Not a member: one answer for a group that exists and one that does not.
+                    return self.err("not_found");
+                }
                 if !manager(self, g) {
                     return self.err("forbidden");
                 }
@@ -357,7 +473,11 @@ impl Server {
                             c.user,
                             g,
                             u,
-                            Some(if role == "admin" { Role::Admin } else { Role::Member }),
+                            Some(if role == "admin" {
+                                Role::Admin
+                            } else {
+                                Role::Member
+                            }),
                         );
                         self.commit(tx);
                         self.logged(function, c.user, Some(g), Some(u), args);
@@ -366,7 +486,9 @@ impl Server {
                 }
             }
             "transfer_ownership" => {
-                let Some(g) = group else { return self.err("invalid") };
+                let Some(g) = group else {
+                    return self.err("invalid");
+                };
                 if self.role(c.user, g).as_deref() != Some("owner") {
                     return self.err("not_owner");
                 }
@@ -386,26 +508,31 @@ impl Server {
                 }
             }
             "accept_ownership" => {
-                let Some(g) = group else { return self.err("invalid") };
+                let Some(g) = group else {
+                    return self.err("invalid");
+                };
                 if self.st.offers.get(&g) != Some(&c.user) || self.role(c.user, g).is_none() {
                     return self.err("no_offer");
                 }
-                let old = self
-                    .st
-                    .rows
-                    .values()
-                    .find_map(|s| match &s.row {
-                        AnyRow::Profile(p) if p.meta.id == g => Some(p.owner_user_id),
-                        _ => None,
-                    });
+                let old = self.st.rows.values().find_map(|s| match &s.row {
+                    AnyRow::Profile(p) if p.meta.id == g => Some(p.owner_user_id),
+                    _ => None,
+                });
                 let mut tx = self.begin();
                 if let Some(o) = old {
                     self.put_membership(&mut tx, c.user, g, o, Some(Role::Admin));
                 }
                 let mark = self.put_membership(&mut tx, c.user, g, c.user, Some(Role::Owner));
-                let key = RowRef { kind: RowKind::Profile, id: g };
+                let key = RowRef {
+                    kind: RowKind::Profile,
+                    id: g,
+                };
                 self.touch(&mut tx, key);
-                if let Some(Stored { row: AnyRow::Profile(p), .. }) = self.st.rows.get_mut(&key) {
+                if let Some(Stored {
+                    row: AnyRow::Profile(p),
+                    ..
+                }) = self.st.rows.get_mut(&key)
+                {
                     p.owner_user_id = c.user;
                     p.meta.rev = mark;
                 }
@@ -414,7 +541,9 @@ impl Server {
                 self.ok(Some(mark))
             }
             "delete_group" => {
-                let Some(g) = group else { return self.err("invalid") };
+                let Some(g) = group else {
+                    return self.err("invalid");
+                };
                 if self.role(c.user, g).as_deref() != Some("owner") {
                     return self.err("not_owner");
                 }
@@ -424,7 +553,11 @@ impl Server {
                     .rows
                     .values()
                     .filter_map(|s| match &s.row {
-                        AnyRow::Membership(m) if m.profile_id == g && m.meta.deleted_at.is_none() => Some(m.user_id),
+                        AnyRow::Membership(m)
+                            if m.profile_id == g && m.meta.deleted_at.is_none() =>
+                        {
+                            Some(m.user_id)
+                        }
                         _ => None,
                     })
                     .collect();
@@ -446,7 +579,8 @@ impl Server {
                     .filter(|s| match &s.row {
                         AnyRow::Folder(f) => f.profile_id == g && f.meta.deleted_at.is_none(),
                         AnyRow::Snippet(sn) => {
-                            sn.meta.deleted_at.is_none() && self.folder(sn.folder_id).is_some_and(|f| f.profile_id == g)
+                            sn.meta.deleted_at.is_none()
+                                && self.folder(sn.folder_id).is_some_and(|f| f.profile_id == g)
                         }
                         _ => false,
                     })
@@ -461,14 +595,19 @@ impl Server {
                     self.tombstone(&mut tx, k, c.user);
                 }
                 tx.before = before;
-                let key = RowRef { kind: RowKind::Profile, id: g };
+                let key = RowRef {
+                    kind: RowKind::Profile,
+                    id: g,
+                };
                 self.tombstone(&mut tx, key, c.user);
                 self.commit(tx);
                 self.logged(function, c.user, Some(g), None, args);
                 self.ok(Some(mark))
             }
             "revoke_device" => {
-                let Some(t) = arg_id(args, "target") else { return self.err("invalid") };
+                let Some(t) = arg_id(args, "target") else {
+                    return self.err("invalid");
+                };
                 match self.st.devices.get_mut(&t) {
                     Some(d) if d.user == c.user => {
                         d.revoked = true;
@@ -479,12 +618,13 @@ impl Server {
                 }
             }
             "resolve_conflict" => self.resolve_conflict(c, args),
+            "get_conflict" => self.get_conflict(c, args),
             "conflicts" => {
                 let list: Vec<Value> = self
                     .st
                     .conflicts
                     .iter()
-                    .filter(|x| x.state == "open")
+                    .filter(|x| x.state == "open" && self.party_reads(c.user, x))
                     .map(|x| json!({ "id": x.id, "entity": x.key.kind.as_str(), "row": x.key.id, "kind": x.kind }))
                     .collect();
                 json!({ "error": null, "epoch": self.epoch().id, "conflicts": list })
@@ -503,25 +643,131 @@ impl Server {
         }
     }
 
-    /// C20: keep the current version, or restore an offered one as a new revision.
+    /// A party of the conflict who can read its row now (ADR-0031): anyone else is told
+    /// `not_found`, as for a conflict that does not exist.
+    fn party_reads(&self, user: Id, x: &super::Conflict) -> bool {
+        let party = x.winner_user == user || x.versions.iter().any(|v| v.user == Some(user));
+        party && self.can_read(user, x.key)
+    }
+
+    /// `version_readable` of the server (C3, C20, ADR-0031): the user wrote the version, or had
+    /// access to the folder it was in (a folder: to itself) from before it was replaced; for a
+    /// tag, owns its personal profile or has been a member of its group since before then.
+    pub(super) fn version_readable(&self, user: Id, row: &AnyRow, replaced_by: u64) -> bool {
+        if row.meta().updated_by == Some(user) {
+            return true;
+        }
+        let since = |f: Id| {
+            self.st
+                .granted_rev
+                .get(&(user, f))
+                .is_some_and(|r| *r < replaced_by)
+        };
+        match row {
+            AnyRow::Snippet(s) => since(s.folder_id),
+            AnyRow::Folder(f) => since(f.meta.id),
+            AnyRow::Tag(t) => {
+                self.st
+                    .users
+                    .get(&user)
+                    .is_some_and(|(p, _)| *p == t.profile_id)
+                    || self.st.rows.values().any(|s| {
+                        matches!(&s.row, AnyRow::Membership(m)
+                            if m.profile_id == t.profile_id && m.user_id == user
+                                && m.meta.deleted_at.is_none())
+                            && s.created_rev < replaced_by
+                    })
+            }
+            _ => false,
+        }
+    }
+
+    /// `get_conflict`: the conflict, the current row and the versions on offer to the caller.
+    fn get_conflict(&self, c: Caller, args: &Value) -> Value {
+        let Some(id) = arg_id(args, "id") else {
+            return self.err("invalid");
+        };
+        let Some(x) = self.st.conflicts.iter().find(|x| x.id == id) else {
+            return self.err("not_found");
+        };
+        if !self.party_reads(c.user, x) {
+            return self.err("not_found");
+        }
+        let versions: Vec<Value> = x
+            .versions
+            .iter()
+            .filter_map(|v| {
+                let h = self
+                    .st
+                    .history
+                    .iter()
+                    .find(|h| h.key == x.key && h.rev == v.rev)?;
+                self.version_readable(c.user, &h.stored.row, h.replaced_by)
+                    .then(|| {
+                        json!({ "rev": v.rev, "user": v.user, "display_name": null,
+                                "device": if v.user == Some(c.user) { json!(v.device) } else { Value::Null },
+                                "taken_over": v.taken_over, "deleted": h.stored.row.meta().deleted_at.is_some() })
+                    })
+            })
+            .collect();
+        json!({ "error": null, "epoch": self.epoch().id,
+                "conflict": { "id": x.id, "entity": x.key.kind.as_str(), "row_id": x.key.id,
+                              "kind": x.kind, "state": x.state, "winner_rev": x.winner_rev,
+                              "winner_user": x.winner_user },
+                "versions": versions })
+    }
+
+    /// C20: keep the current version, or restore an offered one as a new revision. A party who
+    /// cannot read the row is told `not_found`, also for "keep"; a version not on offer to the
+    /// caller is `invalid`; a restore the caller may not write is `forbidden` and leaves the
+    /// conflict open (ADR-0031).
     fn resolve_conflict(&mut self, c: Caller, args: &Value) -> Value {
-        let Some(id) = arg_id(args, "id") else { return self.err("invalid") };
+        let Some(id) = arg_id(args, "id") else {
+            return self.err("invalid");
+        };
         let Some(pos) = self.st.conflicts.iter().position(|x| x.id == id) else {
             return self.err("not_found");
         };
         let conflict = self.st.conflicts[pos].clone();
-        let party = conflict.winner_user == c.user || conflict.versions.iter().any(|v| v.user == Some(c.user));
-        if !party {
-            return self.err("forbidden");
+        if !self.party_reads(c.user, &conflict) {
+            return self.err("not_found");
         }
-        if args.get("action").and_then(Value::as_str) == Some("restore") {
+        if conflict.state != "open" {
+            return json!({ "error": null, "epoch": self.epoch().id, "state": conflict.state });
+        }
+        let action = args.get("action").and_then(Value::as_str);
+        if action == Some("restore") {
             let rev = args.get("rev").and_then(Value::as_u64).unwrap_or(0);
-            let Some(h) = self.st.history.iter().find(|h| h.key == conflict.key && h.rev == rev).cloned() else {
+            if !conflict.versions.iter().any(|v| v.rev == rev) {
+                return self.err("invalid");
+            }
+            let Some(h) = self
+                .st
+                .history
+                .iter()
+                .find(|h| h.key == conflict.key && h.rev == rev)
+                .cloned()
+            else {
                 return self.err("gone");
             };
+            if !self.version_readable(c.user, &h.stored.row, h.replaced_by) {
+                return self.err("invalid");
+            }
+            // C20: restoring needs the right to write the row now, judged as a push of that
+            // version by this user would be (§4.3).
+            let cur = self.st.rows.get(&conflict.key).cloned();
+            let allowed = match &cur {
+                Some(cv) => self.may_restore(c.user, &cv.row, &h.stored.row),
+                None => return self.err("gone"),
+            };
+            if !allowed {
+                return self.err("forbidden");
+            }
             let mut tx = self.begin();
             let profile = match &h.stored.row {
-                AnyRow::Snippet(s) => self.folder(s.folder_id).map_or(s.folder_id, |f| f.profile_id),
+                AnyRow::Snippet(s) => self
+                    .folder(s.folder_id)
+                    .map_or(s.folder_id, |f| f.profile_id),
                 r => r.own_profile().unwrap_or(conflict.key.id),
             };
             let new_rev = self.next_rev(profile);
@@ -544,6 +790,8 @@ impl Server {
                 });
             }
             self.commit(tx);
+        } else if action != Some("keep") {
+            return self.err("invalid");
         }
         self.st.conflicts[pos].state = "resolved".into();
         self.ok(None)
@@ -553,7 +801,8 @@ impl Server {
 
     /// Takes a backup of the database.
     pub fn backup(&mut self, name: &str) {
-        self.backups.insert(name.to_owned(), (self.st.clone(), self.now));
+        self.backups
+            .insert(name.to_owned(), (self.st.clone(), self.now));
     }
 
     /// Restores a backup and begins a new epoch (the operator's script, steps 1 and 3; step 2 is
@@ -580,7 +829,10 @@ impl Server {
             .rows
             .values()
             .filter_map(|s| match &s.row {
-                AnyRow::Profile(p) => Some((p.meta.id, self.st.head_rev.get(&p.meta.id).copied().unwrap_or(0))),
+                AnyRow::Profile(p) => Some((
+                    p.meta.id,
+                    self.st.head_rev.get(&p.meta.id).copied().unwrap_or(0),
+                )),
                 _ => None,
             })
             .collect();
@@ -616,22 +868,40 @@ impl Server {
             let given_back = lines[i + 1..].iter().any(|later| match l.call.as_str() {
                 "share_delete" => later.call == "share_created" && later.subject == l.subject,
                 "remove_member" | "leave_group" => {
-                    later.call == "accept_invitation" && later.group == l.group && later.subject == l.subject
+                    later.call == "accept_invitation"
+                        && later.group == l.group
+                        && later.subject == l.subject
                 }
-                "set_member_role" => later.call == "set_member_role" && later.group == l.group && later.subject == l.subject,
+                "set_member_role" => {
+                    later.call == "set_member_role"
+                        && later.group == l.group
+                        && later.subject == l.subject
+                }
                 _ => false,
             });
             if given_back {
                 continue;
             }
             let session = self.st.sessions.iter().next().copied().unwrap_or(l.user);
-            let caller = Caller { user: l.user, session };
+            let caller = Caller {
+                user: l.user,
+                session,
+            };
             let answer = if l.call == "share_delete" {
                 let Some(sid) = l.subject else { continue };
-                let key = RowRef { kind: RowKind::FolderShare, id: sid };
-                let live = self.st.rows.get(&key).is_some_and(|s| s.row.meta().deleted_at.is_none());
+                let key = RowRef {
+                    kind: RowKind::FolderShare,
+                    id: sid,
+                };
+                let live = self
+                    .st
+                    .rows
+                    .get(&key)
+                    .is_some_and(|s| s.row.meta().deleted_at.is_none());
                 let manage = match self.st.rows.get(&key).map(|s| &s.row) {
-                    Some(AnyRow::FolderShare(x)) => self.permission(l.user, x.folder_id).is_some_and(|g| g.access == iamb_core::sync::Access::Manage),
+                    Some(AnyRow::FolderShare(x)) => self
+                        .permission(l.user, x.folder_id)
+                        .is_some_and(|g| g.access == iamb_core::sync::Access::Manage),
                     _ => false,
                 };
                 if live && manage {
@@ -665,6 +935,10 @@ impl Server {
     /// The permission a share names, for building share rows in tests.
     #[must_use]
     pub const fn share_permission(edit: bool) -> Permission {
-        if edit { Permission::Edit } else { Permission::View }
+        if edit {
+            Permission::Edit
+        } else {
+            Permission::View
+        }
     }
 }

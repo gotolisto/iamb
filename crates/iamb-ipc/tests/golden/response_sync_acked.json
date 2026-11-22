@@ -1,0 +1,16 @@
+{
+  "id": 20,
+  "kind": "response",
+  "result": {
+    "outcome": {
+      "behind": [
+        {
+          "id": "01010101-0101-0101-0101-010101010101",
+          "kind": "snippet"
+        }
+      ],
+      "removed": []
+    },
+    "type": "sync_acked"
+  }
+}

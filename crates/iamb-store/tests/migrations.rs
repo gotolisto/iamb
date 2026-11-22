@@ -61,7 +61,10 @@ fn check_v3(store: &Store) -> TestResult {
     assert_eq!(store.kept_changes()?.len(), 1);
     assert_eq!(store.access_roots()?.len(), 1);
     // The handed-out entry is not "unsent".
-    let key = RowRef { kind: RowKind::Snippet, id: fid3(0x21) };
+    let key = RowRef {
+        kind: RowKind::Snippet,
+        id: fid3(0x21),
+    };
     assert_eq!(store.unsent_entries(key)?, 0);
     Ok(())
 }

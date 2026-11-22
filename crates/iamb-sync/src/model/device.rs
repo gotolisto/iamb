@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use iamb_core::model::{Id, Timestamp};
 use iamb_core::sync::{
-    AccessRemoval, AccessRoot, AckOutcome, ApplyMode, ApplyStatus, Change, LostLine, OpResult,
+    AccessRemoval, AccessRoot, AckOutcome, ApplyMode, ApplyStatus, LostLine, OpResult, OutboxBatch,
     OutboxPhase, ReconcileScope, RemoteRow, SyncInfo,
 };
 use iamb_ipc::SyncStatus;
@@ -68,7 +68,7 @@ impl Device for StoreDevice {
         self.store.set_sync_position(position, now).map_err(e)
     }
 
-    fn outbox_read(&mut self, limit: usize, phase: OutboxPhase) -> DeviceResult<Vec<Change>> {
+    fn outbox_read(&mut self, limit: usize, phase: OutboxPhase) -> DeviceResult<OutboxBatch> {
         self.store.sync_outbox_read(limit, phase).map_err(e)
     }
 

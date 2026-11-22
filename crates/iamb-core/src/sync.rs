@@ -215,10 +215,9 @@ impl AnyRow {
             ],
             Self::Snippet(v) => vec![r(RowKind::Folder, v.folder_id)],
             Self::Tag(v) => vec![r(RowKind::Profile, v.profile_id)],
-            Self::SnippetTag(v) => vec![
-                r(RowKind::Snippet, v.snippet_id),
-                r(RowKind::Tag, v.tag_id),
-            ],
+            Self::SnippetTag(v) => {
+                vec![r(RowKind::Snippet, v.snippet_id), r(RowKind::Tag, v.tag_id)]
+            }
             Self::Attachment(v) => vec![r(RowKind::Profile, v.profile_id)],
             Self::SnippetAttachment(v) => vec![
                 r(RowKind::Snippet, v.snippet_id),
@@ -378,6 +377,18 @@ impl Change {
             id: self.id,
         }
     }
+}
+
+/// What `OutboxRead` answers: the changes to send, and the rows whose last entry was dropped (a
+/// row created and deleted before any entry was handed out, D1) and that are behind what a pull
+/// skipped (D15): read them with `rows`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutboxBatch {
+    /// The changes, in dependency order.
+    pub changes: Vec<Change>,
+    /// Rows now behind.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub behind: Vec<RowRef>,
 }
 
 /// The status of one op's result (§6.3).
@@ -642,6 +653,10 @@ pub struct SyncInfo {
     pub adoption: Option<Adoption>,
     /// The time of a sign-out the device could not confirm with the server (D14).
     pub set_aside_at: Option<Timestamp>,
+    /// The time of the last sign-out, confirmed or not, until the resync after the next sign-in
+    /// (D14: signing in again resyncs). An optional addition to `SyncState`.
+    #[serde(default)]
+    pub signed_out_at: Option<Timestamp>,
     /// Changes waiting to be sent.
     pub waiting: u64,
     /// Changes the server cannot store yet.
@@ -682,7 +697,14 @@ mod tests {
 
     #[test]
     fn op_status_round_trips() {
-        for s in ["applied", "unchanged", "superseded", "partial", "rejected", "blocked"] {
+        for s in [
+            "applied",
+            "unchanged",
+            "superseded",
+            "partial",
+            "rejected",
+            "blocked",
+        ] {
             assert_eq!(OpStatus::parse(s).map(OpStatus::as_str), Some(s));
         }
     }

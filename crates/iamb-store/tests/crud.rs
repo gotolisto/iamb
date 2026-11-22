@@ -283,8 +283,16 @@ fn purge_removes_only_rows_deleted_before_the_cutoff() -> TestResult {
     store.delete_snippet(recent, t(300))?;
 
     // D8: a tombstone with an entry in the outbox is never purged, however old.
-    assert_eq!(store.purge_deleted_before(t(400))?, 0, "rows with outbox entries stay");
-    let pending: Vec<i64> = store.outbox_read(usize::MAX)?.iter().map(|e| e.seq).collect();
+    assert_eq!(
+        store.purge_deleted_before(t(400))?,
+        0,
+        "rows with outbox entries stay"
+    );
+    let pending: Vec<i64> = store
+        .outbox_read(usize::MAX)?
+        .iter()
+        .map(|e| e.seq)
+        .collect();
     store.outbox_ack(&pending)?;
     let outbox_before = store.outbox_len()?;
 

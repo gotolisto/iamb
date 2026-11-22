@@ -30,6 +30,9 @@ CREATE TABLE sync_state_new (
     personal_profile_id BLOB CHECK (personal_profile_id IS NULL OR length(personal_profile_id) = 16),
     adoption            TEXT CHECK (adoption IS NULL OR adoption IN ('adopted', 'merging')),
     set_aside_at        INTEGER,
+    -- The time of the last sign-out, by hand or not (D14): the next sign-in resyncs, and the
+    -- resync clears it.
+    signed_out_at       INTEGER,
     reconcile_token     TEXT,
     reconcile_scope     BLOB,
     reconcile_epoch     INTEGER NOT NULL DEFAULT 0 CHECK (reconcile_epoch IN (0, 1)),

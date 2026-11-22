@@ -115,9 +115,9 @@ fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
 impl TokenStore for FileStore {
     fn load(&self) -> io::Result<Option<Tokens>> {
         match std::fs::read(&self.path) {
-            Ok(bytes) => serde_json::from_slice(&bytes)
-                .map(Some)
-                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "the token file is damaged")),
+            Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "the token file is damaged")
+            }),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e),
         }

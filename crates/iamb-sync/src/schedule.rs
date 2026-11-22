@@ -307,6 +307,9 @@ mod tests {
             s.channel_down(0, false, &mut j);
             at.push(s.reconnect_at.unwrap_or(0));
         }
-        assert_eq!(at, vec![1_000, 2_000, 5_000, 10_000, 30_000, 60_000, 60_000]);
+        assert_eq!(
+            at,
+            vec![1_000, 2_000, 5_000, 10_000, 30_000, 60_000, 60_000]
+        );
     }
 }

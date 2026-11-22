@@ -74,6 +74,34 @@ impl Drop for Supervisor {
         while status(self.path()).is_some() && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(50));
         }
+        reap(self.path());
+    }
+}
+
+/// Waits for every process started for `dir` (the worker follows its supervisor when its input
+/// ends; a UI host stand-in is killed by its test) and kills what is left after five seconds, so
+/// that no test leaves a process behind, also when it panics (`Drop` runs while unwinding). It
+/// runs before the data directory is removed, so that a worker always finds its own socket file
+/// when it stops (before the beta-gap review's finding 10 was fixed, one without it never exited).
+fn reap(dir: &Path) {
+    let pattern = dir.display().to_string();
+    let alive = || {
+        Command::new("pgrep")
+            .args(["-f", &pattern])
+            .stdout(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while alive() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(50));
+    }
+    if alive() {
+        let _ = Command::new("pkill").args(["-9", "-f", &pattern]).status();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while alive() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
     }
 }
 
@@ -157,7 +185,7 @@ fn a_request_left_from_before_is_dropped_at_start() {
     let run = dir.path().join("run");
     fs::create_dir_all(&run).expect("run dir");
     fs::write(run.join("restart-worker"), b"").expect("stale request");
-    let mut child = Command::new(BIN)
+    let child = Command::new(BIN)
         .args(["--supervise", "--platform", "mock", "--data-dir"])
         .arg(dir.path())
         .env_remove("IAMB_DATA_DIR")
@@ -167,6 +195,9 @@ fn a_request_left_from_before_is_dropped_at_start() {
         .stderr(Stdio::null())
         .spawn()
         .expect("supervisor starts");
+    // The guard stops it, and waits for its worker, also when an assertion fails.
+    let s = Supervisor { child, dir };
+    let dir = &s.dir;
     let (first, _) = wait_for_worker(dir.path(), None, Duration::from_secs(15));
     assert!(!run.join("restart-worker").exists());
     // The first worker stays: the old request did not restart it.
@@ -176,12 +207,7 @@ fn a_request_left_from_before_is_dropped_at_start() {
         Some(first.pid),
         "the worker was restarted"
     );
-    let _ = child.kill();
-    let _ = child.wait();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while status(dir.path()).is_some() && Instant::now() < deadline {
-        thread::sleep(Duration::from_millis(50));
-    }
+    drop(s);
 }
 
 #[test]

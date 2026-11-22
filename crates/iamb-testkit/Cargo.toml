@@ -76,6 +76,9 @@ iamb-platform-windows = { path = "../iamb-platform-windows" }
 iamb-platform-macos = { path = "../iamb-platform-macos" }
 
 [dev-dependencies]
+# The scenario replay of task 4.4 (`tests/sync_replay.rs`): the real store and agent against the
+# model of the server.
+iamb-sync = { path = "../iamb-sync", features = ["model"] }
 # The dry-run expansion of `iamb expand`, so a test checks the fixtures through the same code.
 iamb-cli = { path = "../iamb-cli" }
 tempfile = "3.27.0"

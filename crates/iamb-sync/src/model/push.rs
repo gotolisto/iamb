@@ -6,7 +6,9 @@ use iamb_core::model::{Id, Timestamp};
 use iamb_core::sync::{Access, AnyRow, RowKind, RowRef};
 use serde_json::{Value, json};
 
-use super::{Caller, Conflict, DeviceRow, Hist, LogLine, Offered, Processed, Server, Stored, Tx, arg_id};
+use super::{
+    Caller, Conflict, DeviceRow, Hist, LogLine, Offered, Processed, Server, Stored, Tx, arg_id,
+};
 use crate::api::row_from_wire;
 
 /// A row without its sync fields, for comparing what two versions hold.
@@ -189,7 +191,11 @@ impl Server {
         let protos: Vec<u32> = args
             .get("protocols")
             .and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(|x| u32::try_from(x.as_u64()?).ok()).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| u32::try_from(x.as_u64()?).ok())
+                    .collect()
+            })
             .unwrap_or_default();
         let lo = protos.first().copied().unwrap_or(1);
         let hi = protos.last().copied().unwrap_or(lo);
@@ -275,6 +281,15 @@ impl Server {
 
     /// The profile a row of an op belongs to (C24: read before any lock).
     fn op_profile(&self, op: &Op, request: &[Op]) -> Option<Id> {
+        self.st
+            .rows
+            .get(&op.key)
+            .and_then(|s| self.row_profile(&s.row, request))
+            .or_else(|| op.row.as_ref().and_then(|r| self.row_profile(r, request)))
+    }
+
+    /// The profile a row is in, from the rows it refers to (or the request's own rows).
+    fn row_profile(&self, row: &AnyRow, request: &[Op]) -> Option<Id> {
         let folder_profile = |f: Id| -> Option<Id> {
             self.folder(f).map(|x| x.profile_id).or_else(|| {
                 request.iter().find_map(|o| match &o.row {
@@ -305,11 +320,7 @@ impl Server {
                 AnyRow::Membership(m) => Some(m.profile_id),
             }
         };
-        self.st
-            .rows
-            .get(&op.key)
-            .and_then(|s| of(&s.row))
-            .or_else(|| op.row.as_ref().and_then(of))
+        of(row)
     }
 
     /// The version of a row at a revision: the row itself or a history version.
@@ -350,7 +361,12 @@ impl Server {
         let rev = new.row.meta().rev;
         if let Some(old) = self.st.rows.insert(key, new) {
             let old_rev = old.row.meta().rev;
-            if !self.st.history.iter().any(|h| h.key == key && h.rev == old_rev) {
+            if !self
+                .st
+                .history
+                .iter()
+                .any(|h| h.key == key && h.rev == old_rev)
+            {
                 self.st.history.push(Hist {
                     key,
                     rev: old_rev,
@@ -441,7 +457,9 @@ impl Server {
         let chain = self.chain(folder);
         let mut dead: Vec<Id> = Vec::new();
         for f in &chain {
-            let Some(x) = self.folder(*f) else { return false };
+            let Some(x) = self.folder(*f) else {
+                return false;
+            };
             if x.meta.deleted_at.is_some() {
                 let ok = match x.parent_id {
                     None => self.manages(user, x.profile_id),
@@ -505,7 +523,10 @@ impl Server {
         let Some(device) = arg_id(args, "device") else {
             return self.err("invalid");
         };
-        let position = args.get("position").and_then(Value::as_str).map(str::to_owned);
+        let position = args
+            .get("position")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         let raw: Vec<Value> = args
             .get("ops")
             .and_then(Value::as_array)
@@ -584,8 +605,17 @@ impl Server {
             if let Some((status, reason, conflict, adjusted)) =
                 self.st.receipts.get(&(device, op.op_id)).cloned()
             {
-                let mut r = self.result_json(c, &op, &status, reason.as_deref(), conflict, &adjusted, true);
-                if op.key.kind == RowKind::Folder && !op.put
+                let mut r = self.result_json(
+                    c,
+                    &op,
+                    &status,
+                    reason.as_deref(),
+                    conflict,
+                    &adjusted,
+                    true,
+                );
+                if op.key.kind == RowKind::Folder
+                    && !op.put
                     && let Value::Object(m) = &mut r
                 {
                     m.insert("cascade".into(), self.cascade_answer(c, &op.cascade));
@@ -597,7 +627,10 @@ impl Server {
             if out.status == "blocked" {
                 blocked.insert(op.key.id);
             }
-            if matches!(out.status, "applied" | "unchanged" | "superseded" | "rejected") {
+            if matches!(
+                out.status,
+                "applied" | "unchanged" | "superseded" | "rejected"
+            ) {
                 self.st.receipts.insert(
                     (device, op.op_id),
                     (
@@ -608,7 +641,15 @@ impl Server {
                     ),
                 );
             }
-            let mut r = self.result_json(c, &op, out.status, out.reason, out.conflict, &out.adjusted, false);
+            let mut r = self.result_json(
+                c,
+                &op,
+                out.status,
+                out.reason,
+                out.conflict,
+                &out.adjusted,
+                false,
+            );
             if let (Some(casc), Value::Object(m)) = (out.cascade, &mut r) {
                 m.insert("cascade".into(), casc);
             }
@@ -658,11 +699,15 @@ impl Server {
                         let (row, origin) = self
                             .wire_row(c.user, *key)
                             .map_or((Value::Null, Value::Null), |(r, o)| (r, o));
-                        out.push(json!({ "entity": key.kind.as_str(), "id": key.id, "rev": rev,
-                                         "deleted": false, "row": row, "origin": origin }));
+                        out.push(
+                            json!({ "entity": key.kind.as_str(), "id": key.id, "rev": rev,
+                                         "deleted": false, "row": row, "origin": origin }),
+                        );
                     } else {
-                        out.push(json!({ "entity": key.kind.as_str(), "id": key.id, "rev": rev,
-                                         "deleted": deleted(&s.row) }));
+                        out.push(
+                            json!({ "entity": key.kind.as_str(), "id": key.id, "rev": rev,
+                                         "deleted": deleted(&s.row) }),
+                        );
                     }
                 }
                 _ => out.push(json!({ "entity": key.kind.as_str(), "id": key.id, "gone": true })),
@@ -686,6 +731,36 @@ impl Server {
         let Some(profile) = self.op_profile(op, request) else {
             return Outcome::reason("rejected", "parent_gone");
         };
+        // A create inserts and nothing else (4.3, finding 3): one that names an id in use in
+        // another profile is not this op's to write.
+        if op.put
+            && op.base == 0
+            && op.repush.is_none()
+            && self.st.rows.contains_key(&op.key)
+            && op
+                .row
+                .as_ref()
+                .and_then(|r| self.row_profile(r, request))
+                .is_some_and(|p| p != profile)
+        {
+            return Outcome::reason("blocked", "invalid");
+        }
+        // An op on a profile or a group the caller has no grant in (4.3, finding 6): the answer of
+        // an unknown row, whatever the server holds under that id.
+        let group = match &op.row {
+            Some(AnyRow::FolderShare(x)) => Some(x.profile_id),
+            _ => None,
+        };
+        if !self.has_grant(c.user, profile) || group.is_some_and(|g| !self.has_grant(c.user, g)) {
+            if !op.put {
+                let mut o = Outcome::new("unchanged");
+                if op.key.kind == RowKind::Folder {
+                    o.cascade = Some(self.cascade_answer(c, &op.cascade));
+                }
+                return o;
+            }
+            return Outcome::reason("rejected", "parent_gone");
+        }
         if let Some(row) = &op.row {
             // C14: sizes.
             let too_large = match row {
@@ -710,8 +785,10 @@ impl Server {
                     .st
                     .rows
                     .values()
-                    .filter(|s| matches!(&s.row, AnyRow::Snippet(x) if x.meta.deleted_at.is_none()
-                        && self.folder(x.folder_id).is_some_and(|f| f.profile_id == profile)))
+                    .filter(|s| {
+                        matches!(&s.row, AnyRow::Snippet(x) if x.meta.deleted_at.is_none()
+                        && self.folder(x.folder_id).is_some_and(|f| f.profile_id == profile))
+                    })
                     .count();
                 if i64::try_from(n).unwrap_or(i64::MAX) >= limit {
                     return Outcome::reason("blocked", "plan_limit");
@@ -730,6 +807,29 @@ impl Server {
         self.push_row(tx, c, device, op, profile, op.base)
     }
 
+    /// Whether the user has any grant in the profile: its owner, a live member of a live group, or
+    /// someone who can read one of its folders (`has_grant` of the server).
+    fn has_grant(&self, user: Id, profile: Id) -> bool {
+        if self.st.users.get(&user).is_some_and(|(p, _)| *p == profile) {
+            return true;
+        }
+        let live_group = self
+            .st
+            .rows
+            .get(&RowRef {
+                kind: RowKind::Profile,
+                id: profile,
+            })
+            .is_some_and(|g| !deleted(&g.row));
+        if live_group && self.role(user, profile).is_some() {
+            return true;
+        }
+        self.st.rows.iter().any(|(k, s)| {
+            matches!(&s.row, AnyRow::Folder(f) if f.profile_id == profile && f.meta.deleted_at.is_none())
+                && self.can_read(user, *k)
+        })
+    }
+
     /// May the user create this row (§4.3)?
     fn may_create(&self, user: Id, row: &AnyRow) -> bool {
         match row {
@@ -738,7 +838,9 @@ impl Server {
                 Some(p) => self.edit_on(user, p),
             },
             AnyRow::Snippet(s) => self.edit_on(user, s.folder_id),
-            AnyRow::Tag(t) => self.manages(user, t.profile_id) || self.has_edit_in(user, t.profile_id),
+            AnyRow::Tag(t) => {
+                self.manages(user, t.profile_id) || self.has_edit_in(user, t.profile_id)
+            }
             AnyRow::Attachment(a) => {
                 self.manages(user, a.profile_id) || self.has_edit_in(user, a.profile_id)
             }
@@ -759,10 +861,14 @@ impl Server {
                 if a.folder_id == b.folder_id {
                     return self.edit_on(user, a.folder_id);
                 }
-                let (ga, gb) = (self.permission(user, a.folder_id), self.permission(user, b.folder_id));
+                let (ga, gb) = (
+                    self.permission(user, a.folder_id),
+                    self.permission(user, b.folder_id),
+                );
                 match (ga, gb) {
                     (Some(x), Some(y)) => {
-                        let edit = |g: &super::Grant| matches!(g.access, Access::Edit | Access::Manage);
+                        let edit =
+                            |g: &super::Grant| matches!(g.access, Access::Edit | Access::Manage);
                         edit(&x)
                             && edit(&y)
                             && (x.root == y.root
@@ -785,8 +891,9 @@ impl Server {
                         let there = self.permission(user, np);
                         match (here, there) {
                             (Some(x), Some(y)) => {
-                                let edit =
-                                    |g: &super::Grant| matches!(g.access, Access::Edit | Access::Manage);
+                                let edit = |g: &super::Grant| {
+                                    matches!(g.access, Access::Edit | Access::Manage)
+                                };
                                 edit(&x)
                                     && edit(&y)
                                     && (x.root == y.root || y.access == Access::Manage)
@@ -806,6 +913,18 @@ impl Server {
             (AnyRow::Attachment(a), _) => self.manages(user, a.profile_id),
             _ => false,
         }
+    }
+
+    /// May the user restore `version` over `cur` (C20)?
+    pub(super) fn may_restore(&self, user: Id, cur: &AnyRow, version: &AnyRow) -> bool {
+        if version.meta().deleted_at.is_some() {
+            return self.may_delete(user, cur)
+                || matches!(cur, AnyRow::Folder(f) if self.manage_on(user, f.meta.id));
+        }
+        if cur.meta().deleted_at.is_some() {
+            return self.may_create(user, version) || self.may_change(user, cur, version);
+        }
+        self.may_change(user, cur, version)
     }
 
     fn may_delete(&self, user: Id, cur: &AnyRow) -> bool {
@@ -829,11 +948,17 @@ impl Server {
         let readable = |k: RowRef| self.st.rows.contains_key(&k) && self.can_read(user, k);
         match row {
             AnyRow::Snippet(s) => {
-                let k = RowRef { kind: RowKind::Folder, id: s.folder_id };
+                let k = RowRef {
+                    kind: RowKind::Folder,
+                    id: s.folder_id,
+                };
                 if !readable(k) {
                     return Some(Outcome::reason("rejected", "parent_gone"));
                 }
-                if self.folder(s.folder_id).is_some_and(|f| f.profile_id != profile) {
+                if self
+                    .folder(s.folder_id)
+                    .is_some_and(|f| f.profile_id != profile)
+                {
                     return Some(Outcome::reason("blocked", "invalid"));
                 }
             }
@@ -842,7 +967,10 @@ impl Server {
                     return Some(Outcome::reason("blocked", "invalid"));
                 }
                 if let Some(p) = f.parent_id {
-                    let k = RowRef { kind: RowKind::Folder, id: p };
+                    let k = RowRef {
+                        kind: RowKind::Folder,
+                        id: p,
+                    };
                     if !readable(k) {
                         return Some(Outcome::reason("rejected", "parent_gone"));
                     }
@@ -853,8 +981,14 @@ impl Server {
             }
             AnyRow::SnippetTag(l) => {
                 let (s, t) = (
-                    RowRef { kind: RowKind::Snippet, id: l.snippet_id },
-                    RowRef { kind: RowKind::Tag, id: l.tag_id },
+                    RowRef {
+                        kind: RowKind::Snippet,
+                        id: l.snippet_id,
+                    },
+                    RowRef {
+                        kind: RowKind::Tag,
+                        id: l.tag_id,
+                    },
                 );
                 if !self.st.rows.contains_key(&s) || !self.st.rows.contains_key(&t) {
                     return Some(Outcome::reason("rejected", "parent_gone"));
@@ -869,8 +1003,14 @@ impl Server {
             }
             AnyRow::SnippetAttachment(l) => {
                 let (s, a) = (
-                    RowRef { kind: RowKind::Snippet, id: l.snippet_id },
-                    RowRef { kind: RowKind::Attachment, id: l.attachment_id },
+                    RowRef {
+                        kind: RowKind::Snippet,
+                        id: l.snippet_id,
+                    },
+                    RowRef {
+                        kind: RowKind::Attachment,
+                        id: l.attachment_id,
+                    },
                 );
                 if !self.st.rows.contains_key(&s) || !self.st.rows.contains_key(&a) {
                     return Some(Outcome::reason("rejected", "parent_gone"));
@@ -904,9 +1044,11 @@ impl Server {
     }
 
     /// C17: who wrote the content of the row a put writes.
+    #[allow(clippy::too_many_arguments, reason = "the parts of C17's rule")]
     fn content_author(
         &self,
         user: Id,
+        device: Id,
         key: RowRef,
         sent: &AnyRow,
         cur: Option<&Stored>,
@@ -919,10 +1061,22 @@ impl Server {
         if content_eq(sent, &cur.row) && !deleted(&cur.row) {
             return (cur.content_by, cur.content_at);
         }
+        // The base version (4.3, finding 11): a history version the writer could not read while
+        // it was the row cannot be found, and `follows` names this device's own ops only.
         let bv = if base > 0 {
-            self.version_at(key, base)
+            if cur.row.meta().rev == base {
+                Some(cur.clone())
+            } else {
+                self.st
+                    .history
+                    .iter()
+                    .find(|h| h.key == key && h.rev == base)
+                    .filter(|h| self.version_readable(user, &h.stored.row, h.replaced_by))
+                    .map(|h| h.stored.clone())
+            }
         } else {
             self.version_of_follows(key, follows)
+                .filter(|v| v.updated_device == Some(device))
         };
         match bv {
             Some(v) if content_eq(sent, &v.row) => (v.content_by, v.content_at),
@@ -971,10 +1125,13 @@ impl Server {
         let key = op.key;
         let cur = self.st.rows.get(&key).cloned();
         let Some(sent) = op.row.clone() else {
-            // A delete (C5).
+            // A delete (C5). One of a row the caller cannot read answers as one of an unknown id.
             let Some(cur) = cur else {
                 return Outcome::new("unchanged");
             };
+            if !self.can_read(c.user, key) {
+                return Outcome::new("unchanged");
+            }
             if deleted(&cur.row) {
                 return Outcome::new("unchanged");
             }
@@ -998,8 +1155,15 @@ impl Server {
             self.write(tx, key, new);
             let mut out = Outcome::new("applied");
             if conflict {
-                out.conflict =
-                    Some(self.record_conflict(tx, key, "delete_over_edit", rev, c.user, Some(device), &cur));
+                out.conflict = Some(self.record_conflict(
+                    tx,
+                    key,
+                    "delete_over_edit",
+                    rev,
+                    c.user,
+                    Some(device),
+                    &cur,
+                ));
             }
             return out;
         };
@@ -1057,6 +1221,16 @@ impl Server {
                 }
             }
         }
+        // C8 put the tree right and left nothing else changed: nothing new, nothing written.
+        if !adjusted.is_empty()
+            && let Some(cv) = &cur
+            && fields_eq(&sent, &cv.row)
+            && !deleted(&cv.row)
+        {
+            let mut out = Outcome::new("unchanged");
+            out.adjusted = adjusted;
+            return out;
+        }
         // C7: a live row needs live folders.
         if let Some(f) = Self::needs_live(&sent)
             && self.folder(f).is_some_and(|x| x.meta.deleted_at.is_some())
@@ -1068,7 +1242,7 @@ impl Server {
             .as_ref()
             .is_some_and(|cv| self.conflicts_with(device, op, cv, base, Some(&sent)));
         let (content_by, content_at) =
-            self.content_author(c.user, key, &sent, cur.as_ref(), base, &op.follows);
+            self.content_author(c.user, device, key, &sent, cur.as_ref(), base, &op.follows);
         let rev = self.next_rev(profile);
         let mut new = self.new_stored(sent, rev, c.user, device, op.op_id);
         if let Some(cv) = &cur {
@@ -1092,7 +1266,8 @@ impl Server {
                 "edit_edit"
             };
             if matches!(key.kind, RowKind::Snippet | RowKind::Folder | RowKind::Tag) {
-                out.conflict = Some(self.record_conflict(tx, key, kind, rev, c.user, Some(device), cv));
+                out.conflict =
+                    Some(self.record_conflict(tx, key, kind, rev, c.user, Some(device), cv));
             }
         }
         out
@@ -1106,7 +1281,7 @@ impl Server {
             let Some(cur) = cur else {
                 return Outcome::new("unchanged");
             };
-            if deleted(&cur.row) {
+            if !self.can_read(c.user, key) || deleted(&cur.row) {
                 return Outcome::new("unchanged");
             }
             let AnyRow::FolderShare(x) = &cur.row else {
@@ -1115,7 +1290,9 @@ impl Server {
             if !self.manage_on(c.user, x.folder_id) {
                 return Outcome::reason("rejected", "forbidden");
             }
-            let profile = self.folder(x.folder_id).map_or(x.profile_id, |f| f.profile_id);
+            let profile = self
+                .folder(x.folder_id)
+                .map_or(x.profile_id, |f| f.profile_id);
             self.lock_group(x.profile_id);
             let rev = self.next_rev(profile);
             let mut row = cur.row.clone();
@@ -1168,15 +1345,27 @@ impl Server {
         if !ok {
             return Outcome::reason("rejected", "forbidden");
         }
+        // A share of a deleted folder would give access to tombstones only, and C6 ended the
+        // folder's shares with it: refused (proposal to C11).
+        if folder.as_ref().is_some_and(|f| f.meta.deleted_at.is_some()) {
+            return Outcome::reason("rejected", "parent_gone");
+        }
         let profile = folder.as_ref().map_or(x.profile_id, |f| f.profile_id);
+        // A share a device gives back after a restore (C18) is judged against the row as the
+        // restored server has it: the device could not have seen anything written since.
+        let base = match (&op.repush, &cur) {
+            (Some(_), Some(cv)) => op.base.max(cv.row.meta().rev),
+            (Some(_), None) => 0,
+            (None, _) => op.base,
+        };
         if let Some(cv) = &cur {
-            if op.base < cv.row.meta().rev {
+            if base < cv.row.meta().rev {
                 return Outcome::new("superseded");
             }
             if fields_eq(&sent, &cv.row) && !deleted(&cv.row) {
                 return Outcome::new("unchanged");
             }
-        } else if op.base > 0 {
+        } else if base > 0 {
             return Outcome::reason("rejected", "gone");
         }
         if let Some(limit) = self.st.limits.get("shared_folders_max").copied() {
@@ -1185,8 +1374,12 @@ impl Server {
                 .rows
                 .values()
                 .filter_map(|s| match &s.row {
-                    AnyRow::FolderShare(y) if y.meta.deleted_at.is_none() && y.folder_id != x.folder_id => {
-                        self.folder(y.folder_id).filter(|f| f.profile_id == profile).map(|f| f.meta.id)
+                    AnyRow::FolderShare(y)
+                        if y.meta.deleted_at.is_none() && y.folder_id != x.folder_id =>
+                    {
+                        self.folder(y.folder_id)
+                            .filter(|f| f.profile_id == profile)
+                            .map(|f| f.meta.id)
                     }
                     _ => None,
                 })
@@ -1237,6 +1430,11 @@ impl Server {
             o.cascade = Some(self.cascade_answer(c, &op.cascade));
             return o;
         };
+        if !self.can_read(c.user, key) {
+            let mut o = Outcome::new("unchanged");
+            o.cascade = Some(self.cascade_answer(c, &op.cascade));
+            return o;
+        }
         if deleted(&cur.row) {
             let mut o = Outcome::new("unchanged");
             o.cascade = Some(self.cascade_answer(c, &op.cascade));
@@ -1287,7 +1485,9 @@ impl Server {
             .rows
             .values()
             .filter_map(|s| match &s.row {
-                AnyRow::Snippet(x) if x.meta.deleted_at.is_none() && all_folders.contains(&x.folder_id) => {
+                AnyRow::Snippet(x)
+                    if x.meta.deleted_at.is_none() && all_folders.contains(&x.folder_id) =>
+                {
                     Some(s.row.key())
                 }
                 _ => None,
@@ -1295,15 +1495,21 @@ impl Server {
             .collect();
         let mut subs = subtree.clone();
         subs.sort_by_key(|x| std::cmp::Reverse(self.chain(*x).len()));
-        victims.extend(subs.iter().map(|x| RowRef { kind: RowKind::Folder, id: *x }));
+        victims.extend(subs.iter().map(|x| RowRef {
+            kind: RowKind::Folder,
+            id: *x,
+        }));
         if victims.len() > self.limits.cascade_max {
             return Outcome::new("partial");
         }
         for vk in victims {
-            let Some(v) = self.st.rows.get(&vk).cloned() else { continue };
+            let Some(v) = self.st.rows.get(&vk).cloned() else {
+                continue;
+            };
             let vrev = v.row.meta().rev;
             let other = v.updated_device != Some(device)
-                || v.updated_op.is_none_or(|o| o != op.op_id && !op.follows.contains(&o));
+                || v.updated_op
+                    .is_none_or(|o| o != op.op_id && !op.follows.contains(&o));
             let conflict = other
                 && match list.get(&vk) {
                     None => true,
@@ -1339,14 +1545,18 @@ impl Server {
             .rows
             .values()
             .filter_map(|s| match &s.row {
-                AnyRow::FolderShare(x) if x.meta.deleted_at.is_none() && all_folders.contains(&x.folder_id) => {
+                AnyRow::FolderShare(x)
+                    if x.meta.deleted_at.is_none() && all_folders.contains(&x.folder_id) =>
+                {
                     Some((s.row.key(), x.profile_id, x.meta.id))
                 }
                 _ => None,
             })
             .collect();
         for (sk, group, sid) in shares {
-            let Some(v) = self.st.rows.get(&sk).cloned() else { continue };
+            let Some(v) = self.st.rows.get(&sk).cloned() else {
+                continue;
+            };
             let rev = self.next_rev(profile);
             let mut row = v.row.clone();
             let m = row.meta_mut();
@@ -1393,8 +1603,15 @@ impl Server {
         );
         let mut out = Outcome::new("applied");
         if conflict {
-            out.conflict =
-                Some(self.record_conflict(tx, key, "delete_over_edit", rev, c.user, Some(device), &cur));
+            out.conflict = Some(self.record_conflict(
+                tx,
+                key,
+                "delete_over_edit",
+                rev,
+                c.user,
+                Some(device),
+                &cur,
+            ));
         }
         out.cascade = Some(self.cascade_answer(c, &op.cascade));
         out
@@ -1432,7 +1649,9 @@ impl Server {
         }
         let permitted = match (&cur, &op.row) {
             (None, Some(s)) => self.may_create(c.user, s),
-            (Some(cv), Some(s)) => self.may_create(c.user, s) || self.may_change(c.user, &cv.row, s),
+            (Some(cv), Some(s)) => {
+                self.may_create(c.user, s) || self.may_change(c.user, &cv.row, s)
+            }
             (Some(cv), None) => {
                 self.may_delete(c.user, &cv.row)
                     || matches!(&cv.row, AnyRow::Folder(f) if self.manage_on(c.user, f.meta.id))
@@ -1444,7 +1663,9 @@ impl Server {
         }
         let author = |s: &Self, cur: Option<&Stored>, sent: &AnyRow| -> (Option<Id>, Option<i64>) {
             match cur {
-                Some(cv) if content_eq(sent, &cv.row) && !deleted(&cv.row) => (cv.content_by, cv.content_at),
+                Some(cv) if content_eq(sent, &cv.row) && !deleted(&cv.row) => {
+                    (cv.content_by, cv.content_at)
+                }
                 _ => {
                     if op.author_self {
                         (Some(c.user), Some(s.now))
@@ -1459,14 +1680,20 @@ impl Server {
             let mut st = match &op.row {
                 Some(r) => s.new_stored(r.clone(), rev, c.user, device, op.op_id),
                 None => {
-                    let mut st = cur.cloned().unwrap_or_else(|| s.new_stored(
-                        AnyRow::Tag(iamb_core::model::Tag {
-                            meta: iamb_core::model::SyncMeta::new(key.id, Timestamp(s.now)),
-                            profile_id: profile,
-                            name: String::new(),
-                            color: None,
-                        }),
-                        rev, c.user, device, op.op_id));
+                    let mut st = cur.cloned().unwrap_or_else(|| {
+                        s.new_stored(
+                            AnyRow::Tag(iamb_core::model::Tag {
+                                meta: iamb_core::model::SyncMeta::new(key.id, Timestamp(s.now)),
+                                profile_id: profile,
+                                name: String::new(),
+                                color: None,
+                            }),
+                            rev,
+                            c.user,
+                            device,
+                            op.op_id,
+                        )
+                    });
                     let m = st.row.meta_mut();
                     m.rev = rev;
                     m.deleted_at = Some(Timestamp(s.now));
@@ -1514,12 +1741,16 @@ impl Server {
                     Some(r) => fields_eq(r, &cv.row) && !deleted(&cv.row),
                     None => deleted(&cv.row),
                 };
-                if cv.lost_rev.is_some_and(|l| l >= rp_rev) {
+                if kind == "row" && cv.lost_rev.is_some_and(|l| l >= rp_rev) {
                     // Case 3: an earlier version of the same lost history.
                     if same {
                         return Outcome::new("unchanged");
                     }
-                    if !self.st.history.iter().any(|h| h.key == key && h.rev == rp_rev)
+                    if !self
+                        .st
+                        .history
+                        .iter()
+                        .any(|h| h.key == key && h.rev == rp_rev)
                         && let Some(r) = &op.row
                     {
                         let mut st = self.new_stored(r.clone(), rp_rev, c.user, device, op.op_id);
@@ -1533,7 +1764,15 @@ impl Server {
                         let differs = !recorded_eq(r, &cv.row);
                         if differs && kind == "row" && cv.updated_device != Some(device) {
                             self.touch(tx, key);
-                            self.record_conflict(tx, key, "edit_edit", cur_rev, cv.row.meta().updated_by.unwrap_or(c.user), cv.updated_device, &st);
+                            self.record_conflict(
+                                tx,
+                                key,
+                                "edit_edit",
+                                cur_rev,
+                                cv.row.meta().updated_by.unwrap_or(c.user),
+                                cv.updated_device,
+                                &st,
+                            );
                         }
                     }
                     return Outcome::new("superseded");
@@ -1550,7 +1789,10 @@ impl Server {
                 {
                     return Outcome::reason("rejected", "parent_gone");
                 }
-                let written_since = cur_rev > backup;
+                // A change made on top of the lost revision that the row now is (given back by
+                // another device) is based on it knowingly: no conflict.
+                let written_since =
+                    cur_rev > backup && !(kind == "base" && cv.lost_rev == Some(rp_rev));
                 let new = build(self, Some(&cv));
                 let rev = new.row.meta().rev;
                 self.write(tx, key, new);
@@ -1562,13 +1804,23 @@ impl Server {
                         Some(r) => !recorded_eq(r, &cv.row) || deleted(&cv.row),
                         None => !deleted(&cv.row),
                     };
-                    if differs && matches!(key.kind, RowKind::Snippet | RowKind::Folder | RowKind::Tag) {
+                    if differs
+                        && matches!(key.kind, RowKind::Snippet | RowKind::Folder | RowKind::Tag)
+                    {
                         let kind = match (&op.row, deleted(&cv.row)) {
                             (None, _) => "delete_over_edit",
                             (Some(_), true) => "edit_over_delete",
                             (Some(_), false) => "edit_edit",
                         };
-                        out.conflict = Some(self.record_conflict(tx, key, kind, rev, c.user, Some(device), &cv));
+                        out.conflict = Some(self.record_conflict(
+                            tx,
+                            key,
+                            kind,
+                            rev,
+                            c.user,
+                            Some(device),
+                            &cv,
+                        ));
                     }
                 }
                 out
