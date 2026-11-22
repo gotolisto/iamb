@@ -12,7 +12,19 @@
 //! then holds it for the verdict). A newer request replaces a parked one, a cancelled form
 //! drops its parked submit, and a request whose window never gets the focus is dropped after
 //! [`PARK_TIMEOUT`] with the diagnostic `request_focus_timeout`. A request without a token runs
-//! against whatever has the focus.
+//! against whatever has the focus, with one exception: a `ReopenLastForm` that arrives while
+//! the last focus delivered here is one of Iamb's own windows (the tray menu on Windows, which
+//! takes the foreground; the UI host gives the focus back to the window the menu was for right
+//! before it sends the request) is parked until the next `FocusChanged` for a window that is not
+//! Iamb's, with the same time limit, instead of being refused with `refused_own_window` while the
+//! hand-back is still on its way (the beta-gap review's finding 2).
+//!
+//! The "Fill in the last form again" shortcut reads the focus token at the press, as the
+//! palette's shortcut does, and its request carries it: it is parked until the `FocusChanged`
+//! for the window that had the focus at the press is delivered, and runs under that window's
+//! verdict, not under the verdict of the window before (a press right after a switch into a
+//! password field or an excluded app is refused there). Without a focused window it is refused
+//! with `refused_unknown_focus`.
 //!
 //! # Keys that went to another window (the 2.8 review's finding 5)
 //!
@@ -204,7 +216,9 @@ impl Environment for Env<'_> {
 
 struct Parked {
     request: Explicit,
-    token: FocusToken,
+    /// The window whose `FocusChanged` forwards it; `None`: the next window that is not Iamb's
+    /// (module docs).
+    token: Option<FocusToken>,
     deadline: Instant,
 }
 
@@ -667,9 +681,12 @@ impl EngineThread {
                 }
             }
             // "Fill in the last form again" (UX specification §5.1): as `ReopenLastForm`, for the
-            // window that has the focus now, where the shortcut was pressed.
+            // window that had the focus at the press, under that window's verdict (module docs).
             Routed::Hotkey(id) if id == REOPEN_FORM_HOTKEY => {
-                self.on_request(Explicit::Reopen, None);
+                match self.shared.platform.focus_token() {
+                    Ok(token) => self.on_request(Explicit::Reopen, Some(token)),
+                    Err(_) => self.shared.diagnostic(coded("refused_unknown_focus")),
+                }
             }
             // "Pause or resume" (§5.1).
             Routed::Hotkey(id) if id == PAUSE_HOTKEY => self.set_paused(!self.paused),
@@ -789,10 +806,14 @@ impl EngineThread {
         self.verdict = None;
         self.handle(Event::FocusChanged(change.app.app.clone()));
         let token = change.token;
+        let own = change.app.own;
         self.focus = Some(change);
         self.elsewhere = None;
         self.unconfirmed = None;
-        if self.parked.as_ref().is_some_and(|p| p.token == token)
+        if self
+            .parked
+            .as_ref()
+            .is_some_and(|p| p.token.map_or(!own, |t| t == token))
             && let Some(parked) = self.parked.take()
         {
             self.forward(parked.request);
@@ -815,11 +836,20 @@ impl EngineThread {
             self.dropped(request, "form_target_gone");
             return;
         }
+        let in_own_window = self.focus.as_ref().is_some_and(|c| c.app.own);
         match focus {
             Some(token) if self.focus.as_ref().map(|c| c.token) != Some(token) => {
                 self.parked = Some(Parked {
                     request,
-                    token,
+                    token: Some(token),
+                    deadline: Instant::now() + PARK_TIMEOUT,
+                });
+            }
+            // The tray's "Fill in again" while the hand-back to the app is on its way.
+            None if matches!(request, Explicit::Reopen) && in_own_window => {
+                self.parked = Some(Parked {
+                    request,
+                    token: None,
                     deadline: Instant::now() + PARK_TIMEOUT,
                 });
             }

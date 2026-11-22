@@ -369,7 +369,12 @@ one is refused; cancelling a form drops its waiting submit; `Overflow` drops any
 The engine sees focus events and requests in the order the service delivers them, and the two
 arrive from different threads. The service therefore forwards an explicit request only after it
 has delivered the focus change for the window the request will type into (the focus token's
-window, once the UI host has handed focus back).
+window, once the UI host has handed focus back). The "Fill in the last form again" shortcut reads
+the focus token at the press, as the palette's shortcut does, so it runs under the verdict of the
+window it was pressed in, never under the one before. `ReopenLastForm` carries no token; one that
+arrives while the last focus delivered is Iamb's own window (the tray menu on Windows, whose
+focus the UI host has just handed back) waits for the next focus change to another window, for
+the same time limit, instead of being refused there.
 
 Keys typed into Iamb's own windows are not expanded: the focus thread reports `own_window` for the
 UI host's process. The one exception is the onboarding test field, which the UI host declares with

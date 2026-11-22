@@ -8,9 +8,12 @@ mod common;
 
 use std::collections::BTreeMap;
 
+use std::time::{Duration, Instant};
+
 use common::{Harness, LIBRARY, diagnostic_codes, wait_event};
-use iamb_ipc::{Client, ErrorCode, EventBody, RequestBody, ResponseBody, Role, Secret};
-use iamb_platform::{Chord, HotkeyId};
+use iamb_ipc::{Client, ErrorCode, EventBody, FocusRef, RequestBody, ResponseBody, Role, Secret};
+use iamb_platform::mock::MockWindow;
+use iamb_platform::{Chord, FocusToken, HotkeyId};
 
 const REOPEN: HotkeyId = HotkeyId(2);
 const PAUSE: HotkeyId = HotkeyId(3);
@@ -174,4 +177,158 @@ fn the_fill_in_again_shortcut_reopens_the_last_form_in_the_focused_window() {
         }
         _ => unreachable!("matched above"),
     }
+}
+
+/// Fills in the form of `hi ` once in the editor, so that there are answers to reopen.
+fn fill_in_once(h: &Harness, ui: &mut Client) {
+    h.os.type_text("hi ");
+    let EventBody::FormRequested { session, .. } =
+        wait_event(ui, |e| matches!(e, EventBody::FormRequested { .. }))
+    else {
+        unreachable!("matched above")
+    };
+    ui.call(RequestBody::FormAck { session }).expect("ack");
+    ui.call(RequestBody::FormSubmit {
+        session,
+        values: Secret::new(BTreeMap::from([("Name".to_owned(), "Ada".to_owned())])),
+    })
+    .expect("submit");
+    h.settle();
+    assert_eq!(h.text(h.editor), "Hello Ada! ");
+}
+
+/// The `FormRequested` events that arrive within `wait`, with the window each names.
+fn forms_within(ui: &mut Client, wait: Duration) -> Vec<Option<FocusRef>> {
+    let deadline = Instant::now() + wait;
+    let mut out = Vec::new();
+    while Instant::now() < deadline {
+        if let Some(EventBody::FormRequested { focus, session, .. }) = ui
+            .next_event(Some(Duration::from_millis(50)))
+            .expect("event stream")
+        {
+            out.push(focus);
+            ui.call(RequestBody::FormCancel { session })
+                .expect("cancel");
+        }
+    }
+    out
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Target {
+    PasswordField,
+    ExcludedApp,
+    OrdinaryWindow,
+}
+
+/// Fills in a form in the editor, then switches to `target` and presses the shortcut before
+/// the service heard of the switch (the beta-gap review's finding 2).
+fn press_right_after_a_switch(target: Target) -> (Harness, Client, FocusToken) {
+    let h = Harness::start(LIBRARY);
+    let mut ui = h.client(Role::Ui);
+    assert_eq!(
+        put(&mut ui, "reopen_form_hotkey", Some("Ctrl+Alt+F")),
+        Ok(())
+    );
+    fill_in_once(&h, &mut ui);
+    let window = match target {
+        Target::PasswordField => MockWindow::new("org.example.bank", 200).secure(),
+        Target::ExcludedApp => {
+            ui.call(RequestBody::PutExclusion {
+                app_id: "org.example.private".to_owned(),
+                display_name: "Private".to_owned(),
+                excluded: true,
+            })
+            .expect("excluded");
+            MockWindow::new("org.example.private", 200)
+        }
+        Target::OrdinaryWindow => MockWindow::new("org.example.other", 200),
+    };
+    let token = h.os.open_window(window);
+    h.settle();
+    let _ = forms_within(&mut ui, Duration::from_millis(100));
+
+    h.os.hold_focus_reports(true);
+    h.os.focus(token).expect("window is open");
+    assert!(h.os.press_chord(chord("Ctrl+Alt+F")));
+    h.settle();
+    (h, ui, token)
+}
+
+#[test]
+fn the_fill_in_again_shortcut_waits_for_the_verdict_of_the_window_of_the_press() {
+    for target in [Target::PasswordField, Target::ExcludedApp] {
+        let (h, mut ui, _) = press_right_after_a_switch(target);
+        // While the report is late, no form is sent: not for the window just left.
+        assert_eq!(
+            forms_within(&mut ui, Duration::from_millis(300)),
+            [],
+            "{target:?}: a form opened before the verdict"
+        );
+        // The report arrives with its verdict: the request is refused there.
+        h.os.hold_focus_reports(false);
+        h.settle();
+        assert_eq!(
+            forms_within(&mut ui, Duration::from_millis(300)),
+            [],
+            "{target:?}"
+        );
+        let codes = diagnostic_codes(&mut ui);
+        let expected = match target {
+            Target::PasswordField => "refused_secure_field",
+            _ => "refused_excluded_app",
+        };
+        assert!(
+            codes.contains(&expected.to_owned()),
+            "{target:?}: {codes:?}"
+        );
+    }
+
+    // An ordinary window: the form opens once its report is in, for that window.
+    let (h, mut ui, token) = press_right_after_a_switch(Target::OrdinaryWindow);
+    assert_eq!(forms_within(&mut ui, Duration::from_millis(300)), []);
+    h.os.hold_focus_reports(false);
+    h.settle();
+    assert_eq!(
+        forms_within(&mut ui, Duration::from_millis(500)),
+        [Some(FocusRef::from(token))]
+    );
+}
+
+#[test]
+fn the_trays_fill_in_again_waits_for_the_focus_to_come_back_from_iambs_window() {
+    // On Windows the tray menu takes the foreground (an own window of Iamb's); the UI host
+    // gives the focus back to the app the menu was for and sends `ReopenLastForm` at once. The
+    // request waits for that app's report instead of being refused in Iamb's window.
+    let h = Harness::start(LIBRARY);
+    let mut ui = h.client(Role::Ui);
+    fill_in_once(&h, &mut ui);
+    let menu = h.os.open_window(MockWindow::new("iamb-desktop", 300).own());
+    h.os.focus(menu).expect("window is open");
+    h.settle();
+
+    h.os.hold_focus_reports(true);
+    h.os.focus(h.editor).expect("window is open");
+    ui.call(RequestBody::ReopenLastForm {}).expect("asked");
+    h.settle();
+    assert_eq!(forms_within(&mut ui, Duration::from_millis(200)), []);
+    h.os.hold_focus_reports(false);
+    h.settle();
+    assert_eq!(
+        forms_within(&mut ui, Duration::from_millis(500)),
+        [Some(FocusRef::from(h.editor))]
+    );
+    assert!(
+        !diagnostic_codes(&mut ui).contains(&"refused_own_window".to_owned()),
+        "refused while the hand-back was on its way"
+    );
+
+    // No report at all: dropped after the time limit, not run in Iamb's window.
+    h.os.focus(menu).expect("window is open");
+    h.settle();
+    h.os.hold_focus_reports(true);
+    ui.call(RequestBody::ReopenLastForm {}).expect("asked");
+    assert_eq!(forms_within(&mut ui, Duration::from_millis(1500)), []);
+    assert!(diagnostic_codes(&mut ui).contains(&"request_focus_timeout".to_owned()));
+    h.os.hold_focus_reports(false);
 }
