@@ -83,6 +83,8 @@ mod endpoint;
 // `clipboard`, `focus`, `hotkeys`, `injector`, `listener` and `permissions` keep their
 // decisions in plain Rust submodules that are built and tested on every system; their macOS
 // code is gated inside. Off macOS nothing but the tests uses them.
+#[cfg(target_os = "macos")]
+mod account;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod focus;
 #[cfg(target_os = "macos")]
@@ -106,6 +108,8 @@ pub mod probe;
 #[cfg(target_os = "macos")]
 mod session;
 
+#[cfg(target_os = "macos")]
+pub use account::account_home;
 #[cfg(target_os = "macos")]
 pub use hardening::harden_process;
 #[cfg(target_os = "macos")]

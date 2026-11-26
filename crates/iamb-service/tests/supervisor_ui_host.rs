@@ -1,9 +1,10 @@
 //! The supervisor starts the UI host (`supervisor` module docs, "The UI host"; architecture §3.2):
 //! at its own start, for its data root, again after an abnormal exit, and not again after status
 //! 0, a usage error or a quit it marked. Runs the real `iamb-service` binary against the mock platform, with a shell script standing
-//! in for `iamb-desktop`. Unix only, like `supervisor.rs`.
+//! in for `iamb-desktop`. Unix only, like `supervisor.rs`, and debug builds only: a release
+//! build refuses `--ui-host` (`tests/release_switches.rs`).
 
-#![cfg(unix)]
+#![cfg(all(unix, debug_assertions))]
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;

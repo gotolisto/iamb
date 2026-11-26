@@ -103,7 +103,7 @@ pub(crate) fn default_root(get: impl Fn(&str) -> Option<OsString>) -> Option<Pat
 /// The per-OS data root, without the `IAMB_DATA_DIR` override.
 fn system_root(get: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
     if cfg!(target_os = "macos") {
-        nonempty(get("HOME")).map(|h| h.join("Library/Application Support/Iamb"))
+        nonempty(get("HOME")).map(|h| h.join(MAC_DATA_ROOT))
     } else if cfg!(windows) {
         nonempty(get("APPDATA")).map(|a| a.join("Iamb"))
     } else {
@@ -284,17 +284,21 @@ fn plist_string<'a>(text: &'a str, key: &str) -> Option<&'a str> {
 /// Whether the installed macOS helper may run for the data root `root` (the 2026-11 beta review,
 /// note to finding 1; architecture §8): a release build of the helper holds the user's keyboard
 /// permissions, so it serves the default data root only, not one another process of the user
-/// names with `--data-dir` or `IAMB_DATA_DIR` and filled with a library of its choosing.
-/// Development builds, and every executable outside the helper layout, may use any root.
+/// names with `--data-dir` or `IAMB_DATA_DIR` and filled with a library of its choosing. The
+/// default is built from `home`, the home directory the user database gives for this account
+/// (`getpwuid_r`), never from `HOME`: whoever starts the helper chooses its environment
+/// (`open --env HOME=…`). Without `home` the released helper serves no root. Development
+/// builds, and every executable outside the helper layout, may use any root.
 #[must_use]
-pub fn helper_may_use_root(
-    helper: bool,
-    release: bool,
-    root: &Path,
-    get: impl Fn(&str) -> Option<OsString>,
-) -> bool {
-    !(helper && release) || system_root(get).is_some_and(|default| default == root)
+pub fn helper_may_use_root(helper: bool, release: bool, root: &Path, home: Option<&Path>) -> bool {
+    !(helper && release)
+        || home
+            .filter(|h| h.has_root())
+            .is_some_and(|h| h.join(MAC_DATA_ROOT) == root)
 }
+
+/// The macOS data root under the home directory.
+const MAC_DATA_ROOT: &str = "Library/Application Support/Iamb";
 
 #[cfg(test)]
 mod tests {
@@ -434,29 +438,34 @@ mod tests {
 
     #[test]
     fn the_released_helper_serves_the_default_data_root_only() {
-        let env = |k: &str| match k {
-            "HOME" => Some(OsString::from("/home/ada")),
-            "IAMB_DATA_DIR" => Some(OsString::from("/tmp/elsewhere")),
-            _ => None,
-        };
-        let default = system_root(env).expect("a default");
-        assert!(helper_may_use_root(true, true, &default, env));
-        // IAMB_DATA_DIR does not count for the released helper, nor does --data-dir.
+        let home = Path::new("/Users/ada");
+        let default = home.join("Library/Application Support/Iamb");
+        assert!(helper_may_use_root(true, true, &default, Some(home)));
+        // Another root, whether from IAMB_DATA_DIR or --data-dir, is refused.
         assert!(!helper_may_use_root(
             true,
             true,
             Path::new("/tmp/elsewhere"),
-            env
+            Some(home)
         ));
+        // The default under a home that is not the account's (`HOME` set by the caller) is
+        // another root too; without the account's home nothing is served.
         assert!(!helper_may_use_root(
             true,
             true,
-            Path::new("/tmp/x"),
-            |_| None
+            Path::new("/tmp/fake/Library/Application Support/Iamb"),
+            Some(home)
+        ));
+        assert!(!helper_may_use_root(true, true, &default, None));
+        assert!(!helper_may_use_root(
+            true,
+            true,
+            Path::new("Library/Application Support/Iamb"),
+            Some(Path::new(""))
         ));
         // A development build, or not the helper: any root.
-        assert!(helper_may_use_root(true, false, Path::new("/tmp/x"), env));
-        assert!(helper_may_use_root(false, true, Path::new("/tmp/x"), env));
+        assert!(helper_may_use_root(true, false, Path::new("/tmp/x"), None));
+        assert!(helper_may_use_root(false, true, Path::new("/tmp/x"), None));
     }
 
     #[cfg(unix)]

@@ -13,17 +13,24 @@
 //! The supervisor also starts the UI host (`iamb-desktop`, installed beside it) and restarts it
 //! after an abnormal exit (`iamb_service::supervisor`, "The UI host"); `--no-ui-host` starts none
 //! (the UI host passes it when it starts the supervisor itself). With `--platform mock` none is
-//! started unless `--ui-host` names one. `--ui-host` is a switch for tests and development: it
-//! is refused, with the usage error, by a release build on the native platform, because on macOS
-//! the helper holds the user's keyboard permissions and must not start a program of the
-//! caller's choosing (the 2026-11 beta review's finding 1). On macOS the installed helper does
-//! not start the UI host as its child at all: it has the system open `Iamb.app` (`ui_host_plan`).
+//! started unless `--ui-host` names one. `--ui-host` is a switch for tests and development: a
+//! release build refuses it with the usage error, whatever the platform, because on macOS the
+//! helper holds the user's keyboard permissions and must not start a program of the caller's
+//! choosing (the 2026-11 beta review's finding 1, and its re-verification: allowing it with
+//! `--platform mock` left the hole open, since a release build parsed `mock` too). On macOS the
+//! installed helper does not start the UI host as its child at all: it has the system open
+//! `Iamb.app` (`ui_host_plan`).
 //!
 //! A release build of the macOS helper runs for the default data root only (`--data-dir` and
-//! `IAMB_DATA_DIR` naming another are refused; `iamb_service::paths::helper_may_use_root`).
+//! `IAMB_DATA_DIR` naming another are refused; `iamb_service::paths::helper_may_use_root`). The
+//! default is built from the home directory the user database gives for this account
+//! (`getpwuid_r`), not from `HOME`, which whoever starts the helper chooses (`open --env`).
 //!
 //! `--platform mock` runs the worker against the in-memory mock platform: development and CI
-//! only (it is the only choice on Linux). `--heartbeat-stdout` is passed by the supervisor: the
+//! only. A release build refuses it where the system has a native platform (Windows, macOS):
+//! nothing shipped uses it, and the installed helper must not run as something other than the
+//! keyboard helper the user granted. On Linux, which has no native platform, it stays the
+//! default and the only choice. `--heartbeat-stdout` is passed by the supervisor: the
 //! worker then writes its heartbeat to standard output and exits when standard input ends.
 //!
 //! On macOS the native worker gives its main thread to the application event loop
@@ -149,17 +156,20 @@ fn main() -> ExitCode {
         .platform
         .unwrap_or_else(PlatformChoice::default_for_build);
     if let UiHostChoice::Path(_) = &args.ui_host
-        && !ui_host_switch_allowed(choice, cfg!(debug_assertions))
+        && !ui_host_switch_allowed(cfg!(debug_assertions))
     {
+        return fail(&format!("--ui-host is for development builds; {USAGE}"));
+    }
+    if !platform_allowed(choice, cfg!(debug_assertions), HAS_NATIVE_PLATFORM) {
         return fail(&format!(
-            "--ui-host is for development builds and --platform mock; {USAGE}"
+            "--platform mock is for development builds on this system; {USAGE}"
         ));
     }
     if !iamb_service::paths::helper_may_use_root(
         launched_from_helper(),
         !cfg!(debug_assertions),
         dirs.root(),
-        |k| std::env::var_os(k),
+        account_home().as_deref(),
     ) {
         return fail("the installed helper serves the default data root only");
     }
@@ -195,9 +205,30 @@ fn launched_from_helper() -> bool {
         .is_ok_and(|exe| iamb_service::paths::is_login_item_helper(&exe))
 }
 
-/// Whether `--ui-host` may be used (module docs): development builds and the mock platform.
-fn ui_host_switch_allowed(platform: PlatformChoice, debug: bool) -> bool {
-    platform == PlatformChoice::Mock || debug
+/// Whether `--ui-host` may be used (module docs): development builds only.
+const fn ui_host_switch_allowed(debug: bool) -> bool {
+    debug
+}
+
+/// This system has a native platform (module docs, `--platform mock`).
+const HAS_NATIVE_PLATFORM: bool = cfg!(any(windows, target_os = "macos"));
+
+/// Whether `platform` may be used (module docs): the mock in development builds, or where the
+/// system has no native platform.
+fn platform_allowed(platform: PlatformChoice, debug: bool, has_native: bool) -> bool {
+    platform == PlatformChoice::Native || debug || !has_native
+}
+
+/// The home directory the user database gives for this account (macOS; module docs).
+fn account_home() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        iamb_platform_macos::account_home()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
 }
 
 /// The panic hook (by location only: a panic message could quote data) and the log line that
@@ -483,11 +514,24 @@ mod tests {
     const HELPER: &str = "/Applications/Iamb.app/Contents/Library/LoginItems/Iamb Service.app/Contents/MacOS/iamb-service";
 
     #[test]
-    fn the_ui_host_switch_is_refused_by_a_release_build_on_the_native_platform() {
-        assert!(!ui_host_switch_allowed(PlatformChoice::Native, false));
-        assert!(ui_host_switch_allowed(PlatformChoice::Native, true));
-        assert!(ui_host_switch_allowed(PlatformChoice::Mock, false));
-        assert!(ui_host_switch_allowed(PlatformChoice::Mock, true));
+    fn the_ui_host_switch_is_refused_by_a_release_build_on_either_platform() {
+        assert!(!ui_host_switch_allowed(false));
+        assert!(ui_host_switch_allowed(true));
+    }
+
+    #[test]
+    fn the_mock_platform_is_refused_by_a_release_build_where_there_is_a_native_one() {
+        use PlatformChoice::{Mock, Native};
+        // Windows and macOS: development builds only.
+        assert!(!platform_allowed(Mock, false, true));
+        assert!(platform_allowed(Mock, true, true));
+        // Linux has no native platform: the mock is its only choice.
+        assert!(platform_allowed(Mock, false, false));
+        for debug in [false, true] {
+            for native in [false, true] {
+                assert!(platform_allowed(Native, debug, native));
+            }
+        }
     }
 
     #[test]

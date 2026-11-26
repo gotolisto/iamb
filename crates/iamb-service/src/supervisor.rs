@@ -68,7 +68,7 @@
 //! The UI host outlives a supervisor that stops: it then says "Iamb is not running" and offers
 //! to start it again. `main` sets it to the installed UI host ([`crate::paths::ui_host_beside`],
 //! [`crate::paths::main_app_of_helper`]) for the native platform, to the one `--ui-host` names
-//! (development builds and the mock platform only), and to none with `--no-ui-host` or the mock
+//! (development builds only), and to none with `--no-ui-host` or the mock
 //! platform (tests and development).
 //!
 //! # Hook points

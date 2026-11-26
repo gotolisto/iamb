@@ -92,6 +92,9 @@ jobs:
         run: |
           cargo build -p iamb-service --release --locked
           cargo clippy -p iamb-service --release --locked -- -D warnings
+          # What only a release build refuses: --ui-host, and --platform mock on Windows and
+          # macOS (the beta-gap review's finding 1).
+          cargo test -p iamb-service --release --locked --test release_switches
       # Follow-up review N6: the service binary imports no name-resolution or HTTP function, on
       # every OS. The import list is printed so a new import can be looked at.
       - name: Service binary imports (ADR-0008)

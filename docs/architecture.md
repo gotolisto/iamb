@@ -862,12 +862,16 @@ On macOS a process of the same user cannot observe the keyboard until the user g
 grant belongs to the helper app (ADR-0021), so the helper must not lend it out:
 
 - it never starts another program as its own child, which the system would judge as the helper
-  (§3.2): the UI host is opened through the system, and a release build refuses `--ui-host`;
+  (§3.2): the UI host is opened through the system, and a release build refuses `--ui-host`
+  on either platform and `--platform mock` (the mock is for development builds; Linux, which
+  has no native platform, keeps it);
 - any process of the user can have the system start the helper with arguments of its choosing
   (`open -n … --args …`). A release build of the helper therefore runs for the default data root
   only (`--data-dir` and `IAMB_DATA_DIR` naming another are refused,
   `iamb_service::paths::helper_may_use_root`), so a process cannot point a granted helper at a
-  library it wrote elsewhere and have it typed. This does not stop a process that writes into the
+  library it wrote elsewhere and have it typed. The default is built from the home directory the
+  user database gives for the account (`getpwuid_r`), not from `HOME`, which the caller of `open`
+  sets (`open --env`). This does not stop a process that writes into the
   default data root itself, the user's own folder: that, like other malware of the same user, is
   outside this threat model. Development builds accept any data root.
 
