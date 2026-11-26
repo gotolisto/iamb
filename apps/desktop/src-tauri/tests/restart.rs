@@ -3,11 +3,13 @@
 //! data root (`iamb_desktop::onboarding::LaunchSupervisor`).
 
 use std::path::Path;
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
-use iamb_desktop::onboarding::{
-    Launch, LaunchSupervisor, RESTART_REQUEST, Supervisor, start_supervisor, supervisor_running,
-};
+use iamb_desktop::onboarding::{Launch, LaunchSupervisor, RESTART_REQUEST, Supervisor};
+// Used only by the Unix tests below (they run shell scripts).
+#[cfg(unix)]
+use iamb_desktop::onboarding::{start_supervisor, supervisor_running};
 
 #[test]
 fn the_request_has_the_name_the_supervisor_looks_for() {
@@ -186,7 +188,7 @@ fn a_request_never_follows_a_link_or_waits_on_a_fifo() {
 fn a_launcher_that_fails_is_unavailable() {
     let _serial = serial();
     // `open` returns at once with the system's answer: its status is waited for.
-    let e = start_supervisor("/bin/false".into(), &[], true).expect_err("it failed");
+    let e = start_supervisor("/usr/bin/false".into(), &[], true).expect_err("it failed");
     assert_eq!(e.code, "unavailable");
-    start_supervisor("/bin/true".into(), &[], true).expect("it worked");
+    start_supervisor("/usr/bin/true".into(), &[], true).expect("it worked");
 }
