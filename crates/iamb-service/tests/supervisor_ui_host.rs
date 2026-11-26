@@ -154,6 +154,19 @@ impl Drop for Supervisor {
 /// that no test leaves a process behind, also when it panics (`Drop` runs while unwinding). It
 /// runs before the data directory is removed, so that a worker always finds its own socket file
 /// when it stops (before the beta-gap review's finding 10 was fixed, one without it never exited).
+/// The open descriptors listed in `dir` (a `/proc/<pid>/fd`), as (number, what it points at).
+fn descriptors(dir: &str) -> Vec<(u32, String)> {
+    let out = Command::new("ls").args(["-l", dir]).output().expect("ls");
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| {
+            let (left, target) = line.split_once(" -> ")?;
+            let n = left.rsplit(' ').next()?.parse().ok()?;
+            Some((n, target.to_owned()))
+        })
+        .collect()
+}
+
 fn reap(dir: &Path) {
     let pattern = dir.display().to_string();
     let alive = || {
@@ -309,17 +322,30 @@ fn the_ui_host_inherits_no_descriptor_and_the_worker_still_follows_the_superviso
             .expect("ls");
         let listing = String::from_utf8_lossy(&listing.stdout).into_owned();
         fs::write(&fds, &listing).expect("kept for the log");
+        // A descriptor this test process was itself started with (the build tool's job-control
+        // pipes, for one, under `cargo test` on CI) passes to every child it starts, keeping its
+        // number and its pipe; it says nothing about the supervisor. What the supervisor opened
+        // itself (the worker's pipes, its lock) has an object this process does not hold at that
+        // number, so it still counts.
+        let ours = descriptors(&format!("/proc/{}/fd", std::process::id()));
+        let leaked: Vec<String> = descriptors(&format!("/proc/{pid}/fd"))
+            .into_iter()
+            .filter(|(n, _)| *n > 2)
+            .filter(|entry| !ours.contains(entry))
+            .map(|(n, target)| format!("{n} -> {target}"))
+            .collect();
+        let leaked = leaked.join("\n");
         assert!(
-            !listing.contains("pipe:"),
-            "a pipe reached the ui host:\n{listing}"
+            !leaked.contains("pipe:"),
+            "a pipe reached the ui host:\n{leaked}\n(all: {listing})"
         );
         assert!(
-            !listing.contains("supervisor.lock"),
-            "the lock reached the ui host:\n{listing}"
+            !leaked.contains("supervisor.lock"),
+            "the lock reached the ui host:\n{leaked}\n(all: {listing})"
         );
         assert!(
-            !listing.contains("socket:"),
-            "a socket reached the ui host:\n{listing}"
+            !leaked.contains("socket:"),
+            "a socket reached the ui host:\n{leaked}\n(all: {listing})"
         );
     }
 
