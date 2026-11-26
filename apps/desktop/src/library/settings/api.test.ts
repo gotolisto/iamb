@@ -42,8 +42,10 @@ describe("the commands", () => {
     void api.putExclusion("mybank.exe", "My bank", true);
     void api.recentDiagnostics();
     void api.testAbbreviation(";rty");
-    void api.loginItem(false);
-    void api.about();
+    // These two check the answer's shape; the stub's empty answer is refused, which is expected
+    // here (only the command and its arguments are under test).
+    void api.loginItem(false).catch(() => undefined);
+    void api.about().catch(() => undefined);
     void api.openLogFolder();
     expect(calls.map(([c]) => c)).toEqual([
       "settings_get",

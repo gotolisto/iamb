@@ -35,9 +35,17 @@ pub const LIBRARY: &[Entry] = &[
     (4, ";sig", "Kind regards", true),
 ];
 
+/// Opens the library in `root` for a test, waiting up to [`T`] for its lock as the worker does
+/// (architecture §6.3). `Store::open` does not wait, and the lock is a file lock: a child process
+/// another test thread starts (`Command::new`) holds a copy of every open descriptor until it
+/// runs its program, so a library dropped and opened again at that moment reads as locked.
+pub fn open_store(root: &Path) -> Store {
+    Store::open_with_timeout(root, T).expect("store opens")
+}
+
 /// Writes `entries` into the root folder of a fresh store in `root`.
 pub fn seed(root: &Path, entries: &[Entry]) {
-    let mut store = Store::open(root).expect("store opens");
+    let mut store = open_store(root);
     let mut n = 100_u8;
     let mut new_id = || {
         n += 1;
