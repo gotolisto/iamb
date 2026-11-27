@@ -234,7 +234,20 @@ mod tests {
         let first = dirs.take_instance_lock().expect("io").expect("free");
         assert!(dirs.take_instance_lock().expect("io").is_none());
         drop(first);
-        assert!(dirs.take_instance_lock().expect("io").is_some());
+        // Free again once dropped. The lock is a file lock: a child process another test thread
+        // starts in the same instant holds a copy of every open descriptor until it runs its
+        // program, so the lock can read as taken for that moment; wait for it, as briefly as that.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let again = loop {
+            if let Some(lock) = dirs.take_instance_lock().expect("io") {
+                break Some(lock);
+            }
+            if std::time::Instant::now() >= deadline {
+                break None;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        assert!(again.is_some(), "the lock was not freed when dropped");
         assert_eq!(
             dirs.service_endpoint().socket_path(),
             dir.path().join("run/service.sock")
