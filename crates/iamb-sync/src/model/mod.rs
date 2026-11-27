@@ -711,6 +711,14 @@ impl Server {
                 .is_some_and(|since| meta.rev > *since)
     }
 
+    /// Whether the access entry of `user` for `folder` gives the folder's row (§5.4): an entry for
+    /// a deleted folder that its user may not read gives nothing, not the rows in the folder, not
+    /// its shares, not the profile it belongs to.
+    fn entry_gives(&self, user: Id, folder: Id) -> bool {
+        self.folder(folder)
+            .is_some_and(|f| self.reads_through(user, folder, &f.meta))
+    }
+
     /// Whether `user` reads a row of `profile` as its owner or as a member of the group: a
     /// tombstone of a group only when the membership began before the delete (§5.13).
     fn reads_in_profile(&self, user: Id, profile: Id, meta: &SyncMeta) -> bool {
@@ -733,6 +741,7 @@ impl Server {
         let snippet_folder = |sid: Id| {
             self.snippet(sid).and_then(|sn| {
                 (map.contains_key(&sn.folder_id)
+                    && self.entry_gives(user, sn.folder_id)
                     && self.reads_through(user, sn.folder_id, &sn.meta))
                 .then_some(sn.folder_id)
             })
@@ -767,12 +776,15 @@ impl Server {
                 map.contains_key(&key.id) && self.reads_through(user, key.id, meta)
             }
             AnyRow::Snippet(sn) => {
-                map.contains_key(&sn.folder_id) && self.reads_through(user, sn.folder_id, meta)
+                map.contains_key(&sn.folder_id)
+                    && self.entry_gives(user, sn.folder_id)
+                    && self.reads_through(user, sn.folder_id, meta)
             }
             AnyRow::FolderShare(x) => {
                 (map.get(&x.folder_id)
                     .is_some_and(|g| g.access == Access::Manage)
                     || (self.role(user, x.profile_id).is_some() && map.contains_key(&x.folder_id)))
+                    && self.entry_gives(user, x.folder_id)
                     && self.reads_through(user, x.folder_id, meta)
             }
             AnyRow::SnippetTag(l) => {
@@ -794,9 +806,10 @@ impl Server {
             AnyRow::Profile(p) => {
                 (p.kind == iamb_core::model::ProfileKind::Personal && p.owner_user_id == user)
                     || self.role(user, p.meta.id).is_some()
-                    || map
-                        .keys()
-                        .any(|f| self.folder(*f).is_some_and(|x| x.profile_id == p.meta.id))
+                    || map.keys().any(|f| {
+                        self.folder(*f).is_some_and(|x| x.profile_id == p.meta.id)
+                            && self.entry_gives(user, *f)
+                    })
             }
             AnyRow::Membership(m) => {
                 m.user_id == user
@@ -1012,13 +1025,14 @@ impl Server {
             }
             // Tops of trees that stopped being readable while the folder still exists.
             for (f, _) in before.iter().filter(|(f, _)| !after.contains_key(*f)) {
-                if self.folder(*f).is_none() {
+                // An entry that gave nothing (its folder was deleted before it began) ends
+                // unheard: its user never read the folder (§5.4).
+                if self.folder(*f).is_none() || !self.entry_gives(*u, *f) {
                     continue;
                 }
-                let parent_lost = self
-                    .folder(*f)
-                    .and_then(|x| x.parent_id)
-                    .is_some_and(|p| before.contains_key(&p) && !after.contains_key(&p));
+                let parent_lost = self.folder(*f).and_then(|x| x.parent_id).is_some_and(|p| {
+                    before.contains_key(&p) && !after.contains_key(&p) && self.entry_gives(*u, p)
+                });
                 if parent_lost {
                     continue;
                 }
