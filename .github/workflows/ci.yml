@@ -67,7 +67,9 @@ jobs:
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    # Windows builds, tests, the probe tests and clippy in about 14 minutes, and then saves the
+    # cache: 15 cut the cache save short.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
