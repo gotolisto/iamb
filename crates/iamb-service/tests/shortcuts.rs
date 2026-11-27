@@ -556,6 +556,9 @@ fn only_a_regular_file_in_its_place_keeps_the_pause() {
     );
     drop(ui);
     let dir = h.stop();
+    // The rest makes links, which needs Unix.
+    #[cfg(not(unix))]
+    drop(dir);
 
     // A dangling link there: pausing puts a file in its place, so the pause is kept.
     #[cfg(unix)]
