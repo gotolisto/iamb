@@ -1,0 +1,316 @@
+# Security review of the installed-binary check (finding 11)
+
+Date: 2026-11-27 · Commit reviewed: `4093396` ("Accept the installation's own UI host in release
+builds (finding 11)") · Reviewer: independent, did not write the code and judged it from the
+code, not from the commit message
+
+Scope: `crates/iamb-platform/src/installation.rs`, `crates/iamb-platform-macos/src/endpoint.rs`,
+`crates/iamb-platform-windows/src/endpoint.rs`, `crates/iamb-ipc/src/roles.rs`,
+`apps/desktop/src-tauri/src/{check.rs,main.rs}`, `apps/desktop/release/smoke/{macos.sh,windows.ps1,linux.sh}`,
+the release entitlements, and what `docs/architecture.md` §6.1 and `docs/release.md` now claim.
+
+The review changed no file of the tree and added this one. Everything was run on Linux: the
+five unit tests of `installation.rs` and a scratch test of its pure functions (kept outside the
+tree). The two endpoints that carry the fix exist only on macOS and Windows and were not run;
+every finding says "by reading" or "shown by a run".
+
+## 1. Verdict
+
+The design is right and, for a signed installation on macOS, the decision rests on the right
+fact: the code object of the connecting process, taken from its audit token and checked against
+a team requirement. A copy elsewhere, a process whose id was reused, a process that ran another
+program after it connected, and another signer are refused there.
+
+It is not finished. Two medium findings should be fixed before the check is called closed:
+
+1. **A signed installation can be made to fall back to the path check** (finding 1). Whether
+   "this installation is signed" is read lazily, from the file on disk, at the first peer check,
+   and any failure to read it counts as "unsigned". The sentence the fix is built around, "a
+   signed installation never falls back to the path check", does not hold against a process of
+   the user that can write into the installation, which on both systems it can.
+2. **The smoke tests pass while the service's check is broken** (finding 2). The "a copy is
+   refused" step is satisfied by the copy refusing the service, before the service decides
+   anything. A service that accepted every client would pass both steps.
+
+The question asked, whether a process of the same user that is not a member can be trusted as
+`ui` or `service`:
+
+| Installation | Answer |
+| --- | --- |
+| macOS, signed | Not by any way found, except through finding 1 |
+| macOS, unsigned or ad hoc | Yes, by design: the check is the path, and the app bundle of a drag-install belongs to the user. Stated in the module docs |
+| Windows, signed | Yes, in three ways (findings 1 and 4). A process of the same user at the same integrity level can also write into the service's memory, which no check of this kind stops |
+| Windows, unsigned | Yes, by design, as on macOS |
+
+## 2. Findings
+
+### Medium
+
+#### 1. "Signed" is decided from the disk, lazily, and a failure means "unsigned"
+
+Where: `crates/iamb-platform-macos/src/endpoint.rs:228-241` (`own_team`), `:306-316`;
+`crates/iamb-platform-windows/src/endpoint.rs:361-371` (`own_image`), `:386-396`.
+
+By reading; not run.
+
+Both endpoints read this process's own signature the first time a peer is checked, keep the
+answer for the life of the process, and treat every way of not getting one (an API error, no
+team identifier, a verification that fails) as `OwnSigning::Unsigned`. From then on the process
+accepts whatever is at a member's path. On macOS the signature is read from the static code,
+the file on disk (`copy_static_code`, then `copy_signing_information`); on Windows with
+`WinVerifyTrust` on the path of the running image.
+
+Scenarios, all for a process of the user without any grant of its own:
+
+- **macOS.** The bundle of a drag-installed app belongs to the user.
+  1. Leave `run/desktop.quit` and end the UI host, so that no genuine client connects (the
+     marker keeps the supervisor from opening it again).
+  2. Create `run/restart-worker`. The supervisor starts a new worker from the genuine, signed
+     helper. It holds the keyboard permissions, and it has not read its own signature yet.
+  3. Unlink the helper's executable and put any file in its place (the running worker keeps
+     its image), and put a program at `Iamb.app/Contents/MacOS/iamb-sync`, a member that does
+     not ship (finding 5), or in place of `iamb-desktop`.
+  4. Start that program from there and connect. The worker now reads its own signature for the
+     first time: the static code of its path is gone or unsigned, `own_team()` is `None`, the
+     installation counts as unsigned, and the program at the member's path is accepted, as
+     `sync` (`OutboxRead`, `ApplyRemote`) or as `ui`.
+
+  Whether the system resolves the running process's static code to the replaced path, or
+  fails, was not checked on a Mac; both end in `None`.
+- **Windows.** Any of: add the publisher's certificate to the current user's "Untrusted
+  Certificates" store (a registry key the user's processes can write), so that `WinVerifyTrust`
+  fails for the service's own image; rename the running `iamb-service.exe` and put an unsigned
+  file at its path before the first check; or simply wait for the certificate to expire on a
+  build whose signature carries no timestamp, after which every installation of that build
+  degrades by itself. Then drop `iamb-sync.exe` or `iamb.exe` into `%LOCALAPPDATA%\Iamb`.
+
+What the role gives such a process: not keystrokes (no message carries them), but the library,
+the last form answers, and on macOS a service that types what it is asked to type under the
+user's Accessibility permission.
+
+Fix.
+
+1. Pin the signer at build time for builds that are meant to be signed: the team identifier on
+   macOS and the certificate's public-key hash on Windows, compiled in from the release
+   pipeline. Such a build never asks whether it is signed; it requires that signer of every
+   peer. A build without the pin is an unsigned build and says so in its log.
+2. Read this process's own signing state once, first thing in `main`, not at the first
+   connection, and from the running code: on macOS check the dynamic code object of the process
+   itself against `anchor apple generic` and read the team identifier from it, not from the
+   static code's path.
+3. Fail closed. Three states, not two: signed (by whom), unsigned (no signature at all:
+   `errSecCSUnsigned`, `TRUST_E_NOSIGNATURE`), and could-not-tell. The third trusts no peer and
+   is logged. Never keep "unsigned" when it came from an error.
+4. Test: `trusted` has no input for the third state today. Add it, and a test for each endpoint
+   that an error reading the own signature refuses every peer.
+
+#### 2. The smoke tests cannot tell a broken service-side check
+
+Where: `apps/desktop/release/smoke/macos.sh:88-95`, `windows.ps1:102-110`,
+`apps/desktop/src-tauri/src/check.rs:30-45`.
+
+By reading.
+
+`--check-service` connects with `PeerPolicy::for_build()`, so the client checks the server
+first. A copy of `iamb-desktop` outside the installation belongs to no installation and trusts
+no peer: it refuses the service itself. The script asserts a non-zero exit and an output that
+starts with "service check failed", which that client-side refusal produces. The service's own
+decision about the copy is never observed.
+
+So both steps pass with a service that accepts every client; with one that accepts anything
+named `iamb-desktop`; and with a signed service that fell back to the path check (finding 1).
+The steps do catch a service that refuses the installed UI host, which is the regression the
+commit set out to prevent, and a build shipped with the debug policy.
+
+The signed half of the decision is not run at all unless the pipeline has signing set up
+(`docs/release.md` says so). The requirement string, the team identifier read, the leaf
+certificate comparison and the refusal of an unsigned peer by a signed service have never been
+executed anywhere.
+
+Fix.
+
+1. Assert on the service's side: after the copy's attempt, the worker's log must hold
+   `rejected a client:` once more than before (`crates/iamb-service/src/worker/ipc.rs:128-129`),
+   and it must not have gained one for the installed UI host. Or give `--check-service` a
+   switch, for the smoke test only, that skips the client's check of the server, so that the
+   refusal can only be the service's.
+2. On a signed run add the case that matters: replace `iamb-desktop` inside the installed app
+   with an unsigned build (macOS: an ad hoc re-signed copy) and require the service's log to
+   refuse it; and drop an unsigned `iamb-sync` at its member path and require the same.
+3. Until a signed run exists, say in `docs/architecture.md` §8 that finding 11 is closed for
+   unsigned builds and written but unexercised for signed ones. "Closed" is stronger than the
+   evidence.
+
+### Low
+
+#### 3. The macOS smoke test deletes the account's real data root
+
+Where: `apps/desktop/release/smoke/macos.sh:76`, `:98`.
+
+By reading. The script starts the installed helper for the default data root
+(`~/Library/Application Support/Iamb`, the only one a release helper serves) and ends with
+`rm -rf "$default_root"`. It checks that `/Applications/Iamb.app` does not exist before it
+starts, but not the data root. On a machine that has Iamb's data and no installed app (a
+developer who runs development builds, or who removed the app), running the script serves the
+real library to the test and then deletes it. Fix: fail at the start when the data root exists,
+as for the app, and remove only what the script created.
+
+#### 4. Windows: the file is verified, not the running image, and the process is found by its id
+
+Where: `crates/iamb-platform-windows/src/endpoint.rs:753-764`, `:264-286`, `:374-398`.
+
+By reading. The macOS endpoint identifies the peer by audit token; the Windows endpoint by the
+process id the pipe reports, then by the image path of whatever has that id when it looks, then
+by the signature of the file at that path.
+
+- **Process id reuse.** A client connects (the pipe keeps a pending instance open for the next
+  client, `:753-756`, so a connection can be made before the server looks at it), hands the pipe
+  handle to another process and exits; the attacker starts the genuine `iamb-desktop.exe` until
+  one gets the same id; the server then finds the genuine image at a member's path, signed by
+  the same certificate, and trusts the handle's holder as `ui`. The window is short unless the
+  server is slowed, which a process of the same user can do.
+- **Image and file apart.** With write access to `%LOCALAPPDATA%\Iamb` (the user has it): start
+  a process whose image was mapped from other content at `iamb-desktop.exe`'s path and put the
+  genuine signed file back before connecting. The path is a member's, the file's signature is
+  the installation's, the code that runs is neither. The sentence "a signed installation never
+  accepts an unsigned peer" should read "a peer whose file is unsigned" on Windows.
+
+Neither gives more than writing into the service's memory, which a process of the same user at
+the same integrity level may do on Windows; §8's threat model already excludes it. Fix what is
+cheap and say the rest: open the process first and keep the handle while it is examined (an
+open handle keeps the id from being reused), refuse a process created after the pipe instance
+it connected to was created, and compare the image's file identity with the member's
+(`FILE_ID_INFO`) instead of the hard-coded `true` at `:398`. State the limit in §6.1.
+
+#### 5. Two members do not exist, so their paths are free to take
+
+Where: `crates/iamb-platform/src/installation.rs:48`, `:67-88`.
+
+Shown by a run (the scratch test): `…/Contents/MacOS/iamb`, `…/iamb-sync`,
+`%LOCALAPPDATA%\Iamb\iamb.exe` and `iamb-sync.exe` are members, and `roles.rs` gives them `cli`
+and `sync`. Neither program ships. In an unsigned installation, or one that fell back
+(finding 1), a new file at one of those paths is trusted without anything being replaced, so
+nothing looks changed. On a signed macOS installation the opposite will happen when they do
+ship: the requirement names only `org.iamb.Iamb` and `org.iamb.Iamb.Service`
+(`installation.rs:42`), so they will be refused. Fix: list as members only what the installer
+puts there, and add each program together with its bundle identifier when it ships.
+
+#### 6. Windows: the installation is found by comparing a canonical path with an environment variable's text
+
+Where: `crates/iamb-platform/src/installation.rs:129-157`,
+`crates/iamb-platform-windows/src/endpoint.rs:378`.
+
+Shown by a run of the pure functions, on Linux.
+
+- **Fails closed where the two are written differently.** This process's own path is
+  canonical; `%LOCALAPPDATA%` is taken as text. A profile reached through a junction or
+  redirected to another drive, an 8.3 name in the variable, and a mapped drive all give "no
+  installation", and then every peer is refused: the symptom finding 11 was opened for,
+  on those machines. A peer that the system reports with an 8.3 name is refused the same way
+  (`member_for` wants the reported and the canonical path equal as text).
+- **The variable is the starter's.** A copy of the service started with
+  `LOCALAPPDATA=X:\fake` from `X:\fake\Iamb` is an installation (shown). It does not make the
+  running service trust anything more, so this matters only for an unsigned build, where the
+  copy accepts the attacker's client once the real service is ended and its locks are free.
+
+Fix: take the folder from the system (`SHGetKnownFolderPath(FOLDERID_LocalAppData)`), make it
+canonical, and compare canonical with canonical; for the peer, compare the canonical path with
+the member's and drop the textual "reported equals canonical" test, which on both systems
+checks nothing the system does not already guarantee (finding 8).
+
+#### 7. Names are folded with Unicode lower case, which is not how the file systems compare
+
+Where: `crates/iamb-platform/src/installation.rs:161-178`, `:203-214`.
+
+Shown by a run: a path whose `k` is U+212A (KELVIN SIGN) has the same key as the member's path.
+NTFS and APFS treat it as another name, so it is another file or folder. A folder
+`…\AppData\Loca<U+212A>\Iamb\iamb-desktop.exe` is therefore "a member, at its own path" for an
+unsigned Windows installation, without write access to the installation itself, and the
+endpoint passes `same_file = true` there. (As a file name the trick fails later: the role is
+matched in ASCII only.) On macOS the device-and-inode comparison catches it. Fix: fold ASCII
+only, or compare file identities on Windows too (finding 4).
+
+#### 8. On macOS the "without a link" and "same file" tests do not test the process
+
+Where: `crates/iamb-platform-macos/src/endpoint.rs:270-276`, `:292-297`, `:317-323`.
+
+By reading. `proc_pidpath` builds the path from the executable's vnode, so it holds no symbolic
+link: a process started through a link to a member is reported at the member's path and is
+accepted, and with a hard link the kernel may report either name. Both are the member's own
+code, so nothing is gained, but the rows "a link to a member" and "a hard link outside the
+installation: no" of the table in `installation.rs` describe a refusal the code cannot make.
+`same_file(reported, &member.exe)` compares two look-ups of what is, after `member_for`, the
+same path; it tells two files apart on a volume that distinguishes case and nothing else. What
+ties the unsigned process to the file is the path alone. That is consistent with "an unsigned
+installation trusts what is at its members' paths"; the table of `docs/architecture.md` §6.1
+("the executable is the member's file (device and inode)") says more than that: the comparison
+is between two files found by path, not with the file the process runs from. The system offers
+no direct way to ask for that file's identity, so the fix is the wording.
+
+#### 9. The bundle path from the code-signing API is compared as text
+
+Where: `crates/iamb-platform/src/installation.rs:219-224`.
+
+Shown by a run: `/Applications/Iamb.app/` (a trailing separator) does not agree with the member
+`/Applications/Iamb.app`. If the path the API returns for a bundle ever carries one, every UI
+host is refused. It fails closed and the smoke test's first step would show it, on a Mac.
+Compare by components.
+
+#### 10. Smaller
+
+- **The client accepts any member as the server.** The UI host checks that the server is a
+  member, not that it is `iamb-service` (`roles.rs` binds names for clients only). When
+  `iamb-sync` ships with its own endpoint, a link from `run/service.sock` to its socket has the
+  UI host speak to the sync agent. Check the expected member per endpoint.
+- **An older signed build is a member.** The signed check accepts any build of Iamb by the
+  same signer at a member's path, so a process that can write there can put back an older
+  `iamb-desktop` with a known flaw. A version floor (the peer's version at least this build's)
+  would close it; note it for the update design.
+- **An installation is any `.app`, anywhere** (`installation.rs:92-106`, shown: `/tmp/x/Evil.app`
+  is one). A copy of an unsigned service inside a bundle of the attacker's making trusts the
+  attacker's `iamb-desktop`. Only the unsigned case, and only for a service the attacker
+  started.
+
+## 3. What held
+
+- **macOS, signed, the audit token.** `LOCAL_PEERTOKEN` is read with its length checked and
+  given to the code-signing API as the audit attribute; the code object it yields is what the
+  requirement is checked against (`endpoint.rs:145-181`, `:245-267`, `:299-314`). The process id
+  is used only to find the path, and the path's member must be the member the token's code
+  names. A process that connects and then runs a genuine member, and a process id reused after
+  the connection, no longer match their token. By reading.
+- **The requirement.** `anchor apple generic`, the leaf's organisational unit equal to this
+  process's team identifier, and one of two identifiers; the team identifier is checked to be
+  ten letters or digits before it is quoted into the string (unit test passes). Another team,
+  an ad hoc signature and no signature fail it. No network access is requested.
+- **No injection path through entitlements.** Both entitlement files are empty, so a signed
+  build under the hardened runtime loads no foreign library and allows no debugger of the same
+  user (reading the files; the smoke test checks the runtime flag on a signed run).
+- **Windows, the certificate.** The peer's leaf certificate must equal this image's, byte for
+  byte, after a successful verification, so a root certificate added to the user's store does
+  not help an attacker (it does help make verification fail: finding 1). Revocation and network
+  retrieval are off.
+- **Copies.** A copy of a member outside the installation is no member on either system
+  (unit tests and the scratch run).
+- **Roles.** The role still follows the executable's name, `iamb-service` gets no client role,
+  and a peer whose executable is unknown is untrusted under the installed-binary policy.
+- **`--check-service`.** One `GetStatus`, no window, no instance lock, the build's own policy;
+  it prints the service's version and process id and nothing else. Nothing to misuse.
+- **The `LOCALAPPDATA` override** cannot make a running service trust more: its own
+  environment is fixed at its start (finding 6 has the rest).
+
+## 4. What could not be checked
+
+- **Everything on macOS and Windows.** In particular: that `SecCodeCopyGuestWithAttributes`
+  accepts the token for an unsigned process (the unsigned path depends on it); what the static
+  code of a process resolves to after its file was unlinked or replaced (finding 1); the path
+  `proc_pidpath` reports for a hard link and for a firmlinked volume; whether
+  `SecCodeCopyPath` ever returns a trailing separator; what `QueryFullProcessImageNameW` reports
+  after a rename and through an 8.3 name; the pending pipe instance's window.
+- **Whether the smoke tests were run on real runners with this commit.** Nothing in the tree
+  says so; on Linux the step runs but Linux has no installed-binary check.
+- **The signed path, anywhere.** No signed build exists yet.
+
+Tests run: `cargo test -p iamb-platform --lib -- installation` (5 passed) and a scratch test of
+`windows_members`, `windows_key`, `member_for`, `member_for_code_path` and `macos_members` for
+the edge cases above, both built outside the shared target directory.
