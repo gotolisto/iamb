@@ -700,6 +700,7 @@ fn events() -> Vec<EventBody> {
         },
         EventBody::SettingsChanged {},
         EventBody::OutboxChanged { pending: 2 },
+        EventBody::ExpansionFinished {},
     ]
 }
 

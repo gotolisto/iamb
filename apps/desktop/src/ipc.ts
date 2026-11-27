@@ -70,7 +70,8 @@ export type UiEvent =
       /** UTC milliseconds. */
       at: number;
     }
-  | { type: "settings_changed" };
+  | { type: "settings_changed" }
+  | { type: "expansion_finished" };
 
 /** The cold-open marks of a window's first paint, in epoch milliseconds (src-tauri/src/timing.rs). */
 export interface PaintMarks {
@@ -249,6 +250,7 @@ export function isUiEvent(v: unknown): v is UiEvent {
       );
     case "palette_requested":
     case "settings_changed":
+    case "expansion_finished":
       return true;
     case "diagnostic_added":
       return (

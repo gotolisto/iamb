@@ -100,7 +100,11 @@ Nothing in this flow shows an error by itself. What can go wrong is found in the
 
 ## Decisions in this flow
 
-- **No feedback on success.** No sound, no highlight, no counter in the menu.
+- **One quiet sound on success.** After an expansion has been typed, the UI host plays a soft
+  two-note chime (about one second; the service sends `ExpansionFinished`, which carries no
+  snippet and no text). Settings → General has a switch for it, on by default
+  (`ui.expansion_sound`). No highlight and no counter in the menu. Nothing else depends on the
+  sound, and a cancelled expansion makes none.
 - **No feedback on failure either, for typed abbreviations.** A person types thousands of
   words that are not abbreviations; anything that reacts to typing would be noise, and would
   suggest Iamb is watching more than it is. The log answers when asked.

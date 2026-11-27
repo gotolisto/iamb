@@ -6,6 +6,7 @@ import { Choice, Row, Switch } from "./controls";
 import type { SectionProps } from "./section";
 import { type Theme, applyTheme, themeOf } from "./theme";
 import { useMessages } from "./useMessages";
+import { soundEnabled } from "../../sound/expansionSound";
 
 const THEMES: { value: Theme; label: string }[] = [
   { value: "system", label: "Follow the system" },
@@ -35,6 +36,7 @@ export function GeneralSection({ env, data, mac, offline }: SectionProps) {
   const values = data.values ?? {};
   const theme = themeOf(values["ui.theme"]);
   const trayShown = values["ui.tray_icon"] !== "off";
+  const soundOn = soundEnabled(values);
 
   useEffect(() => applyTheme(theme), [theme]);
 
@@ -102,6 +104,23 @@ export function GeneralSection({ env, data, mac, offline }: SectionProps) {
             disabled={offline}
             onChange={(on) => {
               void data.save("ui.tray_icon", on ? null : "off").then((f) => fail("tray", f));
+            }}
+          />
+        )}
+      </Row>
+      <Row
+        label="Play a soft sound after a snippet expands"
+        help="A short, quiet chime each time an abbreviation is replaced. Turn it off for silence."
+        message={messages.sound ?? null}
+      >
+        {(ids) => (
+          <Switch
+            on={soundOn}
+            labelledBy={ids.label}
+            describedBy={ids.describedBy}
+            disabled={offline}
+            onChange={(on) => {
+              void data.save("ui.expansion_sound", on ? null : "off").then((f) => fail("sound", f));
             }}
           />
         )}

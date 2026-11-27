@@ -189,5 +189,5 @@ fn the_front_end_fixtures_match_what_rust_sends() {
         ours, theirs,
         "the front end's fixtures are stale: rerun with IAMB_BLESS=1 and update src/ipc.ts"
     );
-    assert_eq!(ours["events"].as_array().map(Vec::len), Some(5));
+    assert_eq!(ours["events"].as_array().map(Vec::len), Some(6));
 }

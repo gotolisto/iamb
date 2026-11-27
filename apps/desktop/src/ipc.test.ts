@@ -81,7 +81,7 @@ describe("payloads written by the Rust side (contract.fixtures.json)", () => {
   it("are accepted by the guards", () => {
     expect(fixtures.statuses).toHaveLength(3);
     for (const status of fixtures.statuses) expect(isStatusView(status)).toBe(true);
-    expect(fixtures.events).toHaveLength(5);
+    expect(fixtures.events).toHaveLength(6);
     for (const event of fixtures.events) expect(isUiEvent(event)).toBe(true);
     expect(isCommandError(fixtures.error)).toBe(true);
     expect(isCommandError(fixtures.template.link_refused)).toBe(true);

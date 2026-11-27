@@ -64,6 +64,7 @@ pub const UI_KEYS: &[&str] = &[
     "ui.onboarding_done",
     "ui.theme",
     "ui.tray_icon",
+    "ui.expansion_sound",
     "ui.new_trigger",
     "ui.new_case_mode",
     "ui.crash_reports",
