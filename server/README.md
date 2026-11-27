@@ -14,14 +14,17 @@ reviewer then checked the fixes ([`docs/reviews/4.3-security-reverify.md`](../do
 and found seven more points, one of them a way into another account's data that the first fix had
 left open; migrations 19 to 21 and the review's section "After the re-verification" are about
 those. One of the seven was a decision for the owner (a deleted row was handed, with its content,
-to whoever could read its folder later); migration 22 and the review's last section are what the
-owner decided.
+to whoever could read its folder later); migration 22 and the review's section 13 are what the
+owner decided. A final attack pass before the beta
+([`docs/reviews/4.3-final-attack-pass.md`](../docs/reviews/4.3-final-attack-pass.md)) found no way
+into another account's data and made three observations; migration 23 and the review's last
+section are about the third (the ids of deleted folders in a direct read of `folder_access`).
 
 ## Layout
 
 | Path | What |
 | --- | --- |
-| `supabase/migrations/` | Twenty-two timestamped migrations, applied in order, each safe to apply again |
+| `supabase/migrations/` | Twenty-three timestamped migrations, applied in order, each safe to apply again |
 | `supabase/apply.sh` | Applies the migrations to a hosted project through the Management API |
 | `restore/restore.py` | The operator's restore script (C18) |
 | `tests/run.sh` | The local test runner: a throwaway Postgres cluster, the stand-in, the migrations (applied twice), every test |
@@ -61,6 +64,7 @@ The migrations:
 | `…120100_push_bounds_and_locks` | Re-verification N2, N3, N4: a cascade list names a row once, and whole rows are chosen from stored sizes before content is read, within one allowance per request; a push that is cut off is caught and counted; a profile is locked only for a caller who can write in it, and the id lock has a seeded 64-bit key (`server_state.lock_seed`); a restored folder is held to four levels |
 | `…120200_conflict_answers` | Re-verification N6: an answer closes a conflict for everybody only when the party is offered every version; otherwise for that party (`conflict.closed_for`) |
 | `…120300_tombstones_follow_access` | Re-verification N5, the owner's decision: a tombstone is read by who deleted the row and by a reader whose access began before the delete (`rev > since_rev`), in the policies of `folder`, `folder_share`, `snippet`, the two kinds of link, `tag` and `attachment`, in `readers`, the wire view, `cascade_answer`, `visible_folders` and `access`; a tag or attachment row is read through a link only while it is live (`member_before` for a group's); a `put` on a tombstone the writer may not read is `rejected: gone`, and `restore_chain` restores no folder the writer may not read; a snippet that changes its folder leaves its deleted links behind, and a tag that comes back brings its links (`write_row`); a deleted version is offered as the tombstone is read (`version_readable`) |
+| `…120400_entries_for_deleted_folders` | Final attack pass, O3: an access entry for a deleted folder its user may not read is not readable by that user and gives nothing. `folder_access` carries `folder_deleted_rev` and `folder_deleted_by` (two triggers keep them equal to the folder's row), and its read policy shows an entry only while it gives its folder; `readers`, `cascade_answer`, `conflict_history`, `position`, `has_grant` and `writes_in` say the same; `feed_flush` writes no entry for a row the request created that its user cannot read; `refresh_access` writes no `folder_revoked` for an entry that gave nothing; `push_op` refuses a share of a deleted folder (`rejected: parent_gone`) |
 
 ## The schema in brief
 
@@ -112,7 +116,7 @@ The migrations:
 | G3 | The `tag` and `attachment` policies (the row live and a readable snippet with a live link, or writer with `edit` now; a group's deleted row for a member since before the delete) | `04_viewer`, `05_removed_member`, `12_attachments`, `31_tombstones` |
 | G4 | No write privilege anywhere; `anon` has no schema; exactly the gate helpers granted; helpers check the caller's own session and device | `02_grants` (catalog and by trying; a device feeding other devices' ids to the helpers changes nothing) |
 | G5 | `history` has no grant and a false policy; `get_conflict` reads it through `conflict_history`, which returns a version only to a party who can read the row now and who wrote the version or could read it while it was the row (`version_readable`: an access entry for the version's folder whose `since_rev` is below the revision that replaced it). `push` finds a base version under the same rule. `since_rev` is taken when the request that made the entry has ended (`access_begin`), and a version one request wrote and replaced is its writer's alone (`within_request`): "could read" means in a state the reader could have seen | `05_removed_member`, `15_conflicts`, `22_review_conflicts`, `28_same_request` (the replacement and the sharing in one push); `check_access` also checks after every step that no entry was left without its starting revision |
-| G6 | Own-rows policies on `feed`, `feed_head`, `device`, `folder_access`; `conflict` and `conflict_version` by a party who can read the conflict's row; `attachment_upload` by its uploader and by who manages its profile | `03_outsider`, `22_review_conflicts`, `25_review_uploads` |
+| G6 | Own-rows policies on `feed`, `feed_head`, `device`, `folder_access`; a `folder_access` row only while it gives its folder (the folder is live, or the user deleted it, or it was deleted after the entry began; from `folder_deleted_rev` and `folder_deleted_by` on the entry, which two triggers keep equal to the folder's row), and every other policy reads `folder_access` under that policy; `feed_flush` and `refresh_access` write no feed entry that names a folder its user could never read; `conflict` and `conflict_version` by a party who can read the conflict's row; `attachment_upload` by its uploader and by who manages its profile | `03_outsider`, `22_review_conflicts`, `25_review_uploads`; `32_entries` reads every table and view a device's role can select, directly (`iamb_test.named`), for a folder deleted before the reader's access began, for a folder made and deleted in one push, and for a member who leaves; `check_access` compares the two columns with the folder's row after every step of every test |
 | G7 | `push_op` checks §4.3 against `folder_access` after the locks; share roots and the roots of shares below need `manage`. `resolve_conflict` makes a restore through `push_op`, so it allows what a push allows; a party's answer closes a conflict for the others only when that party is offered every version (`offered_all`, `closed_for`) | `04_viewer`, `08_folder_delete`, `09_shares`, `22_review_conflicts`, `30_reverify_conflicts` |
 | G8 | `acct_*` check the role after locking the group; one live owner by a unique index; ownership only by `accept_ownership`, for an offer made to the caller's present membership; `end_membership` withdraws an offer | `10_account_calls`, `23_review_account` |
 | G9 | `push` builds the stored row from the op's fields only; C17's four cases | `07_push_rules` |
@@ -208,7 +212,7 @@ through `POST /v1/projects/<ref>/database/migrations`, one named migration per f
 already applied, with a pause between files (the API names each version after the current second).
 The migrations must run as `postgres` and say so if they do not. With the Supabase command-line tool,
 `supabase db push` from `server/` does the same. A new change is a new migration file: the hosted
-project already holds these twenty-two.
+project already holds these twenty-three.
 
 Besides the migrations, a project needs these settings (the hosted project has them; see below): the
 REST interface exposes `api,api_service` and nothing else; Realtime allows private channels only; the
@@ -272,11 +276,12 @@ lines are a reason to look (was the database restored? what does `rev_seq` hold 
 Project `gemyckdldyzcvrvwuivk` (`iamb`, Postgres 17, us-east-1), set up on 2026-11-21 through the
 Management API only.
 
-**Migrations applied**: the twenty-two files above, in order (`supabase_migrations.schema_migrations`;
+**Migrations applied**: the twenty-three files above, in order (`supabase_migrations.schema_migrations`;
 the first ten as versions 20261121131746 to 20261121133446, the eight of the review's follow-up on
 2026-11-21 and 22, the three after the re-verification on 2026-11-22, the one for its N5 on
 2026-11-27; that one was applied in a first form, corrected, and applied again after its record
-was deleted, so the record holds the file as it is). The last of the eight (`…110700_steady_plans`)
+was deleted, so the record holds the file as it is; the one for the final attack pass's O3 on
+2026-11-27). The last of the eight (`…110700_steady_plans`)
 was changed twice while its effect was measured there, and its statements were run again each
 time; the project holds the file as it is here.
 
@@ -347,18 +352,21 @@ no setting): **TOTP enrolment off** (Authentication, Multi-Factor, TOTP). Iamb n
 an account that enrols and verifies one through the authentication service gets sessions whose `amr`
 holds `totp`, which Iamb refuses, until it signs in again without the factor (review 19).
 
-**Tests on the hosted project**: `hosted.sh`, 28 of 28 files passed (all but `20_concurrency`), each in a
+**Tests on the hosted project**: `hosted.sh`, 29 of 29 files passed (all but `20_concurrency`), each in a
 rolled-back transaction, through the Management API. Through the REST interface, as a device calls:
-`hosted_rest_writes.py`, 86 of 86 checks, after migrations 11 to 22; before migration 11 the same
+`hosted_rest_writes.py`, 99 of 99 checks, after migrations 11 to 23; before migration 11 the same
 script failed in its first call (`hello`: HTTP 400, "DELETE requires a WHERE clause") and in all
 that depend on it, before migration 19 in the four checks of the re-verification's N1, N2 and
 N6 (the member was offered, and restored, the private version), and before migration 22 in four
 of N5 (the member's snapshot held a snippet deleted before the folder was shared, and his put
-restored it). `hosted_auth_probe.py --enable-hook` as below; `perf.sql` rolled
+restored it), and before migration 23 in three of the final attack pass's O3 (a share of a deleted
+folder was applied, the member's snapshot named that folder, and his feed named a folder made and
+deleted in one push). `hosted_auth_probe.py --enable-hook` as below; `perf.sql` rolled
 back: a push of 200 ops 0.42 to 0.55 s, a cascade of 2,000 rows 3.4 to 6.5 s over sixteen runs
 (before migration 18 the same delete took between 3 and 21 s, depending on the plan the pooled
 session had kept); after migration 21, 0.45 to 0.49 s and 3.5 to 4.4 s over three; after
-migration 22, 0.44 to 0.52 s and 3.5 to 4.0 s over three. Throwaway accounts left afterwards: 0; the row counts of every table equal
+migration 22, 0.44 to 0.52 s and 3.5 to 4.0 s over three; after migration 23, 0.51 to 0.59 s and
+3.1 to 5.9 s over three. Throwaway accounts left afterwards: 0; the row counts of every table equal
 those before the runs (2 plans, 1 epoch, 1 `server_state`). The rolled-back
 runs advanced `rev_seq` (one early run moved it to the clock times 1,024 through `begin_epoch`; with no
 committed revision on the project it was set back to 1, and `begin_epoch` is no longer run there).
@@ -518,11 +526,13 @@ follow-up to the security review edited the design itself where the review's fin
   (`api_service.attachment_verified`, `api_service.delete_account_data`) and `api.check` are here.
 - Removing stored objects through the storage interface after the retention job's log lines (4.6).
 - The checks of §11.6 listed as left above.
-- **The model of the server in `crates/iamb-sync`** does not have the rule of migration 22 yet
-  (a tombstone is read by who deleted the row and by those who could read it before; review
-  §13). The scenario replay and the simulation pass against it as it is, because a device ignores
-  a tombstone for a row it does not hold; a patch for the model, checked with 1,000 simulation
-  runs, and one more scenario that needs it were handed over with the migration.
+- **The model of the server in `crates/iamb-sync`** has the rules of migration 22. Of migration 23
+  it lacks what no device can see: it still writes `folder_revoked` for an entry that gave nothing,
+  and it still lets who deleted a snippet read that tombstone inside a folder that somebody else
+  deleted later, while they had no access. (It has refused a share of a deleted folder, and has
+  written no entry for a row made and deleted in one request, since task 4.4.) The scenario replay
+  and the simulation pass against it as it is; a patch that makes it equal, checked with the
+  replay and 1,000 simulation runs, was handed over with the migration.
 - **For task 4.6** (re-verification N7): an upload stays open when its uploader's right to write in
   the profile ends, and `api_service.attachment_verified` commits it without asking. The edge
   function must not be able to commit such an upload: end the uploads with the right, or refuse

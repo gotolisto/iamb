@@ -65,7 +65,8 @@ fn findings_left_to_later_tasks_say_where_they_are_tracked() {
         .expect("the open findings in §8");
     let table = &doc[start..doc[start..].find("\n## ").map_or(doc.len(), |n| start + n)];
     for (finding, task) in [
-        ("| 11,", "Phase 5"),
+        // Closed with the installed-binary check of §6.1 (`iamb_platform::installation`).
+        ("| 11,", "**Closed**"),
         ("| 13,", "Task 3.5"),
         // Both panels send `PanelFocus` (tasks 3.5 and 3.6); what is left is the macOS panel
         // function and the check on a Mac.

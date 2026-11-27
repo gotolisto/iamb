@@ -145,6 +145,9 @@ fn complain(message: &str) -> u8 {
 fn main() -> ExitCode {
     // First, before any other thread exists: no OS crash dump of this process's memory.
     let hardening = crash::harden_process();
+    // Next, from the running code, before anything could replace the file it came from (the
+    // installed-binary check; the strict review of finding 11, finding 1).
+    let _ = OWN_SIGNING.set(iamb_ipc::read_own_signing());
     let args = match parse(std::env::args_os().skip(1)) {
         Ok(Some(args)) => args,
         Ok(None) => return ExitCode::SUCCESS,
@@ -251,7 +254,13 @@ fn crash_handling(log: &Arc<Logger>, dirs: &DataDirs, process: &'static str, h: 
     } else {
         log.warn(format_args!("{}", h.summary()));
     }
+    if let Some(signing) = OWN_SIGNING.get() {
+        log.info(format_args!("installed-binary check: {signing}"));
+    }
 }
+
+/// This process's own signing state, read first in `main` (`iamb_ipc::read_own_signing`).
+static OWN_SIGNING: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 /// How the supervisor starts the UI host (`supervisor` module docs, "The UI host").
 #[derive(Debug, Clone, PartialEq, Eq)]

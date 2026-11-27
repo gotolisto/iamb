@@ -50,6 +50,7 @@ pub mod handoff;
 pub mod hotkeys;
 pub mod inject;
 pub mod injection_settings;
+pub mod installation;
 pub mod listener;
 pub mod login_item;
 pub mod marker;

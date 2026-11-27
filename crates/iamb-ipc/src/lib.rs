@@ -84,6 +84,26 @@ pub fn native_endpoint() -> std::sync::Arc<dyn iamb_platform::LocalEndpoint> {
     }
 }
 
+/// Reads this process's own signing state now, for the installed-binary check of the native
+/// endpoint, and keeps it for the life of the process; returns the line for the log. Call it
+/// first in `main` (`iamb_platform::installation`, "This process's own signing state"; the
+/// strict review of finding 11, finding 1).
+#[must_use]
+pub fn read_own_signing() -> String {
+    #[cfg(windows)]
+    {
+        iamb_platform_windows::read_own_signing()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        iamb_platform_macos::read_own_signing()
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        "no installed-binary check on this system".to_owned()
+    }
+}
+
 /// The endpoint of an OS Iamb does not support: every call is `Unsupported`.
 #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 struct Unsupported;

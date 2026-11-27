@@ -99,6 +99,31 @@ fn a_boundary_before_the_start_marker_cancels_and_is_answered() {
 }
 
 #[test]
+fn declaring_the_test_field_again_keeps_what_is_being_typed() {
+    let h = Harness::start(LIBRARY);
+    let field = h.os.open_window(MockWindow::new("iamb-desktop", 300).own());
+    h.os.focus(field).expect("open");
+    h.worker().sync();
+    let mut c = h.client(Role::Ui);
+    let declare = |c: &mut iamb_ipc::Client| {
+        let body = RequestBody::SetTestField {
+            window: Some(FocusRef::from(field)),
+        };
+        assert!(matches!(c.call(body), Ok(ResponseBody::Done {})));
+    };
+    declare(&mut c);
+    h.settle();
+    h.os.type_text("br");
+    h.settle();
+    // The UI host declares the field again (it does every second) between two keys.
+    declare(&mut c);
+    h.settle();
+    h.os.type_text("b ");
+    h.settle();
+    assert_eq!(h.text(field), "be right back ");
+}
+
+#[test]
 fn secure_fields_excluded_apps_and_own_windows_suspend() {
     let h = Harness::start(LIBRARY);
     let bank =

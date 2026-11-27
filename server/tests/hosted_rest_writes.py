@@ -17,7 +17,9 @@ What it does, with throwaway accounts (`iamb-rest-…@example.test`) that it rem
     share, a stale write that records a conflict, a folder delete with a cascade list, a put that is
     refused, and one request with an edit and the move of its folder into the shared tree, for the
     re-verification's N1; a snippet deleted before its folder is shared, which the member then
-    reads by `pull`, `snapshot` and `rows` and tries to put back, for N5), `pull`, `rows`, `get_conflict`,
+    reads by `pull`, `snapshot` and `rows` and tries to put back, for N5; a share of a deleted
+    folder, and a folder made and deleted in one request, for the final attack pass's O3), `pull`,
+    `rows`, `get_conflict`,
     `resolve_conflict`, `members`, `attachment_upload_begin`,
     `attachment_upload_cancel`, `remove_member`, `revoke_device`, `sign_out_everywhere`;
   - checks every answer (HTTP 200 and the expected `error` or status), and that a revoked device is
@@ -410,6 +412,34 @@ def run(pk):
     check("the owner still holds the tombstone, as she left it",
           any(r.get("id") == sq and (r.get("row") or {}).get("deleted_at") and (r.get("row") or {}).get("body") == "Lena still owes 40."
               for r in out.get("rows") or []))
+
+    # The final attack pass, O3, as far as a device can reach it. A share of a deleted folder is
+    # refused; and a folder made and deleted in one push is named to nobody who could not read it.
+    fd, top, fx, sxx = (str(uuid.uuid4()) for _ in range(4))
+    out = ok200("push (owner: one more private folder)", a.push([folder(fd, p_owner, None, "To be deleted")]))
+    fd_rev = ((out.get("results") or [{}])[0].get("row") or {}).get("rev")
+    out = ok200("push (owner deletes it)", a.push([delete("folder", fd, fd_rev, cascade=[])]))
+    check("applied", statuses(out) == ["applied"], str(statuses(out)))
+    share_d = sql(f"select iamb_private.share_id({q(fd)}, {q(g)}) as id")[0]["id"]
+    out = ok200("push (owner shares the deleted folder)", a.push([
+        op("folder_share", share_d, {"folder_id": fd, "profile_id": g, "permission": "view"})]))
+    check("rejected:parent_gone", statuses(out) == ["rejected:parent_gone"], str(statuses(out)))
+    out = ok200("snapshot (member)", t.snapshot())
+    check("the member's snapshot does not name the deleted folder", fd not in json.dumps(out))
+    out = ok200("push (owner: a folder in the shared one)", a.push([folder(top, p_owner, f1, "Returns")]))
+    top_rev = ((out.get("results") or [{}])[0].get("row") or {}).get("rev")
+    ok200("pull (member)", t.pull())
+    out = ok200("push (owner: a folder made below it and the folder above deleted, in one request)", a.push([
+        folder(fx, p_owner, top, "Made offline"), snippet(sxx, fx, ";off", "Made offline too."),
+        delete("folder", top, top_rev, cascade=[{"entity": "folder", "id": fx, "base_rev": 0},
+                                                {"entity": "snippet", "id": sxx, "base_rev": 0}])]))
+    check("all three applied, and the answer says that what was made is deleted",
+          statuses(out) == ["applied"] * 3
+          and all(e.get("deleted") for e in ((out.get("results") or [{}] * 3)[2].get("cascade") or [{}])), str(statuses(out)))
+    out = ok200("pull (member)", t.pull())
+    check("the member's feed has the tombstone of the folder he read, and names nothing made and deleted in that request",
+          any(e.get("id") == top and (e.get("row") or {}).get("deleted_at") for e in out.get("entries") or [])
+          and fx not in json.dumps(out) and sxx not in json.dumps(out))
 
     # A folder's delete with a cascade list (the largest scratch use of task 4.2).
     out = ok200("push (owner deletes the private folder with its snippet)", a.push([

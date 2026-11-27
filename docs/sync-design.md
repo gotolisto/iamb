@@ -438,8 +438,8 @@ cannot block a sign-up.
 
 ### 5.4 Access entries
 
-`folder_access (user_id, folder_id, permission, via, granted_at, root_folder_id, since_rev)`,
-primary key `(user_id, folder_id)`.
+`folder_access (user_id, folder_id, permission, via, granted_at, root_folder_id, since_rev,
+folder_deleted_rev, folder_deleted_by)`, primary key `(user_id, folder_id)`.
 
 One row for every user and folder such that the user may read the folder under §4.2:
 `permission` is the highest permission, `via` is `own`, `group` or `share`, `root_folder_id` is the
@@ -481,6 +481,23 @@ everybody else the row is not there: no policy shows it, the feed's entry for it
 null, a snapshot leaves it out, `rows` answers null, a cascade answer says `gone`, and
 `visible_folders` and `access` do not name a deleted folder they may not read. The entry itself
 stays, because a folder that comes back needs it; it gives nothing while the folder is deleted.
+
+**An entry that does not give its folder gives nothing, and is not readable itself.** For a
+deleted folder that the entry's user may not read, the entry is a row the server keeps for the
+day the folder comes back, and for nobody's eyes: its user cannot read it (§5.13), so no read of
+theirs is made through it. A snippet, a link or a share of that folder and the profile it belongs
+to are not read through it; it is no grant in the profile for a push (C24); when it ends, nothing
+is revoked (C21). The rule is in the read policy of `folder_access`, and every other policy reads
+that table under it, so a function that reads for a caller cannot forget it. For the policy to
+decide without reading `folder` (whose own policy reads `folder_access`), the entry carries the
+two facts the rule needs: `folder_deleted_rev`, the revision of the folder's delete, and
+`folder_deleted_by`; both are empty while the folder is live, and two triggers keep them equal to
+the folder's row whichever function writes it. The permission of an entry is still what it says
+for a write (§4.3): a folder that is restored needs it, and no write reaches into a deleted
+folder its writer may not read (C7, C13). One thing follows that the rule for single rows did not
+say: a reader who deleted a snippet, lost the access, and came back after somebody else had
+deleted the snippet's folder does not read that old tombstone of their own. The folder is not
+there for them, and nothing in it is; no device holds such a row.
 
 - **Who deleted a row reads its tombstone**, as who wrote a version is offered it (§5.6). It is
   not a courtesy: a device that creates a folder and, still offline, deletes a folder above it
@@ -534,7 +551,8 @@ the two after every step of its tests, including the two-connection tests of G21
 
 Its changes are the visibility entries of the feed (C21): for a user, the top of each newly
 readable tree gets `folder_visible`; the top of each tree that stops being readable while the
-folder still exists as a row gets `folder_revoked`.
+folder still exists as a row gets `folder_revoked`. An entry that gave nothing ends unheard: its
+user never read the folder, and the entry would name it to them.
 
 ### 5.5 The change feed
 
@@ -559,7 +577,10 @@ Rules for task 4.2:
   each entry `seq = head + 1`. The locks are held to the commit, so entries become visible in `seq`
   order: a reader that has seen `n` will never later find an entry below `n`.
 - **Who gets a `row` entry.** Everyone who could read the row before the write or can read it after
-  it. The writer's own feed gets it too: that is how the other devices of the same account hear of
+  it; but nobody for a row that the request itself created and that they cannot read when the
+  request ends. (A device that creates a folder and deletes a folder above it, offline, sends both
+  in one push: the other readers of the tree could never read the new folder, their devices never
+  held it, and an entry, though null, would name it.) The writer's own feed gets it too: that is how the other devices of the same account hear of
   the change. A snippet that becomes readable for a user through a move brings its links: each gets
   a `row` entry for that user, and the tags and attachments they name come with the page (§6.4). A
   tag or an attachment row that comes back from a delete brings its live links the same way, for
@@ -784,7 +805,7 @@ in" are the gate helpers of §5.1, never a subquery on `membership` itself.
 | `snippet_attachment` | As `snippet_tag` |
 | `user_profile` | It is their own; or they share a live group with that person; or that person owns a profile they can read |
 | `device` | It is their own |
-| `folder_access` | It is their own |
+| `folder_access` | It is their own, and it gives its folder: the folder is live, or they deleted it, or it was deleted after the entry began (§5.4) |
 | `feed`, `feed_head` | It is their own |
 | `conflict`, `conflict_version` | They are a party (the winner's author or the author of a version the conflict offers) **and** can read the conflict's row under that row's own rule above. The content of a version is not in these tables: it is a history row, which `get_conflict` returns only for a version on offer to the caller (§5.6) |
 | `invitation` | They are owner or admin of the group; or it is pending and its address is their confirmed address (`own_address()`) |
@@ -1465,7 +1486,10 @@ there (§4.1, open question 7); over the plan's `shared_folders_max` it is `reje
 plan_limit`. A stale `put` is not applied: the answer is `superseded` with the server's row. A
 `put` based on the row's current revision is applied, also on a tombstone (sharing again; the
 access that begins is a new one, with a new `granted_at`). A `delete` is applied whatever its
-base. Shares get no conflicts; their versions are in the history. (S31, S36, S37, S46, S67)
+base. **A share of a deleted folder is `rejected: parent_gone`**: the folder's delete ended its
+shares (C6), access does not come back by itself when a folder does (C7), and a share that waited
+on a deleted folder would name the folder to the members of the group. Shares get no conflicts;
+their versions are in the history. (S31, S36, S37, S46, S67)
 
 **C12.** *Permission is judged on arrival.* Every op is checked against §4.3 with the memberships,
 shares and folders as they are on the server at that moment, for the place the row is in and
@@ -1791,10 +1815,10 @@ a create inserts or fails, and never becomes a change to a row another request m
 profile (S53 covers one profile; the two-connection tests of G21 cover two).
 
 **A request locks only what its caller can write in.** Before any lock, an op whose profile the
-caller has no grant in (not its owner, not a member, no access entry for a folder of it), and a
+caller has no grant in (not its owner, not a member, no access entry that gives a folder of it, §5.4), and a
 share whose group the caller is not in, lose their profile: they are answered as for a profile that
 does not exist (C12, C13) and lock nothing. An op in a profile the caller can read and write
-nothing in (no `edit` or `manage` on any of its folders, and not its manager) locks nothing
+nothing in (no `edit` or `manage` on any of its folders through an entry that gives the folder, and not its manager) locks nothing
 either: it is judged by the same rules without the lock, which refuse it, and it could not write
 if they did not, because a revision is drawn only under a lock. Whoever can write in a profile can
 hold its lock for as long as a request of theirs runs; that is what "one writer at a time" means,
@@ -2514,7 +2538,7 @@ member with `view`, former member, stranger, signed out).
 | G3 | A tag or an attachment row of someone else's profile is readable only while it is live and a readable snippet has a live link to it, or by the user who wrote the row last while that user has `edit` on a folder of the profile; after the share ends or the user is removed, not at all. A deleted tag or attachment row of a group is readable by a member only when the membership began before the delete |
 | G4 | No role a device can have may insert, update or delete in any table of `iamb`. Nothing in `iamb_private` or `api_service` can be called through the REST interface with a device's token. The gate helpers and the two reader helpers of §5.1 are the only functions of `iamb_private` that `authenticated` may execute; no gate helper returns a fact about anyone but the caller or changes anything but the caller's device row and rate counters, and the reader helpers change nothing and return the addresses of a group's members to its owner and admins, and the history rows of a conflict's versions to a party they are on offer to, and nothing to anyone else: whatever a device sends, `server_state`, `epoch`, every feed and every other device's row are as they were. `anon` can read nothing and call nothing |
 | G5 | `history` is unreadable directly; a history version is returned only by `get_conflict`, to a party of the conflict who can read the row now and who wrote that version or could read it while it was the row: a version from a folder the party could not read then, or replaced before the party's access to its folder began, is not returned, not listed and not restorable by that party, also when a later conflict took it over. "Could read" means in a state of the server the party could have seen: a version replaced in the request that began the party's access, and a version written and replaced within one request, are not such versions. The base version of a write (C3, C17) is found under the same rule |
-| G6 | `feed`, `feed_head`, `device` and `folder_access` rows are readable by their user only; a `conflict` by a party who can read its row; an `attachment_upload` by its uploader and by who manages the profile it is for |
+| G6 | `feed`, `feed_head`, `device` and `folder_access` rows are readable by their user only, a `folder_access` row only while it gives its folder: read directly as a device's role, with no function of `api` in between, no row of any table or view is read through an entry for a folder that was deleted before the reader's access to it began, and the reader's feed names only rows they could read in a state of the server that was committed. (What a row policy cannot hide is a column: the raw row of a sub-folder names its parent also to a reader who reads the sub-folder alone; the wire form leaves that parent out, §6.4, and no table is exposed); a `conflict` by a party who can read its row; an `attachment_upload` by its uploader and by who manages the profile it is for |
 | G7 | Every write of §4.3 succeeds for the users that table allows and is `rejected: forbidden` for all others, judged at arrival (C12): after a membership, role or share change commits, the next push sees it. A member with `edit` cannot rename, move or delete the root of the share that gives the access, at any depth, nor delete a folder above the root of another live share. "Restore this version" is one of these writes and is judged as the push of that version would be: it puts no folder at the top level, under another parent or out of the access root for a user who may not move it there |
 | G8 | Every account call of §4.1 succeeds for the roles that table allows and fails for all others with the code of §5.14; a group always has exactly one owner, and nobody becomes one without `accept_ownership`, which accepts an offer only for the membership it was made to: an offer ends when that membership ends |
 | G9 | `updated_by`, `updated_device`, `content_by`, `rev`, `created_rev`, `updated_at` and `deleted_at` are set by the server; nothing a client sends changes them. `content_by` follows the four cases of C17: the caller only for content that differs from the row and from the write's base version |

@@ -21,20 +21,19 @@
 //!   `ui` either. Test programs, the soak and compatibility harnesses and the mock's peers
 //!   have other names and keep every role there.
 //! - **Release builds accept only the three names.** Under
-//!   [`PeerPolicy::InstalledBinary`] the endpoint has already checked that the peer is a
-//!   signed binary of the installation (Windows: the directory of the running executable and a
-//!   valid signature; macOS: the same `Iamb.app` bundle, a valid signature and the service's
-//!   designated requirement), so a renamed or unknown binary there is refused rather than
-//!   trusted with every role.
+//!   [`PeerPolicy::InstalledBinary`] the endpoint has already checked that the peer is one of
+//!   the executables of this process's own installation, at its own path, and, when the
+//!   installation is signed, signed by the same signer (`iamb_platform::installation`, the 2.8
+//!   review's finding 11), so a renamed or unknown binary there is refused rather than trusted
+//!   with every role. An installation holds only what its installer puts there, the UI host and
+//!   the service, so `iamb` and `iamb-sync` take their roles under this policy only once they
+//!   ship in it.
 //!
-//! What this does not stop, and where that is tracked (finding 11, task 5.x, signed builds):
-//! the name is only as good as the endpoint's binary check. On Windows any validly signed
-//! executable in the per-user installation directory passes it, whoever signed it; on macOS
-//! the peer is identified by process id. A process that can put a signed binary named
-//! `iamb-desktop` there, or replace its image under the check, can still choose `ui`. The
-//! signer comparison and the audit-token identification of finding 11 close that, and need
-//! signed builds to test. On Linux (development only) the endpoint names no executable, so
-//! the role is not checked there.
+//! What this does not stop: in an unsigned installation the check is the path, so a process
+//! of the user that replaces `iamb-desktop` inside the installation can choose `ui`; it could
+//! replace the whole installation as well. A signed installation requires the same signer. On
+//! Linux (development only) the endpoint names no executable, so the role is not checked
+//! there.
 
 use std::fmt;
 

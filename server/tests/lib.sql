@@ -326,6 +326,15 @@ begin
     if n > 0 then
         raise exception 'check failed: % access entries were left without a starting revision', n;
     end if;
+    -- What an entry carries of its folder (the revision of the folder's delete and who deleted
+    -- it, for the read policy of `folder_access`; final attack pass, O3) is what the folder's row
+    -- says, whichever function wrote the folder.
+    select count(*) into n from iamb.folder_access fa join iamb.folder f on f.id = fa.folder_id
+    where (fa.folder_deleted_rev, fa.folder_deleted_by) is distinct from
+          (case when f.deleted_at is not null then f.rev end, case when f.deleted_at is not null then f.updated_by end);
+    if n > 0 then
+        raise exception 'check failed: % access entries do not carry the state of their folder', n;
+    end if;
 end $$;
 
 -- I7: no folder cycle, no live folder below the fourth level, no live row under a deleted folder.
@@ -429,6 +438,34 @@ begin
     end;
     perform iamb_test.act_owner();
     return n;
+end $$;
+
+-- Which tables and views of `iamb` name one of the ids in a row the actor can select, read
+-- directly as a device's role (no function of `api` in between): {table: rows}, without the
+-- tables that name none. The REST interface exposes no table; this is what the policies alone
+-- hold (final attack pass, O3).
+create or replace function iamb_test.named(p_name text, p_ids uuid[]) returns jsonb
+language plpgsql as $$
+declare
+    t   text;
+    n   bigint;
+    res jsonb := '{}';
+begin
+    for t in select c.relname from pg_class c join pg_namespace s on s.oid = c.relnamespace
+             where s.nspname = 'iamb' and c.relkind in ('r', 'v') and has_table_privilege('authenticated', c.oid, 'SELECT')
+             order by 1 loop
+        perform iamb_test.act(p_name);
+        execute format('select count(*) from iamb.%I t where exists (select 1 from unnest($1) x where to_jsonb(t)::text like ''%%'' || x::text || ''%%'')', t)
+            into n using p_ids;
+        perform iamb_test.act_owner();
+        if n > 0 then
+            res := res || jsonb_build_object(t, n);
+        end if;
+    end loop;
+    return res;
+exception when others then
+    perform iamb_test.act_owner();
+    raise;
 end $$;
 
 create or replace function iamb_test.check_all() returns void

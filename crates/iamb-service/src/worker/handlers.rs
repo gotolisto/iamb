@@ -314,11 +314,21 @@ pub(crate) fn handle(shared: &Arc<Shared>, _role: Role, body: RequestBody) -> An
             .map_err(|e| err(ErrorCode::Unavailable, e.to_string()))
             .and_then(|()| done()),
         RequestBody::SetTestField { window } => {
-            *shared
-                .test_field
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner) = window.map(Into::into);
-            let _ = shared.focus_tx.send(FocusMsg::Rejudge);
+            let window = window.map(Into::into);
+            let changed = {
+                let mut field = shared
+                    .test_field
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                std::mem::replace(&mut *field, window) != window
+            };
+            // The UI host declares the field again every second while it has the keyboard (so
+            // that a restarted service takes it back). Judging the window again clears what the
+            // engine holds, so it is done only when the declaration changed: otherwise every
+            // second would drop the abbreviation being typed into the field.
+            if changed {
+                let _ = shared.focus_tx.send(FocusMsg::Rejudge);
+            }
             done()
         }
 
