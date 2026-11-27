@@ -213,6 +213,10 @@ fn every_event_the_ui_role_hears_is_forwarded_as_promised() {
         contract::forward(&event("settings_changed")),
         Forward::Ui(UiEvent::SettingsChanged {})
     );
+    assert_eq!(
+        contract::forward(&event("expansion_finished")),
+        Forward::Ui(UiEvent::ExpansionFinished {})
+    );
     // The sync group's event is not the UI's.
     assert!(!Role::Ui.may_call(event("outbox_changed").group()));
     assert_eq!(contract::forward(&event("outbox_changed")), Forward::Ignore);

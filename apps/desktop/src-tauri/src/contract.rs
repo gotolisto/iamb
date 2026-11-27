@@ -20,6 +20,7 @@
 //! | `palette_requested` | `palette_requested` (the focus token stays in Rust) |
 //! | `diagnostic_added` | `diagnostic_added` (code, snippet, app and time) |
 //! | `settings_changed` | `settings_changed` |
+//! | `expansion_finished` | `expansion_finished` (nothing else: the front end plays the sound) |
 //!
 //! `outbox_changed` belongs to the sync group, which the `ui` role does not hear.
 //!
@@ -115,13 +116,14 @@ pub const COMMANDS: &[&str] = &[
 pub const REQUESTS: [&str; 4] = ["get_status", "set_paused", "list_snippets", "get_snippet"];
 
 /// The service events the bridge forwards, by wire name (the `topic` of each).
-pub const EVENTS: [&str; 6] = [
+pub const EVENTS: [&str; 7] = [
     "library_changed",
     "status_changed",
     "palette_requested",
     "form_requested",
     "diagnostic_added",
     "settings_changed",
+    "expansion_finished",
 ];
 
 /// The Tauri event that carries a [`StatusView`].
@@ -376,6 +378,8 @@ pub enum UiEvent {
     },
     /// Settings or exclusions changed.
     SettingsChanged {},
+    /// An expansion finished (the front end may play its sound).
+    ExpansionFinished {},
 }
 
 /// What the bridge does with a service event.
@@ -412,6 +416,7 @@ pub fn forward(event: &EventBody) -> Forward {
         EventBody::PaletteRequested { focus: _ } => Forward::Ui(UiEvent::PaletteRequested {}),
         EventBody::DiagnosticAdded { entry } => Forward::Ui(diagnostic(entry)),
         EventBody::SettingsChanged {} => Forward::Ui(UiEvent::SettingsChanged {}),
+        EventBody::ExpansionFinished {} => Forward::Ui(UiEvent::ExpansionFinished {}),
         EventBody::OutboxChanged { .. } => Forward::Ignore,
     }
 }

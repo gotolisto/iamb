@@ -39,6 +39,44 @@ fn an_abbreviation_typed_through_the_listener_expands_in_the_field() {
 }
 
 #[test]
+fn a_finished_expansion_is_announced_to_the_ui_and_a_cancelled_one_is_not() {
+    let h = Harness::start(LIBRARY);
+    let mut ui = h.client(Role::Ui);
+    h.os.type_text("brb ");
+    h.settle();
+    assert_eq!(h.text(h.editor), "be right back ");
+    // One expansion, one announcement (it names no snippet and carries no text).
+    let seen = wait_event(&mut ui, |e| matches!(e, EventBody::ExpansionFinished {}));
+    assert!(matches!(seen, EventBody::ExpansionFinished {}));
+
+    // An expansion cancelled before its start marker never finished: nothing is announced.
+    h.os.interleave(
+        InjectionPoint::BeforeStartMarker,
+        [
+            MockKey::Char('a'),
+            MockKey::Key(iamb_core::template::KeyName::Left),
+        ],
+    );
+    h.os.type_text("brb ");
+    h.settle();
+    assert_eq!(h.text(h.editor), "be right back brb a");
+    // (Other events, such as the diagnostic of the cancellation, may arrive; this one may not.)
+    let mut heard = Vec::new();
+    while let Some(event) = ui
+        .next_event(Some(Duration::from_millis(300)))
+        .expect("event stream")
+    {
+        heard.push(event);
+    }
+    assert!(
+        !heard
+            .iter()
+            .any(|e| matches!(e, EventBody::ExpansionFinished {})),
+        "a cancelled expansion must not be announced: {heard:?}"
+    );
+}
+
+#[test]
 fn many_expansions_follow_each_other() {
     let h = Harness::start(LIBRARY);
     let mut expected = String::new();

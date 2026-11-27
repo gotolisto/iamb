@@ -1818,11 +1818,14 @@ pub enum EventBody {
         /// Pending entries.
         pending: u64,
     },
+    /// An expansion finished and was counted (Engine control). It names no snippet and carries
+    /// no text: it only tells the UI host that one went through, so it can give feedback.
+    ExpansionFinished {},
 }
 
 impl EventBody {
     /// Every event name, in declaration order.
-    pub const NAMES: [&'static str; 7] = [
+    pub const NAMES: [&'static str; 8] = [
         "library_changed",
         "status_changed",
         "palette_requested",
@@ -1830,6 +1833,7 @@ impl EventBody {
         "diagnostic_added",
         "settings_changed",
         "outbox_changed",
+        "expansion_finished",
     ];
 
     /// The event's name on the wire (its `topic`), for logs.
@@ -1843,6 +1847,7 @@ impl EventBody {
             Self::DiagnosticAdded { .. } => "diagnostic_added",
             Self::SettingsChanged {} => "settings_changed",
             Self::OutboxChanged { .. } => "outbox_changed",
+            Self::ExpansionFinished {} => "expansion_finished",
         }
     }
 
@@ -1851,7 +1856,9 @@ impl EventBody {
     pub const fn group(&self) -> Group {
         match self {
             Self::LibraryChanged { .. } => Group::Library,
-            Self::StatusChanged { .. } | Self::PaletteRequested { .. } => Group::EngineControl,
+            Self::StatusChanged { .. }
+            | Self::PaletteRequested { .. }
+            | Self::ExpansionFinished {} => Group::EngineControl,
             Self::FormRequested { .. } => Group::Forms,
             Self::DiagnosticAdded { .. } => Group::Diagnostics,
             Self::SettingsChanged {} => Group::Settings,

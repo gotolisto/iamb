@@ -69,6 +69,6 @@ describe("the commands", () => {
 
   it("name every key once", () => {
     expect(new Set(SETTING_KEYS).size).toBe(SETTING_KEYS.length);
-    expect(SETTING_KEYS.filter((k) => k.startsWith("ui."))).toHaveLength(6);
+    expect(SETTING_KEYS.filter((k) => k.startsWith("ui."))).toHaveLength(7);
   });
 });

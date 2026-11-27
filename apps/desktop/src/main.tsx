@@ -3,7 +3,11 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { App } from "./App";
+import { onUiEvent } from "./ipc";
+import { settingsApi } from "./library/settings/api";
 import { blockReload } from "./reload";
+import chimeUrl from "./sound/expansion.mp3";
+import { chimePlayer, startExpansionSound } from "./sound/expansionSound";
 import "./styles/tokens.css";
 import "./styles/base.css";
 
@@ -21,6 +25,16 @@ function followTitle(label: string): void {
 
 // F5 and Ctrl+R would reload the page and drop what was typed (src/reload.ts).
 blockReload(window);
+
+// Every window hears every event, so one window plays the chime: the form, which is always
+// created (hidden) while Iamb runs.
+if (getCurrentWindow().label === "form") {
+  void startExpansionSound({
+    listen: onUiEvent,
+    getSettings: settingsApi.getSettings,
+    play: chimePlayer(chimeUrl),
+  }).catch(() => {});
+}
 
 const root = document.getElementById("root");
 if (root) {

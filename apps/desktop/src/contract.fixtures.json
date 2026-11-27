@@ -45,6 +45,9 @@
     },
     {
       "type": "settings_changed"
+    },
+    {
+      "type": "expansion_finished"
     }
   ],
   "form": {

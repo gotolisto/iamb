@@ -452,6 +452,7 @@ export const SECTION_OF_KEY: Record<SettingKey, "general" | "typing" | "dates" |
   "ui.onboarding_done": "onboarding",
   "ui.theme": "general",
   "ui.tray_icon": "general",
+  "ui.expansion_sound": "general",
   "ui.new_trigger": "typing",
   "ui.new_case_mode": "typing",
   "ui.crash_reports": "privacy",

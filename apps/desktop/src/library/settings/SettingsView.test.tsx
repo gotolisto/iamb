@@ -110,6 +110,15 @@ const CASES: Record<SettingKey, (r: Rig) => Promise<void>> = {
     await user.click(sw);
     expect(stored(r, "ui.tray_icon")).toBeUndefined();
   },
+  "ui.expansion_sound": async (r) => {
+    const user = await open(r);
+    const sw = screen.getByRole("switch", { name: "Play a soft sound after a snippet expands" });
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+    await user.click(sw);
+    expect(stored(r, "ui.expansion_sound")).toBe("off");
+    await user.click(sw);
+    expect(stored(r, "ui.expansion_sound")).toBeUndefined();
+  },
   "ui.new_trigger": async (r) => {
     const user = await open(r, "Typing");
     await user.click(screen.getByRole("radio", { name: "Immediately" }));

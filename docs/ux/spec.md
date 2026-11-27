@@ -322,6 +322,7 @@ effect at once and says so by its own state; there is no Save button and no rest
 | --- | --- | --- |
 | General | Start Iamb when I log in | Switch. On by default (set at the end of onboarding) |
 | | Show the Iamb icon in the menu bar / notification area | Switch. Help: "Iamb keeps running without it. Open it from the Dock / Start menu." |
+| | Play a soft sound after a snippet expands | Switch, on by default (`ui.expansion_sound`; stored as `off` when off). Help: "A short, quiet chime each time an abbreviation is replaced. Turn it off for silence." |
 | | Appearance | Follow the system · Light · Dark |
 | | Updates | "Iamb 0.3.0 · up to date" [Check now] · switch "Install updates automatically". Help: "Updates are installed while you are not typing." |
 | Typing | A snippet expands after | Checkboxes: "A space" (always on, shown disabled) · "Punctuation . , ; : ! ?" · "Closing brackets and quotes ) ] } \" '" · "Enter" · "Tab". Enter and Tab are off by default and carry a warning (below) |
@@ -630,7 +631,7 @@ Other requirements:
   as non-activating panels on macOS. This is a risk to prove early in tasks 3.5 and 3.6.
 - **Reduced motion and high contrast**: design system §2.6 and §5.
 - **Pointer targets**: at least 24 × 24 px.
-- **No reliance on sound.** Iamb makes no sound.
+- **No reliance on sound.** The only sound is the soft chime after an expansion (Settings → General, on by default, `ui.expansion_sound`); nothing depends on hearing it, and the visible result is the text itself.
 - **Language.** The `lang` of the interface is set; snippet content is user text and is not
   marked with a language.
 
@@ -692,6 +693,7 @@ All from architecture §6.2 (service endpoint) and §6.4 (account endpoint).
 | Menu | `GetStatus`, `SetPaused`, `PutExclusion`, `ListExclusions`, `GetPermissions` | `StatusChanged` |
 | Library | `ListFolders`, `ListSnippets`, `ListSnippetSummaries`, `GetSnippet`, `PutSnippet`, `DeleteSnippet`, `PutFolder`, `DeleteFolder`, `PutTag`, `ListTags`, `DeleteTag`, `Import`, `Export`, `Health`, `ListPendingReviews` | `LibraryChanged` |
 | Editor | `ParseTemplate`, `RenderPreview`, `CheckAbbreviation`, `PutSnippet`, `ListTags`, `PutTag` | `LibraryChanged` |
+| Expansion feedback | (none) | `ExpansionFinished` (no snippet, no text; the form window plays the chime) |
 | Fill-in form | `FormAck`, `PanelFocus`, `FormSubmit`, `FormCancel`, `ReopenLastForm` | `FormRequested`, `DiagnosticAdded` |
 | Palette | `PanelFocus`, `Search`, `ExpandSnippet`, `RenderPreview`, `ReopenLastForm` | `PaletteRequested`, `DiagnosticAdded` |
 | Onboarding | `GetStatus`, `GetPermissions`, `OpenPermissionSettings`, `SetTestField`, `ListFolders`, `PutSnippet`, `GetSettings`, `PutSetting`, `RecentDiagnostics` | `StatusChanged` |
@@ -704,7 +706,7 @@ All from architecture §6.2 (service endpoint) and §6.4 (account endpoint).
 Settings keys the UI reads and writes with `GetSettings` / `PutSetting`: `delimiters`,
 `date_format`, `time_format`, `locale`, `palette_hotkey`, `reopen_form_hotkey`, `pause_hotkey`,
 `injection_overrides`, and its own
-under the prefix `ui.` (`ui.onboarding_done`, `ui.theme`, `ui.tray_icon`, `ui.new_trigger`,
+under the prefix `ui.` (`ui.onboarding_done`, `ui.theme`, `ui.tray_icon`, `ui.expansion_sound`, `ui.new_trigger`,
 `ui.new_case_mode`, pane widths). The service stores unknown keys as they are, so no change is
 needed for those. Start at login is set through the system's login-item API by the UI host,
 and the supervisor's stop and start (ADR-0023) are used for "Start it again" and "Restart the

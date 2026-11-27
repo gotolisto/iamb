@@ -203,6 +203,9 @@ pub(crate) fn run(
                         Logged(&e)
                     ));
                 }
+                // The expansion went through (a cancelled one never gets here), whether or not
+                // the count was kept: the UI host may give feedback. No snippet, no text.
+                shared.clients.broadcast(&EventBody::ExpansionFinished {});
             }
             Ok(StoreMsg::Stop) | Err(_) => break,
         }

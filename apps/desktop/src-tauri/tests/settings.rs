@@ -149,6 +149,11 @@ fn persists_ui_tray_icon() {
 }
 
 #[test]
+fn persists_ui_expansion_sound() {
+    persists("ui.expansion_sound", "off");
+}
+
+#[test]
 fn persists_ui_new_trigger() {
     persists("ui.new_trigger", "immediate");
 }
