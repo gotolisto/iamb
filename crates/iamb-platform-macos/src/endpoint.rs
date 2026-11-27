@@ -17,10 +17,12 @@
 //!   (`LOCAL_PEERTOKEN`, `SecCodeCopyGuestWithAttributes` with `kSecGuestAttributeAudit`, so a
 //!   process id reused since cannot stand in), the path that code object names, the executable
 //!   `proc_pidpath` reports, that path with its links resolved, and its device and inode. A
-//!   signed installation (this process has a team identifier) also requires the peer to satisfy
-//!   `anchor apple generic`, the same team identifier and Iamb's bundle identifiers
-//!   (`SecCodeCheckValidity`, no network access); an ad hoc or unsigned one requires the
-//!   member's own file instead. Debug builds use [`PeerPolicy::SameUser`].
+//!   signed installation also requires the peer to satisfy `anchor apple generic`, the same
+//!   team identifier and Iamb's bundle identifiers (`SecCodeCheckValidity`, no network access);
+//!   an ad hoc or unsigned one requires the member's own file instead. Whether this process is
+//!   signed is read once, from its running code ([`read_own_signing`], first thing in `main`),
+//!   or compiled in (`IAMB_SIGNER_TEAM`); when it cannot be told, no peer is trusted. Debug
+//!   builds use [`PeerPolicy::SameUser`].
 //! - Streams are the socket itself: clones are duplicated descriptors, the read timeout is the
 //!   socket's, `shutdown` shuts both directions down. A blocked `accept` waits in `poll` on the
 //!   socket and on a private socket pair; `close` sets a flag and writes one byte to the pair,
@@ -41,7 +43,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use iamb_platform::installation::{self, OwnSigning, PathRules, PeerSignature};
+use iamb_platform::installation::{self, OwnState, PathRules, PeerSignature};
 use iamb_platform::{
     EndpointName, LocalEndpoint, LocalListener, LocalStream, PeerIdentity, PeerPolicy,
     PeerRejection, PlatformError, Result,
@@ -224,29 +226,74 @@ fn team_of(code: &SecStaticCode) -> Option<String> {
     (!team.is_empty()).then_some(team)
 }
 
-/// This process's own team identifier (`None`: ad hoc or unsigned), read once.
-fn own_team() -> Option<&'static str> {
-    static TEAM: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    TEAM.get_or_init(|| {
-        let mut me: *mut SecCode = std::ptr::null_mut();
-        // SAFETY: `me` is a valid out-pointer.
-        if unsafe { SecCode::copy_self(SecCSFlags::DefaultFlags, NonNull::from(&mut me)) } != 0 {
-            return None;
-        }
-        let me: CFRetained<SecCode> = adopt(me)?;
-        let me_static: CFRetained<SecStaticCode> = static_of(&me)?;
-        team_of(&me_static)
-    })
-    .as_deref()
+/// The team identifier the release pipeline compiled in for a Developer ID build
+/// (`IAMB_SIGNER_TEAM`, `.github/workflows/installers.yml`); absent or empty for every other
+/// build.
+const PINNED_TEAM: Option<&str> = option_env!("IAMB_SIGNER_TEAM");
+
+/// This process: its canonical executable and its signing state
+/// (`iamb_platform::installation`, "This process's own signing state").
+struct Own {
+    exe: Option<PathBuf>,
+    state: OwnState,
 }
 
-/// Whether `code` satisfies the requirement of a signed installation of `team`
-/// (`installation::macos_requirement`), without network access.
-fn signed_by(code: &SecCode, team: &str) -> bool {
-    let Some(text) = installation::macos_requirement(team) else {
-        return false;
+/// [`Own`], read once: by [`read_own_signing`] at the start of `main`, or at the first peer
+/// check of a process that did not call it.
+fn own() -> &'static Own {
+    static OWN: std::sync::OnceLock<Own> = std::sync::OnceLock::new();
+    OWN.get_or_init(|| Own {
+        exe: std::env::current_exe()
+            .ok()
+            .and_then(|e| fs::canonicalize(e).ok()),
+        state: installation::pinned(
+            PINNED_TEAM,
+            |t| installation::valid_team(t).then(|| t.to_owned()),
+            running_code_state,
+        ),
+    })
+}
+
+/// Reads this process's signing state now, from its running code, and keeps it for the life of
+/// the process; returns the line for the log. Call it first in `main` (the strict review's
+/// finding 1): read later, the file it would be judged by may have been replaced.
+#[must_use]
+pub fn read_own_signing() -> String {
+    own().state.describe()
+}
+
+/// What this process's running code (its dynamic code object, not the file on disk) says about
+/// its signature.
+fn running_code_state() -> OwnState {
+    let mut me: *mut SecCode = std::ptr::null_mut();
+    // SAFETY: `me` is a valid out-pointer.
+    if unsafe { SecCode::copy_self(SecCSFlags::DefaultFlags, NonNull::from(&mut me)) } != 0 {
+        return OwnState::Unknown("this process's code object could not be had");
+    }
+    let Some(me) = adopt(me) else {
+        return OwnState::Unknown("this process's code object could not be had");
     };
-    let text = CFString::from_str(&text);
+    // SAFETY: `me` is a valid code object; no requirement, no network access.
+    let validity = unsafe { me.check_validity(SecCSFlags::NoNetworkAccess, None) };
+    // SAFETY: the signing-information call accepts a dynamic code object as well as a static
+    // one (both are code objects of the Security framework); it then describes the running
+    // code.
+    let as_static: &SecStaticCode = unsafe { &*std::ptr::from_ref::<SecCode>(&me).cast() };
+    let team = if validity == 0 {
+        team_of(as_static)
+    } else {
+        None
+    };
+    let anchored = team
+        .as_deref()
+        .and_then(installation::macos_own_requirement)
+        .is_some_and(|text| satisfies(&me, &text));
+    installation::classify_macos(validity, team, anchored)
+}
+
+/// Whether `code` satisfies the requirement `text`, without network access.
+fn satisfies(code: &SecCode, text: &str) -> bool {
+    let text = CFString::from_str(text);
     let mut requirement: *mut SecRequirement = std::ptr::null_mut();
     // SAFETY: `text` is a valid string; `requirement` is a valid out-pointer.
     if unsafe {
@@ -266,6 +313,12 @@ fn signed_by(code: &SecCode, team: &str) -> bool {
     unsafe { code.check_validity(SecCSFlags::NoNetworkAccess, Some(&requirement)) == 0 }
 }
 
+/// Whether `code` satisfies the requirement of a signed installation of `team`
+/// (`installation::macos_requirement`), without network access.
+fn signed_by(code: &SecCode, team: &str) -> bool {
+    installation::macos_requirement(team).is_some_and(|text| satisfies(code, &text))
+}
+
 /// True when `a` and `b` are the same regular file (device and inode), `a` not being a link.
 fn same_file(a: &Path, b: &Path) -> bool {
     match (fs::symlink_metadata(a), fs::metadata(b)) {
@@ -277,21 +330,14 @@ fn same_file(a: &Path, b: &Path) -> bool {
 /// Whether the peer of `stream`, whose executable the system reports as `reported`, is a
 /// member of this process's installation (module docs; `iamb_platform::installation`).
 fn installed_peer(stream: &UnixStream, reported: Option<&Path>) -> bool {
-    let Some(own) = std::env::current_exe()
-        .ok()
-        .and_then(|e| fs::canonicalize(e).ok())
-    else {
+    let own = own();
+    let Some(members) = own.exe.as_deref().and_then(installation::macos_members) else {
         return false;
     };
-    let Some(members) = installation::macos_members(&own) else {
-        return false;
-    };
-    let Some(reported) = reported else {
-        return false;
-    };
-    let canonical = fs::canonicalize(reported).ok();
-    let Some(member) =
-        installation::member_for(&members, reported, canonical.as_deref(), PathRules::MacOs)
+    // `proc_pidpath` names the executable's vnode, so it holds no link; resolving it is what
+    // makes it comparable with the member's canonical path.
+    let canonical = reported.and_then(|r| fs::canonicalize(r).ok());
+    let Some(member) = installation::member_for(&members, canonical.as_deref(), PathRules::MacOs)
     else {
         return false;
     };
@@ -303,24 +349,14 @@ fn installed_peer(stream: &UnixStream, reported: Option<&Path>) -> bool {
     let agrees = static_of(&code)
         .and_then(|s| code_path(&s))
         .is_some_and(|p| installation::member_for_code_path(&members, &p) == Some(member));
-    let (own_signing, signature) = match own_team() {
-        Some(team) => (
-            OwnSigning::Signed,
-            if signed_by(&code, team) {
-                PeerSignature::SameSigner
-            } else {
-                PeerSignature::Other
-            },
-        ),
-        None => (OwnSigning::Unsigned, PeerSignature::Other),
+    let signature = match own.state.signer() {
+        Some(team) if signed_by(&code, team) => PeerSignature::SameSigner,
+        _ => PeerSignature::Other,
     };
-    installation::trusted(
-        true,
-        own_signing,
-        signature,
-        agrees,
-        same_file(reported, &member.exe),
-    )
+    let same = canonical
+        .as_deref()
+        .is_some_and(|c| same_file(c, &member.exe));
+    installation::trusted(true, own.state.signing(), signature, agrees, same)
 }
 
 /// Identifies the peer of `stream` and checks it against `policy`.
@@ -610,6 +646,11 @@ mod tests {
         // trusts no peer for them (the decision itself is tested in iamb_platform::installation).
         let own = std::env::current_exe().expect("own path");
         assert_eq!(installation::macos_members(&own), None);
-        assert_eq!(own_team(), None);
+        // Ad hoc at most: unsigned, never "signed" from an error, and the line says so.
+        assert!(
+            !read_own_signing().starts_with("signed"),
+            "{}",
+            read_own_signing()
+        );
     }
 }

@@ -156,7 +156,7 @@ runs on a fresh hosted runner that did not build the installer. Only the smoke s
 | Files | UI host and helper app present; identifiers `org.iamb.Iamb` and `org.iamb.Iamb.Service`; both universal | `iamb-desktop.exe`, `iamb-service.exe`, `uninstall.exe`; uninstall entry under HKCU, none under HKLM | `/usr/bin/iamb-desktop`, `/usr/bin/iamb-service` |
 | Version = Cargo version | both `Info.plist` files, both `--version` | uninstall entry, both `--version` | package version, both `--version` |
 | Start | installed UI host, `--measure-open 1` in a scratch data root | same | same, under Xvfb |
-| UI host reaches the service | the helper's `iamb-service --supervise --no-ui-host` for the default data root, then `iamb-desktop --check-service` must say `service ok`; a copy of `iamb-desktop` outside `Iamb.app` must be refused | `iamb-service.exe --supervise --no-ui-host --data-dir <scratch>`, then `iamb-desktop.exe --check-service` must say `service ok`; a copy outside `%LOCALAPPDATA%\Iamb` must be refused | `iamb-service --supervise --no-ui-host`, then `iamb-desktop --check-service` must say `service ok` (no copy: Linux has no installed-binary check) |
+| UI host reaches the service | fails at the start if the default data root exists (the helper serves only that one, and the test removes only what it made); the helper's `iamb-service --supervise --no-ui-host` for it, then `iamb-desktop --check-service` must say `service ok` with no rejection in `worker.log`; a copy of `iamb-desktop` outside `Iamb.app`, run with `--skip-server-check` so that only the service can refuse it, must fail and `worker.log` must gain `rejected a client: the peer is not the installed Iamb binary`; signed runs only: an ad hoc re-signed `iamb-desktop` in place of the real one must be refused the same way | `iamb-service.exe --supervise --no-ui-host --data-dir <scratch>`, then `iamb-desktop.exe --check-service` must say `service ok` with no rejection logged; a copy outside the installation directory, with `--skip-server-check`, must fail and be logged as rejected. An unsigned UI host in place of the real one is not exercised (no unsigned build of a signed release on the runner) | `iamb-service --supervise --no-ui-host`, then `iamb-desktop --check-service` must say `service ok` (no copy: Linux has no installed-binary check) |
 | Signatures, when signed | `codesign --verify --deep --strict`, `spctl -a` on app and image, `stapler validate` on both, same team, hardened runtime | `Get-AuthenticodeSignature` `Valid` and timestamped on four files | none (reported unsigned) |
 | Signatures, when unsigned | `codesign --verify --deep --strict` still runs on the ad-hoc seal; the rest is reported as skipped | states reported, not failed | none |
 | Uninstall | remove `Iamb.app` | `uninstall.exe /S`, then wait until files, uninstall entry, Start menu entry and Run value are gone | `apt-get purge`, binaries gone |
@@ -194,12 +194,16 @@ registry value is all that stays behind.
 
 - **Signed installed builds are checked by the smoke test only once signing is set up.** Release
   builds accept as clients only the executables of their own installation (architecture §6.1,
-  "The installed-binary check"; finding 11, closed). An unsigned or ad-hoc installation accepts
-  its members by path; a signed one also requires the same signer (macOS: the team identifier
-  and both bundle identifiers; Windows: the same leaf certificate). The smoke test connects the
-  installed UI host to the installed service on every run, so the unsigned path is checked on
-  every build; the signed path only on a signed run. Unsigned installers are for testing, not
-  for users.
+  "The installed-binary check"; finding 11: closed for unsigned builds, written but not yet
+  exercised for signed ones). An unsigned or ad-hoc installation accepts its members by path; a
+  signed one also requires the same signer (macOS: the team identifier and both bundle
+  identifiers; Windows: the same certificate thumbprint). A signed build has its signer compiled
+  in (`IAMB_SIGNER_TEAM` from `APPLE_TEAM_ID`; `IAMB_SIGNER_THUMBPRINT` from the imported
+  certificate). With `WINDOWS_SIGN_COMMAND` the thumbprint is not known when the build runs, so
+  such a build reads its own signature at its start instead. The smoke test connects the
+  installed UI host to the installed service on every run and requires the service itself to
+  refuse a copy, so the unsigned path is checked on every build; the signed path only on a
+  signed run. Unsigned installers are for testing, not for users.
 - The supervisor starts the UI host (architecture §3.2), but not the sync agent yet (hook point
   in `crates/iamb-service/src/supervisor.rs`). On Windows, turning on "start at login" writes the
   Run value but does not start the service until the next login (or the next install).

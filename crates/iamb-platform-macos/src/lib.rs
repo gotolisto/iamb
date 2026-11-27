@@ -111,6 +111,8 @@ mod session;
 #[cfg(target_os = "macos")]
 pub use account::account_home;
 #[cfg(target_os = "macos")]
+pub use endpoint::read_own_signing;
+#[cfg(target_os = "macos")]
 pub use hardening::harden_process;
 #[cfg(target_os = "macos")]
 pub use main_loop::run_with_main_loop;

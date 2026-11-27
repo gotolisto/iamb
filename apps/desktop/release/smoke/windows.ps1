@@ -80,14 +80,23 @@ Write-Host $r.Out
 Ok 'the installed UI host opened its library window (--measure-open 1)'
 
 # The installed UI host reaches the installed service (architecture §6.1, the installed-binary
-# check; finding 11): start the installed supervisor as the Run value does (without the UI
-# host), then connect as the UI host, headless (--check-service). A copy of the UI host outside
-# the installation directory must be refused.
+# check; finding 11 and its strict review, finding 2): start the installed supervisor as the Run
+# value does (without the UI host), then connect as the UI host, headless (--check-service). A
+# copy of the UI host outside the installation directory connects without checking the service
+# (--skip-server-check), so that the refusal can only be the service's, and the worker's log
+# must record it. The refusal of an unsigned UI host in place of the real one by a signed
+# service is not exercised here: the runner has no unsigned build of a signed release.
 $serviceData = Join-Path $env:RUNNER_TEMP 'iamb-smoke-service'
 $svc = Start-Process -FilePath $service -ArgumentList @('--supervise', '--no-ui-host', '--data-dir', "`"$serviceData`"") -PassThru
 $null = $svc.Handle
 function Stop-Service-Processes {
   Get-Process -Name 'iamb-service' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+}
+$workerLog = Join-Path $serviceData 'logs\worker.log'
+$rejected = 'rejected a client: the peer is not the installed Iamb binary'
+function Get-Rejections {
+  if (-not (Test-Path $workerLog)) { return 0 }
+  @(Select-String -Path $workerLog -SimpleMatch -Pattern $rejected).Count
 }
 function Show-Service-Logs {
   Get-ChildItem -Path (Join-Path $serviceData 'logs') -Filter '*.log' -ErrorAction SilentlyContinue |
@@ -98,17 +107,23 @@ if ($r.Code -ne 0 -or -not $r.Out.StartsWith("service ok: iamb-service $Version"
   Write-Host $r.Out; Write-Host $r.Err; Show-Service-Logs; Stop-Service-Processes
   Fail "the installed service refused the installed UI host, or never answered (--check-service): code $($r.Code)"
 }
+if ((Get-Rejections) -ne 0) { Show-Service-Logs; Stop-Service-Processes; Fail 'the worker logged a rejection for the installed UI host' }
 Ok "the installed UI host connected to the installed service as the UI host ($($r.Out))"
 $copyDir = Join-Path $env:RUNNER_TEMP 'iamb-copy'
 New-Item -ItemType Directory -Force -Path $copyDir | Out-Null
 Copy-Item -Path $desktop -Destination $copyDir
-$r = Invoke-Exe (Join-Path $copyDir 'iamb-desktop.exe') @('--check-service', '--data-dir', "`"$serviceData`"") 120
+$before = Get-Rejections
+$r = Invoke-Exe (Join-Path $copyDir 'iamb-desktop.exe') @('--check-service', '--skip-server-check', '--data-dir', "`"$serviceData`"") 120
 if ($r.Code -eq 0) { Show-Service-Logs; Stop-Service-Processes; Fail 'a copy of the UI host outside the installation directory was accepted' }
-if (-not $r.Out.StartsWith('service check failed')) {
-  Write-Host $r.Err; Stop-Service-Processes
-  Fail "the copy of the UI host did not run its check: code $($r.Code), said '$($r.Out)'"
+$deadline = (Get-Date).AddSeconds(10)
+while ((Get-Rejections) -le $before) {
+  if ((Get-Date) -gt $deadline) {
+    Write-Host $r.Out; Write-Host $r.Err; Show-Service-Logs; Stop-Service-Processes
+    Fail "the service did not log the copy's rejection ('$rejected'): its own check was not what refused it"
+  }
+  Start-Sleep -Milliseconds 200
 }
-Ok "a copy of the UI host outside the installation directory was refused ($($r.Out))"
+Ok 'the installed service refused a copy of the UI host outside the installation directory, and logged it'
 Stop-Service-Processes
 Remove-Item -Recurse -Force $copyDir
 

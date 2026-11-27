@@ -314,3 +314,28 @@ Compare by components.
 Tests run: `cargo test -p iamb-platform --lib -- installation` (5 passed) and a scratch test of
 `windows_members`, `windows_key`, `member_for`, `member_for_code_path` and `macos_members` for
 the edge cases above, both built outside the shared target directory.
+
+## 5. Fixes
+
+Date: 2026-11-27 · By the author of the fix, not the reviewer · Not committed when written. As
+for the review, everything was run on Linux; the two endpoints were linted for their targets
+(`cargo clippy --target x86_64-pc-windows-msvc` and `aarch64-apple-darwin`, with and without
+`probe`) but not run. "Before" means the new test run against the code of `874aeb2`.
+
+| # | Finding | Fix | Test | Before → after |
+| --- | --- | --- | --- | --- |
+| 1 | "Signed" read lazily from disk; an error meant "unsigned" | Three states (`OwnState`: signed by a signer, unsigned, could not tell); "could not tell" trusts no peer. Read once, first in `main` of the service and the UI host (`iamb_ipc::read_own_signing`, logged as `installed-binary check: …`), from the running code: macOS checks the dynamic code object (`SecCodeCopySelf`, `SecCodeCheckValidity` without and with `anchor apple generic` and the team), only `errSecCSUnsigned` or a valid ad hoc signature is "unsigned"; Windows maps `WinVerifyTrust` on the own image: only `TRUST_E_NOSIGNATURE` is "unsigned". The signer is pinned at build time when the pipeline signs: `IAMB_SIGNER_TEAM` from `APPLE_TEAM_ID` (helper and app builds), `IAMB_SIGNER_THUMBPRINT` from the imported certificate (the service is now built after "Prepare Windows signing"); a pinned build never asks, a malformed pin trusts no one. Not pinned: Windows with `WINDOWS_SIGN_COMMAND`, whose certificate is not known at build time; it reads its signature at its start | `an_error_reading_the_own_signature_trusts_no_peer`; each endpoint: a test binary is never "signed" | New API, no before run; after: passes. The endpoints' tests run only on their systems |
+| 2 | The smoke tests could not tell a broken service-side check | `iamb-desktop --check-service --skip-server-check` (the client takes the server as the same user's, so a refusal can only be the service's). macOS and Windows: the copy runs that way, must fail, and `worker.log` must gain `rejected a client: the peer is not the installed Iamb binary`; the installed UI host must leave no rejection. Signed macOS runs: an ad hoc re-signed `iamb-desktop` put in place of the real one must be refused and logged. Signed Windows: not exercised (no unsigned build of a signed release on the runner), said in the script and in `docs/release.md`. §8 now says "closed for unsigned builds; written, and not yet exercised, for signed ones" | The smoke scripts (CI only) | Runs on the next installers workflow |
+| 3 | The macOS smoke test deleted the real data root | It fails at the start when `~/Library/Application Support/Iamb` exists, and removes only what it created | Script (CI only) | – |
+| 4 | Windows: file, not image; the process found by its id | The process is opened once and the handle kept while it is examined; a process created after the connection (`GetProcessTimes` against the time the connection was seen) is refused; the file identity (volume serial number, file index) of the peer's canonical path is compared with the member's instead of `true`. The rest (a file put back after other content ran from its path) is stated as a limit in §6.1 | `a_process_created_after_the_connection_is_not_the_client` (the pure rule) | New, passes |
+| 5 | Two members that do not ship | Members are the UI host and the service only; the others are added with their bundle identifiers when they ship | `review::programs_that_do_not_ship_are_no_members` | fails (`…/Contents/MacOS/iamb` was a member) → passes |
+| 6 | Windows installation found by comparing with an environment variable's text | The directory is the `LocalAppData` known folder (`SHGetKnownFolderPath`) and `Iamb`, made canonical (junctions, 8.3 names, redirection resolved), compared with the canonical own directory; the peer's canonical path is compared with the member's, the textual "reported equals canonical" test is gone | `the_windows_installation_is_the_canonical_per_user_directory` | The known-folder call runs on Windows only |
+| 7 | Unicode folding | ASCII letters only are folded, on both systems | `review::only_ascii_letters_are_folded` (a Kelvin sign in a user name) | fails (the keys were equal) → passes |
+| 8 | macOS link and same-file wording | The tables in `installation.rs` and §6.1 now say what is checked: the path the system reports (no link on macOS), and the identity of the file found at the member's path, not of the mapped image | – | – |
+| 9 | Bundle path compared as text | Paths are compared by components (trailing, repeated and `.` separators do not matter) | `review::trailing_and_repeated_separators_do_not_matter` | fails (`/Applications/Iamb.app/` matched nothing) → passes |
+| 10 | Smaller | Left as documented in the review | – | – |
+
+What still could not be checked here: every call into the Security framework and the Windows
+APIs (in particular that `SecCodeCopySigningInformation` describes the dynamic code object it
+is given, and what `GetProcessTimes` and `SHGetKnownFolderPath` return on a redirected profile),
+and the smoke scripts' new steps, which run in the installers workflow only.

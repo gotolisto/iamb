@@ -21,14 +21,18 @@
 //!   Clients open the pipe with `SECURITY_IDENTIFICATION`, so a server can never act as them.
 //! - Under [`PeerPolicy::InstalledBinary`] the peer is trusted only when it is a member of the
 //!   same installation as this process, as `iamb_platform::installation` decides (the 2.8
-//!   review's finding 11): its image path (`QueryFullProcessImageNameW`), with every link
-//!   resolved, must be one of Iamb's executables in the per-user installation directory
-//!   `%LOCALAPPDATA%\Iamb` this process runs from. When this process's own image carries a
-//!   valid Authenticode signature, the peer's must too, with the same leaf certificate
-//!   (`WinVerifyTrust` with revocation checks off and URL retrieval from the cache only, so
-//!   nothing touches the network, then the signer's certificate from the verification's
-//!   state); an unsigned installation requires the path alone. Debug builds use
-//!   [`PeerPolicy::SameUser`].
+//!   review's finding 11, and its strict review): the process is opened and kept open while it
+//!   is examined, must have been created before it connected (a process id reused since is
+//!   refused), and its image path (`QueryFullProcessImageNameW`), with every link resolved,
+//!   must be one of Iamb's executables in the canonical per-user installation directory
+//!   (`SHGetKnownFolderPath(FOLDERID_LocalAppData)\Iamb`) this process runs from. When this
+//!   process is signed (read once at the start, [`read_own_signing`], or compiled in,
+//!   `IAMB_SIGNER_THUMBPRINT`), the peer's file must verify with the same certificate
+//!   thumbprint (`WinVerifyTrust` with revocation checks off and URL retrieval from the cache
+//!   only, so nothing touches the network); an unsigned installation requires the member's own
+//!   file (volume serial number and file index); when it cannot be told, no peer is trusted.
+//!   What is verified is the file, not the image the process was mapped from, which Windows
+//!   does not let another process ask for. Debug builds use [`PeerPolicy::SameUser`].
 //! - Streams use overlapped I/O, so a read blocked on one thread does not hold up a write on a
 //!   clone; a read timeout cancels the blocked read, and `shutdown` cancels every pending
 //!   operation on the handle (and disconnects, on the server side).
@@ -41,7 +45,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use iamb_platform::installation::{self, OwnSigning, PathRules, PeerSignature};
+use iamb_platform::installation::{self, OwnState, PathRules, PeerSignature};
 use iamb_platform::{
     EndpointName, LocalEndpoint, LocalListener, LocalStream, PeerIdentity, PeerPolicy,
     PeerRejection, PlatformError, Result,
@@ -49,7 +53,7 @@ use iamb_platform::{
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_BROKEN_PIPE, ERROR_FILE_NOT_FOUND, ERROR_IO_PENDING, ERROR_NO_DATA,
     ERROR_OPERATION_ABORTED, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, ERROR_PIPE_NOT_CONNECTED,
-    GENERIC_READ, GENERIC_WRITE, GetLastError, HANDLE, INVALID_HANDLE_VALUE, LocalFree,
+    FILETIME, GENERIC_READ, GENERIC_WRITE, GetLastError, HANDLE, INVALID_HANDLE_VALUE, LocalFree,
     WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Security::Authorization::{
@@ -57,6 +61,9 @@ use windows_sys::Win32::Security::Authorization::{
 };
 use windows_sys::Win32::Security::Cryptography::{
     BCRYPT_USE_SYSTEM_PREFERRED_RNG, BCryptGenRandom,
+};
+use windows_sys::Win32::Security::Cryptography::{
+    CERT_SHA1_HASH_PROP_ID, CertGetCertificateContextProperty,
 };
 use windows_sys::Win32::Security::WinTrust::{
     WINTRUST_ACTION_GENERIC_VERIFY_V2, WINTRUST_DATA, WINTRUST_FILE_INFO,
@@ -69,20 +76,25 @@ use windows_sys::Win32::Security::{
     TokenUser,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    CreateFileW, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, OPEN_EXISTING,
-    PIPE_ACCESS_DUPLEX, ReadFile, SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT, WriteFile,
+    BY_HANDLE_FILE_INFORMATION, CreateFileW, FILE_FLAG_BACKUP_SEMANTICS,
+    FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, FILE_SHARE_DELETE, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, GetFileInformationByHandle, OPEN_EXISTING, PIPE_ACCESS_DUPLEX, ReadFile,
+    SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT, WriteFile,
 };
+use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 use windows_sys::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeClientProcessId,
     GetNamedPipeServerProcessId, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE,
     PIPE_UNLIMITED_INSTANCES, PIPE_WAIT, WaitNamedPipeW,
 };
+use windows_sys::Win32::System::SystemInformation::GetSystemTimeAsFileTime;
 use windows_sys::Win32::System::Threading::{
-    CreateEventW, GetCurrentProcess, INFINITE, OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32,
-    PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW, SetEvent,
+    CreateEventW, GetCurrentProcess, GetProcessTimes, INFINITE, OpenProcess, OpenProcessToken,
+    PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW, SetEvent,
     WaitForMultipleObjects, WaitForSingleObject,
 };
+use windows_sys::Win32::UI::Shell::{FOLDERID_LocalAppData, SHGetKnownFolderPath};
 
 use crate::Platform;
 use crate::pipe_names::{
@@ -261,8 +273,9 @@ pub(crate) fn own_sid() -> Result<String> {
     token_user(unsafe { GetCurrentProcess() })
 }
 
-/// The user and image path of process `pid`.
-fn process_identity(pid: u32) -> Result<(String, Option<PathBuf>)> {
+/// Process `pid`, opened, with its user and image path. The handle is kept while the process
+/// is examined, so that its id cannot be reused meanwhile (the strict review's finding 4).
+fn process_identity(pid: u32) -> Result<(Handle, String, Option<PathBuf>)> {
     // SAFETY: `OpenProcess` with limited query rights has no other preconditions.
     let process = Handle::new(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) })
         .ok_or(PlatformError::PeerRejected(PeerRejection::Unidentified))?;
@@ -283,13 +296,42 @@ fn process_identity(pid: u32) -> Result<(String, Option<PathBuf>)> {
         buf.truncate(usize::try_from(len).unwrap_or(0));
         PathBuf::from(String::from_utf16_lossy(&buf))
     });
-    Ok((user, exe))
+    Ok((process, user, exe))
 }
 
-/// The leaf certificate (DER) of the signer of `path`, when `path` carries a valid Authenticode
-/// signature. No revocation checks and no URL retrieval beyond the local cache: this never
-/// touches the network.
-fn signer_of(path: &Path) -> Option<Vec<u8>> {
+/// The time now, as a `FILETIME` value (100 ns since 1601).
+fn now_filetime() -> u64 {
+    let mut t = FILETIME::default();
+    // SAFETY: `t` is a valid out-pointer.
+    unsafe { GetSystemTimeAsFileTime(&raw mut t) };
+    (u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime)
+}
+
+/// When `process` was created, as a `FILETIME` value.
+fn created_at(process: &Handle) -> Option<u64> {
+    let (mut created, mut exited, mut kernel, mut user) = (
+        FILETIME::default(),
+        FILETIME::default(),
+        FILETIME::default(),
+        FILETIME::default(),
+    );
+    // SAFETY: `process` is open with query rights; the four out-pointers are valid.
+    let ok = unsafe {
+        GetProcessTimes(
+            process.0,
+            &raw mut created,
+            &raw mut exited,
+            &raw mut kernel,
+            &raw mut user,
+        )
+    };
+    (ok != 0).then(|| (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
+}
+
+/// Verifies the Authenticode signature of `path`: what `WinVerifyTrust` answered, and the
+/// thumbprint of the signer's leaf certificate when it verified. No revocation checks and no
+/// URL retrieval beyond the local cache: this never touches the network.
+fn signer_of(path: &Path) -> (i32, Option<String>) {
     let file = wide(&path.to_string_lossy());
     let mut info = WINTRUST_FILE_INFO {
         cbStruct: u32::try_from(size_of::<WINTRUST_FILE_INFO>()).unwrap_or(0),
@@ -318,7 +360,7 @@ fn signer_of(path: &Path) -> Option<Vec<u8>> {
         )
     };
     let signer = if status == 0 {
-        leaf_certificate(data.hWVTStateData)
+        leaf_thumbprint(data.hWVTStateData)
     } else {
         None
     };
@@ -331,11 +373,12 @@ fn signer_of(path: &Path) -> Option<Vec<u8>> {
             (&raw mut data).cast::<c_void>(),
         );
     }
-    signer
+    (status, signer)
 }
 
-/// The encoded leaf certificate of the first signer in a verification's open `state`.
-fn leaf_certificate(state: HANDLE) -> Option<Vec<u8>> {
+/// The thumbprint (SHA-1, upper-case hexadecimal) of the leaf certificate of the first signer
+/// in a verification's open `state`.
+fn leaf_thumbprint(state: HANDLE) -> Option<String> {
     // SAFETY: `state` is the state a successful `WinVerifyTrust` left open; the caller closes
     // it after this returns, and nothing read here outlives it but the copied bytes.
     unsafe {
@@ -348,62 +391,175 @@ fn leaf_certificate(state: HANDLE) -> Option<Vec<u8>> {
             return None;
         }
         let cert = (*(*signer).pasCertChain).pCert;
-        if cert.is_null() || (*cert).pbCertEncoded.is_null() {
+        if cert.is_null() {
             return None;
         }
-        let len = usize::try_from((*cert).cbCertEncoded).ok()?;
-        Some(std::slice::from_raw_parts((*cert).pbCertEncoded, len).to_vec())
+        let mut hash = [0_u8; 20];
+        let mut len = u32::try_from(hash.len()).ok()?;
+        if CertGetCertificateContextProperty(
+            cert,
+            CERT_SHA1_HASH_PROP_ID,
+            hash.as_mut_ptr().cast::<c_void>(),
+            &raw mut len,
+        ) == 0
+            || usize::try_from(len).ok()? != hash.len()
+        {
+            return None;
+        }
+        let mut text = String::with_capacity(40);
+        for b in hash {
+            use std::fmt::Write as _;
+            let _ = write!(text, "{b:02X}");
+        }
+        Some(text)
     }
 }
 
-/// This process's own canonical image, and the leaf certificate of its signer (`None`:
-/// unsigned), read once.
-fn own_image() -> Option<&'static (PathBuf, Option<Vec<u8>>)> {
-    static OWN: std::sync::OnceLock<Option<(PathBuf, Option<Vec<u8>>)>> =
-        std::sync::OnceLock::new();
+/// The certificate thumbprint the release pipeline compiled in for a signed build
+/// (`IAMB_SIGNER_THUMBPRINT`, `.github/workflows/installers.yml`); absent or empty for every
+/// other build.
+const PINNED_THUMBPRINT: Option<&str> = option_env!("IAMB_SIGNER_THUMBPRINT");
+
+/// This process: its canonical image, the canonical per-user installation directory and its
+/// signing state (`iamb_platform::installation`).
+struct Own {
+    exe: Option<PathBuf>,
+    install_dir: Option<PathBuf>,
+    state: OwnState,
+}
+
+/// [`Own`], read once: by [`read_own_signing`] at the start of `main`, or at the first peer
+/// check of a process that did not call it.
+fn own() -> &'static Own {
+    static OWN: std::sync::OnceLock<Own> = std::sync::OnceLock::new();
     OWN.get_or_init(|| {
-        let own = std::fs::canonicalize(std::env::current_exe().ok()?).ok()?;
-        let signer = signer_of(&own);
-        Some((own, signer))
+        let exe = std::env::current_exe()
+            .ok()
+            .and_then(|e| std::fs::canonicalize(e).ok());
+        let state = installation::pinned(
+            PINNED_THUMBPRINT,
+            installation::windows_thumbprint,
+            || match &exe {
+                Some(exe) => {
+                    let (status, thumbprint) = signer_of(exe);
+                    installation::classify_windows(status, thumbprint.as_deref())
+                }
+                None => OwnState::Unknown("this process's image could not be found"),
+            },
+        );
+        Own {
+            exe,
+            install_dir: install_dir(),
+            state,
+        }
     })
-    .as_ref()
+}
+
+/// Reads this process's signing state now and keeps it for the life of the process; returns
+/// the line for the log. Call it first in `main` (the strict review's finding 1): read later,
+/// the file it is judged by may have been replaced.
+#[must_use]
+pub fn read_own_signing() -> String {
+    own().state.describe()
+}
+
+/// The canonical per-user installation directory: the `LocalAppData` known folder as the system
+/// gives it (not `%LOCALAPPDATA%`, which whoever starts a process chooses), `Iamb` under it,
+/// with every junction, 8.3 name and redirection resolved; `None` when it does not exist.
+fn install_dir() -> Option<PathBuf> {
+    let folder_id = FOLDERID_LocalAppData;
+    let mut text: windows_sys::core::PWSTR = std::ptr::null_mut();
+    // SAFETY: the folder id is a constant; a null token means the current user; `text`
+    // receives a CoTaskMemAlloc'd, NUL-terminated string, freed below.
+    let hr = unsafe {
+        SHGetKnownFolderPath(&raw const folder_id, 0, std::ptr::null_mut(), &raw mut text)
+    };
+    let folder = if hr == 0 && !text.is_null() {
+        let mut n = 0;
+        // SAFETY: the string is NUL-terminated; we read up to the terminator.
+        while unsafe { *text.add(n) } != 0 {
+            n += 1;
+        }
+        // SAFETY: `text` points to `n` valid UTF-16 units.
+        let units = unsafe { std::slice::from_raw_parts(text, n) };
+        Some(PathBuf::from(String::from_utf16_lossy(units)))
+    } else {
+        None
+    };
+    // SAFETY: freeing what the call allocated (null is allowed).
+    unsafe { CoTaskMemFree(text.cast::<c_void>()) };
+    std::fs::canonicalize(folder?.join(installation::WINDOWS_INSTALL_DIR)).ok()
+}
+
+/// The volume serial number and file index of the file at `path` (its link resolved).
+fn file_id(path: &Path) -> Option<(u32, u32, u32)> {
+    let name = wide(&path.to_string_lossy());
+    // SAFETY: `name` is NUL-terminated; no access is asked for, only the file's information;
+    // backup semantics let a directory be opened too.
+    let file = Handle::new(unsafe {
+        CreateFileW(
+            name.as_ptr(),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            std::ptr::null_mut(),
+        )
+    })?;
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: `file` is open; `info` is a valid out-pointer.
+    if unsafe { GetFileInformationByHandle(file.0, &raw mut info) } == 0 {
+        return None;
+    }
+    Some((
+        info.dwVolumeSerialNumber,
+        info.nFileIndexHigh,
+        info.nFileIndexLow,
+    ))
 }
 
 /// Whether the peer whose image the system reports as `reported` is a member of this
 /// process's installation (module docs; `iamb_platform::installation`).
 fn installed_peer(reported: &Path) -> bool {
-    let Some((own, own_signer)) = own_image() else {
-        return false;
-    };
-    let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
-    let Some(members) = installation::windows_members(own, local.as_deref()) else {
+    let own = own();
+    let Some(members) = own
+        .exe
+        .as_deref()
+        .and_then(|exe| installation::windows_members(exe, own.install_dir.as_deref()))
+    else {
         return false;
     };
     let canonical = std::fs::canonicalize(reported).ok();
-    let member =
-        installation::member_for(&members, reported, canonical.as_deref(), PathRules::Windows)
-            .is_some();
-    let (own_signing, signature) = match own_signer {
-        Some(own_signer) => (
-            OwnSigning::Signed,
-            if member && signer_of(reported).as_ref() == Some(own_signer) {
-                PeerSignature::SameSigner
-            } else {
-                PeerSignature::Other
-            },
-        ),
-        None => (OwnSigning::Unsigned, PeerSignature::Other),
+    let Some(member) = installation::member_for(&members, canonical.as_deref(), PathRules::Windows)
+    else {
+        return false;
     };
-    // The canonical path is the file's own name on Windows: matching it is matching the file.
-    installation::trusted(true, own_signing, signature, member, true)
+    let Some(canonical) = canonical else {
+        return false;
+    };
+    let signature = match own.state.signer() {
+        Some(signer) if signer_of(&canonical).1.as_deref() == Some(signer) => {
+            PeerSignature::SameSigner
+        }
+        _ => PeerSignature::Other,
+    };
+    let same = file_id(&canonical).is_some_and(|id| file_id(&member.exe) == Some(id));
+    installation::trusted(true, own.state.signing(), signature, true, same)
 }
 
-/// Identifies process `pid` at the other end and checks it against `policy` for a process of
-/// `own_user`.
-fn verify(pid: u32, own_user: &str, policy: PeerPolicy) -> Result<PeerIdentity> {
-    let (user, executable) = process_identity(pid)?;
+/// Identifies process `pid` at the other end, which connected at `connected` (a `FILETIME`
+/// value), and checks it against `policy` for a process of `own_user`. A process created after
+/// the connection took the id of the one that connected (`installation::created_before`).
+fn verify(pid: u32, own_user: &str, policy: PeerPolicy, connected: u64) -> Result<PeerIdentity> {
+    let (process, user, executable) = process_identity(pid)?;
+    if !created_at(&process).is_some_and(|c| installation::created_before(c, connected)) {
+        return Err(PlatformError::PeerRejected(PeerRejection::Unidentified));
+    }
     let trusted_binary =
         policy == PeerPolicy::InstalledBinary && executable.as_deref().is_some_and(installed_peer);
+    // The process stays open until it has been examined.
+    drop(process);
     let peer = PeerIdentity {
         pid,
         user,
@@ -754,11 +910,12 @@ impl LocalListener for Listener {
             if let Ok(next) = self.instance(false) {
                 *self.pending.lock().unwrap_or_else(PoisonError::into_inner) = Some(next);
             }
+            let connected = now_filetime();
             let mut pid = 0;
             // SAFETY: `pipe` is a connected server instance; `pid` is an out-pointer.
             let known = unsafe { GetNamedPipeClientProcessId(pipe.0, &raw mut pid) } != 0;
             let verdict = if known {
-                verify(pid, &self.own_user, self.policy)
+                verify(pid, &self.own_user, self.policy, connected)
             } else {
                 Err(PlatformError::PeerRejected(PeerRejection::Unidentified))
             };
@@ -907,12 +1064,13 @@ impl LocalEndpoint for Platform {
                 _ => return Err(os("CreateFileW")),
             }
         };
+        let connected = now_filetime();
         let mut pid = 0;
         // SAFETY: `handle` is a client end of a pipe; `pid` is an out-pointer.
         if unsafe { GetNamedPipeServerProcessId(handle.0, &raw mut pid) } == 0 {
             return Err(PlatformError::PeerRejected(PeerRejection::Unidentified));
         }
-        let peer = verify(pid, &own_user, policy)?;
+        let peer = verify(pid, &own_user, policy, connected)?;
         Ok(Box::new(Stream {
             pipe: Arc::new(Pipe {
                 handle,
@@ -1053,7 +1211,13 @@ mod tests {
             Err(PeerRejection::UntrustedBinary)
         );
         // This process, identified through its pid, is the same user.
-        let me = verify(std::process::id(), &own, PeerPolicy::SameUser).expect("self");
+        let me = verify(
+            std::process::id(),
+            &own,
+            PeerPolicy::SameUser,
+            now_filetime(),
+        )
+        .expect("self");
         assert_eq!(me.user, own);
         assert!(me.executable.is_some());
     }
@@ -1063,14 +1227,22 @@ mod tests {
         // `target\` is not `%LOCALAPPDATA%\Iamb`: the policy trusts no peer for a test binary
         // (the decision itself is tested in iamb_platform::installation).
         let own = std::env::current_exe().expect("test binary");
-        let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
-        assert_eq!(installation::windows_members(&own, local.as_deref()), None);
+        assert_eq!(
+            installation::windows_members(&own, install_dir().as_deref()),
+            None
+        );
         assert!(!installed_peer(&own));
+        // A test binary is not signed: "unsigned", never "signed" from an error.
+        assert!(
+            !read_own_signing().starts_with("signed"),
+            "{}",
+            read_own_signing()
+        );
     }
 
     #[test]
     fn an_unsigned_test_binary_does_not_verify() {
         let exe = std::env::current_exe().expect("test binary");
-        assert_eq!(signer_of(&exe), None);
+        assert_eq!(signer_of(&exe).1, None);
     }
 }

@@ -25,7 +25,9 @@
 //!   the executables of this process's own installation, at its own path, and, when the
 //!   installation is signed, signed by the same signer (`iamb_platform::installation`, the 2.8
 //!   review's finding 11), so a renamed or unknown binary there is refused rather than trusted
-//!   with every role.
+//!   with every role. An installation holds only what its installer puts there, the UI host and
+//!   the service, so `iamb` and `iamb-sync` take their roles under this policy only once they
+//!   ship in it.
 //!
 //! What this does not stop: in an unsigned installation the check is the path, so a process
 //! of the user that replaces `iamb-desktop` inside the installation can choose `ui`; it could

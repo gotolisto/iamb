@@ -140,6 +140,9 @@ jobs:
         if: runner.os == 'macOS'
         env:
           APPLE_SIGNING_IDENTITY: ${{ steps.signing.outputs.mode == 'developer-id' && secrets.APPLE_SIGNING_IDENTITY || '' }}
+          # The signer every peer must have, compiled in (the installed-binary check; empty, and
+          # so read at run time, for an unsigned build).
+          IAMB_SIGNER_TEAM: ${{ steps.signing.outputs.mode == 'developer-id' && secrets.APPLE_TEAM_ID || '' }}
         run: apps/desktop/release/macos/build-helper.sh "${{ steps.version.outputs.version }}"
       # Gone before the bundler runs, which imports the certificate into a keychain of its own: two
       # keychains with the same identity in the search list would make codesign's choice ambiguous.
@@ -160,6 +163,7 @@ jobs:
           APPLE_ID: ${{ steps.signing.outputs.mode == 'developer-id' && secrets.APPLE_ID || '' }}
           APPLE_PASSWORD: ${{ steps.signing.outputs.mode == 'developer-id' && secrets.APPLE_PASSWORD || '' }}
           APPLE_TEAM_ID: ${{ steps.signing.outputs.mode == 'developer-id' && secrets.APPLE_TEAM_ID || '' }}
+          IAMB_SIGNER_TEAM: ${{ steps.signing.outputs.mode == 'developer-id' && secrets.APPLE_TEAM_ID || '' }}
           MODE: ${{ steps.signing.outputs.mode }}
         run: |
           # Empty variables would count as set for the bundler: drop them.
@@ -182,19 +186,6 @@ jobs:
           dmgs=(target/universal-apple-darwin/release/bundle/dmg/*.dmg)
           [ "${#dmgs[@]}" -eq 1 ] || { echo "expected one disk image, found ${#dmgs[@]}" >&2; exit 1; }
           apps/desktop/release/macos/notarize-dmg.sh "${dmgs[0]}"
-
-      # ---- Windows and Linux: the service as a sidecar next to the UI host ------------------
-      # Built with `-p iamb-service` alone, as it ships (ADR-0008, check 4), and staged under
-      # the name the bundler expects (`externalBin` in release/tauri.<os>.json).
-      - name: Build and stage the service (Windows, Linux)
-        if: runner.os != 'macOS'
-        run: |
-          cargo build -p iamb-service --release --locked
-          triple="$(rustc -vV | sed -n 's/^host: //p')"
-          ext=""; [ "$RUNNER_OS" = Windows ] && ext=".exe"
-          mkdir -p apps/desktop/release/out
-          cp "target/release/iamb-service$ext" "apps/desktop/release/out/iamb-service-$triple$ext"
-          "apps/desktop/release/out/iamb-service-$triple$ext" --version
 
       # Windows signing, two ways (docs/release.md): a code-signing certificate exported as a
       # .pfx in WINDOWS_CERTIFICATE, imported into the runner's user store and used through
@@ -220,6 +211,10 @@ jobs:
             Remove-Item $pfx
             if (-not $cert.HasPrivateKey) { throw 'the certificate in WINDOWS_CERTIFICATE has no private key' }
             "IAMB_SIGNING_THUMBPRINT=$($cert.Thumbprint)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+            # Compiled into the service and the UI host as the signer every peer must have (the
+            # installed-binary check; the strict review of finding 11, finding 1): such a build
+            # never asks at run time whether it is signed. Set for the builds after this step.
+            "IAMB_SIGNER_THUMBPRINT=$($cert.Thumbprint)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
             $windows = @{ certificateThumbprint = $cert.Thumbprint; digestAlgorithm = 'sha256'; timestampUrl = $env:TIMESTAMP_URL }
           } else {
             $windows = @{ signCommand = $env:WINDOWS_SIGN_COMMAND }
@@ -227,6 +222,19 @@ jobs:
           @{ bundle = @{ windows = $windows } } | ConvertTo-Json -Depth 5 | Out-File -Encoding utf8 $overlay
           "IAMB_SIGNING_CONFIG=$overlay" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           Write-Host "Windows signing prepared ($env:MODE)."
+      # ---- Windows and Linux: the service as a sidecar next to the UI host ------------------
+      # Built with `-p iamb-service` alone, as it ships (ADR-0008, check 4), and staged under
+      # the name the bundler expects (`externalBin` in release/tauri.<os>.json).
+      - name: Build and stage the service (Windows, Linux)
+        if: runner.os != 'macOS'
+        run: |
+          cargo build -p iamb-service --release --locked
+          triple="$(rustc -vV | sed -n 's/^host: //p')"
+          ext=""; [ "$RUNNER_OS" = Windows ] && ext=".exe"
+          mkdir -p apps/desktop/release/out
+          cp "target/release/iamb-service$ext" "apps/desktop/release/out/iamb-service-$triple$ext"
+          "apps/desktop/release/out/iamb-service-$triple$ext" --version
+
       - name: Build the installer (Windows)
         if: runner.os == 'Windows'
         working-directory: apps/desktop

@@ -573,28 +573,48 @@ One transport and framing for both endpoints ([ADR-0006](decisions/0006-ipc.md))
   user and, in release builds, that its executable belongs to the same installation as the
   client (below). Servers verify clients the same way. The same-user check always comes first.
 - **The installed-binary check** (release builds, `PeerPolicy::InstalledBinary`;
-  `iamb_platform::installation`; the 2.8 review's finding 11, closed). An installation is found
-  from the process's own canonical executable: on macOS `<X>.app/Contents/MacOS/iamb-desktop` or
+  `iamb_platform::installation`; the 2.8 review's finding 11, and its strict review,
+  `docs/reviews/finding-11-security-review.md`). An installation is found from the process's own
+  canonical executable: on macOS `<X>.app/Contents/MacOS/iamb-desktop` or
   `<X>.app/Contents/Library/LoginItems/Iamb Service.app/Contents/MacOS/iamb-service`, on Windows
-  an Iamb executable in the per-user installation directory `%LOCALAPPDATA%\Iamb`. Its members
-  are the UI host, the service and, should they ship there, `iamb` and `iamb-sync`. Whether the
-  installation is signed is read from the process's own image only (macOS: a team identifier;
-  Windows: a valid Authenticode signature):
+  an Iamb executable whose canonical directory is the canonical per-user installation directory
+  (the `LocalAppData` known folder from `SHGetKnownFolderPath`, not `%LOCALAPPDATA%`, and `Iamb`
+  under it, with junctions, 8.3 names and redirection resolved). Its members are what the
+  installer puts there: the UI host and the service (`iamb` and `iamb-sync` are added, with
+  their bundle identifiers, when they ship). The process's own signing state is read once, first
+  in `main`, from its running code (macOS: the dynamic code object checked against
+  `anchor apple generic` and its team identifier; Windows: `WinVerifyTrust` on its image), or is
+  compiled in by the release pipeline (`IAMB_SIGNER_TEAM` on macOS, `IAMB_SIGNER_THUMBPRINT` on
+  Windows with a certificate; such a build never asks). It has three states: signed by a signer;
+  unsigned (no signature, or ad hoc on macOS); and could not tell (any error), which trusts no
+  peer. Every service and UI host logs which (`installed-binary check: …`).
 
   | This process | The peer | Trusted |
   | --- | --- | --- |
-  | Not in an installation (a development build, a copy elsewhere) | anything | no |
-  | Signed | a member at its own path, not reached through a link, signed by the same signer: macOS, the code its audit token names satisfies `anchor apple generic`, the team identifier and `org.iamb.Iamb` or `org.iamb.Iamb.Service` (`SecCodeCheckValidity`, no network access); Windows, a valid signature with the same leaf certificate | yes |
-  | Signed | a member, but unsigned, ad hoc, invalid or signed by another signer | no |
-  | Unsigned (ad hoc or none) | a member at its own path, not reached through a link; macOS: the code its audit token names is that member, and the executable is the member's file (device and inode) | yes |
-  | either | not a member: another folder, a copy of `iamb-desktop` elsewhere, a link to a member, a hard link outside the installation | no |
+  | Not in an installation, or could not tell how it is signed | anything | no |
+  | Signed | its canonical path is a member's, and it is signed by the same signer: macOS, the code its audit token names is that member and satisfies `anchor apple generic`, the team identifier and `org.iamb.Iamb` or `org.iamb.Iamb.Service` (`SecCodeCheckValidity`, no network access); Windows, the file at that path verifies with the same certificate thumbprint | yes |
+  | Signed | its canonical path is a member's, but it is unsigned, ad hoc, invalid or signed by another signer | no |
+  | Unsigned | its canonical path is a member's (macOS: and the code its audit token names is that member), and the file there is the member's file (macOS: device and inode; Windows: volume serial number and file index) | yes |
+  | either | its canonical path is no member's: another folder, a copy of `iamb-desktop` elsewhere, a program that does not ship | no |
 
-  A signed installation never falls back to the path check, so it cannot be made to accept an
-  unsigned peer. What the check does not stop: in an unsigned installation a process of the user
-  that replaces a member's file inside the installation is trusted as that member; it could
-  replace the whole installation as well. Linux (development only) has no such check. The
-  install smoke test (`docs/release.md`) connects the installed UI host to the installed service
-  (`iamb-desktop --check-service`) on every OS.
+  Paths are compared by components with ASCII letters folded, as the file systems compare names.
+  On Windows the process is opened and kept open while it is examined, and one created after it
+  connected (a process id reused since) is refused. What the check rests on, and does not stop:
+  the path is what the system reports for the running process (macOS: the executable's vnode,
+  which holds no link, so a process started through a link to a member counts as that member;
+  Windows: the image name), and the file identity and, on Windows, the signature are those of the
+  file found at that path, not of the image the process was mapped from, which neither system
+  lets another process ask for. So in an unsigned installation a process of the user that
+  replaces a member's file is trusted as that member (it could replace the whole installation as
+  well), and on Windows a process that runs other content from a member's path and puts the
+  signed file back before it connects passes as that member; a process of the same user at the
+  same integrity level can write into the service's memory on Windows anyway, which §8 leaves out
+  of the threat model. A signed installation, its signer read at the start or compiled in, never
+  falls back to the path check. Linux (development only) has no such check. The install smoke
+  test (`docs/release.md`) connects the installed UI host to the installed service
+  (`iamb-desktop --check-service`) on every OS and requires the service itself to refuse a copy
+  of the UI host from another folder, and on a signed macOS run an unsigned UI host in place of
+  the real one.
 - The role a client states must be one its executable may take, by the file name the endpoint
   read from the operating system (§6.2; `iamb_ipc::roles`; the 2.8 review's finding 10): an
   Iamb client is held to its role in every build, and release builds accept no other program.
@@ -973,7 +993,7 @@ real machines:
 
 | Finding | What is open | Tracked in |
 | --- | --- | --- |
-| 11, the installed-binary check | **Closed** (§6.1, "The installed-binary check"; `iamb_platform::installation`): the peer must be a member of the process's own installation; a signed installation requires the same signer (macOS: a requirement built from the team identifier and both bundle identifiers, checked on the code the audit token names, without network access; Windows: the same leaf certificate), an unsigned one the member's own path and file. Unsigned installed builds now accept their own UI host. Left: the signed path is checked by the install smoke test only once builds are signed | The install smoke test (`iamb-desktop --check-service`) on each OS; with the first signed builds, its signed run |
+| 11, the installed-binary check | **Closed** for unsigned builds; written, and not yet exercised, for signed ones (§6.1, "The installed-binary check"; `iamb_platform::installation`; the strict review, `docs/reviews/finding-11-security-review.md`, and its "Fixes"): the peer must be a member of the process's own installation; the process's signing state is read once at the start from its running code, or compiled in, and "could not tell" trusts no one; a signed installation requires the same signer (macOS: a requirement built from the team identifier and both bundle identifiers, checked on the code the audit token names, without network access; Windows: the same certificate thumbprint), an unsigned one the member's own path and file. Left: the signed path has never run; no signed build exists yet | The install smoke test (`iamb-desktop --check-service`, and the service's own refusal of a copy) on each OS; with the first signed builds, its signed run (on macOS also an unsigned UI host in place of the real one) |
 | 13, screen lock and sign-out | **Done in the service** (§4.5, §5): `SessionEvents` in the platform traits, the mock and both OS crates; every event forgets the remembered values and disturbs the hand-off; `FormValues`, the wire copy of a submit and clipboard snapshots overwrite their bytes before they are freed. Tests on the mock (`tests/panels.rs`), a Windows unit test of the sign-out messages, a macOS main-loop test of the notifications (`tests/session.rs`). Left: a lock, user switch and sign-out on a real Windows and Mac (`docs/compatibility-run.md`); the IPC frames that carried values (serde's buffers) are freed without being overwritten | Task 3.5: the manual checks on both systems |
 | 16, Iamb's own panels on macOS | **Done in the service** (§4.5, ADR-0013 addendum): `PanelFocus(panel, shown)`, with a lease and the UI-host-gone fallback; keys typed while a panel has the keyboard reach neither the engine nor the hand-off (`tests/panels.rs`, `tests/focus_order.rs`). **The form panel sends it** (task 3.5, `apps/desktop/src-tauri/src/form.rs`): before the panel takes the keyboard, renewed every 10 seconds, and `shown: false` when the panel resigns the keyboard (a click into the app behind it) and before `FormSubmit` and `FormCancel` (`apps/desktop/src-tauri/tests/form.rs`). **The palette sends it too** (task 3.6, `apps/desktop/src-tauri/src/palette.rs`): the same order, and before `ExpandSnippet` and `ReopenLastForm` (`apps/desktop/src-tauri/tests/palette.rs`). Left: the form panel and the palette must become non-activating panels on macOS (a function in `iamb-platform-macos`, `apps/desktop/README.md`), and a check on a Mac that keys typed into the panels do not expand (`docs/compatibility-run.md`, F2 and P3) | The macOS panel function, and the Mac check |
 

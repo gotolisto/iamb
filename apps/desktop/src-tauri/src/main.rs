@@ -3,14 +3,18 @@
 //! ```text
 //! iamb-desktop [--data-dir PATH] [--open-library]
 //!              [--measure-open RUNS | --measure-form RUNS | --measure-palette RUNS]
-//!              [--budget-ms MS] [--check-service]
+//!              [--budget-ms MS] [--check-service [--skip-server-check]]
 //! ```
 //!
 //! Started hidden at login by the service's supervisor (architecture §3.2). `--open-library`
 //! opens the library window at start (development, and desktops without a tray).
 //! `--check-service` opens no window: it connects to the service of the data root as the UI
 //! host, waits up to a minute for it to answer `GetStatus`, and exits 0 when it does, 1 when it
-//! refuses or never answers (the install smoke test, `iamb_desktop::check`).
+//! refuses or never answers (the install smoke test, `iamb_desktop::check`). With
+//! `--skip-server-check` it does not check the server itself (it takes it as the same user's,
+//! `PeerPolicy::SameUser`), so that a refusal can only be the service's: the smoke test runs a
+//! copy of the UI host that way and requires the service to refuse it. It still makes one
+//! `GetStatus` and nothing else.
 //! `--measure-open` times the cold open of the library window and exits; `--measure-form` times
 //! the fill-in form from the request to its first paint and exits, `--measure-palette` the
 //! search palette from the shortcut to its first paint (`docs/test-strategy.md` §8).
@@ -41,7 +45,7 @@ use iamb_desktop::paths::DataDirs;
 
 const USAGE: &str = "usage: iamb-desktop [--data-dir PATH] [--open-library] \
      [--measure-open RUNS | --measure-form RUNS | --measure-palette RUNS] [--budget-ms MS] \
-     [--check-service]";
+     [--check-service [--skip-server-check]]";
 
 /// How long `--check-service` waits for the service to answer.
 const CHECK_WAIT: std::time::Duration = std::time::Duration::from_mins(1);
@@ -54,6 +58,7 @@ struct Args {
     budget_ms: Option<f64>,
     open_library: bool,
     check_service: bool,
+    skip_server_check: bool,
 }
 
 fn parse(args: impl Iterator<Item = OsString>) -> Result<Option<Args>, String> {
@@ -65,6 +70,7 @@ fn parse(args: impl Iterator<Item = OsString>) -> Result<Option<Args>, String> {
         budget_ms: None,
         open_library: false,
         check_service: false,
+        skip_server_check: false,
     };
     let mut args = args.peekable();
     while let Some(arg) = args.next() {
@@ -77,6 +83,7 @@ fn parse(args: impl Iterator<Item = OsString>) -> Result<Option<Args>, String> {
             Some("--data-dir") => out.data_dir = Some(PathBuf::from(value("--data-dir")?)),
             Some("--open-library") => out.open_library = true,
             Some("--check-service") => out.check_service = true,
+            Some("--skip-server-check") => out.skip_server_check = true,
             Some("--measure-open") => {
                 let runs = value("--measure-open")?
                     .parse::<usize>()
@@ -144,11 +151,16 @@ fn usage_error(message: &str) -> ExitCode {
 /// `--check-service` (`iamb_desktop::check`): exits 0 when the service of the data root
 /// accepts this executable as the UI host, 1 otherwise; says which on standard output and in
 /// the log. No window, no instance lock.
-fn check_service(dirs: &DataDirs, log: &Logger) -> ExitCode {
+fn check_service(dirs: &DataDirs, log: &Logger, skip_server_check: bool) -> ExitCode {
+    let policy = if skip_server_check {
+        iamb_platform::PeerPolicy::SameUser
+    } else {
+        iamb_platform::PeerPolicy::for_build()
+    };
     match iamb_desktop::check::check_service(
         iamb_ipc::native_endpoint().as_ref(),
         &dirs.service_endpoint(),
-        iamb_platform::PeerPolicy::for_build(),
+        policy,
         CHECK_WAIT,
     ) {
         Ok(status) => {
@@ -181,6 +193,9 @@ fn quit(dirs: &DataDirs, log: &Logger) -> ExitCode {
 fn main() -> ExitCode {
     // First, before any other thread exists: no OS crash dump of this process's memory.
     let hardening = crash::harden_process();
+    // Next, from the running code, before anything could replace the file it came from (the
+    // installed-binary check; the strict review of finding 11, finding 1).
+    let signing = iamb_ipc::read_own_signing();
     let args = match parse(std::env::args_os().skip(1)) {
         Ok(Some(args)) => args,
         Ok(None) => return ExitCode::SUCCESS,
@@ -192,7 +207,7 @@ fn main() -> ExitCode {
     };
     let log = Arc::new(Logger::open(&dirs.logs(), crash::PROCESS));
     if args.check_service {
-        return check_service(&dirs, &log);
+        return check_service(&dirs, &log, args.skip_server_check);
     }
     crash::install_panic_hook(&log, &dirs.logs());
     if hardening.complete() {
@@ -205,6 +220,7 @@ fn main() -> ExitCode {
         iamb_desktop::VERSION,
         std::process::id()
     ));
+    log.info(format_args!("installed-binary check: {signing}"));
     let _instance = match dirs.take_instance_lock() {
         Ok(Some(lock)) => lock,
         Ok(None) => {
