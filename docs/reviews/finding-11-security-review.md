@@ -339,3 +339,95 @@ What still could not be checked here: every call into the Security framework and
 APIs (in particular that `SecCodeCopySigningInformation` describes the dynamic code object it
 is given, and what `GetProcessTimes` and `SHGetKnownFolderPath` return on a redirected profile),
 and the smoke scripts' new steps, which run in the installers workflow only.
+
+## 6. Re-verification
+
+Date: 2026-11-27 · Commit reviewed: `2a58a18` ("Close the strict review's findings on the
+installed-binary check") · By the reviewer of sections 1 to 4, not the author of the fix · Same
+limits: run on Linux only (the ten unit tests of `installation.rs` pass; a second scratch test
+of its pure functions, kept outside the tree); the two endpoints, the workflow and the smoke
+scripts were read, not run.
+
+### 6.1 Verdict
+
+Both medium findings are closed as written, and the fixes brought no new medium or high
+problem. Two things keep this short of "done": nothing of it has run on macOS or Windows yet
+(section 5 says the same), and one kind of signed Windows build still has no compiled-in signer.
+
+### 6.2 The findings
+
+| # | Now | Evidence |
+| --- | --- | --- |
+| M1, "signed" read lazily from disk; an error meant "unsigned" | **Closed** for builds with a compiled-in signer and for every error case; **partly** for Windows builds signed through `WINDOWS_SIGN_COMMAND` (6.3, a) | Reading: `pinned` returns `Signed(pin)` without asking the system (`installation.rs:352-365`), so such a build demands its signer of every peer whatever happens to its files. Without a pin the state is read once, first in `main` of the service and the UI host (`crates/iamb-service/src/main.rs:150`, `apps/desktop/src-tauri/src/main.rs:198`), and there are three states; `trusted(…, Unknown, …)` is `false` for every input (run: all four combinations). Run: a malformed pin gives "could not tell", not "unsigned"; a Windows verification that fails for distrust or expiry gives "could not tell"; only "no signature at all" gives "unsigned" |
+| M2, the smoke tests could not tell a broken service-side check | **Closed** as written; not run yet | Reading: the copy runs with `--skip-server-check`, so the client refuses nothing, and both scripts require the worker's log to gain `rejected a client: the peer is not the installed Iamb binary` (the text is `PeerRejection::UntrustedBinary`'s, `crates/iamb-platform/src/endpoint.rs:123`) and to hold none after the installed UI host connected. A signed macOS run replaces `iamb-desktop` in place with an ad hoc re-signed copy and requires the same refusal. The same case on Windows is not exercised, and the script says so. `docs/architecture.md` now reads "closed for unsigned builds; written, and not yet exercised, for signed ones" |
+| L3, the macOS smoke test deleted the real data root | **Closed** | `macos.sh:34-35` fails at the start when the data root exists, before anything is started |
+| L4, Windows: the file, not the image; the process found by its id | **Partly**, and the rest is stated | The process handle is held while the peer is examined and the file identities are compared. The creation time is compared with the moment the server noticed the connection (`endpoint.rs:913`), not with the moment the client connected, so an id reused in between is still not seen; the module docs say "created before it connected", which is a little more than the code does. 6.3, b |
+| L5, members that do not ship | **Closed** | Run: `iamb` and `iamb-sync` are no members on either system; two members each |
+| L6, the installation found from an environment variable's text | **Closed** by reading | `SHGetKnownFolderPath(FOLDERID_LocalAppData)` joined with `Iamb` and made canonical, compared with the canonical own directory; the peer's canonical path is compared with the member's. Not run on a redirected profile |
+| L7, Unicode folding | **Closed** | Run: a folder whose `k` is the Kelvin sign is no member; ASCII case still folds |
+| L8, the macOS "link" and "same file" wording | **Closed** | The module docs and §6.1 now say what is compared: the path the system reports and the file found at the member's path |
+| L9, the bundle path compared as text | **Closed** | Run: a trailing separator, a doubled one and a `.` agree with the member |
+
+### 6.3 The three points asked about, and what is new
+
+**The build-time pins (`.github/workflows/installers.yml`).** macOS: `IAMB_SIGNER_TEAM` is set
+from `APPLE_TEAM_ID` for the helper's build and for the app's build, only in the Developer ID
+mode. Windows: `IAMB_SIGNER_THUMBPRINT` is taken from the imported certificate itself and
+written to the job's environment before the service and the installer are built (the service's
+build step was moved after it). Both are read with `option_env!`, which the compiler records,
+so a cached unpinned build is not reused.
+
+- a. **Low: a Windows build signed through `WINDOWS_SIGN_COMMAND` has no pin.** The thumbprint
+  is written only in the `certificate` mode (`installers.yml:217`); `docs/release.md` says so.
+  Such a build reads its own signature at its start, which closes every error case, but it
+  still becomes "unsigned" when its own file has no signature. A process of the user that
+  strips the Authenticode signature from the installed `iamb-service.exe` (the code stays the
+  same and runs) and replaces `iamb-desktop.exe` gets the path check at the next start; a
+  pinned build would still demand the signer. Signing through a service is the usual way to
+  hold a certificate today, so this is likely to be the mode that ships. Fix: require the
+  certificate's thumbprint as a repository variable in that mode and fail the job without it.
+- **The macOS pin is the notarization team, not read from the signing identity.** If the two
+  ever differ, every peer is refused; it fails closed and the signed smoke run shows it. On a
+  signed run, also assert the line `installed-binary check: signed by <signer>` in the logs
+  against the installer's actual signer, on both systems; today a signed run without the pin
+  would pass.
+
+**The "could not tell" state.** Sound in the pure part (above). Two notes on how the macOS
+endpoint fills it for a build without a pin (`endpoint.rs:267-296`), both by reading:
+
+- The team identifier is asked of the running code object, but the signing-information call
+  describes the code on disk for anything except the dynamic flags; the comment says otherwise.
+  It does no harm as written, because validity is checked first on the running code and the
+  team is then confirmed by a requirement checked against the running code.
+- c. **Low: "unsigned" is taken from the validity check's `errSecCSUnsigned`**, which also
+  looks at the file on disk. A file swapped for an unsigned one in the first moments after the
+  worker starts (the restart request gives the moment) may give that answer for a signed
+  process. Only for a build without a pin, and the window is now the start of `main`. Take
+  "unsigned" from the kernel's code-signing flags of the process instead.
+
+**`--skip-server-check`.** It cannot weaken a production client. It is read in one place, the
+`--check-service` branch (`apps/desktop/src-tauri/src/main.rs:154-159`, `:210`); the UI host's
+own connection always uses the build's policy. With it the genuine UI host sends one hello and
+one `GetStatus` to whatever serves the data root it was given, and receives a status: nothing
+of the user's leaves, and towards the real service it is the installed UI host doing what it
+may do anyway. Two small things: the flag is accepted without `--check-service` and then
+ignored (make that a usage error), and the version string of a server that was not checked is
+printed and written to the log as it comes (drop control characters).
+
+**New with the fixes.**
+
+- b. **Low: the creation-time test compares wall-clock times** (`endpoint.rs:913`,
+  `installation.rs:427-429`). When the system clock is set back after the UI host started (a
+  time correction, a zone or date change by hand), the UI host's creation time is later than
+  "now" and the service refuses it as `Unidentified` until the clock passes that time. It fails
+  closed and the UI says "Iamb is not running"; restarting the UI host cures it. Log the reason
+  as its own line, and consider a tolerance of the size of ordinary corrections.
+- Finding 10's three notes are unchanged, as section 5 says.
+
+### 6.4 Not checked
+
+Everything that needs a Mac or Windows: the Security framework and Windows calls, the
+known-folder path on a redirected profile, the new smoke steps (they run in the installers
+workflow only), and any signed build. The scratch test covered `windows_members`,
+`member_for`, `member_for_code_path`, `trusted`, `pinned`, `classify_macos`,
+`classify_windows` and `created_before`.
