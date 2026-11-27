@@ -13,11 +13,13 @@
 //!    focus changes (`epoch`). An answer that came too late for an earlier question about the
 //!    same subject serves a report the watcher made again ([`Watching::again`]) if it arrived
 //!    at most a quarter of a second ago (`inspect`, "A late answer"), and only when the element
-//!    it describes is provided by the window's process or by the process of its focused
-//!    control's window (an embedded browser engine's); any other element is
+//!    it describes is provided by the window's process, by the process of its focused
+//!    control's window, or by a process that owns some other window inside it (an embedded
+//!    browser engine runs several processes, and the one that answers for the page need not own
+//!    the control the system names as focused); any other element is
 //!    `Unknown(NotInspectable)`. Process ancestry is not looked at: it cannot be read reliably
-//!    (a parent may have ended and its id been given to another process), so the two processes
-//!    are the ones the system names for the two windows.
+//!    (a parent may have ended and its id been given to another process), so the processes are
+//!    the ones the system names as owners of windows inside the window asked about.
 //! 5. The window must still be in front. If it is not, the answer just obtained may be about
 //!    another window and is thrown away: `Unknown(FocusMoved)`.
 //!
@@ -77,6 +79,9 @@ pub(crate) trait Desk {
     fn privilege(&self, pid: u32) -> Privilege;
     /// The control that has the keyboard focus in `front`.
     fn control(&self, front: Front) -> Control;
+    /// True when process `pid` owns a window inside `front` (a child window, at any depth):
+    /// a web view's engine process does, for the window it draws the page in.
+    fn has_window_in(&self, front: Front, pid: u32) -> bool;
 }
 
 /// What the running watcher tells a question (`None` to [`judge`] without one).
@@ -145,7 +150,11 @@ pub(crate) fn judge<D: Desk, S: ProbeSource>(
                 match inspector.observe(lateness, left) {
                     Answer::Observed(observation) => classify(kind, observation),
                     Answer::Late(observation) => {
-                        if provided_by(observation, front.pid, control.pid) {
+                        if provided_by(observation, |process| {
+                            process == front.pid
+                                || process == control.pid
+                                || desk.has_window_in(front, process)
+                        }) {
                             classify(kind, observation)
                         } else {
                             Judgement::passing(UnknownReason::NotInspectable)
@@ -163,12 +172,11 @@ pub(crate) fn judge<D: Desk, S: ProbeSource>(
     }
 }
 
-/// False when `observation` is an element provided by neither process (module docs, step 4).
-const fn provided_by(observation: Observation, window: u32, control: u32) -> bool {
+/// False when `observation` is an element provided by a process `known` does not accept, or
+/// by process 0 (module docs, step 4).
+fn provided_by(observation: Observation, known: impl Fn(u32) -> bool) -> bool {
     match observation {
-        Observation::Element { process, .. } => {
-            process != 0 && (process == window || process == control)
-        }
+        Observation::Element { process, .. } => process != 0 && known(process),
         Observation::NoElement | Observation::Failed => true,
     }
 }
@@ -210,6 +218,7 @@ mod tests {
             password,
             control_type,
             process,
+            detail: super::super::classify::Detail::NONE,
         }
     }
 
@@ -220,6 +229,8 @@ mod tests {
         privilege: Privilege,
         control: Cell<Control>,
         controls_read: Cell<u32>,
+        /// Processes that own windows inside `EDITOR`.
+        inner: Vec<u32>,
     }
 
     impl FakeDesk {
@@ -233,6 +244,7 @@ mod tests {
                 privilege: Privilege::NotHigher,
                 control: Cell::new(control),
                 controls_read: Cell::new(0),
+                inner: Vec::new(),
             }
         }
 
@@ -259,6 +271,10 @@ mod tests {
         fn control(&self, _front: Front) -> Control {
             self.controls_read.set(self.controls_read.get() + 1);
             self.control.get()
+        }
+
+        fn has_window_in(&self, _front: Front, pid: u32) -> bool {
+            self.inner.contains(&pid)
         }
     }
 
@@ -610,6 +626,26 @@ mod tests {
             );
             assert_eq!(source.0.asked(), 2, "{moved:?}");
         }
+    }
+
+    #[test]
+    fn a_late_answer_from_another_process_with_a_window_inside_is_believed() {
+        // The page's process of a web view need not be the one that owns the focused control:
+        // one that owns some window inside the window asked about is accepted.
+        let source = FakeSource::default();
+        let mut desk = FakeDesk::with(ENGINE);
+        desk.inner = vec![77];
+        let (inspector, woken) = late(&source, &desk, from(false, 50004, 77));
+        assert_eq!(
+            judge(
+                &desk,
+                &inspector,
+                &EDITOR.token(),
+                watching(3, true, &woken),
+                LONG
+            ),
+            Judgement::settled(FieldSecurity::Normal)
+        );
     }
 
     #[test]

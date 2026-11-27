@@ -14,11 +14,19 @@ mod support;
 
 use support::{Field, TestWindow, alone, eventually, skip};
 
-use super::classify::{ControlKind, Observation, control_type};
+use super::classify::{ControlKind, Detail, Framework, Observation, control_type};
 use super::inspect::Probe;
 use super::os::{self, SystemDesk};
 use super::secure::{Desk, Front, Privilege};
 use super::uia::Session;
+
+/// What UI Automation says besides the kind of a focused control of the test window: it has
+/// the focus, it is a window of its own (each control is), and it is a system control.
+const OWN_EDIT: Detail = Detail {
+    has_focus: true,
+    window_root: true,
+    framework: Framework::Win32,
+};
 
 /// The control type of a button (`UIA_ButtonControlTypeId`).
 const BUTTON: i32 = 50000;
@@ -60,6 +68,7 @@ fn ui_automation_tells_a_password_field_from_a_text_field() {
         password: false,
         control_type: control_type::EDIT,
         process: std::process::id(),
+        detail: OWN_EDIT,
     };
     assert_eq!(observed(&mut session, plain), plain);
 
@@ -70,6 +79,7 @@ fn ui_automation_tells_a_password_field_from_a_text_field() {
                 password: true,
                 control_type: control_type::EDIT,
                 process: std::process::id(),
+                detail: OWN_EDIT,
             },
         ),
         (
@@ -78,6 +88,7 @@ fn ui_automation_tells_a_password_field_from_a_text_field() {
                 password: false,
                 control_type: BUTTON,
                 process: std::process::id(),
+                detail: OWN_EDIT,
             },
         ),
         (Field::Plain, plain),

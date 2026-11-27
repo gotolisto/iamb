@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 
 use iamb_platform::{AppIdentity, PlatformError, Result};
 use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_ACCESS_DENIED, ERROR_INSUFFICIENT_BUFFER, GetLastError, HANDLE, HWND,
+    CloseHandle, ERROR_ACCESS_DENIED, ERROR_INSUFFICIENT_BUFFER, GetLastError, HANDLE, HWND, LPARAM,
 };
 use windows_sys::Win32::Security::{
     GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, TOKEN_MANDATORY_LABEL,
@@ -24,12 +24,13 @@ use windows_sys::Win32::System::Threading::{
 use windows_sys::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, DispatchMessageW, EVENT_OBJECT_FOCUS, EVENT_SYSTEM_FOREGROUND,
-    FindWindowExW, GA_ROOTOWNER, GUITHREADINFO, GWL_STYLE, GetAncestor, GetClassNameW,
-    GetForegroundWindow, GetGUIThreadInfo, GetMessageW, GetWindowLongW, GetWindowThreadProcessId,
-    IsIconic, IsWindow, KillTimer, MSG, PM_NOREMOVE, PeekMessageW, PostThreadMessageW,
-    RealGetWindowClassW, SW_RESTORE, SetForegroundWindow, SetTimer, ShowWindowAsync,
-    WINEVENT_OUTOFCONTEXT, WM_APP, WM_QUIT, WM_TIMER, WM_USER,
+    EnumChildWindows, FindWindowExW, GA_ROOTOWNER, GUITHREADINFO, GWL_STYLE, GetAncestor,
+    GetClassNameW, GetForegroundWindow, GetGUIThreadInfo, GetMessageW, GetWindowLongW,
+    GetWindowThreadProcessId, IsIconic, IsWindow, KillTimer, MSG, PM_NOREMOVE, PeekMessageW,
+    PostThreadMessageW, RealGetWindowClassW, SW_RESTORE, SetForegroundWindow, SetTimer,
+    ShowWindowAsync, WINEVENT_OUTOFCONTEXT, WM_APP, WM_QUIT, WM_TIMER, WM_USER,
 };
+use windows_sys::core::BOOL;
 
 use super::classify;
 use super::identity;
@@ -316,6 +317,37 @@ impl Desk for SystemDesk {
             pid: owner(control).map_or(0, |(_, pid)| pid),
             kind: classify::control_kind(&real_class(control), style),
         }
+    }
+
+    fn has_window_in(&self, front: Front, pid: u32) -> bool {
+        /// What the enumeration looks for, and whether it found it.
+        struct Search {
+            pid: u32,
+            found: bool,
+        }
+        unsafe extern "system" fn visit(window: HWND, search: LPARAM) -> BOOL {
+            // SAFETY: `search` is the `Search` passed below, alive for the whole enumeration,
+            // and only this callback uses it, on this thread.
+            let search = unsafe { &mut *(search as *mut Search) };
+            if owner(window).is_some_and(|(_, pid)| pid == search.pid) {
+                search.found = true;
+                // Stop: found.
+                return 0;
+            }
+            1
+        }
+        let mut search = Search { pid, found: false };
+        // SAFETY: the callback is a function of this crate with the right signature, and the
+        // parameter is a pointer to `search`, which outlives the call. The enumeration walks
+        // the system's list of windows and sends none of them a message.
+        unsafe {
+            EnumChildWindows(
+                handle(front.window),
+                Some(visit),
+                (&raw mut search) as LPARAM,
+            )
+        };
+        search.found
     }
 }
 

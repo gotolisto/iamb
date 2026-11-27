@@ -79,7 +79,7 @@ pub use endpoint::read_own_signing;
 #[cfg(windows)]
 pub use files::{restrict_to_current_user, windows_directory};
 #[cfg(windows)]
-pub use focus::window_class;
+pub use focus::{diagnose_focus, window_class};
 #[cfg(windows)]
 pub use hardening::harden_process;
 

@@ -8,7 +8,16 @@
 //! ```text
 //! iamb-service --supervise [--ui-host PATH | --no-ui-host] [--data-dir PATH] [--platform native|mock]
 //! iamb-service [--worker] [--data-dir PATH] [--platform native|mock] [--heartbeat-stdout]
+//! iamb-service --diagnose-focus SECONDS [--data-dir PATH]
 //! ```
+//!
+//! `--diagnose-focus SECONDS` (Windows) watches the focus for that long, from 1 to 600 seconds,
+//! and writes for each focus change what the secure-field check saw and decided, to standard
+//! output and to `logs/focus-diagnosis-<unix ms>.txt` in the data root
+//! (`iamb_platform_windows::diagnose_focus`, which says what a line holds: no text, no window
+//! title). It runs beside the running service and changes nothing: no keyboard hook, no key
+//! sent, no endpoint. A release build has no console window, so standard output is seen only
+//! when it is redirected, as PowerShell does with `| Out-Host`; the file is written either way.
 //!
 //! The supervisor also starts the UI host (`iamb-desktop`, installed beside it) and restarts it
 //! after an abnormal exit (`iamb_service::supervisor`, "The UI host"); `--no-ui-host` starts none
@@ -64,7 +73,10 @@ use iamb_service::supervisor::{self, SupervisorConfig};
 use iamb_service::worker::{ExitReason, Worker, WorkerConfig};
 use iamb_service::{EXIT_RESTART, VERSION};
 
-const USAGE: &str = "usage: iamb-service [--supervise [--ui-host PATH | --no-ui-host] | --worker] [--data-dir PATH] [--platform native|mock] [--heartbeat-stdout]";
+const USAGE: &str = "usage: iamb-service [--supervise [--ui-host PATH | --no-ui-host] | --worker | --diagnose-focus SECONDS] [--data-dir PATH] [--platform native|mock] [--heartbeat-stdout]";
+
+/// The longest `--diagnose-focus` run, in seconds.
+const DIAGNOSE_MAX_SECONDS: u64 = 600;
 
 /// What `--ui-host` and `--no-ui-host` asked for.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -86,6 +98,8 @@ struct Args {
     data_dir: Option<PathBuf>,
     platform: Option<PlatformChoice>,
     heartbeat_stdout: bool,
+    /// `--diagnose-focus SECONDS`.
+    diagnose_focus: Option<u64>,
 }
 
 fn parse(args: impl Iterator<Item = OsString>) -> Result<Option<Args>, String> {
@@ -97,6 +111,14 @@ fn parse(args: impl Iterator<Item = OsString>) -> Result<Option<Args>, String> {
             Some("--worker") => out.supervise = Some(false),
             Some(psn) if psn.starts_with("-psn_") => {}
             Some("--heartbeat-stdout") => out.heartbeat_stdout = true,
+            Some("--diagnose-focus") => {
+                let seconds = args
+                    .next()
+                    .and_then(|v| v.to_str().and_then(|v| v.parse::<u64>().ok()))
+                    .filter(|s| (1..=DIAGNOSE_MAX_SECONDS).contains(s))
+                    .ok_or("--diagnose-focus needs a number of seconds from 1 to 600")?;
+                out.diagnose_focus = Some(seconds);
+            }
             Some("--no-ui-host") => out.ui_host = UiHostChoice::None,
             Some("--ui-host") => {
                 out.ui_host =
@@ -126,6 +148,41 @@ fn parse(args: impl Iterator<Item = OsString>) -> Result<Option<Args>, String> {
         }
     }
     Ok(Some(out))
+}
+
+/// `--diagnose-focus SECONDS` (module docs).
+#[cfg(windows)]
+fn diagnose_focus(dirs: &DataDirs, seconds: u64) -> ExitCode {
+    let logs = dirs.logs();
+    if let Err(e) = std::fs::create_dir_all(&logs) {
+        return fail(&format!("cannot create the logs folder: {e}"));
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis());
+    let path = logs.join(format!("focus-diagnosis-{stamp}.txt"));
+    let mut file = match std::fs::File::create_new(&path) {
+        Ok(file) => file,
+        Err(e) => return fail(&format!("cannot create {}: {e}", path.display())),
+    };
+    say(&format!("writing to {}", path.display()));
+    let mut out = |line: &str| {
+        say(line);
+        let _ = writeln!(file, "{line}");
+    };
+    match iamb_platform_windows::diagnose_focus(std::time::Duration::from_secs(seconds), &mut out) {
+        Ok(()) => {
+            say(&format!("done; the lines are in {}", path.display()));
+            ExitCode::SUCCESS
+        }
+        Err(e) => fail(&format!("the focus diagnosis could not run: {e}")),
+    }
+}
+
+/// `--diagnose-focus` exists on Windows only.
+#[cfg(not(windows))]
+fn diagnose_focus(_dirs: &DataDirs, _seconds: u64) -> ExitCode {
+    fail("--diagnose-focus is for Windows")
 }
 
 fn say(line: &str) {
@@ -193,6 +250,9 @@ fn main() -> ExitCode {
         return fail(&format!(
             "cannot make the data root private to this user: {e}"
         ));
+    }
+    if let Some(seconds) = args.diagnose_focus {
+        return diagnose_focus(&dirs, seconds);
     }
     if args.supervise.unwrap_or_else(launched_as_login_item) {
         return supervise(dirs, choice, &args.ui_host, &hardening);
@@ -534,6 +594,37 @@ mod tests {
     use super::*;
 
     const HELPER: &str = "/Applications/Iamb.app/Contents/Library/LoginItems/Iamb Service.app/Contents/MacOS/iamb-service";
+
+    fn parsed(args: &[&str]) -> Result<Option<Args>, String> {
+        parse(args.iter().map(OsString::from))
+    }
+
+    #[test]
+    fn the_focus_diagnosis_takes_a_number_of_seconds() {
+        let args = parsed(&["--diagnose-focus", "30"])
+            .expect("parses")
+            .expect("runs");
+        assert_eq!(args.diagnose_focus, Some(30));
+        assert_eq!(
+            parsed(&["--diagnose-focus", "600"])
+                .expect("parses")
+                .expect("runs")
+                .diagnose_focus,
+            Some(600)
+        );
+        for bad in [
+            &["--diagnose-focus"][..],
+            &["--diagnose-focus", "0"],
+            &["--diagnose-focus", "601"],
+            &["--diagnose-focus", "ten"],
+        ] {
+            assert!(parsed(bad).is_err(), "{bad:?}");
+        }
+        assert_eq!(
+            parsed(&[]).expect("parses").expect("runs").diagnose_focus,
+            None
+        );
+    }
 
     #[test]
     fn the_ui_host_switch_is_refused_by_a_release_build_on_either_platform() {

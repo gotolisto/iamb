@@ -24,6 +24,19 @@ use crate::error::Result;
 /// How long the focus thread waits for the secure-field answer (architecture §3.1).
 pub const SECURE_STATE_TIMEOUT: Duration = Duration::from_millis(100);
 
+/// How long the focus thread waits for the answer about a window other than the one it judged
+/// last: the first look after the focus moved to another window.
+///
+/// That look is the slowest one: the first question into a process sets up the accessibility
+/// connection, and a browser engine switches its accessibility on. The engine is suspended
+/// until the verdict whatever the wait, so a longer wait costs nothing in safety; what it costs
+/// is that keys typed in the first 300 ms after a window switch are not matched (they reach the
+/// application as typed; an abbreviation typed in that time does not expand, as under an
+/// unknown verdict), and that a further focus change waits that long behind it, still with the
+/// engine suspended. Looks again, and moves between fields of the same window, keep
+/// [`SECURE_STATE_TIMEOUT`].
+pub const FIRST_LOOK_TIMEOUT: Duration = Duration::from_millis(300);
+
 /// The longest [`FocusInspector::restore_focus`] may take before it reports
 /// [`Timeout`](crate::PlatformError::Timeout).
 pub const RESTORE_FOCUS_TIMEOUT: Duration = Duration::from_millis(500);

@@ -21,6 +21,20 @@
 //! shortly (`rules::Settle`). An element of any other kind comes out of the built tree, and
 //! its answer is taken.
 //!
+//! # A control without a kind
+//!
+//! Before its tree exists an engine shows two things as focused: its window (a pane, or the
+//! window the system makes up for a window that says nothing) and the root of the page (a
+//! document). Neither is ever anything else, so those stay not believed. A **custom** element,
+//! a control the engine gives no standard kind, is not one of them: it is a node of the page,
+//! and the page's nodes exist only in the built tree. It is believed when the engine also says
+//! that it has the keyboard focus (`HasKeyboardFocus`) and that it is not the root of a window
+//! (its `NativeWindowHandle` is 0: a window's own element names its window), facts the engine
+//! gives for a node of its tree. A custom element without them stays not believed. Editors of
+//! web pages that give their editable region an unusual role are such elements; a password
+//! field is never one: an `<input type="password">` reports `IsPassword`, whatever its kind,
+//! and that is `Secure` before any kind is looked at.
+//!
 //! Everywhere else the element is believed. An application that draws its own fields and
 //! tells the system nothing about them (see the limits in the module docs of `focus`) cannot
 //! be told apart from an editor that does the same, and refusing all of them would stop Iamb
@@ -62,9 +76,67 @@ pub(crate) enum ControlKind {
     Other,
 }
 
+/// The UI framework an element says it comes from (`FrameworkId`), as one of the names the
+/// system's frameworks use. Only for `--diagnose-focus`: the decision does not use it. The
+/// name itself is not kept, so no text of the application's can be in it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Framework {
+    /// A browser engine (`Chrome`).
+    Chrome,
+    /// The newer Windows toolkits (`XAML`, `DirectUI`).
+    Xaml,
+    /// System controls (`Win32`).
+    Win32,
+    /// `WPF`.
+    Wpf,
+    /// `WinForm`.
+    WinForm,
+    /// `Qt`.
+    Qt,
+    /// Another name, or none.
+    Other,
+}
+
+impl Framework {
+    /// The framework a `FrameworkId` names.
+    pub(crate) fn named(name: &str) -> Self {
+        match name {
+            "Chrome" => Self::Chrome,
+            "XAML" | "DirectUI" => Self::Xaml,
+            "Win32" => Self::Win32,
+            "WPF" => Self::Wpf,
+            "WinForm" => Self::WinForm,
+            "Qt" => Self::Qt,
+            _ => Self::Other,
+        }
+    }
+}
+
+/// What the engine says about an element besides its kind: whether it comes from a built
+/// tree (module docs, "A control without a kind").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Detail {
+    /// `HasKeyboardFocus`.
+    pub(crate) has_focus: bool,
+    /// `NativeWindowHandle` is not 0: the element is a window's own.
+    pub(crate) window_root: bool,
+    /// `FrameworkId`.
+    pub(crate) framework: Framework,
+}
+
+impl Detail {
+    /// Nothing said: no focus, no window, no framework.
+    #[cfg(test)]
+    pub(crate) const NONE: Self = Self {
+        has_focus: false,
+        window_root: false,
+        framework: Framework::Other,
+    };
+}
+
 /// What UI Automation said about the focused element. By construction this holds no name,
-/// no value and no text: two facts about the element's kind and the process that provides it,
-/// nothing of its content.
+/// no value and no text: facts about the element's kind, its state and the process that
+/// provides it, nothing of its content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Observation {
     /// There is a focused element.
@@ -76,6 +148,8 @@ pub(crate) enum Observation {
         /// The process that provides it (`ProcessId`): which window the answer is about, for a
         /// late answer (`inspect`).
         process: u32,
+        /// Its focus, whether it is a window's own, its framework.
+        detail: Detail,
     },
     /// The system named no focused element.
     NoElement,
@@ -146,6 +220,12 @@ pub(crate) const fn is_shell(control_type: i32) -> bool {
     )
 }
 
+/// True for a custom element the engine describes as a node of its built tree (module docs,
+/// "A control without a kind").
+const fn is_built_custom(control_type: i32, detail: Detail) -> bool {
+    control_type == control_type::CUSTOM && detail.has_focus && !detail.window_root
+}
+
 /// What `observation`, made in a control of kind `kind`, says about the field.
 pub(crate) const fn classify(kind: ControlKind, observation: Observation) -> Judgement {
     match observation {
@@ -156,9 +236,13 @@ pub(crate) const fn classify(kind: ControlKind, observation: Observation) -> Jud
         Observation::Element {
             password: false,
             control_type,
+            detail,
             ..
         } => {
-            if matches!(kind, ControlKind::WebEngine) && is_shell(control_type) {
+            if matches!(kind, ControlKind::WebEngine)
+                && is_shell(control_type)
+                && !is_built_custom(control_type, detail)
+            {
                 Judgement::passing(UnknownReason::NotInspectable)
             } else {
                 Judgement::settled(FieldSecurity::Normal)
@@ -172,11 +256,87 @@ mod tests {
     use super::*;
 
     const fn element(password: bool, control_type: i32) -> Observation {
+        with(password, control_type, Detail::NONE)
+    }
+
+    const fn with(password: bool, control_type: i32, detail: Detail) -> Observation {
         Observation::Element {
             password,
             control_type,
             process: 40,
+            detail,
         }
+    }
+
+    #[test]
+    fn a_custom_element_of_a_built_page_is_believed() {
+        // The real-machine data of a chat application on the system's web view: an editable
+        // region with a kind the engine reports as custom, focused, inside the page.
+        let node = Detail {
+            has_focus: true,
+            window_root: false,
+            framework: Framework::Chrome,
+        };
+        assert_eq!(
+            classify(
+                ControlKind::WebEngine,
+                with(false, control_type::CUSTOM, node)
+            ),
+            Judgement::settled(FieldSecurity::Normal)
+        );
+        // And a password field is secure whatever its kind and detail.
+        assert_eq!(
+            classify(
+                ControlKind::WebEngine,
+                with(true, control_type::CUSTOM, node)
+            ),
+            Judgement::settled(FieldSecurity::Secure)
+        );
+        // Without focus, or as a window's own element: not believed.
+        for detail in [
+            Detail {
+                has_focus: false,
+                ..node
+            },
+            Detail {
+                window_root: true,
+                ..node
+            },
+            Detail::NONE,
+        ] {
+            assert_eq!(
+                classify(
+                    ControlKind::WebEngine,
+                    with(false, control_type::CUSTOM, detail)
+                ),
+                Judgement::passing(UnknownReason::NotInspectable),
+                "{detail:?}"
+            );
+        }
+        // The window and the page root are never believed, whatever they say.
+        for control_type in [
+            control_type::PANE,
+            control_type::WINDOW,
+            control_type::DOCUMENT,
+        ] {
+            assert_eq!(
+                classify(ControlKind::WebEngine, with(false, control_type, node)),
+                Judgement::passing(UnknownReason::NotInspectable),
+                "{control_type}"
+            );
+        }
+    }
+
+    #[test]
+    fn framework_names_are_kept_as_kinds_only() {
+        assert_eq!(Framework::named("Chrome"), Framework::Chrome);
+        assert_eq!(Framework::named("XAML"), Framework::Xaml);
+        assert_eq!(Framework::named("DirectUI"), Framework::Xaml);
+        assert_eq!(Framework::named("Qt"), Framework::Qt);
+        assert_eq!(
+            Framework::named("anything a provider says"),
+            Framework::Other
+        );
     }
 
     #[test]
