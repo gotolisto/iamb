@@ -372,6 +372,9 @@ mod tests {
         );
     }
 
+    // macOS paths: a Windows host joins them with its own separator, and this check only runs
+    // on macOS.
+    #[cfg(not(windows))]
     #[test]
     fn a_peer_is_a_member_only_at_its_own_path_and_without_a_link() {
         let members = macos_members(&helper_exe(APP)).expect("installed");
