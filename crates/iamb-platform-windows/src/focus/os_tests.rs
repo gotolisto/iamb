@@ -42,7 +42,7 @@ fn open(field: Field) -> Option<TestWindow> {
 fn observed(session: &mut Session, wanted: Observation) -> Observation {
     let mut last = Observation::Failed;
     eventually(|| {
-        last = session.observe();
+        last = session.observe().observation;
         (last == wanted).then_some(())
     });
     last

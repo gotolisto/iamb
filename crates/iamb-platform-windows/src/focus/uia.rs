@@ -25,6 +25,7 @@
 use std::ffi::c_void;
 use std::mem::offset_of;
 use std::ptr::{self, NonNull};
+use std::time::Instant;
 
 use windows_sys::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
@@ -33,7 +34,7 @@ use windows_sys::Win32::UI::Accessibility::CUIAutomation;
 use windows_sys::core::GUID;
 
 use super::classify::Observation;
-use super::inspect::{Probe, ProbeSource};
+use super::inspect::{Probe, ProbeSource, Probed};
 
 /// The class of the automation object (`CLSID_CUIAutomation`).
 static CLASS_AUTOMATION: GUID = CUIAutomation;
@@ -238,17 +239,25 @@ impl Drop for Session {
     }
 }
 
-impl Probe for Session {
-    fn observe(&mut self) -> Observation {
+impl Session {
+    /// The focused element's two facts and its process, and when the element was obtained.
+    fn probe(&self) -> Probed {
+        let at_once = |observation| Probed {
+            observation,
+            chosen: Instant::now(),
+        };
         let Some(automation) = &self.automation else {
-            return Observation::Failed;
+            return at_once(Observation::Failed);
         };
         let element = match automation.focused_element() {
             Ok(Some(element)) => element,
-            Ok(None) => return Observation::NoElement,
-            Err(()) => return Observation::Failed,
+            Ok(None) => return at_once(Observation::NoElement),
+            Err(()) => return at_once(Observation::Failed),
         };
-        match (
+        // The element is chosen here, by the first of the four calls; the three that follow
+        // read its properties, each a call into the application (`inspect`, "A late answer").
+        let chosen = Instant::now();
+        let observation = match (
             element.is_password(),
             element.control_type(),
             element.process(),
@@ -259,7 +268,17 @@ impl Probe for Session {
                 process,
             },
             _ => Observation::Failed,
+        };
+        Probed {
+            observation,
+            chosen,
         }
+    }
+}
+
+impl Probe for Session {
+    fn observe(&mut self) -> Probed {
+        self.probe()
     }
 }
 

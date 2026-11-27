@@ -31,14 +31,18 @@
 //! - **its arrival wakes the watcher** (the question's [`Wake`]), which reports the window again
 //!   at once, so the answer is used when it is new, not at the next pause;
 //! - the next question about the **same subject** that **may take a late answer** (only a report
-//!   the watcher made again, not one of a change: the caller decides) takes it if it arrived at
-//!   most [`LATE_ANSWER_FRESH`] ago, or waits for it if it has not arrived yet. One that has waited
-//!   longer is dropped and the application asked afresh.
+//!   the watcher made again, not one of a change: the caller decides) takes it if its element
+//!   was chosen at most [`LATE_ANSWER_FRESH`] ago, or waits for it if it has not arrived yet.
+//!   One that is older is dropped and the application asked afresh.
 //!
 //! A late answer is the field **as it was when the application answered**, not what a call made
 //! at the later question would say: a field that turned into a password field in between, with
 //! no focus change, is not in it. The freshness bound keeps "in between" to a quarter of a
-//! second, the window of every answer's own race with such a change. A question about another
+//! second, the window of every answer's own race with such a change. It is counted from the
+//! moment the probe **obtained the focused element** ([`Probed::chosen`]), not from when its
+//! last property came back: the element is chosen by the first call into the application, and
+//! for an application where every call is slow the property calls after it can take seconds,
+//! during which the focus may move to another element of the page without an event. A question about another
 //! window or control, after another focus change, or that may not take one, drops it: the late
 //! answer then goes nowhere, as before. The caller also checks which process provided the
 //! element ([`Answer::Late`]).
@@ -54,13 +58,24 @@ use super::classify::{ControlKind, Observation};
 /// for an application.
 pub(crate) const MAX_WORKERS: usize = 4;
 
-/// How long after its arrival a late answer may still serve a question (module docs).
+/// How long after its element was chosen a late answer may still serve a question (module
+/// docs).
 pub(crate) const LATE_ANSWER_FRESH: Duration = Duration::from_millis(250);
+
+/// What a probe saw, and when it chose the element it describes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Probed {
+    /// What the focused element is.
+    pub(crate) observation: Observation,
+    /// When the system named the focused element (for no element or a failed call: when the
+    /// probe returned). The freshness of a late answer is counted from here (module docs).
+    pub(crate) chosen: Instant,
+}
 
 /// Asks the system about the focused element. Used on the thread that opened it.
 pub(crate) trait Probe {
     /// What the focused element is. May take as long as the application in front likes.
-    fn observe(&mut self) -> Observation;
+    fn observe(&mut self) -> Probed;
 }
 
 /// Opens probes.
@@ -99,7 +114,7 @@ struct Mailbox {
 
 #[derive(Default)]
 struct Mail {
-    /// The answer and when it arrived.
+    /// The answer and when its element was chosen.
     answer: Option<(Observation, Instant)>,
     /// The thread dropped the question (skipped it, or ended).
     closed: bool,
@@ -120,10 +135,10 @@ impl Mailbox {
     }
 
     /// The inspection thread's side: the answer, then the wake (outside the lock).
-    fn deliver(&self, observation: Observation) {
+    fn deliver(&self, probed: Probed) {
         let wake = {
             let mut mail = self.mail();
-            mail.answer = Some((observation, Instant::now()));
+            mail.answer = Some((probed.observation, probed.chosen));
             mail.wake.take()
         };
         self.arrived.notify_all();
@@ -323,7 +338,7 @@ impl<S: ProbeSource> Inspector<S> {
             && Some(late.subject) == subject
         {
             match late.mailbox.wait(deadline) {
-                Waited::Arrived(observation, at) if at.elapsed() <= self.late_fresh => {
+                Waited::Arrived(observation, chosen) if chosen.elapsed() <= self.late_fresh => {
                     return Answer::Late(observation);
                 }
                 // Too old: the field may have changed since. Ask afresh.
@@ -480,14 +495,26 @@ pub(crate) mod fake {
     use std::sync::mpsc::{Receiver, Sender};
     use std::sync::{Arc, Mutex, PoisonError};
 
-    use super::{Observation, Probe, ProbeSource};
+    use std::time::Instant;
+
+    use super::{Observation, Probe, ProbeSource, Probed};
 
     /// What the probe does when asked.
     pub(crate) enum Step {
         /// Answers at once.
         Answer(Observation),
-        /// Waits until the test lets go (or drops the sender), then answers.
+        /// Waits until the test lets go (or drops the sender), then chooses the element and
+        /// answers: an application slow before it names its focused element.
         Hang(Receiver<()>, Observation),
+        /// Chooses the element at once, then waits until the test lets go before it answers:
+        /// an application slow to give the element's properties.
+        ChooseThenHang(Receiver<()>, Observation),
+    }
+
+    /// A step that chooses the element at once and answers when the test lets go.
+    pub(crate) fn choose_then_hang(then: Observation) -> (Step, Sender<()>) {
+        let (release, released) = std::sync::mpsc::channel();
+        (Step::ChooseThenHang(released, then), release)
     }
 
     /// A hanging step and the way to end it.
@@ -537,7 +564,7 @@ pub(crate) mod fake {
     pub(crate) struct FakeProbe(Arc<Script>);
 
     impl Probe for FakeProbe {
-        fn observe(&mut self) -> Observation {
+        fn observe(&mut self) -> Probed {
             *self.0.asked.lock().unwrap_or_else(PoisonError::into_inner) += 1;
             let step = self
                 .0
@@ -545,13 +572,25 @@ pub(crate) mod fake {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .pop_front();
+            let now = |observation| Probed {
+                observation,
+                chosen: Instant::now(),
+            };
             match step {
-                Some(Step::Answer(observation)) => observation,
+                Some(Step::Answer(observation)) => now(observation),
                 Some(Step::Hang(released, observation)) => {
                     let _ = released.recv();
-                    observation
+                    now(observation)
                 }
-                None => Observation::Failed,
+                Some(Step::ChooseThenHang(released, observation)) => {
+                    let chosen = Instant::now();
+                    let _ = released.recv();
+                    Probed {
+                        observation,
+                        chosen,
+                    }
+                }
+                None => now(Observation::Failed),
             }
         }
     }
@@ -849,7 +888,8 @@ mod tests {
         );
         release.send(()).expect("the thread still waits");
         wakes.recv_timeout(LONG).expect("woken");
-        // The report comes after the bound, counted from the arrival.
+        // The report comes after the bound, counted from when the element was chosen (here, at
+        // the arrival).
         std::thread::sleep(SHORT * 3);
         assert_eq!(
             inspector.observe(again(SUBJECT, &woken), LONG),
@@ -859,7 +899,36 @@ mod tests {
     }
 
     #[test]
-    fn the_bound_counts_from_the_arrival_not_from_the_question() {
+    fn the_bound_counts_from_when_the_element_was_chosen() {
+        // The re-verification's 6.3 a: the application named its focused element at once and
+        // then took long over the element's properties. The answer arrives just now, but the
+        // element is as old as the wait: not taken, the application is asked afresh.
+        let source = FakeSource::default();
+        let (step, release) = super::fake::choose_then_hang(PLAIN);
+        source.0.push(step);
+        source.0.push(Step::Answer(PASSWORD));
+        let inspector = Inspector::new(source.clone()).with_late_fresh(SHORT * 3);
+        inspector.wait_open();
+        let (woken, wakes) = mpsc::channel();
+        assert_eq!(
+            inspector.observe(first(SUBJECT, &woken), SHORT),
+            Answer::TimedOut
+        );
+        std::thread::sleep(SHORT * 4);
+        release.send(()).expect("the thread still waits");
+        wakes
+            .recv_timeout(LONG)
+            .expect("the arrival wakes the watcher");
+        // Taken at once after the arrival, so only the element's age can refuse it.
+        assert_eq!(
+            inspector.observe(again(SUBJECT, &woken), LONG),
+            Answer::Observed(PASSWORD)
+        );
+        assert_eq!(source.0.asked(), 2);
+    }
+
+    #[test]
+    fn the_bound_counts_from_the_choice_not_from_the_question() {
         let source = FakeSource::default();
         let (step, release) = hang(PLAIN);
         source.0.push(step);
@@ -870,7 +939,8 @@ mod tests {
             inspector.observe(first(SUBJECT, &woken), SHORT),
             Answer::TimedOut
         );
-        // Long after the question, the answer arrives while a report again waits for it.
+        // Long after the question, the element is chosen and the answer arrives while a report
+        // again waits for it.
         std::thread::sleep(SHORT * 4);
         let releaser = std::thread::spawn(move || {
             std::thread::sleep(SHORT);

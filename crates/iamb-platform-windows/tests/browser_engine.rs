@@ -2,7 +2,14 @@
 //! system's web view) in an application window. Three pages: a `<textarea>`, which must come out
 //! `Normal`; an `<input type="password">`, which must come out `Secure`; and a text field that
 //! the page turns into a password field a few seconds after it loads, with no focus change,
-//! after which no answer may be `Normal` (the late-answer review's finding 1).
+//! after which no answer may be `Normal` (the late-answer review's finding 1). A fourth page
+//! turns its field while an answer is pending (finding L6 of the re-verification): on a key the
+//! test sends, the page keeps its main thread busy for [`BUSY`] and then turns the field, while
+//! the test keeps asking, so that questions time out and their late answers arrive around the
+//! turn. From the turn plus the freshness bound of a late answer on, no answer, asked directly
+//! or brought by a report, may be `Normal`. The engine answers UI Automation from its browser
+//! process's copy of the page's tree, so a busy page may not make a question time out at all;
+//! the test prints how many timed out, which says whether the case it is for was reached.
 //!
 //! The engine switches its accessibility on only when it is first asked and then builds its
 //! tree in the background, so the answer is asked again until it settles, through the watcher's
@@ -30,14 +37,46 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
-use iamb_platform::{FieldSecurity, FocusChange, FocusInspector, SECURE_STATE_TIMEOUT};
+use iamb_platform::{
+    FieldSecurity, FocusChange, FocusInspector, SECURE_STATE_TIMEOUT, UnknownReason,
+};
 use iamb_platform_windows::Platform;
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, VK_F9,
+};
 
 /// How long the window may take to come to the front, and the answer to settle.
 const PATIENCE: Duration = Duration::from_secs(30);
 
 /// When the changing page turns its field into a password field, after it loaded.
 const TURNS_AFTER: Duration = Duration::from_secs(8);
+
+/// How long the busy page blocks its main thread before it turns its field.
+const BUSY: Duration = Duration::from_millis(1500);
+
+/// The freshness bound of a late answer (`focus/inspect.rs`, `LATE_ANSWER_FRESH`).
+const LATE_ANSWER_FRESH: Duration = Duration::from_millis(250);
+
+/// Presses and releases F9, which goes to the window in front (the page's field).
+fn press_f9() {
+    let key = |flags| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VK_F9,
+                wScan: 0,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let inputs = [key(0), key(KEYEVENTF_KEYUP)];
+    let size = i32::try_from(size_of::<INPUT>()).expect("small");
+    // SAFETY: two `INPUT`s, with their count and the size of one.
+    let sent = unsafe { SendInput(2, inputs.as_ptr(), size) };
+    assert_eq!(sent, 2, "the key could not be sent");
+}
 
 /// Says why the test could not look: a failure, unless `IAMB_ALLOW_SKIP` is set.
 fn cannot_look(why: &str) {
@@ -245,6 +284,66 @@ fn a_field_that_turns_into_a_password_field_is_never_normal_afterwards() {
         secure |= state == FieldSecurity::Secure;
         std::thread::sleep(Duration::from_millis(150));
     }
+    assert!(secure, "the password field was never seen as one");
+    let _ = platform.unwatch();
+}
+
+#[test]
+#[ignore = "needs Edge and an interactive desktop; run by hand (module docs)"]
+fn a_field_that_turns_while_an_answer_is_pending_is_never_normal_afterwards() {
+    let busy = format!(
+        "document.addEventListener('keydown',e=>{{if(e.key==='F9'){{\
+         const end=performance.now()+{};while(performance.now()<end){{}}\
+         document.querySelector('%23f').type='password'}}}})",
+        BUSY.as_millis()
+    );
+    let Some((_browser, platform, heard, _)) = open(&page("<input id=f type=text>", &busy), "busy")
+    else {
+        return;
+    };
+    let before = settle(&heard);
+    assert!(
+        matches!(before, Some(FieldSecurity::Normal) | None),
+        "a text field: {before:?}"
+    );
+    let Ok(token) = platform.focus_token() else {
+        cannot_look("Edge's window lost the front");
+        return;
+    };
+    while heard.try_recv().is_ok() {}
+    press_f9();
+    let pressed = Instant::now();
+    // The turn comes at the end of the busy loop, which starts once the page has the key: no
+    // earlier than `BUSY` after the press. From the turn plus the bound on, nothing is normal.
+    let safe_from = pressed + BUSY + LATE_ANSWER_FRESH;
+    let deadline = pressed + BUSY + Duration::from_secs(10);
+    let (mut timeouts, mut secure) = (0, false);
+    while Instant::now() < deadline {
+        let asked = Instant::now();
+        let state = platform.secure_state(&token, SECURE_STATE_TIMEOUT);
+        timeouts += u32::from(state == FieldSecurity::Unknown(UnknownReason::Timeout));
+        if asked >= safe_from {
+            assert_ne!(
+                state,
+                FieldSecurity::Normal,
+                "asked {:?} after the press",
+                asked - pressed
+            );
+        }
+        while let Ok((at, state)) = heard.try_recv() {
+            if at >= safe_from {
+                assert_ne!(
+                    state,
+                    FieldSecurity::Normal,
+                    "a report {:?} after the press",
+                    at - pressed
+                );
+            }
+        }
+        secure |= state == FieldSecurity::Secure;
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    eprintln!("{timeouts} questions timed out around the turn");
     assert!(secure, "the password field was never seen as one");
     let _ = platform.unwatch();
 }

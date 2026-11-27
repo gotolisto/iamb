@@ -81,16 +81,17 @@
 //! the service waits, would time out at every report if each asked afresh: every call is as
 //! slow as the one before, and each would start another inspection thread. So the answer of a
 //! question that timed out is kept, and **its arrival makes the watcher report the window again
-//! at once**. That report's question takes it if it arrived at most 250 ms before and nothing
-//! has changed since (`inspect`, "A late answer"). What it is: the field **as it was when the
+//! at once**. That report's question takes it if its element was obtained at most 250 ms
+//! before and nothing has changed since (`inspect`, "A late answer"). What it is: the field **as it was when the
 //! application answered**, not what a call made at the later question would say. Why it is
 //! safe to use:
 //!
-//! - **Fresh.** It is used within a quarter of a second of the application's answer, counted
-//!   from its arrival; an older one is dropped and the application asked afresh. A field that
-//!   turns into a password field without a focus change (a page that changes the type of its
-//!   field) in that quarter of a second is the same race every answer has between the
-//!   application answering and the verdict arriving.
+//! - **Fresh.** It is used within a quarter of a second, counted from when the probe obtained
+//!   the focused element (the first of its calls; the properties follow), not from when the
+//!   last property came back; an older one is dropped and the application asked afresh. A
+//!   field that turns into a password field without a focus change (a page that changes the
+//!   type of its field) in that quarter of a second is the same race every answer has between
+//!   the application answering and the verdict arriving.
 //! - **Only for a report again.** Only a question for a report the watcher made again of the
 //!   same window (after a pause, or for the arrival) may take it: the watcher marks such a
 //!   report, with the count of focus changes, just before it makes it. Every change, the

@@ -259,6 +259,21 @@ event when a field changes its type; that `ProcessId` of a web view's element is
 browser process, as assumed for finding 4 (if it is not, late answers there are
 `NotInspectable` and the window falls back to fresh answers: fail closed).
 
+### 5.1 After the re-verification (section 6)
+
+Made on top of `31e4472`, not committed; run on Linux, the Windows code compiled and linted for
+Windows only.
+
+| Item | Fix | Test |
+| --- | --- | --- |
+| 6.3 a, the bound started at the last of four calls | The fallback the re-verification allows: the bound is counted from when the focused element was **obtained**. The probe notes the time right after `GetFocusedElement` returns, before the three property calls, and hands it on with the observation (`inspect::Probed::chosen`); the mailbox keeps that time, and `observe` takes a late answer only while `chosen.elapsed() <= LATE_ANSWER_FRESH`. One cached request (`CreateCacheRequest`, `AddProperty`, `GetFocusedElementBuildCache` and the cached getters) was not done: it needs three more hand-declared method tables (`IUIAutomationCacheRequest`, and slots 12 and 20 of `IUIAutomation` and the cached getters of `IUIAutomationElement`), whose slots can be counted but not run here, and a wrong slot is a call into the wrong method; the fallback closes the finding the same way, because the properties are read from that same element object. Docs: `focus.rs` and `inspect.rs` module docs, architecture §8's table. | `inspect`: `the_bound_counts_from_when_the_element_was_chosen` (a fake step that names its element at once and gives its properties four bounds later: the answer, taken at once after its arrival, is refused and the application asked afresh). It fails with the bound counted from the arrival (checked by putting `Instant::now()` back in the mailbox). The earlier test is renamed `the_bound_counts_from_the_choice_not_from_the_question`. |
+| L6, a turn while an answer is pending | A fourth Edge page: on F9, which the test sends, the page blocks its main thread for 1.5 s and then turns its field into a password field, while the test asks every 50 ms and the watcher's reports are judged as well. Every answer asked, and every report verdict, from 1.5 s plus 250 ms after the key on must not be `Normal`; one must be `Secure`. Still `#[ignore]`, still fails when it cannot look. It prints how many questions timed out: the engine answers UI Automation from its browser process's copy of the page's tree, so a busy page may not make any question time out, and then the pending-answer case was not reached on that run (the count says so). | Manual, Windows: `cargo test -p iamb-platform-windows --test browser_engine -- --ignored --test-threads 1` |
+
+Checks: `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`;
+`cargo clippy --target x86_64-pc-windows-msvc` for `iamb-platform-windows` and `iamb-ipc`, with
+and without `probe`, and the testkit's Windows step; `cargo xtask banned-terms` (0 hits);
+`cargo test -p iamb-platform-windows` (239 unit tests on the fakes): all pass.
+
 ## 6. Re-verification
 
 Date: 2026-11-27 · Commit reviewed: `c600b00` ("Close the strict review's findings on late
