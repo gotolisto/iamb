@@ -258,3 +258,89 @@ within the bound (the Edge test prints the reasons and times); whether the engin
 event when a field changes its type; that `ProcessId` of a web view's element is the engine's
 browser process, as assumed for finding 4 (if it is not, late answers there are
 `NotInspectable` and the window falls back to fresh answers: fail closed).
+
+## 6. Re-verification
+
+Date: 2026-11-27 · Commit reviewed: `c600b00` ("Close the strict review's findings on late
+answers") · By the reviewer of sections 1 to 4, not the author of the fix · Same limits: run on
+Linux only. The pure code of the decision passes its 51 unit tests there, the protocol's
+golden tests pass, and a second scratch test on the same fakes was added outside the tree. The
+watcher, the probe, the thread message and the Edge test need Windows and were read, not run.
+
+### 6.1 Verdict
+
+The medium finding is closed for what it described: a late answer no longer waits for the next
+pause, and one that has waited is not taken. The low findings are closed, one of them partly.
+The fixes brought no new medium or high problem. One low remainder of finding 1 is new to
+this section (6.3, a), and the Edge test's new page does not exercise the case it was added
+for (L6).
+
+### 6.2 The findings
+
+| # | Now | Evidence |
+| --- | --- | --- |
+| M1, a late answer older than the look that uses it | **Closed** for the wait after the answer arrives; a low remainder inside the call (6.3, a) | Run, with the real bound: the field turns into a password field after the answer arrived; a report again 400 ms after the arrival asks afresh and says `Secure` (the application is asked a second time); at 0 and 100 ms the late `Normal` is taken, which is the quarter second the docs now state. The arrival calls the question's wake in every case. The age is counted from the arrival (`inspect.rs:126`, `:326`); the ten-second lifetime is gone and is not needed |
+| L2, the subject left out the focused control | **Closed** | Run: with another control handle, or the same handle now of kind `Other`, the late answer is dropped and a fresh call decides. The unbuilt page that comes late under the engine's own window is still not believed |
+| L3, changes the service reports itself | **Closed** | Run: a question that is not a report again (no mark) never takes a late answer, also at once after its arrival. Reading: the watcher marks a report again for its window and the count before it makes it, a change clears the mark, and `focus_now` counts as a change (`focus.rs:337-348`, `rules.rs` `Counts`). A mark taken by another question than the one it was made for does no harm: the subject still carries the count |
+| L4, the answer did not say which window it is about | **Closed** | Run: a late answer from another process, or from process 0, is `Unknown(NotInspectable)` with a look again; from the top-level window's process or the focused control's it is taken. Reading: the process id is read with the other properties (`uia.rs:246-258`), and the control's process is read from the system at the look. It applies to late answers only, which is where it was missing |
+| L5, the wire field and the log line | **Closed** | The field is an enumeration of the five words and `Other`; a word this version does not know decodes as `Other`, the UI host passes none on for it and the page shows nothing (reading; golden tests pass). The worker logs the reason when the window or the reason changes |
+| L6, the Edge test | **Partly** | It fails when it cannot look (unless told to skip) and judges the watcher's own reports. The new page turns its field 8 s after it loads, which is after the answer has settled, so no late answer is waiting at the turn: it shows that a fresh question says `Secure` afterwards, not that a late answer is refused. Turn the field within the first second, or keep the page busy at the turn, so that the turn falls between a late answer's arrival and its use |
+| L7, tests | **Closed** | The cases of findings 1 and 2 are unit tests now, and section 5 says each fails with its fix taken out |
+
+### 6.3 The points asked about, and what is new
+
+**The `WM_LATE_ANSWER` wake** (`watch.rs:139-150`, `:327-338`). The answer's arrival posts the
+message to the watcher thread, which reports the window again only if it is still in front and
+is the window it last reported, and marks that report. Sound by reading: the wake runs outside
+the mailbox's lock; a wake set after the answer is already there runs at once; a watcher that
+has left its loop gets no message; a message that cannot be posted leaves the window to the
+next pause, where the answer is too old and a fresh call is made.
+
+- A thread message can be posted by any process of the user. A forged one makes the watcher
+  report the window in front once more: a look, and the engine's buffer cleared. It cannot
+  make a late answer be taken that would not be (the subject, the mark's count and the bound
+  do not depend on it), and the two older thread messages can be forged the same way. A
+  process that floods it stops Iamb expanding, which it can do in other ways. No fix needed;
+  noted so that the message never gains a meaning that matters.
+- The time between "the thread is alive" and the post is a few instructions; a thread id
+  given to another thread in that time would get a message it ignores.
+
+**The 250 ms bound.** Counted from when the whole answer arrived, checked when the answer is
+taken, and applied to an answer that was already there; an answer that arrives while the
+question waits for it is new by definition. Shown above.
+
+- a. **Low, new: the bound starts when the last of four calls returns, and the element is
+  chosen by the first** (`uia.rs:246-258`). The probe asks for the focused element, then for
+  three of its properties, each a call into the application. For an application that is busy
+  once and then free, the four follow each other at once. For one where every call is slow,
+  which is the case the commit describes, the element may have been chosen seconds before the
+  answer "arrives". A move of the focus inside the page in that time, with no event, gives
+  the properties of the element before. The same holds for an answer in time, but there the
+  whole call is under 100 ms. Fix: ask once, with a cache request that brings the three
+  properties with the element (`GetFocusedElementBuildCache`), or note the time the element
+  was obtained and count the bound from there.
+
+**The process match.** As in the table. Two notes: an element of another window of the same
+process passes it, so it is a second line behind the count, as intended; and whether a web
+view's elements name the engine's process that owns the focused control is still unverified
+(section 5 says so). If they do not, every late answer there is `NotInspectable` and such
+windows are back to timing out: safe, but the commit's purpose is not met, and only the Edge
+test on a real machine shows which.
+
+**The `Other` catch-all.** Nothing but the six values can be carried, and `Other` is shown as
+nothing at both steps. This version never sends it. A detail that is not a string fails the
+frame, like any other type error.
+
+**Also checked.** `focus_now` has one caller in the service (its own look after keys went to
+an unreported window), so counting it as a change costs late answers only when the service
+already doubts the watcher. A report made for an arrival cancels the pause's timer; a look
+that still cannot tell starts the next pause, so the retries go on. A late answer has no
+overall lifetime any more: one that arrives after a long hang is used only if the window, the
+control and the count are still the same and the report comes within the bound, which is the
+right rule.
+
+### 6.4 Not checked
+
+Everything on Windows: that late answers of a real engine arrive and are used within the
+bound, the thread message, the process id a web view's element reports, whether the engine
+raises a focus event when a field changes its type, and the Edge test itself.
