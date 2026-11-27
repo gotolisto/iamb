@@ -72,9 +72,10 @@ iamb-platform = { path = "../iamb-platform" }
 #   Security, Security_Authorization
 #                                  endpoint (user SID, pipe security descriptor), focus
 #                                  (integrity level)
-#   Security_WinTrust, Security_Cryptography
-#                                  endpoint (signature of the peer's executable; revocation
-#                                  checks must stay off so that nothing touches the network)
+#   Security_WinTrust, Security_Cryptography, Security_Cryptography_Catalog, _Sip
+#                                  endpoint (signature of the peer's executable and its signer's
+#                                  certificate, WTHelper*; revocation checks must stay off so
+#                                  that nothing touches the network)
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
@@ -82,6 +83,8 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_Security",
     "Win32_Security_Authorization",
     "Win32_Security_Cryptography",
+    "Win32_Security_Cryptography_Catalog",
+    "Win32_Security_Cryptography_Sip",
     "Win32_Security_WinTrust",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",

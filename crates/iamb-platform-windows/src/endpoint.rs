@@ -19,11 +19,16 @@
 //!   `GetNamedPipeServerProcessId`, before anything is written. Both decide with
 //!   [`PeerPolicy::check`]. A rejected client is disconnected before `accept` reports it.
 //!   Clients open the pipe with `SECURITY_IDENTIFICATION`, so a server can never act as them.
-//! - Under [`PeerPolicy::InstalledBinary`] the peer is trusted when its executable lives in the
-//!   installation directory of the running process (the path check) and its Authenticode
-//!   signature verifies with `WinVerifyTrust` (revocation checks off and URL retrieval from the
-//!   cache only, so nothing touches the network). Iamb is signed from Phase 5: until then a
-//!   release build trusts no peer, and debug builds use [`PeerPolicy::SameUser`].
+//! - Under [`PeerPolicy::InstalledBinary`] the peer is trusted only when it is a member of the
+//!   same installation as this process, as `iamb_platform::installation` decides (the 2.8
+//!   review's finding 11): its image path (`QueryFullProcessImageNameW`), with every link
+//!   resolved, must be one of Iamb's executables in the per-user installation directory
+//!   `%LOCALAPPDATA%\Iamb` this process runs from. When this process's own image carries a
+//!   valid Authenticode signature, the peer's must too, with the same leaf certificate
+//!   (`WinVerifyTrust` with revocation checks off and URL retrieval from the cache only, so
+//!   nothing touches the network, then the signer's certificate from the verification's
+//!   state); an unsigned installation requires the path alone. Debug builds use
+//!   [`PeerPolicy::SameUser`].
 //! - Streams use overlapped I/O, so a read blocked on one thread does not hold up a write on a
 //!   clone; a read timeout cancels the blocked read, and `shutdown` cancels every pending
 //!   operation on the handle (and disconnects, on the server side).
@@ -36,6 +41,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use iamb_platform::installation::{self, OwnSigning, PathRules, PeerSignature};
 use iamb_platform::{
     EndpointName, LocalEndpoint, LocalListener, LocalStream, PeerIdentity, PeerPolicy,
     PeerRejection, PlatformError, Result,
@@ -55,7 +61,8 @@ use windows_sys::Win32::Security::Cryptography::{
 use windows_sys::Win32::Security::WinTrust::{
     WINTRUST_ACTION_GENERIC_VERIFY_V2, WINTRUST_DATA, WINTRUST_FILE_INFO,
     WTD_CACHE_ONLY_URL_RETRIEVAL, WTD_CHOICE_FILE, WTD_REVOCATION_CHECK_NONE, WTD_REVOKE_NONE,
-    WTD_STATEACTION_CLOSE, WTD_STATEACTION_VERIFY, WTD_UI_NONE, WinVerifyTrust,
+    WTD_STATEACTION_CLOSE, WTD_STATEACTION_VERIFY, WTD_UI_NONE, WTHelperGetProvSignerFromChain,
+    WTHelperProvDataFromStateData, WinVerifyTrust,
 };
 use windows_sys::Win32::Security::{
     GetTokenInformation, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
@@ -279,20 +286,10 @@ fn process_identity(pid: u32) -> Result<(String, Option<PathBuf>)> {
     Ok((user, exe))
 }
 
-/// True when `peer` lives in the directory of `own` (the path half of the installed-binary
-/// check). Compared case-insensitively, as NTFS does.
-pub(crate) fn same_installation(own: &Path, peer: &Path) -> bool {
-    match (own.parent(), peer.parent()) {
-        (Some(a), Some(b)) => {
-            a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
-        }
-        _ => false,
-    }
-}
-
-/// True when `path` carries a valid Authenticode signature. No revocation checks and no URL
-/// retrieval beyond the local cache: this never touches the network.
-fn signature_valid(path: &Path) -> bool {
+/// The leaf certificate (DER) of the signer of `path`, when `path` carries a valid Authenticode
+/// signature. No revocation checks and no URL retrieval beyond the local cache: this never
+/// touches the network.
+fn signer_of(path: &Path) -> Option<Vec<u8>> {
     let file = wide(&path.to_string_lossy());
     let mut info = WINTRUST_FILE_INFO {
         cbStruct: u32::try_from(size_of::<WINTRUST_FILE_INFO>()).unwrap_or(0),
@@ -320,6 +317,11 @@ fn signature_valid(path: &Path) -> bool {
             (&raw mut data).cast::<c_void>(),
         )
     };
+    let signer = if status == 0 {
+        leaf_certificate(data.hWVTStateData)
+    } else {
+        None
+    };
     data.dwStateAction = WTD_STATEACTION_CLOSE;
     // SAFETY: closing the state the verification opened, with the same structures.
     unsafe {
@@ -329,18 +331,79 @@ fn signature_valid(path: &Path) -> bool {
             (&raw mut data).cast::<c_void>(),
         );
     }
-    status == 0
+    signer
+}
+
+/// The encoded leaf certificate of the first signer in a verification's open `state`.
+fn leaf_certificate(state: HANDLE) -> Option<Vec<u8>> {
+    // SAFETY: `state` is the state a successful `WinVerifyTrust` left open; the caller closes
+    // it after this returns, and nothing read here outlives it but the copied bytes.
+    unsafe {
+        let provider = WTHelperProvDataFromStateData(state);
+        if provider.is_null() {
+            return None;
+        }
+        let signer = WTHelperGetProvSignerFromChain(provider, 0, 0, 0);
+        if signer.is_null() || (*signer).csCertChain == 0 || (*signer).pasCertChain.is_null() {
+            return None;
+        }
+        let cert = (*(*signer).pasCertChain).pCert;
+        if cert.is_null() || (*cert).pbCertEncoded.is_null() {
+            return None;
+        }
+        let len = usize::try_from((*cert).cbCertEncoded).ok()?;
+        Some(std::slice::from_raw_parts((*cert).pbCertEncoded, len).to_vec())
+    }
+}
+
+/// This process's own canonical image, and the leaf certificate of its signer (`None`:
+/// unsigned), read once.
+fn own_image() -> Option<&'static (PathBuf, Option<Vec<u8>>)> {
+    static OWN: std::sync::OnceLock<Option<(PathBuf, Option<Vec<u8>>)>> =
+        std::sync::OnceLock::new();
+    OWN.get_or_init(|| {
+        let own = std::fs::canonicalize(std::env::current_exe().ok()?).ok()?;
+        let signer = signer_of(&own);
+        Some((own, signer))
+    })
+    .as_ref()
+}
+
+/// Whether the peer whose image the system reports as `reported` is a member of this
+/// process's installation (module docs; `iamb_platform::installation`).
+fn installed_peer(reported: &Path) -> bool {
+    let Some((own, own_signer)) = own_image() else {
+        return false;
+    };
+    let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+    let Some(members) = installation::windows_members(own, local.as_deref()) else {
+        return false;
+    };
+    let canonical = std::fs::canonicalize(reported).ok();
+    let member =
+        installation::member_for(&members, reported, canonical.as_deref(), PathRules::Windows)
+            .is_some();
+    let (own_signing, signature) = match own_signer {
+        Some(own_signer) => (
+            OwnSigning::Signed,
+            if member && signer_of(reported).as_ref() == Some(own_signer) {
+                PeerSignature::SameSigner
+            } else {
+                PeerSignature::Other
+            },
+        ),
+        None => (OwnSigning::Unsigned, PeerSignature::Other),
+    };
+    // The canonical path is the file's own name on Windows: matching it is matching the file.
+    installation::trusted(true, own_signing, signature, member, true)
 }
 
 /// Identifies process `pid` at the other end and checks it against `policy` for a process of
 /// `own_user`.
 fn verify(pid: u32, own_user: &str, policy: PeerPolicy) -> Result<PeerIdentity> {
     let (user, executable) = process_identity(pid)?;
-    let trusted_binary = policy == PeerPolicy::InstalledBinary
-        && executable.as_deref().is_some_and(|peer| {
-            std::env::current_exe().is_ok_and(|own| same_installation(&own, peer))
-                && signature_valid(peer)
-        });
+    let trusted_binary =
+        policy == PeerPolicy::InstalledBinary && executable.as_deref().is_some_and(installed_peer);
     let peer = PeerIdentity {
         pid,
         user,
@@ -996,18 +1059,18 @@ mod tests {
     }
 
     #[test]
-    fn the_installation_is_the_executable_directory() {
-        let own = Path::new(r"C:\Program Files\Iamb\iamb-service.exe");
-        assert!(same_installation(
-            own,
-            Path::new(r"c:\program files\iamb\iamb.exe")
-        ));
-        assert!(!same_installation(own, Path::new(r"C:\Temp\iamb.exe")));
+    fn a_test_binary_is_in_no_installation() {
+        // `target\` is not `%LOCALAPPDATA%\Iamb`: the policy trusts no peer for a test binary
+        // (the decision itself is tested in iamb_platform::installation).
+        let own = std::env::current_exe().expect("test binary");
+        let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+        assert_eq!(installation::windows_members(&own, local.as_deref()), None);
+        assert!(!installed_peer(&own));
     }
 
     #[test]
     fn an_unsigned_test_binary_does_not_verify() {
         let exe = std::env::current_exe().expect("test binary");
-        assert!(!signature_valid(&exe));
+        assert_eq!(signer_of(&exe), None);
     }
 }

@@ -65,6 +65,38 @@ limited 120 "$app/Contents/MacOS/iamb-desktop" --data-dir "$data" --measure-open
   || fail "the installed UI host did not open its window and exit cleanly"
 ok "the installed UI host opened its library window (--measure-open 1)"
 
+# The installed UI host reaches the installed service (architecture §6.1, the installed-binary
+# check; finding 11). The helper's supervisor is started as the login item starts it, without
+# arguments but --supervise --no-ui-host, for the account's default data root; the UI host then
+# connects as it does at login, headless (--check-service). A copy of the UI host outside
+# Iamb.app must be refused.
+scratch="$(mktemp -d)"
+"$helper/Contents/MacOS/iamb-service" --supervise --no-ui-host 2> "$scratch/service.err" &
+service_pid=$!
+default_root="$HOME/Library/Application Support/Iamb"
+show_logs() {
+  cat "$scratch/service.err" "$scratch"/*.out 2> /dev/null || true
+  tail -n 40 "$default_root"/logs/*.log 2> /dev/null || true
+}
+if ! limited 120 "$app/Contents/MacOS/iamb-desktop" --check-service > "$scratch/check.out" 2>&1; then
+  show_logs
+  fail "the installed service refused the installed UI host, or never answered (--check-service)"
+fi
+grep -q "^service ok: iamb-service $version" "$scratch/check.out" \
+  || { show_logs; fail "--check-service said: $(cat "$scratch/check.out")"; }
+ok "the installed UI host connected to the installed service as the UI host ($(head -n 1 "$scratch/check.out"))"
+cp "$app/Contents/MacOS/iamb-desktop" "$scratch/iamb-desktop"
+if limited 120 "$scratch/iamb-desktop" --check-service > "$scratch/copy.out" 2>&1; then
+  show_logs
+  fail "a copy of the UI host outside Iamb.app was accepted by the installed service"
+fi
+grep -q "^service check failed" "$scratch/copy.out" \
+  || { show_logs; fail "the copy of the UI host did not run its check: $(cat "$scratch/copy.out")"; }
+ok "a copy of the UI host outside Iamb.app was refused ($(head -n 1 "$scratch/copy.out"))"
+kill "$service_pid" 2> /dev/null || true
+wait "$service_pid" 2> /dev/null || true
+rm -rf "$default_root" "$scratch"
+
 # Signatures. The bundle is always sealed (ad hoc when unsigned), so the structural check runs
 # either way: it fails if the helper was not signed before the main app.
 codesign --verify --deep --strict --verbose=2 "$app" || fail "codesign --verify failed"

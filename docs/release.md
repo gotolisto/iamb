@@ -156,6 +156,7 @@ runs on a fresh hosted runner that did not build the installer. Only the smoke s
 | Files | UI host and helper app present; identifiers `org.iamb.Iamb` and `org.iamb.Iamb.Service`; both universal | `iamb-desktop.exe`, `iamb-service.exe`, `uninstall.exe`; uninstall entry under HKCU, none under HKLM | `/usr/bin/iamb-desktop`, `/usr/bin/iamb-service` |
 | Version = Cargo version | both `Info.plist` files, both `--version` | uninstall entry, both `--version` | package version, both `--version` |
 | Start | installed UI host, `--measure-open 1` in a scratch data root | same | same, under Xvfb |
+| UI host reaches the service | the helper's `iamb-service --supervise --no-ui-host` for the default data root, then `iamb-desktop --check-service` must say `service ok`; a copy of `iamb-desktop` outside `Iamb.app` must be refused | `iamb-service.exe --supervise --no-ui-host --data-dir <scratch>`, then `iamb-desktop.exe --check-service` must say `service ok`; a copy outside `%LOCALAPPDATA%\Iamb` must be refused | `iamb-service --supervise --no-ui-host`, then `iamb-desktop --check-service` must say `service ok` (no copy: Linux has no installed-binary check) |
 | Signatures, when signed | `codesign --verify --deep --strict`, `spctl -a` on app and image, `stapler validate` on both, same team, hardened runtime | `Get-AuthenticodeSignature` `Valid` and timestamped on four files | none (reported unsigned) |
 | Signatures, when unsigned | `codesign --verify --deep --strict` still runs on the ad-hoc seal; the rest is reported as skipped | states reported, not failed | none |
 | Uninstall | remove `Iamb.app` | `uninstall.exe /S`, then wait until files, uninstall entry, Start menu entry and Run value are gone | `apt-get purge`, binaries gone |
@@ -167,9 +168,10 @@ Limits:
   dialog and SmartScreen are not exercised. The signature checks stand in for them. Before a
   1.0 release, also install each signed build once by hand, downloaded through a browser on a
   fresh Mac and a fresh Windows machine.
-- The installed UI host starts with no service running. The smoke test does not cover granting
-  permissions, the login item, or expansion through the installed service. Those need a
-  person at the machine.
+- The installed service is started by the script, not by the login item, and the UI host's
+  connection is checked headless (`--check-service`). The smoke test does not cover granting
+  permissions, the login item, or expansion through the installed service. Those need a person
+  at the machine.
 
 ## Installed layout
 
@@ -190,17 +192,16 @@ registry value is all that stays behind.
 
 ## Known gaps (not done by task 5.1)
 
-- **The service refuses the UI host in release builds until task 5.2.** Release builds check
-  that a client is the installed Iamb binary (architecture §6.1, open finding 11 in §8). On
-  Windows this requires a valid Authenticode signature, so it fails for unsigned builds. On
-  macOS it compares the client with the service's own designated requirement. Neither an
-  ad-hoc nor a Developer ID requirement for `org.iamb.Iamb.Service` accepts the UI host
-  `org.iamb.Iamb`. Until finding 11 is done (a requirement built from the team identifier,
-  as planned for the first signed builds), an installed release build installs, starts and
-  passes the smoke test, but the library window cannot reach the service. Unsigned installers
-  are for testing the pipeline, not for users.
-- The supervisor does not start the UI host and the sync agent yet (hook point in
-  `crates/iamb-service/src/supervisor.rs`). On Windows, turning on "start at login" writes the
+- **Signed installed builds are checked by the smoke test only once signing is set up.** Release
+  builds accept as clients only the executables of their own installation (architecture §6.1,
+  "The installed-binary check"; finding 11, closed). An unsigned or ad-hoc installation accepts
+  its members by path; a signed one also requires the same signer (macOS: the team identifier
+  and both bundle identifiers; Windows: the same leaf certificate). The smoke test connects the
+  installed UI host to the installed service on every run, so the unsigned path is checked on
+  every build; the signed path only on a signed run. Unsigned installers are for testing, not
+  for users.
+- The supervisor starts the UI host (architecture §3.2), but not the sync agent yet (hook point
+  in `crates/iamb-service/src/supervisor.rs`). On Windows, turning on "start at login" writes the
   Run value but does not start the service until the next login (or the next install).
 - No updater artifacts. Update signing and channels are task 5.2 (ADR-0023).
 - No AppImage and no signed Linux packages.

@@ -34,6 +34,21 @@ data="$(mktemp -d)/data"
 timeout 120 xvfb-run -a /usr/bin/iamb-desktop --data-dir "$data" --measure-open 1 \
   || fail "the installed UI host did not open its window and exit cleanly"
 ok "the installed UI host opened its library window (--measure-open 1, Xvfb)"
+
+# The installed UI host reaches the installed service (architecture §6.1), headless. Linux has
+# no installed-binary check (development only), so no copy is tried here.
+service_data="$(mktemp -d)/service"
+/usr/bin/iamb-service --supervise --no-ui-host --data-dir "$service_data" 2> "$service_data.err" &
+service_pid=$!
+if ! timeout 120 /usr/bin/iamb-desktop --check-service --data-dir "$service_data" > "$service_data.check" 2>&1; then
+  cat "$service_data.err" "$service_data.check"; tail -n 40 "$service_data"/logs/*.log || true
+  fail "the installed service refused the installed UI host, or never answered (--check-service)"
+fi
+grep -q "^service ok: iamb-service $version" "$service_data.check" \
+  || fail "--check-service said: $(cat "$service_data.check")"
+ok "the installed UI host connected to the installed service ($(head -n 1 "$service_data.check"))"
+kill "$service_pid" 2> /dev/null || true
+wait "$service_pid" 2> /dev/null || true
 ok "unsigned: Linux packages are not signed by this pipeline"
 
 sudo apt-get purge -y iamb

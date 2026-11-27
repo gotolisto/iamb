@@ -11,11 +11,16 @@
 //!   (`getpeereid`), its process id (`LOCAL_PEERPID`) and the path of its executable
 //!   (`proc_pidpath`), and decide with [`PeerPolicy::check`]. A rejected client is closed before
 //!   `accept` reports it; a rejected server is never written to.
-//! - Under [`PeerPolicy::InstalledBinary`] the peer is trusted only when its executable lives in
-//!   the same `Iamb.app` bundle as this process and its code signature is valid and satisfies
-//!   this process's own designated requirement (`SecCodeCopyGuestWithAttributes` with the pid,
-//!   then `SecCodeCheckValidity`; no network access). An unsigned development build therefore
-//!   trusts no one under that policy; debug builds use [`PeerPolicy::SameUser`].
+//! - Under [`PeerPolicy::InstalledBinary`] the peer is trusted only when it is a member of the
+//!   same installation as this process, as `iamb_platform::installation` decides (the 2.8
+//!   review's finding 11). The facts: the peer's code object from its audit token
+//!   (`LOCAL_PEERTOKEN`, `SecCodeCopyGuestWithAttributes` with `kSecGuestAttributeAudit`, so a
+//!   process id reused since cannot stand in), the path that code object names, the executable
+//!   `proc_pidpath` reports, that path with its links resolved, and its device and inode. A
+//!   signed installation (this process has a team identifier) also requires the peer to satisfy
+//!   `anchor apple generic`, the same team identifier and Iamb's bundle identifiers
+//!   (`SecCodeCheckValidity`, no network access); an ad hoc or unsigned one requires the
+//!   member's own file instead. Debug builds use [`PeerPolicy::SameUser`].
 //! - Streams are the socket itself: clones are duplicated descriptors, the read timeout is the
 //!   socket's, `shutdown` shuts both directions down. A blocked `accept` waits in `poll` on the
 //!   socket and on a private socket pair; `close` sets a flag and writes one byte to the pair,
@@ -36,12 +41,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use iamb_platform::installation::{self, OwnSigning, PathRules, PeerSignature};
 use iamb_platform::{
     EndpointName, LocalEndpoint, LocalListener, LocalStream, PeerIdentity, PeerPolicy,
     PeerRejection, PlatformError, Result,
 };
-use objc2_core_foundation::{CFDictionary, CFNumber, CFRetained, CFString};
-use objc2_security::{SecCSFlags, SecCode, SecRequirement, SecStaticCode, kSecGuestAttributePid};
+use objc2_core_foundation::{CFData, CFDictionary, CFRetained, CFString, CFType, CFURL};
+use objc2_security::{
+    SecCSFlags, SecCode, SecRequirement, SecStaticCode, kSecCSSigningInformation,
+    kSecCodeInfoTeamIdentifier, kSecGuestAttributeAudit,
+};
 
 use crate::Platform;
 
@@ -89,22 +98,6 @@ fn lock_path(socket: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// The outermost `.app` bundle that contains `exe`, if any.
-pub(crate) fn outer_bundle(exe: &Path) -> Option<&Path> {
-    exe.ancestors()
-        .filter(|p| p.extension().is_some_and(|e| e == "app"))
-        .last()
-}
-
-/// True when `peer` is in the same `Iamb.app` bundle as `own` (the path half of the
-/// installed-binary check).
-pub(crate) fn same_installation(own: &Path, peer: &Path) -> bool {
-    match (outer_bundle(own), outer_bundle(peer)) {
-        (Some(a), Some(b)) => a == b,
-        _ => false,
-    }
-}
-
 /// The user id, process id and executable of the socket's peer.
 fn peer_of(stream: &UnixStream) -> Result<(u32, u32, Option<PathBuf>)> {
     let fd = stream.as_raw_fd();
@@ -147,28 +140,121 @@ fn adopt<T: objc2_core_foundation::Type>(ptr: *mut T) -> Option<CFRetained<T>> {
     NonNull::new(ptr).map(|p| unsafe { CFRetained::from_raw(p) })
 }
 
-/// True when the running process `pid` has a valid code signature that satisfies this
-/// process's own designated requirement.
-fn signed_like_us(pid: u32) -> bool {
-    let flags = SecCSFlags::DefaultFlags;
-    let mut me: *mut SecCode = std::ptr::null_mut();
-    // SAFETY: `me` is a valid out-pointer.
-    if unsafe { SecCode::copy_self(flags, NonNull::from(&mut me)) } != 0 {
-        return false;
+/// The audit token of the socket's peer (`LOCAL_PEERTOKEN`): the process, including its
+/// generation, at the moment it connected.
+fn audit_token(stream: &UnixStream) -> Option<[u32; 8]> {
+    let mut token = [0_u32; 8];
+    let mut len = libc::socklen_t::try_from(size_of_val(&token)).ok()?;
+    // SAFETY: `stream` is an open socket; `token` and `len` are valid out-pointers of the size
+    // given (an `audit_token_t` is eight 32-bit words).
+    let rc = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_LOCAL,
+            libc::LOCAL_PEERTOKEN,
+            token.as_mut_ptr().cast::<c_void>(),
+            &raw mut len,
+        )
+    };
+    (rc == 0 && usize::try_from(len).ok() == Some(size_of_val(&token))).then_some(token)
+}
+
+/// The code object of the process `token` names.
+fn guest(token: &[u32; 8]) -> Option<CFRetained<SecCode>> {
+    let bytes: Vec<u8> = token.iter().flat_map(|w| w.to_ne_bytes()).collect();
+    let data = CFData::from_bytes(&bytes);
+    // SAFETY: `kSecGuestAttributeAudit` is a constant string of the Security framework.
+    let key: &CFString = unsafe { kSecGuestAttributeAudit };
+    let attributes = CFDictionary::<CFString, CFData>::from_slices(&[key], &[&data]);
+    let mut guest: *mut SecCode = std::ptr::null_mut();
+    // SAFETY: the attributes map the audit key to the token's bytes, as the API requires;
+    // `guest` is a valid out-pointer.
+    let rc = unsafe {
+        SecCode::copy_guest_with_attributes(
+            None,
+            Some(attributes.as_opaque()),
+            SecCSFlags::DefaultFlags,
+            NonNull::from(&mut guest),
+        )
+    };
+    if rc == 0 { adopt(guest) } else { None }
+}
+
+/// The static code (the code on disk) of `code`.
+fn static_of(code: &SecCode) -> Option<CFRetained<SecStaticCode>> {
+    let mut out: *const SecStaticCode = std::ptr::null();
+    // SAFETY: `code` is a valid code object; `out` is a valid out-pointer.
+    let rc = unsafe { code.copy_static_code(SecCSFlags::DefaultFlags, NonNull::from(&mut out)) };
+    if rc == 0 { adopt(out.cast_mut()) } else { None }
+}
+
+/// The path the code-signing API names for `code`: the bundle of an app's main executable, the
+/// executable otherwise.
+fn code_path(code: &SecStaticCode) -> Option<PathBuf> {
+    let mut url: *const CFURL = std::ptr::null();
+    // SAFETY: `code` is a valid static code object; `url` is a valid out-pointer.
+    let rc = unsafe { SecCode::copy_path(code, SecCSFlags::DefaultFlags, NonNull::from(&mut url)) };
+    if rc != 0 {
+        return None;
     }
-    let Some(me) = adopt(me) else { return false };
-    let mut me_static: *const SecStaticCode = std::ptr::null();
-    // SAFETY: `me` is a valid code object; `me_static` is a valid out-pointer.
-    if unsafe { me.copy_static_code(flags, NonNull::from(&mut me_static)) } != 0 {
-        return false;
+    adopt(url.cast_mut())?.to_file_path()
+}
+
+/// The team identifier `code` is signed with; `None` for ad hoc and unsigned code.
+fn team_of(code: &SecStaticCode) -> Option<String> {
+    let mut info: *const CFDictionary = std::ptr::null();
+    // SAFETY: `code` is a valid static code object; `info` is a valid out-pointer.
+    let rc = unsafe {
+        SecCode::copy_signing_information(
+            code,
+            SecCSFlags(kSecCSSigningInformation),
+            NonNull::from(&mut info),
+        )
+    };
+    if rc != 0 {
+        return None;
     }
-    let Some(me_static) = adopt(me_static.cast_mut()) else {
+    let info = adopt(info.cast_mut())?;
+    // SAFETY: the signing information dictionary has string keys and object values.
+    let info: CFRetained<CFDictionary<CFString, CFType>> =
+        unsafe { CFRetained::cast_unchecked(info) };
+    // SAFETY: `kSecCodeInfoTeamIdentifier` is a constant string of the Security framework.
+    let key: &CFString = unsafe { kSecCodeInfoTeamIdentifier };
+    let team = info.get(key)?.downcast::<CFString>().ok()?.to_string();
+    (!team.is_empty()).then_some(team)
+}
+
+/// This process's own team identifier (`None`: ad hoc or unsigned), read once.
+fn own_team() -> Option<&'static str> {
+    static TEAM: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    TEAM.get_or_init(|| {
+        let mut me: *mut SecCode = std::ptr::null_mut();
+        // SAFETY: `me` is a valid out-pointer.
+        if unsafe { SecCode::copy_self(SecCSFlags::DefaultFlags, NonNull::from(&mut me)) } != 0 {
+            return None;
+        }
+        let me: CFRetained<SecCode> = adopt(me)?;
+        let me_static: CFRetained<SecStaticCode> = static_of(&me)?;
+        team_of(&me_static)
+    })
+    .as_deref()
+}
+
+/// Whether `code` satisfies the requirement of a signed installation of `team`
+/// (`installation::macos_requirement`), without network access.
+fn signed_by(code: &SecCode, team: &str) -> bool {
+    let Some(text) = installation::macos_requirement(team) else {
         return false;
     };
+    let text = CFString::from_str(&text);
     let mut requirement: *mut SecRequirement = std::ptr::null_mut();
-    // SAFETY: `me_static` is a valid static code object; `requirement` a valid out-pointer.
+    // SAFETY: `text` is a valid string; `requirement` is a valid out-pointer.
     if unsafe {
-        SecCode::copy_designated_requirement(&me_static, flags, NonNull::from(&mut requirement))
+        SecRequirement::create_with_string(
+            &text,
+            SecCSFlags::DefaultFlags,
+            NonNull::from(&mut requirement),
+        )
     } != 0
     {
         return false;
@@ -176,42 +262,72 @@ fn signed_like_us(pid: u32) -> bool {
     let Some(requirement) = adopt(requirement) else {
         return false;
     };
-    let Ok(pid) = i32::try_from(pid) else {
-        return false;
-    };
-    let number = CFNumber::new_i32(pid);
-    // SAFETY: `kSecGuestAttributePid` is a constant string of the Security framework.
-    let key: &CFString = unsafe { kSecGuestAttributePid };
-    let attributes = CFDictionary::<CFString, CFNumber>::from_slices(&[key], &[&number]);
-    let mut guest: *mut SecCode = std::ptr::null_mut();
-    // SAFETY: the attributes dictionary maps the pid key to a CFNumber, as the API requires;
-    // `guest` is a valid out-pointer.
-    if unsafe {
-        SecCode::copy_guest_with_attributes(
-            None,
-            Some(attributes.as_opaque()),
-            flags,
-            NonNull::from(&mut guest),
-        )
-    } != 0
-    {
-        return false;
+    // SAFETY: both objects are valid; the flag forbids network access.
+    unsafe { code.check_validity(SecCSFlags::NoNetworkAccess, Some(&requirement)) == 0 }
+}
+
+/// True when `a` and `b` are the same regular file (device and inode), `a` not being a link.
+fn same_file(a: &Path, b: &Path) -> bool {
+    match (fs::symlink_metadata(a), fs::metadata(b)) {
+        (Ok(a), Ok(b)) => a.file_type().is_file() && a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
     }
-    let Some(guest) = adopt(guest) else {
+}
+
+/// Whether the peer of `stream`, whose executable the system reports as `reported`, is a
+/// member of this process's installation (module docs; `iamb_platform::installation`).
+fn installed_peer(stream: &UnixStream, reported: Option<&Path>) -> bool {
+    let Some(own) = std::env::current_exe()
+        .ok()
+        .and_then(|e| fs::canonicalize(e).ok())
+    else {
         return false;
     };
-    // SAFETY: both objects are valid; no network access is requested by these flags.
-    unsafe { guest.check_validity(flags, Some(&requirement)) == 0 }
+    let Some(members) = installation::macos_members(&own) else {
+        return false;
+    };
+    let Some(reported) = reported else {
+        return false;
+    };
+    let canonical = fs::canonicalize(reported).ok();
+    let Some(member) =
+        installation::member_for(&members, reported, canonical.as_deref(), PathRules::MacOs)
+    else {
+        return false;
+    };
+    // The code the audit token names is that member too: not a process that has run another
+    // program since, nor one whose pid was reused.
+    let Some(code) = audit_token(stream).and_then(|t| guest(&t)) else {
+        return false;
+    };
+    let agrees = static_of(&code)
+        .and_then(|s| code_path(&s))
+        .is_some_and(|p| installation::member_for_code_path(&members, &p) == Some(member));
+    let (own_signing, signature) = match own_team() {
+        Some(team) => (
+            OwnSigning::Signed,
+            if signed_by(&code, team) {
+                PeerSignature::SameSigner
+            } else {
+                PeerSignature::Other
+            },
+        ),
+        None => (OwnSigning::Unsigned, PeerSignature::Other),
+    };
+    installation::trusted(
+        true,
+        own_signing,
+        signature,
+        agrees,
+        same_file(reported, &member.exe),
+    )
 }
 
 /// Identifies the peer of `stream` and checks it against `policy`.
 fn verify(stream: &UnixStream, policy: PeerPolicy) -> Result<PeerIdentity> {
     let (uid, pid, executable) = peer_of(stream)?;
-    let trusted_binary = policy == PeerPolicy::InstalledBinary
-        && executable.as_deref().is_some_and(|peer| {
-            std::env::current_exe().is_ok_and(|own| same_installation(&own, peer))
-        })
-        && signed_like_us(pid);
+    let trusted_binary =
+        policy == PeerPolicy::InstalledBinary && installed_peer(stream, executable.as_deref());
     let peer = PeerIdentity {
         pid,
         user: uid.to_string(),
@@ -489,30 +605,11 @@ mod tests {
     }
 
     #[test]
-    fn the_installation_is_the_outer_app_bundle() {
-        let own = Path::new(
-            "/Applications/Iamb.app/Contents/Library/LoginItems/Iamb Service.app/Contents/MacOS/iamb-service",
-        );
-        assert_eq!(outer_bundle(own), Some(Path::new("/Applications/Iamb.app")));
-        assert!(same_installation(
-            own,
-            Path::new("/Applications/Iamb.app/Contents/MacOS/Iamb")
-        ));
-        assert!(!same_installation(
-            own,
-            Path::new("/tmp/Iamb.app/Contents/MacOS/Iamb")
-        ));
-        assert!(!same_installation(own, Path::new("/usr/local/bin/iamb")));
-        assert!(!same_installation(
-            Path::new("/usr/local/bin/iamb-service"),
-            Path::new("/usr/local/bin/iamb")
-        ));
-    }
-
-    #[test]
-    fn an_unbundled_test_binary_is_not_signed_like_an_installation() {
-        // `cargo test` binaries are ad-hoc signed at most; checking ourselves must not crash
-        // and the policy must not trust a test binary.
-        let _ = signed_like_us(std::process::id());
+    fn a_test_binary_is_in_no_installation_and_reading_its_own_signature_does_not_crash() {
+        // `cargo test` binaries are ad hoc signed at most and live in `target/`: the policy
+        // trusts no peer for them (the decision itself is tested in iamb_platform::installation).
+        let own = std::env::current_exe().expect("own path");
+        assert_eq!(installation::macos_members(&own), None);
+        assert_eq!(own_team(), None);
     }
 }

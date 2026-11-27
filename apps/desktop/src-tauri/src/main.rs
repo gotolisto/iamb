@@ -3,11 +3,14 @@
 //! ```text
 //! iamb-desktop [--data-dir PATH] [--open-library]
 //!              [--measure-open RUNS | --measure-form RUNS | --measure-palette RUNS]
-//!              [--budget-ms MS]
+//!              [--budget-ms MS] [--check-service]
 //! ```
 //!
 //! Started hidden at login by the service's supervisor (architecture §3.2). `--open-library`
 //! opens the library window at start (development, and desktops without a tray).
+//! `--check-service` opens no window: it connects to the service of the data root as the UI
+//! host, waits up to a minute for it to answer `GetStatus`, and exits 0 when it does, 1 when it
+//! refuses or never answers (the install smoke test, `iamb_desktop::check`).
 //! `--measure-open` times the cold open of the library window and exits; `--measure-form` times
 //! the fill-in form from the request to its first paint and exits, `--measure-palette` the
 //! search palette from the shortcut to its first paint (`docs/test-strategy.md` §8).
@@ -37,7 +40,11 @@ use iamb_desktop::log::Logger;
 use iamb_desktop::paths::DataDirs;
 
 const USAGE: &str = "usage: iamb-desktop [--data-dir PATH] [--open-library] \
-     [--measure-open RUNS | --measure-form RUNS | --measure-palette RUNS] [--budget-ms MS]";
+     [--measure-open RUNS | --measure-form RUNS | --measure-palette RUNS] [--budget-ms MS] \
+     [--check-service]";
+
+/// How long `--check-service` waits for the service to answer.
+const CHECK_WAIT: std::time::Duration = std::time::Duration::from_mins(1);
 
 struct Args {
     data_dir: Option<PathBuf>,
@@ -46,6 +53,7 @@ struct Args {
     measure_palette_runs: Option<usize>,
     budget_ms: Option<f64>,
     open_library: bool,
+    check_service: bool,
 }
 
 fn parse(args: impl Iterator<Item = OsString>) -> Result<Option<Args>, String> {
@@ -56,6 +64,7 @@ fn parse(args: impl Iterator<Item = OsString>) -> Result<Option<Args>, String> {
         measure_palette_runs: None,
         budget_ms: None,
         open_library: false,
+        check_service: false,
     };
     let mut args = args.peekable();
     while let Some(arg) = args.next() {
@@ -67,6 +76,7 @@ fn parse(args: impl Iterator<Item = OsString>) -> Result<Option<Args>, String> {
         match arg.to_str() {
             Some("--data-dir") => out.data_dir = Some(PathBuf::from(value("--data-dir")?)),
             Some("--open-library") => out.open_library = true,
+            Some("--check-service") => out.check_service = true,
             Some("--measure-open") => {
                 let runs = value("--measure-open")?
                     .parse::<usize>()
@@ -131,6 +141,35 @@ fn usage_error(message: &str) -> ExitCode {
     ExitCode::from(EXIT_USAGE)
 }
 
+/// `--check-service` (`iamb_desktop::check`): exits 0 when the service of the data root
+/// accepts this executable as the UI host, 1 otherwise; says which on standard output and in
+/// the log. No window, no instance lock.
+fn check_service(dirs: &DataDirs, log: &Logger) -> ExitCode {
+    match iamb_desktop::check::check_service(
+        iamb_ipc::native_endpoint().as_ref(),
+        &dirs.service_endpoint(),
+        iamb_platform::PeerPolicy::for_build(),
+        CHECK_WAIT,
+    ) {
+        Ok(status) => {
+            log.info(format_args!(
+                "check-service: the service {} accepted the UI host",
+                status.version
+            ));
+            say(&format!(
+                "service ok: iamb-service {}, pid {}",
+                status.version, status.pid
+            ));
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            log.error(format_args!("check-service: {e}"));
+            say(&format!("service check failed: {e}"));
+            fail(&e)
+        }
+    }
+}
+
 /// Ends on purpose: leaves the quit marker for the supervisor first.
 fn quit(dirs: &DataDirs, log: &Logger) -> ExitCode {
     if let Err(e) = dirs.mark_quit() {
@@ -152,6 +191,9 @@ fn main() -> ExitCode {
         Err(e) => return usage_error(&e.to_string()),
     };
     let log = Arc::new(Logger::open(&dirs.logs(), crash::PROCESS));
+    if args.check_service {
+        return check_service(&dirs, &log);
+    }
     crash::install_panic_hook(&log, &dirs.logs());
     if hardening.complete() {
         log.info(format_args!("{}", hardening.summary()));

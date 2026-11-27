@@ -79,6 +79,39 @@ if ($r.Code -ne 0) { Write-Host $r.Out; Write-Host $r.Err; Fail "the installed U
 Write-Host $r.Out
 Ok 'the installed UI host opened its library window (--measure-open 1)'
 
+# The installed UI host reaches the installed service (architecture §6.1, the installed-binary
+# check; finding 11): start the installed supervisor as the Run value does (without the UI
+# host), then connect as the UI host, headless (--check-service). A copy of the UI host outside
+# the installation directory must be refused.
+$serviceData = Join-Path $env:RUNNER_TEMP 'iamb-smoke-service'
+$svc = Start-Process -FilePath $service -ArgumentList @('--supervise', '--no-ui-host', '--data-dir', "`"$serviceData`"") -PassThru
+$null = $svc.Handle
+function Stop-Service-Processes {
+  Get-Process -Name 'iamb-service' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+}
+function Show-Service-Logs {
+  Get-ChildItem -Path (Join-Path $serviceData 'logs') -Filter '*.log' -ErrorAction SilentlyContinue |
+    ForEach-Object { Write-Host "--- $($_.Name)"; Get-Content -Tail 40 $_.FullName }
+}
+$r = Invoke-Exe $desktop @('--check-service', '--data-dir', "`"$serviceData`"") 120
+if ($r.Code -ne 0 -or -not $r.Out.StartsWith("service ok: iamb-service $Version")) {
+  Write-Host $r.Out; Write-Host $r.Err; Show-Service-Logs; Stop-Service-Processes
+  Fail "the installed service refused the installed UI host, or never answered (--check-service): code $($r.Code)"
+}
+Ok "the installed UI host connected to the installed service as the UI host ($($r.Out))"
+$copyDir = Join-Path $env:RUNNER_TEMP 'iamb-copy'
+New-Item -ItemType Directory -Force -Path $copyDir | Out-Null
+Copy-Item -Path $desktop -Destination $copyDir
+$r = Invoke-Exe (Join-Path $copyDir 'iamb-desktop.exe') @('--check-service', '--data-dir', "`"$serviceData`"") 120
+if ($r.Code -eq 0) { Show-Service-Logs; Stop-Service-Processes; Fail 'a copy of the UI host outside the installation directory was accepted' }
+if (-not $r.Out.StartsWith('service check failed')) {
+  Write-Host $r.Err; Stop-Service-Processes
+  Fail "the copy of the UI host did not run its check: code $($r.Code), said '$($r.Out)'"
+}
+Ok "a copy of the UI host outside the installation directory was refused ($($r.Out))"
+Stop-Service-Processes
+Remove-Item -Recurse -Force $copyDir
+
 # Signatures.
 $files = @($Installer, $desktop, $service, $uninstaller)
 if ($Signed -eq 'true') {

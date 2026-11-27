@@ -23,6 +23,7 @@
 
 pub mod app;
 pub mod bridge;
+pub mod check;
 pub mod contract;
 pub mod crash;
 pub mod form;

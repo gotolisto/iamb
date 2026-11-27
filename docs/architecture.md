@@ -570,14 +570,34 @@ One transport and framing for both endpoints ([ADR-0006](decisions/0006-ipc.md))
   when the bind fails it starts without it, logs why, records the diagnostic
   `endpoint_unavailable`, and tries again every 5 seconds until it can serve it.
 - Client side: before sending anything, a client verifies that the server process runs as the same
-  user and, in release builds, that its executable is the installed Iamb binary with a valid
-  signature. Servers verify clients the same way.
+  user and, in release builds, that its executable belongs to the same installation as the
+  client (below). Servers verify clients the same way. The same-user check always comes first.
+- **The installed-binary check** (release builds, `PeerPolicy::InstalledBinary`;
+  `iamb_platform::installation`; the 2.8 review's finding 11, closed). An installation is found
+  from the process's own canonical executable: on macOS `<X>.app/Contents/MacOS/iamb-desktop` or
+  `<X>.app/Contents/Library/LoginItems/Iamb Service.app/Contents/MacOS/iamb-service`, on Windows
+  an Iamb executable in the per-user installation directory `%LOCALAPPDATA%\Iamb`. Its members
+  are the UI host, the service and, should they ship there, `iamb` and `iamb-sync`. Whether the
+  installation is signed is read from the process's own image only (macOS: a team identifier;
+  Windows: a valid Authenticode signature):
+
+  | This process | The peer | Trusted |
+  | --- | --- | --- |
+  | Not in an installation (a development build, a copy elsewhere) | anything | no |
+  | Signed | a member at its own path, not reached through a link, signed by the same signer: macOS, the code its audit token names satisfies `anchor apple generic`, the team identifier and `org.iamb.Iamb` or `org.iamb.Iamb.Service` (`SecCodeCheckValidity`, no network access); Windows, a valid signature with the same leaf certificate | yes |
+  | Signed | a member, but unsigned, ad hoc, invalid or signed by another signer | no |
+  | Unsigned (ad hoc or none) | a member at its own path, not reached through a link; macOS: the code its audit token names is that member, and the executable is the member's file (device and inode) | yes |
+  | either | not a member: another folder, a copy of `iamb-desktop` elsewhere, a link to a member, a hard link outside the installation | no |
+
+  A signed installation never falls back to the path check, so it cannot be made to accept an
+  unsigned peer. What the check does not stop: in an unsigned installation a process of the user
+  that replaces a member's file inside the installation is trusted as that member; it could
+  replace the whole installation as well. Linux (development only) has no such check. The
+  install smoke test (`docs/release.md`) connects the installed UI host to the installed service
+  (`iamb-desktop --check-service`) on every OS.
 - The role a client states must be one its executable may take, by the file name the endpoint
   read from the operating system (§6.2; `iamb_ipc::roles`; the 2.8 review's finding 10): an
   Iamb client is held to its role in every build, and release builds accept no other program.
-  What that cannot stop until builds are signed (a signed binary of another publisher in the
-  installation directory, a process that replaces its image under the check) is finding 11,
-  tracked under "Open findings" in §8.
 - Framing: a 4-byte little-endian length, then one UTF-8 JSON document, at most 8 MB. Bulk data
   (import, export, attachments) is passed as file paths, never inline.
 - Shape: `Request { id, body }` → `Response { id, result | error }`, plus `Event { topic, body }`
@@ -953,7 +973,7 @@ real machines:
 
 | Finding | What is open | Tracked in |
 | --- | --- | --- |
-| 11, the installed-binary check | Windows trusts any executable in the installation directory with a valid signature from any publisher; macOS identifies the peer by process id, compares it with the service's own designated requirement (which would refuse the UI host and the command-line tool once builds are signed) and does not pass `kSecCSNoNetworkAccess`. The role check of §6.1 rests on this check | Phase 5, with the first signed builds (the signing rules of task 5.2): compare the peer's signer with the running executable's; build the macOS requirement from the team identifier and identify the peer by audit token; set the no-network flag; say in §6.1 what the check does not stop; test with signed builds |
+| 11, the installed-binary check | **Closed** (§6.1, "The installed-binary check"; `iamb_platform::installation`): the peer must be a member of the process's own installation; a signed installation requires the same signer (macOS: a requirement built from the team identifier and both bundle identifiers, checked on the code the audit token names, without network access; Windows: the same leaf certificate), an unsigned one the member's own path and file. Unsigned installed builds now accept their own UI host. Left: the signed path is checked by the install smoke test only once builds are signed | The install smoke test (`iamb-desktop --check-service`) on each OS; with the first signed builds, its signed run |
 | 13, screen lock and sign-out | **Done in the service** (§4.5, §5): `SessionEvents` in the platform traits, the mock and both OS crates; every event forgets the remembered values and disturbs the hand-off; `FormValues`, the wire copy of a submit and clipboard snapshots overwrite their bytes before they are freed. Tests on the mock (`tests/panels.rs`), a Windows unit test of the sign-out messages, a macOS main-loop test of the notifications (`tests/session.rs`). Left: a lock, user switch and sign-out on a real Windows and Mac (`docs/compatibility-run.md`); the IPC frames that carried values (serde's buffers) are freed without being overwritten | Task 3.5: the manual checks on both systems |
 | 16, Iamb's own panels on macOS | **Done in the service** (§4.5, ADR-0013 addendum): `PanelFocus(panel, shown)`, with a lease and the UI-host-gone fallback; keys typed while a panel has the keyboard reach neither the engine nor the hand-off (`tests/panels.rs`, `tests/focus_order.rs`). **The form panel sends it** (task 3.5, `apps/desktop/src-tauri/src/form.rs`): before the panel takes the keyboard, renewed every 10 seconds, and `shown: false` when the panel resigns the keyboard (a click into the app behind it) and before `FormSubmit` and `FormCancel` (`apps/desktop/src-tauri/tests/form.rs`). **The palette sends it too** (task 3.6, `apps/desktop/src-tauri/src/palette.rs`): the same order, and before `ExpandSnippet` and `ReopenLastForm` (`apps/desktop/src-tauri/tests/palette.rs`). Left: the form panel and the palette must become non-activating panels on macOS (a function in `iamb-platform-macos`, `apps/desktop/README.md`), and a check on a Mac that keys typed into the panels do not expand (`docs/compatibility-run.md`, F2 and P3) | The macOS panel function, and the Mac check |
 
