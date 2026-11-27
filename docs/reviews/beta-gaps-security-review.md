@@ -702,3 +702,123 @@ removed from the shared target directory afterwards.
 
 Not run: anything on macOS or Windows; the other desktop integration tests; the macOS
 endpoint test.
+
+
+## 6. Round 2 re-verification
+
+Date: 2026-11-27 · Commits reviewed: `3817188` (first part) and `166c52b` (the rest; the working
+tree named in the request had been committed as `166c52b` when this was read, and the checkout
+was clean) · Same reviewer, same limits: everything was run on Linux, nothing on macOS or
+Windows; each line says whether it was shown by a run or by reading.
+
+### 6.1 Verdict
+
+Nothing found here stands in the way of the beta any more. All six items left open by section 5
+are closed, on Linux by a run wherever a run was possible, and by reading for the parts that
+only exist on macOS and Windows. The fixes brought no new medium or high problem. What is left
+is low (6.4), plus the checks on real machines that sections 4 and 5 already list (the Mac
+checks H1 to H5, the tray on Windows and macOS): the macOS claims of this round rest on reading
+the code and the window toolkit's source, not on a Mac.
+
+### 6.2 The open items of section 5
+
+| Item | Now | Evidence |
+| --- | --- | --- |
+| Finding 1, scenario a (`--ui-host` with `--platform mock` in a release build; the default root from `HOME`) | **Closed** | Run: a release build made from this tree refuses `--supervise --platform mock --ui-host <program>` and the same with `--platform native` (exit 1, "--ui-host is for development builds"), creates nothing in the data root and starts nothing; `tests/release_switches.rs` passes in a release build (1 test on Linux; the second is for systems with a native platform). Reading: `main.rs:158-168`, `209-220`: `--ui-host` needs a debug build on any platform, `--platform mock` needs a debug build where a native platform exists; `paths.rs:293-298` builds the default from the home directory `getpwuid_r` gives (`iamb-platform-macos/src/account.rs`), and with no answer from the user database the released helper serves no root. Unit tests pass (5 in `main.rs`, 18 for paths and supervisor). H4 in `docs/compatibility-run.md` now tries the mock platform and `open --env HOME=…` |
+| N1, the tray lock held across menu calls | **Closed** (by reading, and its unit test) | `menu.rs:363-438`: `SharedCapture` changes the capture under its lock, lets the lock go, then calls the item. `tray.rs:257-271`: every change to the menu and the icon runs on the main thread (`on_main`: at once when already there, queued otherwise, never waited for). `render` no longer holds `shown_icon` across `set_icon` (`tray.rs:300-322`). The main thread still takes the capture lock in the pointer events, but nothing holds that lock while it waits for the main thread. The bridge lets its own lock go before it calls the sink (`bridge/mod.rs:138-161`), so the main thread's `bridge.status()` cannot be caught the same way. The test `the_capture_lock_is_never_held_while_the_menu_waits_for_the_main_thread` uses an item that takes the lock on each call and passes (31 desktop unit tests for `menu`, `app`, `paths`, `onboarding` pass in the binary built from this tree) |
+| N2, a quit marker from another UI host hides a crash | **Closed** | Run: `second_instance` passes (the real UI host steps aside with status 0 and leaves no marker); `a_marker_created_while_the_ui_host_runs_does_not_turn_a_kill_into_a_quit` and `a_usage_error_ends_the_supervision_and_a_marker_does_not_hide_a_crash` pass. Reading: `supervisor.rs:222-250`, the marker counts behind a launcher only; `apps/desktop/src-tauri/src/main.rs:168-172` |
+| N4, the tray's "Fill in again" with another program's window reported last | **Closed** | Scratch test re-run with the token: taskbar reported last, hand-back to the editor late, request naming the editor: no form before the editor's report, then the form for the editor. `the_trays_fill_in_again_with_its_window_waits_for_that_window_alone` passes (a password field or another window reported in between decides nothing). The tray and the palette send their window (`form.rs`, `palette.rs`). A request without the field still behaves as in section 5 (shown again: the form goes to the taskbar's window); that is what an older UI host gets |
+| N5, the pause file | **Closed**, one case left (6.4, R1) | Scratch tests re-run: an empty directory in its place is removed and means not paused; a link to a file of the user's is removed, the file untouched, not paused; a dangling link planted before a pause is replaced by a regular file and the pause is there after a restart with `paused_kept`; a resume and a new pause clear `paused_kept`. `only_a_regular_file_in_its_place_keeps_the_pause` passes. Architecture §8 lists `run/paused` with the two signal files |
+| Finding 8, no sign of a pause when the icon is hidden | **Closed** as far as the specification allows | Reading: the status carries `paused_kept`; the menu says "Iamb is still paused", the status line of the library window and the top of "Why didn't it expand?" say that Iamb is paused, and the user guide has "Nothing expands at all" (`docs/user/troubleshooting.md`). There is still no notice at the moment of an accidental press of the pause shortcut, which §4.11 rules out; the places a user looks when nothing expands now answer it |
+
+Also re-checked from 5.2: finding 6 on macOS. The marker is now left when the event loop ends
+without a requested status or with status 0 (`app/mod.rs:305-318`). In the window toolkit's
+source a quit by the system (a logout, a restart, a "quit" Apple event) goes through
+`applicationWillTerminate` to the loop's end without an exit request, so it leaves the marker
+and Iamb is not opened again during a logout (reading; N6 of section 5 closed on that basis,
+check H3 on a Mac). An end by SIGTERM behind `open` is still restarted; the module docs and
+§3.2 say so.
+
+### 6.3 The points asked about
+
+- **The `focus` field of `ReopenLastForm`.** It gives a client no new reach. Only the UI role
+  may send the request (run: the command-line and sync roles get `not_permitted`).
+  Naming a window does not move the focus and does not type: the request waits until that
+  window's focus change is delivered, and then that window's own verdict decides. Run: a named
+  password window that never gets the focus ends with `request_focus_timeout`, nothing shown,
+  nothing typed; named and then focused, a password window gives `refused_secure_field`, a
+  window of an excluded app `refused_excluded_app`, one of Iamb's own `refused_own_window`;
+  the focused window named while its field is a password field gives no form; a window that
+  does not exist gives nothing. `ExpandSnippet` has had the same field, for the UI and the
+  command-line roles, since Phase 2. The field is optional and absent on the wire when empty.
+- **The marker on `RunEvent::Exit`.** A crash does not pass there: a panic leaves through the
+  panic hook with status 70, a fault or a kill ends the process without the event loop's end,
+  and an exit requested with another status leaves no marker. What does pass, besides a quit:
+  an end of the event loop that some other process of the user asked for politely (a quit
+  Apple event, a posted quit message), which is "on purpose". A marker written by a process of
+  the user can still suppress a restart behind `open`; that is a same-user action and is
+  stated in §8.
+- **`on_main` ordering and staleness.** Each queued call renders from what the tray holds when
+  it runs (the last status, the capture as it is), so order between two calls does not matter
+  and the last state wins. A click reads the item's text through the main thread and compares
+  it with the label of the target under the lock: a text that lags behind the capture refuses
+  the click (`exclusion_label_changed`). One case was not checked on a real system: a capture
+  that finishes after the menu was drawn (up to the two seconds it may take) changes the item
+  while the menu is open; the click then acts on the application just captured, which is the
+  one in front, while a menu that does not repaint could still show the older name.
+- **Removing what is not a file at `run/paused`.** Only the entry itself is removed: a link is
+  unlinked and never followed (run: the file it pointed to was untouched), a directory only
+  when empty (run: a full one stays). The path is `<data root>/run/paused`; whoever chooses
+  the data root is the user, and the worker has no rights the user lacks, so nothing can be
+  removed that the user's process could not remove itself. A `run` that is itself a link is
+  followed, as it is for every other file there.
+
+### 6.4 What is left, all low
+
+- **R1. A directory that is not empty in the pause file's place loses a pause at the next
+  start.** `crates/iamb-service/src/worker/engine.rs:227-266`, `436-445`. Run: with such a
+  directory there, pausing works (`paused: true`) but cannot be kept, the log has "cannot keep
+  the pause for a restart", and the next worker starts not paused. Only a process of the user
+  can make the directory. Fix: carry "the pause could not be kept" in the status so the menu
+  can say it, or move the directory aside (rename) and create the file.
+- **R2. A released helper whose `HOME` is not the user database's home, or that gets no
+  answer from the user database, does not start, and says so only on standard error.**
+  `main.rs:166-173`, `paths.rs:293-298`. By reading. It fails closed, which is right, but at
+  login nobody reads standard error. Fix: when neither `--data-dir` nor `IAMB_DATA_DIR` is
+  given, have the released helper build its root from the account's home instead of comparing
+  and refusing; write the refusal to the supervisor log of the default root when there is one.
+- **R3. The bundle check is still not a protection** (N3 of section 5, unchanged, and the
+  comment says so): it looks for `iamb-desktop` while `open` starts what `CFBundleExecutable`
+  names, and it reads no binary property list. Add to the macOS smoke test that the installed
+  helper's log says the UI host was opened, so that a bundler change cannot silently stop the
+  start at login.
+- **R4. Smaller, unchanged from 5.4:** `reopen_waiting` stays set after `request_cancelled`
+  or `form_open` (`engine.rs:1011`, `1073`, `1083`); `GetWindowsDirectoryW` instead of
+  `GetSystemWindowsDirectoryW` (`iamb-platform-windows/src/files.rs:38`).
+- **Not a finding, a limit to keep in mind:** the data-root rule does not stop a process of
+  the user that writes into the default data root itself; §8 now says so.
+
+### 6.5 What was run
+
+All passing: `cargo test --locked -p iamb-service --test shortcuts --test supervisor_restart
+--test supervisor_ui_host --test supervisor` from the checkout (13, 6, 7, 6);
+`release_switches` in a release build (1); the service's unit-test binaries as built from this
+tree, filtered to the supervisor, paths and `main` tests (18 and 5); the desktop's unit-test
+binary filtered to `menu`, `app`, `paths`, `onboarding` (31), `second_instance` (1) and
+`restart` (6), as built from this tree, not rebuilt. Four scratch tests of this round (the named
+window, the roles, the pause file's cases, the tray's request with and without the token) and
+a hand run of the release binary. The ten scratch tests of section 2's finding 2 were not run
+again: their cases are in `tests/shortcuts.rs` now, which was.
+
+How it was run, for whoever reads the build logs: the checkout was not edited. The scratch tests
+were built from an exported copy of `166c52b` in the scratchpad with the shared target
+directory; a copy shares the artifact names of the checkout, so the service crates were
+rebuilt in place once, and the first attempt (01:20, a compile error in the scratch test)
+overlapped the start of another test run in the checkout. While the disk was down to under
+100 MB the scratch binary (16 MB, stripped) was moved to memory-backed storage and run there,
+and the release build was made and run entirely in memory-backed storage; both are removed and
+nothing of this round is left in the shared target directory.
+
+Not run: anything on macOS or Windows (the mock-platform refusal test for systems with a
+native platform, the home lookup, the tray, the quit by the system); the front-end tests; the
+other desktop integration tests.
