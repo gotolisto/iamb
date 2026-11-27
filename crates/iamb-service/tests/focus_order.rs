@@ -68,15 +68,21 @@ fn keys_that_went_elsewhere_leave_the_previous_field_as_it_was() {
     h.os.type_text("br");
     h.settle();
     h.os.hold_focus_reports(true);
-    // A few keys go to the password field and the focus comes back, all before the watcher
-    // reports anything: those keys are not part of the editor's text, and the abbreviation
-    // the user goes on typing in the editor still expands there.
+    // A key goes to the password field and the focus comes back, all before the watcher
+    // reports anything: that key is not part of the editor's text, and the abbreviation the
+    // user goes on typing in the editor still expands there.
+    //
+    // One key, not more: from the second one on, the engine may read the focus itself (N5,
+    // after `RESYNC_AFTER_KEYS` keys or `RESYNC_AFTER`), and whether that read still finds
+    // the password field depends on how far this thread got meanwhile. When it does, the
+    // engine is told so and rightly drops the editor's keys until the held reports come
+    // (`keys_for_a_window_the_watcher_never_reported_bring_a_diagnostic_and_a_new_look`).
     h.os.focus(bank).expect("window is open");
-    h.os.type_text("x b");
+    h.os.type_text("x");
     h.os.focus(h.editor).expect("window is open");
     h.os.type_text("b ");
     h.settle();
-    assert_eq!(h.text(bank), "x b");
+    assert_eq!(h.text(bank), "x");
     assert_eq!(h.text(h.editor), "be right back ");
     h.os.hold_focus_reports(false);
     h.settle();

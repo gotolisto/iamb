@@ -92,6 +92,14 @@ a merge.
   tight timing limits (load KPI under 100 ms, worst-case template budgets) that debug builds
   relax.
 
+## Installers and the install smoke test
+
+Not part of the pull-request checks. `.github/workflows/installers.yml` builds the macOS disk
+image, the Windows installer and the Linux package, and installs, starts and uninstalls each on
+a fresh runner. It runs from `release.yml` for every tag `v*` (signed when the owner's secrets
+exist) and from `ci.yml` only on a manual run with the `installers` input ticked (never signed);
+the `installers` job is not in `ci-ok`. See [`release.md`](release.md).
+
 ## Running the checks locally
 
 On Linux the workspace-wide commands below include `iamb-desktop`, which needs the packages the

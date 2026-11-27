@@ -154,7 +154,14 @@ impl Service {
     }
 
     /// Types `text` into the focused window and waits for the expansions to finish.
+    ///
+    /// Before the first key it waits until the engine has handled everything the focus thread
+    /// was sent so far. Keys reach the engine straight from the hook, focus changes through
+    /// the focus thread, so a change that is still on its way (the re-judging after every
+    /// settings change, a focus change the test made) would otherwise reach the engine among
+    /// or after the keys and clear them, as it may on a busy machine.
     pub fn type_text(&self, text: &str) {
+        self.worker().sync();
         self.os.type_text(text);
         self.worker().settle();
     }

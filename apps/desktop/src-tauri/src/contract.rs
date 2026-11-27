@@ -67,6 +67,8 @@ pub const COMMANDS: &[&str] = &[
     // Formatted snippets (`app/template_commands.rs`, task 3.8).
     "template_add_attachment",
     "template_try_form",
+    // Links in a formatted preview (`app/template_commands.rs`, `link.rs`).
+    "template_open_link",
     // The fill-in form's commands (`app/form_panel.rs`, task 3.5).
     "form_ready",
     "form_current",
@@ -80,6 +82,9 @@ pub const COMMANDS: &[&str] = &[
     "settings_put",
     "settings_list_exclusions",
     "settings_put_exclusion",
+    "settings_login_item",
+    "settings_about",
+    "settings_open_log_folder",
     "diagnostics_recent",
     "diagnostics_test",
     // The onboarding window's commands (`app/onboarding_commands.rs`, task 3.7).
@@ -91,6 +96,7 @@ pub const COMMANDS: &[&str] = &[
     "onboarding_login_item",
     "onboarding_open_library",
     "onboarding_close",
+    "app_restart_service",
     // The search palette's commands (`app/palette_panel.rs`, task 3.6).
     "palette_ready",
     "palette_current",
@@ -160,6 +166,10 @@ pub struct ServiceView {
     pub version: String,
     /// Global pause is on.
     pub paused: bool,
+    /// The pause was kept from before the worker started (it outlives a quit, a logout and a
+    /// restart of the machine) and nobody has paused or resumed since.
+    #[serde(default)]
+    pub paused_kept: bool,
     /// Typed keys are dropped right now (a secure field, an excluded app, pause, …).
     pub suspended: bool,
     /// Snippets in the current snapshot.
@@ -177,6 +187,7 @@ impl From<&ServiceStatus> for ServiceView {
         Self {
             version: s.version.clone(),
             paused: s.paused,
+            paused_kept: s.paused && s.paused_kept,
             suspended: s.suspended,
             snippets: s.snippets,
             revision: s.revision,
@@ -541,6 +552,7 @@ mod tests {
             version: "1".to_owned(),
             pid: 1,
             paused: true,
+            paused_kept: false,
             suspended: false,
             injection: iamb_ipc::InjectionStatus::Idle,
             snippets: 2,

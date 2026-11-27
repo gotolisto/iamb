@@ -1,0 +1,11 @@
+{
+  "id": 21,
+  "kind": "response",
+  "result": {
+    "status": [
+      "applied",
+      "removed"
+    ],
+    "type": "applied"
+  }
+}

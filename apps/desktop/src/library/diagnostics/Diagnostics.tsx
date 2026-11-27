@@ -281,6 +281,15 @@ function Log({
           <span>Show technical entries</span>
         </label>
       </div>
+      {online && env.paused && (
+        <div className="banner warning" role="status">
+          <p>
+            {env.pausedKept
+              ? "Iamb is still paused: it has been since before it last started. Typed abbreviations do not expand, and nothing is listed here for them."
+              : "Iamb is paused. Typed abbreviations do not expand, and nothing is listed here for them."}
+          </p>
+        </div>
+      )}
       {error && (
         <div className="banner danger" role="alert">
           <p>{error}</p>

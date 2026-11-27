@@ -84,7 +84,18 @@ pub enum HotkeyKey {
 /// A modifier set and a key, e.g. `Ctrl+Shift+Space`.
 ///
 /// A valid chord cannot be typed by accident: a letter, digit or named key needs Ctrl, Alt or
-/// Meta (Shift alone would swallow ordinary typing); a function key may stand alone.
+/// Meta (Shift alone would swallow ordinary typing); a function key may stand alone. The system
+/// hotkey API takes a registered chord away from every application, so these are refused too
+/// (the beta-gap review's finding 4), by the service and not only by the recorder:
+///
+/// - the clipboard and undo chords, Ctrl or Meta alone with C, V, X, Z, A or Y, and the
+///   word and line deletions, Ctrl or Meta alone with Backspace or Delete
+///   ([`ChordError::Reserved`]): Iamb's own paste sends one of them, and they are everyday
+///   editing;
+/// - chords that type a character ([`ChordError::TypesCharacter`]): Alt (Option), with or
+///   without Shift, and a letter or digit, which types a character on macOS and opens a menu on
+///   Windows; and on Windows Ctrl+Alt, with or without Shift, and a letter or digit unless Meta
+///   is held too, because `AltGr` is Ctrl+Alt there (`AltGr`+Q is `@` on a German layout).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Chord {
     modifiers: Modifiers,
@@ -107,6 +118,10 @@ pub enum ChordError {
     /// The key is outside its range (a letter that is not `A`–`Z`, a digit above 9, a function
     /// key outside 1–24).
     OutOfRange,
+    /// A clipboard, undo or deletion chord (see [`Chord`]).
+    Reserved,
+    /// The chord types a character on this system (see [`Chord`]).
+    TypesCharacter,
 }
 
 impl fmt::Display for ChordError {
@@ -118,6 +133,8 @@ impl fmt::Display for ChordError {
             Self::DuplicateModifier => "the shortcut names a modifier twice",
             Self::NeedsModifier => "the shortcut needs Ctrl, Alt or Meta",
             Self::OutOfRange => "the shortcut's key is out of range",
+            Self::Reserved => "the shortcut is an editing shortcut every application uses",
+            Self::TypesCharacter => "the shortcut types a character on this keyboard",
         })
     }
 }
@@ -129,7 +146,8 @@ impl Chord {
     ///
     /// # Errors
     ///
-    /// [`ChordError::OutOfRange`] or [`ChordError::NeedsModifier`].
+    /// [`ChordError::OutOfRange`], [`ChordError::NeedsModifier`], [`ChordError::Reserved`] or
+    /// [`ChordError::TypesCharacter`].
     pub fn new(modifiers: Modifiers, key: HotkeyKey) -> std::result::Result<Self, ChordError> {
         let key = match key {
             HotkeyKey::Letter(c) if c.is_ascii_alphabetic() => {
@@ -145,6 +163,9 @@ impl Chord {
             || modifiers.contains(Modifiers::META);
         if !strong && !matches!(key, HotkeyKey::Function(_)) {
             return Err(ChordError::NeedsModifier);
+        }
+        if let Some(e) = conflict(modifiers, key, cfg!(windows)) {
+            return Err(e);
         }
         Ok(Self { modifiers, key })
     }
@@ -194,6 +215,30 @@ impl Chord {
     pub const fn key(self) -> HotkeyKey {
         self.key
     }
+}
+
+/// Why `modifiers` + `key` would take an editing chord or a character away from every
+/// application (see [`Chord`]); `windows` for the Windows rule.
+fn conflict(modifiers: Modifiers, key: HotkeyKey, windows: bool) -> Option<ChordError> {
+    let only = |m: Modifiers| modifiers == m;
+    let text_key = matches!(key, HotkeyKey::Letter(_) | HotkeyKey::Digit(_));
+    let editing = matches!(
+        key,
+        HotkeyKey::Letter('C' | 'V' | 'X' | 'Z' | 'A' | 'Y')
+            | HotkeyKey::Named(KeyName::Backspace | KeyName::Delete)
+    );
+    if (only(Modifiers::CTRL) || only(Modifiers::META)) && editing {
+        return Some(ChordError::Reserved);
+    }
+    let alt_shift = Modifiers::ALT.with(Modifiers::SHIFT);
+    if text_key && (only(Modifiers::ALT) || only(alt_shift)) {
+        return Some(ChordError::TypesCharacter);
+    }
+    let ctrl_alt = Modifiers::CTRL.with(Modifiers::ALT);
+    if windows && text_key && modifiers.contains(ctrl_alt) && !modifiers.contains(Modifiers::META) {
+        return Some(ChordError::TypesCharacter);
+    }
+    None
 }
 
 fn parse_key(part: &str) -> std::result::Result<HotkeyKey, ChordError> {
@@ -292,14 +337,14 @@ mod tests {
 
     #[test]
     fn accessors() {
-        let c = chord("Ctrl+Alt+k");
+        let c = chord("Ctrl+Alt+Meta+k");
         assert_eq!(c.key(), HotkeyKey::Letter('K'));
         assert!(c.modifiers().contains(Modifiers::CTRL.with(Modifiers::ALT)));
         assert!(!c.modifiers().contains(Modifiers::SHIFT));
         assert!(!c.modifiers().is_empty());
         assert!(Modifiers::NONE.is_empty());
         assert_eq!(Modifiers::default(), Modifiers::NONE);
-        assert_eq!(format!("{:?}", c.modifiers()), "Modifiers(Ctrl+Alt)");
+        assert_eq!(format!("{:?}", c.modifiers()), "Modifiers(Ctrl+Alt+Meta)");
         assert_eq!(format!("{:?}", Modifiers::NONE), "Modifiers()");
         assert_eq!(chord("meta+space").key(), HotkeyKey::Named(KeyName::Space));
         assert_eq!(chord("ctrl+0").key(), HotkeyKey::Digit(0));
@@ -353,6 +398,82 @@ mod tests {
         assert_eq!(
             Chord::new(Modifiers::SHIFT, HotkeyKey::Named(KeyName::Enter)),
             Err(ChordError::NeedsModifier)
+        );
+    }
+
+    #[test]
+    fn editing_chords_and_chords_that_type_are_refused() {
+        for input in [
+            "Ctrl+V",
+            "Meta+V",
+            "Ctrl+C",
+            "Cmd+C",
+            "Ctrl+X",
+            "Ctrl+Z",
+            "Meta+Z",
+            "Ctrl+A",
+            "Ctrl+Y",
+            "Ctrl+Backspace",
+            "Meta+Backspace",
+            "Ctrl+Delete",
+        ] {
+            assert_eq!(Chord::parse(input), Err(ChordError::Reserved), "{input}");
+        }
+        for input in ["Alt+Q", "Option+E", "Alt+Shift+2", "Alt+7"] {
+            assert_eq!(
+                Chord::parse(input),
+                Err(ChordError::TypesCharacter),
+                "{input}"
+            );
+        }
+        // With another modifier they are ordinary chords.
+        for input in [
+            "Ctrl+Shift+V",
+            "Meta+Shift+Z",
+            "Ctrl+Alt+Meta+V",
+            "Alt+Meta+Q",
+            "Alt+F4",
+            "Alt+Space",
+            "Ctrl+Shift+Backspace",
+            "Ctrl+B",
+        ] {
+            assert!(Chord::parse(input).is_ok(), "{input}");
+        }
+        assert!(!ChordError::Reserved.to_string().is_empty());
+        assert!(!ChordError::TypesCharacter.to_string().is_empty());
+    }
+
+    #[test]
+    fn altgr_combinations_are_refused_on_windows_only() {
+        let key = |c| HotkeyKey::Letter(c);
+        let ctrl_alt = Modifiers::CTRL.with(Modifiers::ALT);
+        let with_shift = ctrl_alt.with(Modifiers::SHIFT);
+        for (modifiers, k) in [
+            (ctrl_alt, key('Q')),
+            (ctrl_alt, key('A')),
+            (with_shift, key('A')),
+            (ctrl_alt, HotkeyKey::Digit(2)),
+        ] {
+            assert_eq!(
+                conflict(modifiers, k, true),
+                Some(ChordError::TypesCharacter),
+                "{modifiers:?} {k:?}"
+            );
+            assert_eq!(conflict(modifiers, k, false), None, "{modifiers:?} {k:?}");
+        }
+        // Meta with them, or a key that types nothing, is fine on Windows too.
+        assert_eq!(
+            conflict(ctrl_alt.with(Modifiers::META), key('Q'), true),
+            None
+        );
+        assert_eq!(conflict(ctrl_alt, HotkeyKey::Function(5), true), None);
+        assert_eq!(
+            conflict(ctrl_alt, HotkeyKey::Named(KeyName::Space), true),
+            None
+        );
+        assert_eq!(
+            conflict(Modifiers::CTRL.with(Modifiers::SHIFT), key('Q'), true),
+            None
         );
     }
 }

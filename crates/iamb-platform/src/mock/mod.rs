@@ -1314,9 +1314,19 @@ impl FocusInspector for MockPlatform {
             .ok_or(PlatformError::NoFocus)
     }
 
+    /// As the OS crates do, a token whose window still has the focus is answered at once,
+    /// without a focus change: the form and the palette are non-activating panels on macOS,
+    /// so their window usually never lost it. A report here would be one no real watcher
+    /// sends, and it could reach the engine after the request the UI host sends next.
     fn restore_focus(&self, token: &FocusToken) -> Result<()> {
-        if self.desk().refuse_restore {
-            return Err(PlatformError::Timeout);
+        {
+            let desk = self.desk();
+            if desk.refuse_restore {
+                return Err(PlatformError::Timeout);
+            }
+            if desk.focus_change().map(|change| change.token) == Some(*token) {
+                return Ok(());
+            }
         }
         self.focus(*token)
     }

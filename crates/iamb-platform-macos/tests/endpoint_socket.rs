@@ -125,3 +125,28 @@ fn a_round_trip_with_verified_peers() {
     ));
     listener.close().expect("closes");
 }
+
+#[test]
+fn close_wakes_accept_after_the_run_directory_is_gone() {
+    // A data folder removed while the service runs must not leave accept blocked (the beta-gap
+    // review's finding 10): the wake-up does not go through the socket's path.
+    let dir = Dir::new("gone");
+    let p = Platform::new();
+    let listener: Arc<dyn LocalListener> = p
+        .bind(&dir.name(), PeerPolicy::SameUser)
+        .expect("binds")
+        .into();
+    let accepting = Arc::clone(&listener);
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(accepting.accept().err());
+    });
+    thread::sleep(Duration::from_millis(100));
+    fs::remove_dir_all(dir.name().run_dir()).expect("removed");
+    listener.close().expect("closed");
+    let woken = rx.recv_timeout(T);
+    assert!(
+        matches!(woken, Ok(Some(PlatformError::Closed))),
+        "accept was not woken: {woken:?}"
+    );
+}

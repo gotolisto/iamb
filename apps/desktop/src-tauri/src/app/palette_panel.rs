@@ -104,26 +104,32 @@ impl PaletteHost for Panel {
     }
 
     fn to_library(&self, request: LibraryRequest) {
-        let Some(ui) = self.app.try_state::<Arc<Ui>>() else {
-            return;
-        };
-        ui.palette.put(request);
-        let app = self.app.clone();
-        let ui: Arc<Ui> = Arc::clone(&ui);
-        // Off the flow's thread: opening a window can take a while (`windows::open_library`).
-        tauri::async_runtime::spawn_blocking(move || {
-            if let Err(e) = windows::open_library(&app, &ui.timer) {
-                ui.log
-                    .warn(format_args!("cannot open the library window: {e}"));
-                return;
-            }
-            let _ = app.emit_to(
-                EventTarget::webview_window(windows::LIBRARY),
-                LIBRARY_REQUEST_EVENT,
-                (),
-            );
-        });
+        to_library(&self.app, request);
     }
+}
+
+/// Opens the library window and has it do `request` (a pick in the palette, or the menu's "New
+/// snippet…", "Settings…" and "Why didn't it expand?"). Never blocks.
+pub fn to_library(app: &AppHandle, request: LibraryRequest) {
+    let Some(ui) = app.try_state::<Arc<Ui>>() else {
+        return;
+    };
+    ui.palette.put(request);
+    let app = app.clone();
+    let ui: Arc<Ui> = Arc::clone(&ui);
+    // Off the caller's thread: opening a window can take a while (`windows::open_library`).
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(e) = windows::open_library(&app, &ui.timer) {
+            ui.log
+                .warn(format_args!("cannot open the library window: {e}"));
+            return;
+        }
+        let _ = app.emit_to(
+            EventTarget::webview_window(windows::LIBRARY),
+            LIBRARY_REQUEST_EVENT,
+            (),
+        );
+    });
 }
 
 /// The platform layer the UI host gives the focus back with and follows the front application
@@ -135,7 +141,7 @@ impl PaletteHost for Panel {
         reason = "the same signature returns `None` on Linux"
     )
 )]
-fn platform_focus() -> Option<Arc<dyn FocusInspector>> {
+pub(super) fn platform_focus() -> Option<Arc<dyn FocusInspector>> {
     #[cfg(windows)]
     {
         Some(Arc::new(iamb_platform_windows::Platform::new()))

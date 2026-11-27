@@ -51,6 +51,9 @@ describe("the palette's commands", () => {
     expect(isLibraryRequest({ kind: "new", label: "a" })).toBe(true);
     expect(isLibraryRequest({ kind: "show", id: "a" })).toBe(true);
     expect(isLibraryRequest({ kind: "show" })).toBe(false);
+    expect(isLibraryRequest({ kind: "view", view: "settings" })).toBe(true);
+    expect(isLibraryRequest({ kind: "view", view: "diagnostics" })).toBe(true);
+    expect(isLibraryRequest({ kind: "view", view: "health" })).toBe(false);
   });
 
   it("takes a library request once and opens the palette from the library window", async () => {

@@ -46,6 +46,19 @@ describe("the template commands", () => {
     await expect(service.tryForm?.(fields, "", "hi")).rejects.toMatchObject({ code: "unexpected_response" });
   });
 
+  it("open a link by its address only, and pass the Rust side's refusal on", async () => {
+    const calls: Array<{ command: TemplateCommand; args: Record<string, unknown> }> = [];
+    let fail = false;
+    const service = createTemplateService((command, args) => {
+      calls.push({ command, args });
+      return fail ? Promise.reject(fixtures.template.link_refused) : Promise.resolve(null);
+    });
+    await service.openLink?.("https://example.com/a?b=1&c=2");
+    expect(calls).toEqual([{ command: "template_open_link", args: { url: "https://example.com/a?b=1&c=2" } }]);
+    fail = true;
+    await expect(service.openLink?.("javascript:alert(1)")).rejects.toMatchObject({ code: "link_refused" });
+  });
+
   it("refuse an answer of the wrong shape", async () => {
     const service = createTemplateService(() => Promise.resolve({ tokens: "nope" }));
     await expect(service.parse("x")).rejects.toMatchObject({ code: "unexpected_response" });

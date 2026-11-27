@@ -157,6 +157,8 @@ export interface PaletteApi {
   preview: (id: string) => Promise<TemplatePreview | null>;
   /** What the user did. Rejects with `FOCUS_LOST` when the focus could not be given back. */
   pick: (session: number, action: PickAction) => Promise<void>;
+  /** "Start it again" under "Iamb is not running.": starts the background service again. */
+  restartService?: () => Promise<void>;
 }
 
 const unexpected = { code: "unexpected_response", message: "the answer did not have the expected shape" };
@@ -185,6 +187,7 @@ export function createPaletteApi(invoke: Invoke): PaletteApi {
       return isTemplatePreview(preview) ? preview : null;
     },
     pick: (session, action) => invoke<void>("palette_pick", { session, action }),
+    restartService: () => invoke<void>("app_restart_service"),
   };
 }
 
@@ -206,12 +209,20 @@ export const paletteApi: PaletteApi = createPaletteApi((command, args) =>
 // ---- What the palette asks of the library window ---------------------------------------------
 
 /** What a pick asked of the library window (`LibraryRequest` in src-tauri/src/palette.rs). */
-export type LibraryRequest = { kind: "new"; label: string } | { kind: "show"; id: string };
+export type LibraryRequest =
+  | { kind: "new"; label: string }
+  | { kind: "show"; id: string }
+  | { kind: "view"; view: LibraryRequestView };
+
+/** The views the menu's "Settings…" and "Why didn't it expand?" open (`LibraryView`). */
+export type LibraryRequestView = "settings" | "diagnostics";
 
 export function isLibraryRequest(v: unknown): v is LibraryRequest {
   return (
     isObject(v) &&
-    ((v.kind === "new" && isString(v.label)) || (v.kind === "show" && isString(v.id)))
+    ((v.kind === "new" && isString(v.label)) ||
+      (v.kind === "show" && isString(v.id)) ||
+      (v.kind === "view" && (v.view === "settings" || v.view === "diagnostics")))
   );
 }
 

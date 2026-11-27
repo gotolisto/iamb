@@ -32,6 +32,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "fold_final_sigma",
         sql: include_str!("../migrations/0002_fold_final_sigma.sql"),
     },
+    Migration {
+        version: 3,
+        name: "sync",
+        sql: include_str!("../migrations/0003_sync.sql"),
+    },
 ];
 
 /// The schema version this build creates and understands.

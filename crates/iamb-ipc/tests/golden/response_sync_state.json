@@ -1,0 +1,20 @@
+{
+  "id": 22,
+  "kind": "response",
+  "result": {
+    "info": {
+      "account": "05050505-0505-0505-0505-050505050505",
+      "adoption": null,
+      "blocked": 0,
+      "device": "06060606-0606-0606-0606-060606060606",
+      "kept": 1,
+      "max_rev": 40,
+      "personal_profile": "09090909-0909-0909-0909-090909090909",
+      "position": "e:12:t",
+      "set_aside_at": null,
+      "signed_out_at": null,
+      "waiting": 2
+    },
+    "type": "sync_state"
+  }
+}

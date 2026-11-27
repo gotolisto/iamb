@@ -12,14 +12,19 @@ use std::path::{Path, PathBuf};
 use iamb_core::model::{
     Abbreviation, Folder, FolderDefaults, Id, Sha256, Snippet, SyncMeta, Tag, Timestamp,
 };
+use iamb_core::sync::{
+    AccessRemoval, AccessRoot, AckOutcome, AnyRow, ApplyMode, ApplyStatus, CascadeItem, Change,
+    KeptChange, LostLine, OpResult, OpStatus, OutboxPhase, ReconcileScope, RemoteRow, RowKind,
+    RowRef, SyncInfo,
+};
 use iamb_ipc::{
     AttachmentRef, ChangedRows, ConflictPolicy, ErrorBody, ErrorCode, EventBody, ExcludedEntry,
     FocusRef, GrantState, HealthReport, Hello, InjectionStatus, PROTOCOL_VERSION, PanelKind,
-    PendingReview, PermissionName, PreviewBlank, PreviewCursor, PreviewPart, RemoteRow, Request,
-    RequestBody, Response, ResponseBody, Role, SearchField, SearchHit, Secret, ServiceStatus,
-    ShadowedEntry, SnippetQuery, SnippetSummary, SyncStatus, TagEntry, TemplateAttribute,
-    TemplateErrorInfo, TemplateToken, TransferFormat, UnusedEntry, Welcome, Wire, WireAction,
-    WireAttachment, WireDiagnostic, WireExclusion, WireField, WireOutboxEntry,
+    PendingReview, PermissionName, PreviewBlank, PreviewCursor, PreviewPart, Request, RequestBody,
+    Response, ResponseBody, Role, SearchField, SearchHit, Secret, ServiceStatus, ShadowedEntry,
+    SnippetQuery, SnippetSummary, SyncStatus, TagEntry, TemplateAttribute, TemplateErrorInfo,
+    TemplateToken, TransferFormat, UnusedEntry, Welcome, Wire, WireAction, WireAttachment,
+    WireDiagnostic, WireExclusion, WireField,
 };
 
 fn id(n: u8) -> Id {
@@ -75,6 +80,7 @@ fn status() -> ServiceStatus {
         version: "0.0.0".to_owned(),
         pid: 4242,
         paused: false,
+        paused_kept: false,
         suspended: true,
         injection: InjectionStatus::Idle,
         snippets: 12,
@@ -102,6 +108,47 @@ fn field() -> WireField {
         kind: "choice".to_owned(),
         options: vec!["S".to_owned(), "M".to_owned()],
         default: "M".to_owned(),
+    }
+}
+
+fn op_result() -> OpResult {
+    OpResult {
+        op_id: id(8),
+        key: RowRef {
+            kind: RowKind::Snippet,
+            id: id(1),
+        },
+        status: OpStatus::Applied,
+        reason: None,
+        conflict: None,
+        adjusted: vec![],
+        replayed: false,
+        row: Some(AnyRow::Snippet(snippet())),
+        origin: None,
+        cascade: vec![],
+        seqs: vec![1],
+        repush: false,
+    }
+}
+
+fn access_root() -> AccessRoot {
+    AccessRoot {
+        folder_id: id(2),
+        profile_id: id(9),
+        permission: iamb_core::sync::Access::Edit,
+        via: "share".to_owned(),
+        granted_at: Timestamp(1_763_400_000_000),
+    }
+}
+
+fn access_removal() -> AccessRemoval {
+    AccessRemoval {
+        id: id(7),
+        call: "remove_member".to_owned(),
+        profile_id: Some(id(9)),
+        subject: Some(id(5)),
+        mark: Some(41),
+        made_at: Timestamp(1_763_400_000_000),
     }
 }
 
@@ -154,6 +201,8 @@ fn requests() -> Vec<RequestBody> {
         },
         RequestBody::Health {},
         RequestBody::ListPendingReviews {},
+        RequestBody::ListKeptChanges {},
+        RequestBody::DismissKeptChange { id: id(7) },
         RequestBody::ApproveSnippet { id: id(1), rev: 5 },
         RequestBody::GetStatus {},
         RequestBody::SetPaused { paused: true },
@@ -183,7 +232,12 @@ fn requests() -> Vec<RequestBody> {
             values: values(),
         },
         RequestBody::FormCancel { session: 2 },
-        RequestBody::ReopenLastForm {},
+        RequestBody::ReopenLastForm {
+            focus: Some(FocusRef {
+                pid: 100,
+                window: 3,
+            }),
+        },
         RequestBody::PanelFocus {
             panel: PanelKind::Form,
             shown: true,
@@ -208,12 +262,39 @@ fn requests() -> Vec<RequestBody> {
             display_name: "Bank".to_owned(),
             excluded: true,
         },
-        RequestBody::OutboxRead { limit: 100 },
-        RequestBody::OutboxAck { ids: vec![1, 2, 3] },
-        RequestBody::ApplyRemote {
-            batch: vec![RemoteRow::Snippet(snippet()), RemoteRow::Tag(tag())],
+        RequestBody::OutboxRead {
+            limit: 200,
+            phase: Some(OutboxPhase::All),
         },
-        RequestBody::PurgeFolder { id: id(2) },
+        RequestBody::OutboxAck {
+            results: vec![op_result()],
+        },
+        RequestBody::ApplyRemote {
+            batch: vec![
+                RemoteRow {
+                    key: RowRef {
+                        kind: RowKind::Snippet,
+                        id: id(1),
+                    },
+                    row: Some(AnyRow::Snippet(snippet())),
+                    origin: None,
+                },
+                RemoteRow {
+                    key: RowRef {
+                        kind: RowKind::Tag,
+                        id: id(3),
+                    },
+                    row: None,
+                    origin: None,
+                },
+            ],
+            position: Some("e:12:t".to_owned()),
+            mode: ApplyMode::Feed,
+        },
+        RequestBody::PurgeFolder {
+            id: id(2),
+            except: vec![id(4)],
+        },
         RequestBody::AttachmentAvailable {
             profile: id(9),
             sha256: sha(),
@@ -229,6 +310,47 @@ fn requests() -> Vec<RequestBody> {
         RequestBody::SetEntitlements {
             entitlements: BTreeMap::from([("shared_folders".to_owned(), "10".to_owned())]),
         },
+        RequestBody::SyncState {},
+        RequestBody::SetAccount {
+            user: id(5),
+            personal_profile: id(9),
+            device: id(6),
+        },
+        RequestBody::SetDeviceId { device: id(6) },
+        RequestBody::SetPosition {
+            position: Some("e:12:t".to_owned()),
+        },
+        RequestBody::ReconcileBegin {
+            scope: ReconcileScope::All,
+            lost: Some(LostLine {
+                epoch: "e2".to_owned(),
+                started_at: Timestamp(1_763_400_000_000),
+                device_epoch: "e1".to_owned(),
+                profiles: BTreeMap::from([(id(9), 40)]),
+            }),
+        },
+        RequestBody::ReconcileEnd {
+            token: "0011".to_owned(),
+            position: Some("e2:3:t".to_owned()),
+        },
+        RequestBody::ClearLostLines {},
+        RequestBody::SetAccess {
+            roots: vec![access_root()],
+        },
+        RequestBody::SetBlocked {
+            seqs: vec![4],
+            reason: "server_error".to_owned(),
+        },
+        RequestBody::Unblock { reason: None },
+        RequestBody::NoteAccessRemoval {
+            entry: access_removal(),
+            refused: false,
+        },
+        RequestBody::SignedOut {
+            confirmed: false,
+            keep: true,
+        },
+        RequestBody::ForeignFolders {},
         RequestBody::PutAttachment {
             path: PathBuf::from("/tmp/iamb-drop/logo.png"),
             file_name: "logo.png".to_owned(),
@@ -424,14 +546,75 @@ fn responses() -> Vec<ResponseBody> {
                 created_at: Timestamp(1_763_400_000_000),
             }],
         },
-        ResponseBody::Outbox {
-            entries: vec![WireOutboxEntry {
-                seq: 1,
-                entity: "snippet".to_owned(),
-                row_id: id(1),
-                op: "put".to_owned(),
-                base_rev: 0,
-                created_at: Timestamp(1_763_400_000_000),
+        ResponseBody::Changes {
+            changes: vec![Change {
+                op_id: id(8),
+                follows: vec![id(7)],
+                kind: RowKind::Folder,
+                id: id(2),
+                row: None,
+                base_rev: 3,
+                cascade: vec![CascadeItem {
+                    key: RowRef {
+                        kind: RowKind::Snippet,
+                        id: id(1),
+                    },
+                    base_rev: 5,
+                }],
+                repush: None,
+                author_self: false,
+                seqs: vec![1, 2],
+            }],
+            behind: vec![],
+        },
+        ResponseBody::SyncAcked {
+            outcome: AckOutcome {
+                behind: vec![RowRef {
+                    kind: RowKind::Snippet,
+                    id: id(1),
+                }],
+                removed: vec![],
+            },
+        },
+        ResponseBody::Applied {
+            status: vec![ApplyStatus::Applied, ApplyStatus::Removed],
+        },
+        ResponseBody::SyncState {
+            info: SyncInfo {
+                account: Some(id(5)),
+                device: Some(id(6)),
+                personal_profile: Some(id(9)),
+                position: Some("e:12:t".to_owned()),
+                adoption: None,
+                set_aside_at: None,
+                signed_out_at: None,
+                waiting: 2,
+                blocked: 0,
+                kept: 1,
+                max_rev: 40,
+            },
+        },
+        ResponseBody::ReconcileToken {
+            token: "0011".to_owned(),
+        },
+        ResponseBody::AccessRemovals {
+            entries: vec![access_removal()],
+        },
+        ResponseBody::Ids { ids: vec![id(2)] },
+        ResponseBody::KeptChanges {
+            changes: vec![KeptChange {
+                id: id(7),
+                key: RowRef {
+                    kind: RowKind::Snippet,
+                    id: id(1),
+                },
+                delete: false,
+                content: Some(AnyRow::Snippet(snippet())),
+                held: false,
+                place: "Snippets".to_owned(),
+                reason: "forbidden".to_owned(),
+                made_at: Timestamp(1_763_400_000_000),
+                kept_at: Timestamp(1_763_400_000_001),
             }],
         },
         ResponseBody::Acked { count: 3 },
@@ -634,4 +817,16 @@ fn there_are_no_stale_golden_files() {
             "{file} has no sample; remove it or add one"
         );
     }
+}
+
+#[test]
+fn a_reopen_request_without_its_window_is_still_understood() {
+    // `focus` came later (the beta review's re-verification, N4) and is optional: a client that
+    // leaves it out sends what it always sent, and it reads as "the focused window".
+    let body: RequestBody = serde_json::from_str(r#"{"type":"reopen_last_form"}"#).expect("parses");
+    assert!(matches!(body, RequestBody::ReopenLastForm { focus: None }));
+    assert_eq!(
+        serde_json::to_string(&RequestBody::ReopenLastForm { focus: None }).expect("json"),
+        r#"{"type":"reopen_last_form"}"#
+    );
 }

@@ -1,7 +1,11 @@
 {
   "body": {
+    "focus": {
+      "pid": 100,
+      "window": 3
+    },
     "type": "reopen_last_form"
   },
-  "id": 29,
+  "id": 31,
   "kind": "request"
 }

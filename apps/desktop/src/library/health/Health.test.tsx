@@ -116,13 +116,21 @@ describe("Library health", () => {
 
   it("offers a way back when the service cannot answer", async () => {
     const fake = planted();
+    // Only the health read fails, from the start. Taking the whole service down after the list
+    // loaded raced the view's first health read (60 ms after opening): when that one won, the
+    // view kept its last good answer and showed no alert, as it should.
+    let healthFails = true;
+    const health = fake.api.health.bind(fake.api);
+    fake.api.health = async () => {
+      if (healthFails) throw new Error("the service is not connected");
+      return health();
+    };
     await renderLibrary(fake);
     await screen.findAllByRole("option");
-    fake.setDown("disconnected");
     fireEvent.click(screen.getByRole("button", { name: /Library health/ }));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Library health could not be read.");
-    fake.setDown(null);
+    healthFails = false;
     fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("region", { name: "Never reached" })).toBeTruthy();
   });

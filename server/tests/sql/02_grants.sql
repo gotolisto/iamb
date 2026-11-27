@@ -12,9 +12,21 @@ begin
     select count(*) into n from pg_class c join pg_namespace s on s.oid = c.relnamespace
     where s.nspname in ('iamb', 'iamb_private', 'api', 'api_service') and c.relkind in ('r', 'p') and not c.relrowsecurity;
     perform iamb_test.eq(n, 0, 'tables without row-level security');
+    -- Outside `iamb` there are two relations: the scratch tables of `iamb_private`, keyed by the
+    -- transaction (security review 4.3, finding 16). No role a device can have holds any
+    -- privilege on them, and no session holds a temporary table of Iamb's.
     select count(*) into n from pg_class c join pg_namespace s on s.oid = c.relnamespace
-    where s.nspname in ('iamb_private', 'api', 'api_service') and c.relkind in ('r', 'p', 'v', 'm', 'f');
-    perform iamb_test.eq(n, 0, 'relations outside the schema iamb');
+    where s.nspname in ('iamb_private', 'api', 'api_service') and c.relkind in ('r', 'p', 'v', 'm', 'f')
+      and not (s.nspname = 'iamb_private' and c.relname in ('tx_feed', 'tx_rows') and c.relkind = 'r');
+    perform iamb_test.eq(n, 0, 'relations outside the schema iamb, the two scratch tables apart');
+    select count(*) into n from pg_class c join pg_namespace s on s.oid = c.relnamespace,
+         unnest(array['anon', 'authenticated', 'service_role']) r,
+         unnest(array['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) pr
+    where s.nspname = 'iamb_private' and c.relkind = 'r' and has_table_privilege(r, c.oid, pr);
+    perform iamb_test.eq(n, 0, 'privileges on the scratch tables');
+    select count(*) into n from pg_proc p join pg_namespace s on s.oid = p.pronamespace
+    where s.nspname in ('iamb', 'iamb_private', 'api', 'api_service') and p.prosrc ~* '(temp|temporary)\s+table|pg_temp\.';
+    perform iamb_test.eq(n, 0, 'functions that use a temporary table');
 
     -- Policies are read rules only (§5.13).
     select count(*) into n from pg_policies where schemaname = 'iamb' and cmd <> 'SELECT';
@@ -48,27 +60,31 @@ begin
             perform iamb_test.ok(ok, 'authenticated executes api.' || f.proname);
         elsif f.nspname = 'iamb_private' then
             perform iamb_test.eq(ok, f.proname in ('session_ok', 'member_of', 'role_in', 'shares_group_with',
-                                                   'own_address', 'enter', 'position'),
+                                                   'own_address', 'enter', 'position',
+                                                   'conflict_history', 'member_addresses'),
                                  'authenticated executes iamb_private.' || f.proname);
         else
             perform iamb_test.ok(not ok and has_function_privilege('service_role', f.oid, 'EXECUTE'),
                                  'api_service.' || f.proname || ' for service_role only');
         end if;
         -- G17: a fixed search_path everywhere, and no statement built at run time.
-        perform iamb_test.ok(exists (select 1 from unnest(f.proconfig) c where c like 'search_path=%'),
-                             f.nspname || '.' || f.proname || ' has a fixed search_path');
+        -- The caller's temporary schema is searched last, never first (finding 16).
+        perform iamb_test.ok(exists (select 1 from unnest(f.proconfig) c where c = 'search_path=pg_catalog, pg_temp'),
+                             f.nspname || '.' || f.proname || ' has the fixed search_path pg_catalog, pg_temp');
         perform iamb_test.ok(f.prosrc !~* '\mexecute\M\s+(format|''|\$)' , f.nspname || '.' || f.proname || ' builds no statement');
         -- Every function of api that writes is security definer; the readers of §5.1 are invoker.
         if f.nspname = 'api' then
             perform iamb_test.eq(f.prosecdef, f.proname not in ('pull', 'rows', 'fetch_folder', 'snapshot', 'visible_folders',
-                                                                'access', 'users', 'check', 'invitations', 'devices', 'conflicts'),
+                                                                'access', 'users', 'check', 'invitations', 'devices', 'conflicts',
+                                                                'members', 'get_conflict'),
                                  'api.' || f.proname || ' definer');
             perform iamb_test.ok(exists (select 1 from unnest(f.proconfig) c where c like 'statement_timeout=%'),
                                  'api.' || f.proname || ' has its own statement_timeout');
         end if;
         if f.nspname = 'iamb_private' and f.prosecdef then
             perform iamb_test.ok(f.proname in ('session_ok', 'member_of', 'role_in', 'shares_group_with',
-                                               'own_address', 'enter', 'position'), 'definer helper ' || f.proname);
+                                               'own_address', 'enter', 'position',
+                                               'conflict_history', 'member_addresses'), 'definer helper ' || f.proname);
         end if;
     end loop;
     -- The token hook is executable by the authentication service's role and nobody else.
@@ -101,12 +117,12 @@ begin
         foreach r in array array['"authenticated"'::jsonb, '"anon"'::jsonb] loop
             if r #>> '{}' = 'authenticated' then perform iamb_test.act('ines'); else perform iamb_test.act_anon(); end if;
             begin
-                execute format('delete from iamb.%I', t);
+                execute format('delete from iamb.%I where true', t);
                 ok := false;
             exception when insufficient_privilege then ok := true;
             end;
             begin
-                execute format('update iamb.%I set created_at = 0', t);
+                execute format('update iamb.%I set created_at = 0 where true', t);
                 ok := false;
             exception when insufficient_privilege or undefined_column then ok := ok;
             end;

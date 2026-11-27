@@ -54,6 +54,8 @@ pub const SERVICE_KEYS: &[&str] = &[
     "time_format",
     "locale",
     "palette_hotkey",
+    "reopen_form_hotkey",
+    "pause_hotkey",
     "injection_overrides",
 ];
 
@@ -392,5 +394,160 @@ pub fn test_abbreviation(bridge: &Bridge, typed: &str) -> Res<TestView> {
         Found::Expands(id) => Ok(described(bridge, "not_yet", &id, None)),
         Found::Broken(id, code) => Ok(described(bridge, "broken", &id, Some(code))),
         Found::Nothing => Ok(TestView::none()),
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// About
+// ---------------------------------------------------------------------------------------------
+
+/// What Settings → About shows besides the licence and the source (specification §4.7).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AboutView {
+    /// This build's version.
+    pub version: String,
+    /// The folder of the log files (the UI host's and the service's, architecture §3.3).
+    pub log_folder: String,
+}
+
+/// The systems [`folder_opener`] knows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum System {
+    /// macOS: Finder, through `/usr/bin/open`.
+    Mac,
+    /// Windows: File Explorer, `explorer.exe` in the Windows directory.
+    Windows,
+    /// Linux (development only): the desktop's default, `xdg-open`.
+    Linux,
+}
+
+impl System {
+    /// The system this build runs on.
+    #[must_use]
+    pub const fn this() -> Self {
+        if cfg!(target_os = "macos") {
+            Self::Mac
+        } else if cfg!(windows) {
+            Self::Windows
+        } else {
+            Self::Linux
+        }
+    }
+}
+
+/// The program and arguments that show `folder` in the system's file manager. The folder is one
+/// argument, never a shell line, and the program is named by its full path on macOS and Windows
+/// (the beta-gap review's finding 7): `/usr/bin/open`, and `explorer.exe` in `windows_dir` (the
+/// Windows directory; `None` when it is not known). On Linux, a development system, `xdg-open` is
+/// looked up as the desktop sets it up.
+#[must_use]
+pub fn folder_opener(
+    system: System,
+    windows_dir: Option<&std::path::Path>,
+    folder: &std::path::Path,
+) -> Option<(std::path::PathBuf, Vec<std::ffi::OsString>)> {
+    let program = match system {
+        System::Mac => std::path::PathBuf::from("/usr/bin/open"),
+        System::Windows => windows_dir
+            .filter(|d| d.is_absolute())?
+            .join("explorer.exe"),
+        System::Linux => std::path::PathBuf::from("xdg-open"),
+    };
+    Some((program, vec![folder.as_os_str().to_owned()]))
+}
+
+/// The Windows directory, on Windows.
+fn windows_dir() -> Option<std::path::PathBuf> {
+    #[cfg(windows)]
+    {
+        iamb_platform_windows::windows_directory()
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+/// Shows `folder` in the file manager ("Open the log folder"), creating it if it is missing.
+///
+/// # Errors
+///
+/// `unavailable` when the folder cannot be made or the file manager cannot be started.
+pub fn open_folder(folder: &std::path::Path) -> Res<()> {
+    crate::paths::create_private_dir(folder)
+        .map_err(|e| CommandError::new("unavailable", format!("the log folder: {e}")))?;
+    let (program, args) = folder_opener(System::this(), windows_dir().as_deref(), folder)
+        .ok_or_else(|| CommandError::new("unavailable", "Iamb could not open the folder"))?;
+    let mut child = std::process::Command::new(program)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|_| CommandError::new("unavailable", "Iamb could not open the folder"))?;
+    // Reaped on a thread of its own: the file manager may stay open.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
+#[cfg(test)]
+mod about_tests {
+    use super::*;
+
+    #[test]
+    fn the_folder_is_one_argument_to_the_file_manager() {
+        use std::path::Path;
+        let folder = Path::new("/data/iamb/logs; rm -rf x");
+        let windows = if cfg!(windows) {
+            Path::new(r"C:\Windows")
+        } else {
+            Path::new("/windows")
+        };
+        for system in [System::Mac, System::Windows, System::Linux] {
+            let (_, args) = folder_opener(system, Some(windows), folder).expect("an opener");
+            assert_eq!(args, [folder.as_os_str()]);
+        }
+    }
+
+    #[test]
+    fn the_file_manager_is_named_by_its_full_path() {
+        use std::path::Path;
+        let folder = Path::new("/data/iamb/logs");
+        let program =
+            |system, dir: Option<&Path>| folder_opener(system, dir, folder).map(|(p, _)| p);
+        assert_eq!(
+            program(System::Mac, None),
+            Some(Path::new("/usr/bin/open").to_path_buf())
+        );
+        // On Windows the Windows directory is asked, never `PATH`; without it, nothing starts.
+        let windows = if cfg!(windows) {
+            Path::new(r"C:\Windows")
+        } else {
+            Path::new("/windows")
+        };
+        assert_eq!(
+            program(System::Windows, Some(windows)),
+            Some(windows.join("explorer.exe"))
+        );
+        assert_eq!(program(System::Windows, None), None);
+        assert_eq!(program(System::Windows, Some(Path::new("Windows"))), None);
+        assert_eq!(
+            program(System::Linux, None),
+            Some(Path::new("xdg-open").to_path_buf())
+        );
+    }
+
+    #[test]
+    fn the_about_view_is_camel_case() {
+        let view = AboutView {
+            version: "0.1.0".into(),
+            log_folder: "/data/iamb/logs".into(),
+        };
+        let json = serde_json::to_value(&view).expect("json");
+        assert_eq!(json["version"], "0.1.0");
+        assert_eq!(json["logFolder"], "/data/iamb/logs");
     }
 }

@@ -18,6 +18,8 @@ export const SERVICE_KEYS = [
   "time_format",
   "locale",
   "palette_hotkey",
+  "reopen_form_hotkey",
+  "pause_hotkey",
   "injection_overrides",
 ] as const;
 
@@ -59,6 +61,23 @@ export interface TestResult {
   error: string | null;
 }
 
+/** "Start Iamb when I log in" as the system has it (`LoginView` in src-tauri/src/onboarding.rs). */
+export type LoginState = "enabled" | "disabled" | "requires_approval" | "unavailable";
+
+/** Settings → About: this build's version and the folder of the log files. */
+export interface About {
+  version: string;
+  logFolder: string;
+}
+
+export function isAbout(v: unknown): v is About {
+  return typeof v === "object" && v !== null && typeof (v as About).version === "string" && typeof (v as About).logFolder === "string";
+}
+
+export function isLoginState(v: unknown): v is LoginState {
+  return v === "enabled" || v === "disabled" || v === "requires_approval" || v === "unavailable";
+}
+
 /** The commands, over `invoke` (Tauri's, or a fake in tests). */
 export function createSettingsApi(invoke: Invoke) {
   return {
@@ -74,6 +93,20 @@ export function createSettingsApi(invoke: Invoke) {
     recentDiagnostics: () => invoke<Diagnostic[]>("diagnostics_recent"),
     /** What typing `typed` would do; nothing is typed or stored. */
     testAbbreviation: (typed: string) => invoke<TestResult>("diagnostics_test", { typed }),
+    /** The version and the log folder (Settings → About). */
+    about: async () => {
+      const about = await invoke<unknown>("settings_about");
+      if (!isAbout(about)) throw { code: "unexpected_response", message: "not the about view" };
+      return about;
+    },
+    /** Shows the log folder in Finder or File Explorer. */
+    openLogFolder: () => invoke<void>("settings_open_log_folder"),
+    /** Registers (true) or removes (false) the login item; no argument only reads it. */
+    loginItem: async (enabled?: boolean) => {
+      const state = await invoke<unknown>("settings_login_item", { enabled: enabled ?? null });
+      if (!isLoginState(state)) throw { code: "unexpected_response", message: "not a login item state" };
+      return state;
+    },
   };
 }
 

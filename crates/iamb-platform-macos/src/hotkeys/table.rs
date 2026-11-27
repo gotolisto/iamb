@@ -360,7 +360,7 @@ mod tests {
         let mut system = FakeSystem::default();
         let mut table = Table::default();
         assert_eq!(table.try_record(PALETTE, chord("Ctrl+Space")), Ok(true));
-        assert_eq!(table.try_record(PAUSE, chord("Ctrl+Alt+P")), Ok(true));
+        assert_eq!(table.try_record(PAUSE, chord("Ctrl+Shift+P")), Ok(true));
         assert!(
             system.log.is_empty(),
             "nothing is held while nobody listens"
@@ -474,10 +474,10 @@ mod tests {
             Ok(())
         );
         assert_eq!(
-            table.register(PALETTE, chord("Ctrl+Alt+K"), &mut system),
+            table.register(PALETTE, chord("Ctrl+Shift+K"), &mut system),
             Ok(())
         );
-        assert_eq!(table.wanted(PALETTE), Some(combo("Ctrl+Alt+K")));
+        assert_eq!(table.wanted(PALETTE), Some(combo("Ctrl+Shift+K")));
         assert_eq!(system.live.len(), 1);
         // New first, then the old one is released.
         assert_eq!(system.log, ["register 1", "register 1", "unregister 1"]);

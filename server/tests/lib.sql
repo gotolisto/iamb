@@ -293,18 +293,26 @@ begin
     if n > 0 then
         raise exception 'check failed: folder_access differs from the reference in % rows: %', n, left(d, 2000);
     end if;
+    -- Every entry has begun: the request that made it gave it its starting revision when it ended
+    -- (re-verification N1), and none begins above the counter.
+    select count(*) into n from iamb.folder_access where since_rev > (select last_value from iamb.rev_seq);
+    if n > 0 then
+        raise exception 'check failed: % access entries were left without a starting revision', n;
+    end if;
 end $$;
 
--- I7: no folder cycle, no tree deeper than four levels, no live row under a deleted folder.
+-- I7: no folder cycle, no live folder below the fourth level, no live row under a deleted folder.
+-- (A deleted folder can lie deeper, after a folder above it was moved; it is held to four levels
+-- when it is restored: C8, re-verification N4.)
 create or replace function iamb_test.check_tree() returns void
 language plpgsql as $$
 begin
     perform iamb_test.ok(not exists (
         with recursive up as (
-            select f.id as start, f.parent_id as cur, 1 as d from iamb.folder f
+            select f.id as start, f.parent_id as cur, 1 as d, f.deleted_at is null as live from iamb.folder f
             union all
-            select up.start, g.parent_id, up.d + 1 from up join iamb.folder g on g.id = up.cur where up.d < 10
-        ) select 1 from up where up.cur = up.start or up.d > 4), 'no cycle and at most four levels');
+            select up.start, g.parent_id, up.d + 1, up.live from up join iamb.folder g on g.id = up.cur where up.d < 12
+        ) select 1 from up where up.cur = up.start or (up.live and up.d > 4)), 'no cycle and at most four levels');
     perform iamb_test.ok(not exists (
         select 1 from iamb.folder c join iamb.folder p on p.id = c.parent_id
         where c.deleted_at is null and p.deleted_at is not null), 'no live folder under a deleted folder');
@@ -422,7 +430,7 @@ declare
     r   jsonb;
 begin
     -- A new cast each time: earlier accounts stay in the database, under no name.
-    delete from iamb_test.actor;
+    delete from iamb_test.actor where true;
     perform iamb_test.new_user('ines');
     perform iamb_test.new_user('tom');
     perform iamb_test.new_user('stranger');

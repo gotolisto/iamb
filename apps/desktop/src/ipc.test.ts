@@ -33,6 +33,7 @@ describe("commands", () => {
     await api.reportFirstPaint({ navigationAtMs: 1000, scriptAtMs: 1100, paintedAtMs: 1234.5 });
     await api.dismiss();
     await api.quit();
+    await api.restartService();
     expect(calls).toEqual([
       { command: "status", args: undefined },
       { command: "refresh_status", args: undefined },
@@ -46,6 +47,7 @@ describe("commands", () => {
       },
       { command: "dismiss", args: undefined },
       { command: "app_quit", args: undefined },
+      { command: "app_restart_service", args: undefined },
     ]);
     // Every registered command is reachable from the API (the library's from its own,
     // library/api.test.ts; the template editor's from library/template/api.test.ts; the form
@@ -82,6 +84,8 @@ describe("payloads written by the Rust side (contract.fixtures.json)", () => {
     expect(fixtures.events).toHaveLength(5);
     for (const event of fixtures.events) expect(isUiEvent(event)).toBe(true);
     expect(isCommandError(fixtures.error)).toBe(true);
+    expect(isCommandError(fixtures.template.link_refused)).toBe(true);
+    expect(fixtures.template.link_refused.code).toBe("link_refused");
     const snippet = fixtures.snippet;
     expect(snippet.abbreviation).toBe("brb");
     expect(snippet.folderId).toMatch(/^[0-9a-f-]{36}$/);

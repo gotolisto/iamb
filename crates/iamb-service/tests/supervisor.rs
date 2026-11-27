@@ -48,6 +48,34 @@ impl Drop for Running {
         while status(self.path()).is_some() && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(50));
         }
+        reap(self.path());
+    }
+}
+
+/// Waits for every process started for `dir` (the worker follows its supervisor when its input
+/// ends; a UI host stand-in is killed by its test) and kills what is left after five seconds, so
+/// that no test leaves a process behind, also when it panics (`Drop` runs while unwinding). It
+/// runs before the data directory is removed, so that a worker always finds its own socket file
+/// when it stops (before the beta-gap review's finding 10 was fixed, one without it never exited).
+fn reap(dir: &Path) {
+    let pattern = dir.display().to_string();
+    let alive = || {
+        Command::new("pgrep")
+            .args(["-f", &pattern])
+            .stdout(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while alive() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(50));
+    }
+    if alive() {
+        let _ = Command::new("pkill").args(["-9", "-f", &pattern]).status();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while alive() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
     }
 }
 
@@ -93,10 +121,17 @@ fn wait_for_worker(dir: &Path, not: Option<u32>, limit: Duration) -> (ServiceSta
         {
             return (s, start.elapsed());
         }
-        assert!(
-            start.elapsed() < limit,
-            "no new worker answered within {limit:?}"
-        );
+        if start.elapsed() >= limit {
+            let log = |process: &str| {
+                fs::read_to_string(dir.join("logs").join(format!("{process}.log")))
+                    .unwrap_or_default()
+            };
+            panic!(
+                "no new worker answered within {limit:?}; supervisor log:\n{}\nworker log:\n{}",
+                log("supervisor"),
+                log("worker")
+            );
+        }
         thread::sleep(Duration::from_millis(10));
     }
 }
@@ -237,4 +272,42 @@ fn a_killed_supervisor_leaves_no_worker_behind() {
         }
     }
     assert!(s.log("worker").contains("the supervisor is gone"));
+}
+
+#[test]
+fn a_worker_whose_socket_file_is_gone_still_stops() {
+    // A data folder's `run/` cleaned while Iamb runs, then the supervisor gone: the worker must
+    // still finish stopping (the beta-gap review's finding 10), not wait for its accept thread
+    // for ever.
+    let mut s = Running::start(&[]);
+    let (first, _) = wait_for_worker(s.path(), None, Duration::from_secs(15));
+    std::fs::remove_file(s.path().join("run").join("service.sock")).expect("socket removed");
+    s.child.kill().expect("kill the supervisor");
+    let _ = s.child.wait();
+    let pid = first.pid.to_string();
+    let alive = || {
+        std::process::Command::new("kill")
+            .args(["-0", &pid])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|st| st.success())
+    };
+    let start = Instant::now();
+    while alive() {
+        if start.elapsed() > Duration::from_secs(10) {
+            let _ = std::process::Command::new("kill")
+                .args(["-9", &pid])
+                .status();
+            panic!(
+                "worker {pid} still runs 10 s after its supervisor went:\n{}",
+                s.log("worker")
+            );
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        s.log("worker").contains("worker stopped"),
+        "{}",
+        s.log("worker")
+    );
 }

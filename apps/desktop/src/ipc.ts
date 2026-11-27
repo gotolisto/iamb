@@ -15,6 +15,8 @@ export type ConnectionState = "connecting" | "connected" | "disconnected";
 export interface ServiceView {
   version: string;
   paused: boolean;
+  /** The pause was kept from before the service started (a quit, a logout, a restart). */
+  pausedKept: boolean;
   suspended: boolean;
   snippets: number;
   revision: number;
@@ -118,6 +120,7 @@ export const COMMANDS = [
   "template_preview",
   "template_add_attachment",
   "template_try_form",
+  "template_open_link",
   "form_ready",
   "form_current",
   "form_laid_out",
@@ -129,6 +132,9 @@ export const COMMANDS = [
   "settings_put",
   "settings_list_exclusions",
   "settings_put_exclusion",
+  "settings_login_item",
+  "settings_about",
+  "settings_open_log_folder",
   "diagnostics_recent",
   "diagnostics_test",
   "onboarding_permissions",
@@ -139,6 +145,7 @@ export const COMMANDS = [
   "onboarding_login_item",
   "onboarding_open_library",
   "onboarding_close",
+  "app_restart_service",
   "palette_ready",
   "palette_current",
   "palette_painted",
@@ -168,6 +175,8 @@ export function createApi(invoke: Invoke) {
     dismiss: () => invoke<void>("dismiss"),
     /** Ends Iamb: "Quit Iamb", once the library window asked about unsaved edits. */
     quit: () => invoke<void>("app_quit"),
+    /** "Start it again": asks the supervisor for the background service, started afresh. */
+    restartService: () => invoke<void>("app_restart_service"),
   };
 }
 
@@ -189,6 +198,7 @@ function isServiceView(v: unknown): v is ServiceView {
     isObject(v) &&
     typeof v.version === "string" &&
     typeof v.paused === "boolean" &&
+    typeof v.pausedKept === "boolean" &&
     typeof v.suspended === "boolean" &&
     typeof v.snippets === "number" &&
     typeof v.revision === "number" &&

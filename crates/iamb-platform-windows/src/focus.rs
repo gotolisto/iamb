@@ -148,6 +148,8 @@ mod os_tests;
 #[cfg(windows)]
 pub(crate) use os::keyboard_focus;
 #[cfg(windows)]
+pub use os::window_class;
+#[cfg(windows)]
 pub(crate) use windows::State;
 
 #[cfg(windows)]

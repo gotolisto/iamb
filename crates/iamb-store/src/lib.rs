@@ -26,6 +26,7 @@ mod error;
 pub mod health;
 pub mod migrations;
 mod ops;
+pub mod sync;
 pub mod transfer;
 
 pub use attachments::AttachmentError;

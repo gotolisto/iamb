@@ -11,8 +11,22 @@
 //! *parked*. Delivering that `FocusChanged` forwards it, right behind the change (the engine
 //! then holds it for the verdict). A newer request replaces a parked one, a cancelled form
 //! drops its parked submit, and a request whose window never gets the focus is dropped after
-//! [`PARK_TIMEOUT`] with the diagnostic `request_focus_timeout`. A request without a token runs
-//! against whatever has the focus.
+//! [`PARK_TIMEOUT`] with the diagnostic `request_focus_timeout`. `ReopenLastForm` carries the
+//! token too when the UI host knows the window (the tray's menu and the palette name the window
+//! they give the focus back to; the beta review's re-verification, N4): it then waits for that
+//! window alone, so neither the shell's taskbar reported last nor another window reported next
+//! decides it. A request without a token runs against whatever has the focus, with one
+//! exception: a `ReopenLastForm` that arrives while the last focus delivered here is one of
+//! Iamb's own windows is parked until the next `FocusChanged` for a window that is not Iamb's,
+//! with the same time limit, instead of being refused with `refused_own_window` while a
+//! hand-back is still on its way (the beta-gap review's finding 2).
+//!
+//! The "Fill in the last form again" shortcut reads the focus token at the press, as the
+//! palette's shortcut does, and its request carries it: it is parked until the `FocusChanged`
+//! for the window that had the focus at the press is delivered, and runs under that window's
+//! verdict, not under the verdict of the window before (a press right after a switch into a
+//! password field or an excluded app is refused there). Without a focused window it is refused
+//! with `refused_unknown_focus`.
 //!
 //! # Keys that went to another window (the 2.8 review's finding 5)
 //!
@@ -116,6 +130,23 @@
 //! (`Engine::forget_form_values`, whose values overwrite themselves when dropped) and the
 //! hand-off is disturbed, which overwrites what it captured.
 //!
+//! # Pause across a restart (the beta-gap review's finding 5)
+//!
+//! The pause lives in this thread, so a worker started afresh (a crash, "Restart the helper",
+//! "Start it again") would expand again although the user paused Iamb. So a pause is also kept
+//! as the empty file [`PAUSED_FILE`] in `run/`, created when Iamb is paused and removed when it
+//! resumes; a worker that starts with the file there starts paused. The file carries nothing; a
+//! process of the user that removes it does what it could do with `SetPaused`.
+//!
+//! Only a regular file counts, looked at without following a link (the beta review's
+//! re-verification, N5): anything else in its place (a link, a dangling one too, a directory, a
+//! FIFO) means "not paused" and is removed, when pausing, when resuming and at the start (a
+//! directory only when empty; one that is not stays, with a warning, and still means "not
+//! paused"). The status says when the pause was kept from before this worker
+//! ([`ServiceStatus::paused_kept`](iamb_ipc::ServiceStatus)), so that the menu, the library and
+//! "Why didn't it expand?" can say so: such a pause outlives a quit, a logout and a restart of
+//! the machine.
+//!
 //! # Why an injection stopped
 //!
 //! Every outcome but `Finished` becomes `InjectionCancelled`, whose diagnostic is
@@ -151,8 +182,89 @@ use iamb_platform::{
 use super::keys::KeyQueue;
 use super::store::StoreMsg;
 use super::{
-    EngineMsg, EngineStatus, Explicit, FocusMsg, PALETTE_HOTKEY, Shared, WakeCounters, coded,
+    EngineMsg, EngineStatus, Explicit, FocusMsg, PALETTE_HOTKEY, PAUSE_HOTKEY, REOPEN_FORM_HOTKEY,
+    Shared, WakeCounters, coded,
 };
+
+/// The engine thread's global pause.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pause {
+    /// Not paused.
+    Off,
+    /// Paused in this worker.
+    On,
+    /// Paused, as kept from before this worker started (`run/paused`), and nobody has paused
+    /// or resumed since.
+    Kept,
+}
+
+/// The file in `run/` that says Iamb is paused (module docs, "Pause across a restart").
+pub const PAUSED_FILE: &str = "paused";
+
+/// Whether the pause file at `path` says "paused" (module docs, "Pause across a restart"): a
+/// regular file does; nothing there does not; anything else does not either and is removed.
+///
+/// # Errors
+///
+/// Something that is not a regular file is there and could not be removed (a directory that
+/// is not empty); it still means "not paused".
+pub(crate) fn pause_kept(path: &std::path::Path) -> std::io::Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_file() => Ok(true),
+        Ok(meta) => remove_entry(path, meta.file_type().is_dir()).map(|()| false),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+/// Creates (`on`) or removes the pause file at `path` (module docs, "Pause across a restart").
+/// Created new, so a link in its place is neither followed nor counted: anything there that is
+/// not a regular file is removed first.
+///
+/// # Errors
+///
+/// I/O errors; a directory that is not empty in its place.
+pub(crate) fn keep_pause_file(path: &std::path::Path, on: bool) -> std::io::Result<()> {
+    let create = || {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map(drop)
+    };
+    if on {
+        match create() {
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                if pause_kept(path)? {
+                    Ok(())
+                } else {
+                    create()
+                }
+            }
+            other => other,
+        }
+    } else {
+        match std::fs::symlink_metadata(path) {
+            Ok(meta) => remove_entry(path, meta.file_type().is_dir()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+/// Removes the entry at `path` itself (a link, not what it points to); `dir` when it is a
+/// directory, which must be empty.
+fn remove_entry(path: &std::path::Path, dir: bool) -> std::io::Result<()> {
+    let removed = if dir {
+        std::fs::remove_dir(path)
+    } else {
+        std::fs::remove_file(path)
+    };
+    match removed {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
+}
 
 /// How long a parked request waits for the focus change of its window: the UI host's
 /// `restore_focus` limit (500 ms) and some margin.
@@ -203,7 +315,9 @@ impl Environment for Env<'_> {
 
 struct Parked {
     request: Explicit,
-    token: FocusToken,
+    /// The window whose `FocusChanged` forwards it; `None`: the next window that is not Iamb's
+    /// (module docs).
+    token: Option<FocusToken>,
     deadline: Instant,
 }
 
@@ -242,7 +356,14 @@ pub(crate) struct EngineThread {
     form_lease: Option<(FormSessionId, Instant)>,
     form_lease_for: Duration,
     values_touched: Option<Instant>,
-    paused: bool,
+    /// How long the answers are kept after their last use (normally [`FORM_VALUES_TTL`]).
+    values_ttl: Duration,
+    /// A `ReopenLastForm` went to the engine and has not been answered with a form or a
+    /// refusal yet: only the form it opens renews the answers' time (the beta-gap review's
+    /// finding 8).
+    reopen_waiting: bool,
+    /// Global pause (module docs, "Pause across a restart").
+    pause: Pause,
     /// The code the next `injection_cancelled` diagnostic is given instead (module docs).
     cancel_code: Option<&'static str>,
     /// The focus watcher stopped by itself and is not running again yet (module docs).
@@ -277,6 +398,7 @@ impl EngineThread {
         heartbeat_every: Duration,
         panel_lease: Duration,
         form_lease: Duration,
+        values_ttl: Duration,
     ) -> Self {
         Self {
             shared,
@@ -297,7 +419,9 @@ impl EngineThread {
             form_lease: None,
             form_lease_for: form_lease,
             values_touched: None,
-            paused: false,
+            values_ttl,
+            reopen_waiting: false,
+            pause: Pause::Off,
             cancel_code: None,
             watcher_down: false,
             elsewhere: None,
@@ -309,8 +433,36 @@ impl EngineThread {
         }
     }
 
+    /// Writes or removes `run/paused` (module docs, "Pause across a restart"): see
+    /// [`keep_pause_file`].
+    fn keep_pause(&self, on: bool) {
+        let path = self.shared.data_root.join("run").join(PAUSED_FILE);
+        if let Err(e) = keep_pause_file(&path, on) {
+            self.shared.logger.warn(format_args!(
+                "cannot keep the pause for a restart: {}",
+                e.kind()
+            ));
+        }
+    }
+
     /// The thread's loop.
     pub(crate) fn run(mut self, rx: &Receiver<EngineMsg>) {
+        let pause_file = self.shared.data_root.join("run").join(PAUSED_FILE);
+        match pause_kept(&pause_file) {
+            Ok(true) => {
+                // Paused before this worker started (module docs, "Pause across a restart").
+                self.set_paused(true);
+                self.pause = Pause::Kept;
+                self.shared
+                    .logger
+                    .info(format_args!("paused, as the worker before was"));
+            }
+            Ok(false) => {}
+            Err(e) => self.shared.logger.warn(format_args!(
+                "something that is not a file is in the pause file's place: {}",
+                e.kind()
+            )),
+        }
         loop {
             let now = Instant::now();
             if now >= self.next_heartbeat {
@@ -347,7 +499,7 @@ impl EngineThread {
         consider(self.parked.as_ref().map(|p| p.deadline));
         consider(self.ack_deadline.map(|(_, t)| t));
         consider(self.form_lease.map(|(_, t)| t));
-        consider(self.values_touched.map(|t| t + FORM_VALUES_TTL));
+        consider(self.values_touched.map(|t| t + self.values_ttl));
         consider(self.panel.as_ref().map(|p| p.until));
         next
     }
@@ -477,7 +629,7 @@ impl EngineThread {
         }
         if self
             .values_touched
-            .is_some_and(|t| now >= t + FORM_VALUES_TTL)
+            .is_some_and(|t| now >= t + self.values_ttl)
         {
             self.values_touched = None;
             self.engine.forget_form_values();
@@ -574,17 +726,7 @@ impl EngineThread {
                     self.form_lease = Some((session, Instant::now() + self.form_lease_for));
                 }
             }
-            EngineMsg::SetPaused(on) => {
-                self.handoff.disturb();
-                self.handle(Event::Paused(on));
-                if self.paused != on {
-                    self.paused = on;
-                    let status = self.shared.status(self.status());
-                    self.shared
-                        .clients
-                        .broadcast(&EventBody::StatusChanged { status });
-                }
-            }
+            EngineMsg::SetPaused(on) => self.set_paused(on),
             EngineMsg::Snapshot(snapshot) => self.handle(Event::SnapshotChanged(snapshot)),
             // The forget itself ran at the top of this function, when the session watcher or
             // `Worker::forget_form_values` asked for it; the message only woke the thread.
@@ -617,7 +759,8 @@ impl EngineThread {
 
     fn status(&self) -> EngineStatus {
         EngineStatus {
-            paused: self.paused,
+            paused: self.pause != Pause::Off,
+            paused_kept: self.pause == Pause::Kept,
             suspended: self.engine.is_suspended(),
             injection: match self.engine.injection_state() {
                 InjectionState::Idle => InjectionStatus::Idle,
@@ -675,7 +818,34 @@ impl EngineThread {
                         .warn(format_args!("palette hotkey without a focused window: {e}")),
                 }
             }
+            // "Fill in the last form again" (UX specification §5.1): as `ReopenLastForm`, for the
+            // window that had the focus at the press, under that window's verdict (module docs).
+            Routed::Hotkey(id) if id == REOPEN_FORM_HOTKEY => {
+                match self.shared.platform.focus_token() {
+                    Ok(token) => self.on_request(Explicit::Reopen, Some(token)),
+                    Err(_) => self.shared.diagnostic(coded("refused_unknown_focus")),
+                }
+            }
+            // "Pause or resume" (§5.1).
+            Routed::Hotkey(id) if id == PAUSE_HOTKEY => self.set_paused(self.pause == Pause::Off),
             Routed::Hotkey(_) => {}
+        }
+    }
+
+    /// Global pause on or off (`SetPaused`, and the "Pause or resume" shortcut). Kept in
+    /// `run/paused` (module docs, "Pause across a restart").
+    fn set_paused(&mut self, on: bool) {
+        self.handoff.disturb();
+        self.handle(Event::Paused(on));
+        let was = self.pause;
+        // Paused or resumed now: no longer the pause kept from before.
+        self.pause = if on { Pause::On } else { Pause::Off };
+        if was != self.pause {
+            self.keep_pause(on);
+            let status = self.shared.status(self.status());
+            self.shared
+                .clients
+                .broadcast(&EventBody::StatusChanged { status });
         }
     }
 
@@ -778,10 +948,14 @@ impl EngineThread {
         self.verdict = None;
         self.handle(Event::FocusChanged(change.app.app.clone()));
         let token = change.token;
+        let own = change.app.own;
         self.focus = Some(change);
         self.elsewhere = None;
         self.unconfirmed = None;
-        if self.parked.as_ref().is_some_and(|p| p.token == token)
+        if self
+            .parked
+            .as_ref()
+            .is_some_and(|p| p.token.map_or(!own, |t| t == token))
             && let Some(parked) = self.parked.take()
         {
             self.forward(parked.request);
@@ -804,11 +978,20 @@ impl EngineThread {
             self.dropped(request, "form_target_gone");
             return;
         }
+        let in_own_window = self.focus.as_ref().is_some_and(|c| c.app.own);
         match focus {
             Some(token) if self.focus.as_ref().map(|c| c.token) != Some(token) => {
                 self.parked = Some(Parked {
                     request,
-                    token,
+                    token: Some(token),
+                    deadline: Instant::now() + PARK_TIMEOUT,
+                });
+            }
+            // The tray's "Fill in again" while the hand-back to the app is on its way.
+            None if matches!(request, Explicit::Reopen) && in_own_window => {
+                self.parked = Some(Parked {
+                    request,
+                    token: None,
                     deadline: Instant::now() + PARK_TIMEOUT,
                 });
             }
@@ -824,7 +1007,8 @@ impl EngineThread {
                 Event::FormSubmitted { session, values }
             }
             Explicit::Reopen => {
-                self.values_touched = Some(Instant::now());
+                // Renewed only by the form it opens (`handle`), not by a refusal.
+                self.reopen_waiting = true;
                 Event::ReopenLastForm
             }
         };
@@ -885,6 +1069,9 @@ impl EngineThread {
                     {
                         code.clone_into(&mut wire.code);
                     }
+                    if wire.code.starts_with("refused_") || wire.code == "no_last_form" {
+                        self.reopen_waiting = false;
+                    }
                     self.shared.diagnostic(wire);
                 }
                 Action::ShowForm {
@@ -892,7 +1079,15 @@ impl EngineThread {
                     snippet,
                     spec,
                     last_values,
-                } => self.show_form(session, snippet, &spec, last_values),
+                } => {
+                    if std::mem::take(&mut self.reopen_waiting)
+                        && last_values.is_some()
+                        && self.shared.clients.ui_connected()
+                    {
+                        self.values_touched = Some(Instant::now());
+                    }
+                    self.show_form(session, snippet, &spec, last_values);
+                }
                 _ => {}
             }
         }

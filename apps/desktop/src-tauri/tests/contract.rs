@@ -115,6 +115,7 @@ fn the_responses_the_bridge_reads_map_to_the_front_ends_types() {
         ServiceView {
             version: "0.0.0".to_owned(),
             paused: false,
+            paused_kept: false,
             suspended: true,
             snippets: 12,
             revision: 3,

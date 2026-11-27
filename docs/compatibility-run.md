@@ -53,6 +53,10 @@ key.
    target\release\iamb-service.exe --supervise --data-dir C:\iamb-compat
    ```
 
+   A release build has no console window (it is the login item): the command returns at once and
+   the service runs in the background, logging to `C:\iamb-compat\logs\`. Stop it with
+   `taskkill /im iamb-service.exe /t /f`.
+
 5. In a second Command Prompt, check that it answers:
 
    ```bat
@@ -352,7 +356,7 @@ refuse the whole text; the previous overrides stay in force. Older texts written
 builds (`default`, `typing`, `shift_enter`, `return`) are refused too.
 
 There is no settings screen yet. Write the setting with any SQLite tool while the service is
-stopped (Ctrl+C in its window), then start it again (step 4 on Windows, step 5 on macOS):
+stopped (Ctrl+C in its window; on Windows `taskkill /im iamb-service.exe /t /f`), then start it again (step 4 on Windows, step 5 on macOS):
 
 ```sh
 sqlite3 ~/iamb-compat/library.db
@@ -464,6 +468,24 @@ version. A failure of P4 or P5 (the focus did not come back, or came back to ano
 the focus KPI for that app unless it has an exception record, as for the matrix cells. On macOS,
 until the non-activating panel exists (`apps/desktop/README.md`, "The macOS panel"), P1's
 menu-bar check fails by design; record it as a known limitation and check the rest.
+
+## The installed helper and the UI host (macOS; finding 1 of the beta-gap review)
+
+The helper app holds the user's Accessibility and Input Monitoring permissions (ADR-0021), and
+the system judges a program the helper starts as its own child as the helper. So the helper
+never starts the UI host, or anything else, as its child: it has the system open `Iamb.app`
+(`/usr/bin/open -g -W -a`), and a release build refuses `--ui-host`
+([`docs/reviews/beta-gaps-security-review.md`](reviews/beta-gaps-security-review.md), finding 1;
+`crates/iamb-service/src/supervisor.rs`, "The UI host"). These checks need the installed, signed
+app with Start at login on and both permissions granted to "Iamb Service".
+
+| # | Do | Pass when |
+| --- | --- | --- |
+| H1 | Log out and in. Run `ps -o pid,ppid,command -ax \| grep -i iamb` | `iamb-desktop`'s parent (PPID) is 1 (launchd), not the pid of `iamb-service --supervise` |
+| H2 | `sudo launchctl procinfo <pid of iamb-desktop> \| grep -i responsible` | The responsible process is `iamb-desktop` itself, not `Iamb Service` |
+| H3 | Quit Iamb from the menu bar, wait a minute | It stays quit; `logs/supervisor.log` says `ui host … ended (Quit); not restarted`. Start it again, then `kill -SEGV <pid of iamb-desktop>`: it comes back within a few seconds. Then log out and back in, and quit it with `osascript -e 'quit app "Iamb"'`: the logout is not held up, and after each `logs/supervisor.log` says `ended (Quit); not restarted` (the quit marker is left when the system quits the app) |
+| H4 | `open -n -W -a "/Applications/Iamb.app/Contents/Library/LoginItems/Iamb Service.app" --args --supervise --ui-host /bin/sh --data-dir /tmp/iamb-h4`, then the same with `--platform mock` added before `--ui-host`, then `--supervise --platform mock` alone (no `--ui-host`, no `--data-dir`), and finally `open -n -W --env HOME=/tmp/iamb-h4home -a "…/Iamb Service.app" --args --supervise` | Each time the helper exits at once (no new `iamb-service` in `ps`, nothing in `/tmp/iamb-h4/logs` or under `/tmp/iamb-h4home`): a release build refuses `--ui-host` on either platform, `--platform mock`, a data root other than the default, and a default built from a `HOME` that is not the account's (the re-verification of finding 1) |
+| H5 | The child check itself, with a development helper granted both permissions (a copy of `Iamb Service.app` whose `Contents/MacOS/iamb-service` is a debug build, `cargo build -p iamb-service`, signed ad hoc with `codesign -f -s -`): save as `/tmp/probe.sh` the script `#!/bin/sh` / `/usr/bin/swift -e 'import CoreGraphics; print(CGPreflightListenEventAccess(), CGPreflightPostEventAccess())' > /tmp/probe.txt`, make it executable, and start the development helper with `open -n -W -a <its path> --args --supervise --platform native --ui-host /tmp/probe.sh --data-dir /tmp/iamb-h5` | `/tmp/probe.txt` says `true true`: a child of the helper gets the helper's keyboard access, which is why the release helper starts no child. Then run `open -W -a Terminal /tmp/probe.sh` from a Terminal that has no grant of its own: `false false`. Record both answers; `true` in the second, or `false` in the first, changes the finding and must be reported |
 
 ## Delivering the result
 

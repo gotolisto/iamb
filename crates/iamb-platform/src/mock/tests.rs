@@ -212,7 +212,7 @@ fn hotkeys_are_delivered_through_the_listener_and_consumed() {
     let window = editor(&os);
     let seen = listening(&os);
     let palette = Chord::parse("Ctrl+Shift+Space").expect("chord");
-    let other = Chord::parse("Alt+K").expect("chord");
+    let other = Chord::parse("Alt+F7").expect("chord");
 
     os.register(HotkeyId(1), palette).expect("free chord");
     assert_eq!(os.registered_hotkeys(), [(HotkeyId(1), palette)]);
@@ -464,6 +464,29 @@ fn focus_is_given_back_to_a_token() {
 
     os.close_window(target);
     assert_eq!(os.restore_focus(&token), Err(PlatformError::FocusLost));
+}
+
+/// As the OS crates' `restore_focus`: a window that kept the focus (behind a non-activating
+/// panel) is given nothing, and the watcher hears of no change; one that lost it is reported.
+#[test]
+fn giving_the_focus_back_to_the_window_that_has_it_reports_nothing() {
+    let os = MockPlatform::new();
+    let target = os.open_window(MockWindow::new("editor", 1));
+    let other = os.open_window(MockWindow::new("chat", 2));
+    os.focus(target).expect("open");
+    let seen: Arc<Mutex<Vec<FocusChange>>> = Arc::default();
+    let log = Arc::clone(&seen);
+    os.watch(Box::new(move |change: FocusChange| lock(&log).push(change)))
+        .expect("watches");
+    assert_eq!(lock(&seen).len(), 1, "the focus as it is");
+
+    assert_eq!(os.restore_focus(&target), Ok(()));
+    assert_eq!(lock(&seen).len(), 1, "no change, no report");
+
+    os.focus(other).expect("open");
+    assert_eq!(os.restore_focus(&target), Ok(()));
+    let tokens: Vec<FocusToken> = lock(&seen).iter().map(|c| c.token).collect();
+    assert_eq!(tokens, [target, other, target]);
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -346,10 +346,10 @@ fn check_profile_change(
     let Some((_, old_profile, _)) = folder_links(conn, id)? else {
         return Ok(());
     };
-    if old_profile == folder.profile_id {
+    if old_profile == folder.profile_id || mode == WriteMode::Remote {
         return Ok(());
     }
-    if mode == WriteMode::Local {
+    {
         let has_children: bool = conn
             .prepare_cached(
                 "SELECT EXISTS (SELECT 1 FROM folder WHERE parent_id = ?1 AND deleted_at IS NULL)",
@@ -573,7 +573,9 @@ impl sealed::Row for Snippet {
         let key = unchanged_key
             .clone()
             .unwrap_or_else(|| self.abbreviation.fold_key());
-        if live && unchanged_key.is_none() {
+        // Rows from the server are applied as they are (C9, D3): only a local edit is refused a
+        // duplicate abbreviation.
+        if live && unchanged_key.is_none() && mode == WriteMode::Local {
             let existing = conn
                 .prepare_cached(
                     "SELECT id FROM snippet

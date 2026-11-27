@@ -5,6 +5,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      installers:
+        description: Also build the installers and run the install smoke test (unsigned; about 30-60 min)
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -87,6 +92,9 @@ jobs:
         run: |
           cargo build -p iamb-service --release --locked
           cargo clippy -p iamb-service --release --locked -- -D warnings
+          # What only a release build refuses: --ui-host, and --platform mock on Windows and
+          # macOS (the beta-gap review's finding 1).
+          cargo test -p iamb-service --release --locked --test release_switches
       # Follow-up review N6: the service binary imports no name-resolution or HTTP function, on
       # every OS. The import list is printed so a new import can be looked at.
       - name: Service binary imports (ADR-0008)
@@ -108,6 +116,11 @@ jobs:
       - name: Test
         if: runner.os != 'Windows'
         run: cargo test --workspace --exclude iamb-desktop --locked
+      # Task 4.4: the sync agent's tests with the model of the server (120 simulation runs; the
+      # nightly workflow runs 1,000).
+      - name: Test (sync agent with the model of the server)
+        if: runner.os == 'Linux'
+        run: cargo test -p iamb-sync --features model --locked
       # Hosted Windows runners have an interactive desktop, so keyboard tests that need one
       # must run there: IAMB_REQUIRE_DESKTOP turns their "skipped, no desktop" into a failure.
       - name: Test (Windows, desktop required)
@@ -291,6 +304,16 @@ jobs:
           sudo apt-get install -y --no-install-recommends postgresql postgresql-contrib
       - name: Policy tests
         run: server/tests/run.sh
+
+  # The installers and the install smoke test (docs/release.md), on demand only: a manual run
+  # with `installers` ticked. Every release runs them too (release.yml). Not part of `ci-ok`, so
+  # pull requests do not wait for them. Never signed from here.
+  installers:
+    name: installers
+    if: github.event_name == 'workflow_dispatch' && inputs.installers
+    uses: ./.github/workflows/installers.yml
+    with:
+      sign: false
 
   # Single required status check for branch protection.
   ci-ok:

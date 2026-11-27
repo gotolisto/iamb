@@ -1,0 +1,336 @@
+# Installers and the install smoke test (docs/release.md). A reusable workflow, called by
+# release.yml (tags `v*` and manual runs, signing on when the owner has added the secrets) and by
+# ci.yml on demand (manual run with `installers` ticked, never signed). It never runs on a pull
+# request by itself, so it does not slow the PR checks down.
+#
+# - build: one job per OS builds the installer: a universal (Apple silicon + Intel) Iamb.app in a
+#   .dmg on macOS, a per-user NSIS setup.exe on Windows, a .deb on Linux (ADR-0030). The service
+#   ships inside each: as the helper app Iamb.app/Contents/Library/LoginItems/Iamb Service.app
+#   on macOS (ADR-0021), as iamb-service(.exe) next to iamb-desktop(.exe) elsewhere.
+# - smoke: one job per OS, on a fresh runner that never built anything, installs that
+#   installer silently, checks the installed files and versions, starts the installed app,
+#   checks signatures when the build is signed, uninstalls, and checks that it is gone.
+name: Installers
+
+on:
+  workflow_call:
+    inputs:
+      sign:
+        description: Sign (and on macOS notarize) when the signing secrets exist. Without them the build is unsigned either way.
+        type: boolean
+        default: false
+    outputs:
+      version:
+        description: The version built (the workspace version in Cargo.toml).
+        value: ${{ jobs.build.outputs.version }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, platform: macos }
+          - { os: windows-latest, platform: windows }
+          - { os: ubuntu-latest, platform: linux }
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Add both Apple targets (universal build)
+        if: runner.os == 'macOS'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - name: Install the web view and tray libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: installers-${{ matrix.platform }}
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: apps/desktop/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+      - name: Front-end dependencies
+        working-directory: apps/desktop
+        run: pnpm install --frozen-lockfile
+
+      # One source of truth: [workspace.package] version in Cargo.toml (release.yml checks the tag).
+      - name: Version
+        id: version
+        run: echo "version=$(cargo xtask release-version)" >> "$GITHUB_OUTPUT"
+
+      # Which signing applies. Secrets are only tested for presence here, never printed. A partial
+      # set is an error rather than a silently unsigned release.
+      - name: Signing mode
+        id: signing
+        env:
+          SIGN: ${{ inputs.sign }}
+          PLATFORM: ${{ matrix.platform }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_SIGN_COMMAND: ${{ secrets.WINDOWS_SIGN_COMMAND }}
+        run: |
+          present() { local n; for n in "$@"; do [ -n "${!n}" ] || return 1; done; }
+          missing() { local n; for n in "$@"; do [ -n "${!n}" ] || printf '%s ' "$n"; done; }
+          any() { local n; for n in "$@"; do [ -n "${!n}" ] && return 0; done; return 1; }
+          mode=unsigned
+          case "$PLATFORM" in
+            macos)
+              apple=(APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID)
+              if present "${apple[@]}"; then mode=developer-id
+              elif any "${apple[@]}"; then
+                echo "Some Apple signing secrets are set but not all; missing: $(missing "${apple[@]}")" >&2
+                exit 1
+              fi ;;
+            windows)
+              cert=(WINDOWS_CERTIFICATE WINDOWS_CERTIFICATE_PASSWORD)
+              if present "${cert[@]}" && [ -n "$WINDOWS_SIGN_COMMAND" ]; then
+                echo "Set either WINDOWS_CERTIFICATE (+ password) or WINDOWS_SIGN_COMMAND, not both." >&2
+                exit 1
+              elif present "${cert[@]}"; then mode=certificate
+              elif [ -n "$WINDOWS_SIGN_COMMAND" ]; then mode=sign-command
+              elif any "${cert[@]}"; then
+                echo "Windows certificate secrets incomplete; missing: $(missing "${cert[@]}")" >&2
+                exit 1
+              fi ;;
+          esac
+          if [ "$SIGN" != true ] && [ "$mode" != unsigned ]; then
+            echo "Signing secrets exist, but this run does not sign (sign: false)."
+            mode=unsigned
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          if [ "$mode" = unsigned ]; then echo "signed=false" >> "$GITHUB_OUTPUT"; else echo "signed=true" >> "$GITHUB_OUTPUT"; fi
+          echo "Signing mode for $PLATFORM: $mode"
+
+      # ---- macOS ----------------------------------------------------------------------------
+      - name: Import the Developer ID certificate (macOS, signed)
+        if: runner.os == 'macOS' && steps.signing.outputs.mode == 'developer-id'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: apps/desktop/release/macos/keychain.sh
+      - name: Build the service helper app (macOS)
+        if: runner.os == 'macOS'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ steps.signing.outputs.mode == 'developer-id' && secrets.APPLE_SIGNING_IDENTITY || '' }}
+        run: apps/desktop/release/macos/build-helper.sh "${{ steps.version.outputs.version }}"
+      # Gone before the bundler runs, which imports the certificate into a keychain of its own: two
+      # keychains with the same identity in the search list would make codesign's choice ambiguous.
+      - name: Remove the helper's temporary keychain (macOS)
+        if: always() && runner.os == 'macOS' && env.IAMB_KEYCHAIN != ''
+        run: security delete-keychain "$IAMB_KEYCHAIN" || true
+      # Signed: the bundler signs the app with the hardened runtime and the entitlements file,
+      # notarizes it and staples the ticket, and signs the disk image (it reads the APPLE_*
+      # variables itself). Unsigned: an ad-hoc signature, so the bundle is sealed and the
+      # structure check in the smoke test still applies.
+      - name: Build Iamb.app and the disk image (macOS)
+        if: runner.os == 'macOS'
+        working-directory: apps/desktop
+        env:
+          APPLE_CERTIFICATE: ${{ steps.signing.outputs.mode == 'developer-id' && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ steps.signing.outputs.mode == 'developer-id' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ steps.signing.outputs.mode == 'developer-id' && secrets.APPLE_SIGNING_IDENTITY || '' }}
+          APPLE_ID: ${{ steps.signing.outputs.mode == 'developer-id' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ steps.signing.outputs.mode == 'developer-id' && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ steps.signing.outputs.mode == 'developer-id' && secrets.APPLE_TEAM_ID || '' }}
+          MODE: ${{ steps.signing.outputs.mode }}
+        run: |
+          # Empty variables would count as set for the bundler: drop them.
+          for n in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            [ -n "${!n}" ] || unset "$n"
+          done
+          config=(--config "$GITHUB_WORKSPACE/apps/desktop/release/tauri.macos.json")
+          if [ "$MODE" != developer-id ]; then
+            config+=(--config '{"bundle":{"macOS":{"signingIdentity":"-"}}}')
+          fi
+          pnpm tauri build --ci --target universal-apple-darwin "${config[@]}"
+      - name: Notarize and staple the disk image (macOS, signed)
+        if: runner.os == 'macOS' && steps.signing.outputs.mode == 'developer-id'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          shopt -s nullglob
+          dmgs=(target/universal-apple-darwin/release/bundle/dmg/*.dmg)
+          [ "${#dmgs[@]}" -eq 1 ] || { echo "expected one disk image, found ${#dmgs[@]}" >&2; exit 1; }
+          apps/desktop/release/macos/notarize-dmg.sh "${dmgs[0]}"
+
+      # ---- Windows and Linux: the service as a sidecar next to the UI host ------------------
+      # Built with `-p iamb-service` alone, as it ships (ADR-0008, check 4), and staged under
+      # the name the bundler expects (`externalBin` in release/tauri.<os>.json).
+      - name: Build and stage the service (Windows, Linux)
+        if: runner.os != 'macOS'
+        run: |
+          cargo build -p iamb-service --release --locked
+          triple="$(rustc -vV | sed -n 's/^host: //p')"
+          ext=""; [ "$RUNNER_OS" = Windows ] && ext=".exe"
+          mkdir -p apps/desktop/release/out
+          cp "target/release/iamb-service$ext" "apps/desktop/release/out/iamb-service-$triple$ext"
+          "apps/desktop/release/out/iamb-service-$triple$ext" --version
+
+      # Windows signing, two ways (docs/release.md): a code-signing certificate exported as a
+      # .pfx in WINDOWS_CERTIFICATE, imported into the runner's user store and used through
+      # signtool by thumbprint; or WINDOWS_SIGN_COMMAND, a command line with %1 for the file,
+      # which the bundler runs for every binary (a cloud signing service's client). The bundler
+      # signs iamb-desktop.exe, iamb-service.exe, the uninstaller and the installer.
+      - name: Prepare Windows signing
+        if: runner.os == 'Windows' && steps.signing.outputs.mode != 'unsigned'
+        shell: pwsh
+        env:
+          MODE: ${{ steps.signing.outputs.mode }}
+          WINDOWS_CERTIFICATE: ${{ steps.signing.outputs.mode == 'certificate' && secrets.WINDOWS_CERTIFICATE || '' }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ steps.signing.outputs.mode == 'certificate' && secrets.WINDOWS_CERTIFICATE_PASSWORD || '' }}
+          WINDOWS_SIGN_COMMAND: ${{ steps.signing.outputs.mode == 'sign-command' && secrets.WINDOWS_SIGN_COMMAND || '' }}
+          TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL || 'http://timestamp.digicert.com' }}
+        run: |
+          $overlay = Join-Path $env:RUNNER_TEMP 'iamb-windows-signing.json'
+          if ($env:MODE -eq 'certificate') {
+            $pfx = Join-Path $env:RUNNER_TEMP 'iamb-signing.pfx'
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+            $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+            $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+            Remove-Item $pfx
+            if (-not $cert.HasPrivateKey) { throw 'the certificate in WINDOWS_CERTIFICATE has no private key' }
+            "IAMB_SIGNING_THUMBPRINT=$($cert.Thumbprint)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+            $windows = @{ certificateThumbprint = $cert.Thumbprint; digestAlgorithm = 'sha256'; timestampUrl = $env:TIMESTAMP_URL }
+          } else {
+            $windows = @{ signCommand = $env:WINDOWS_SIGN_COMMAND }
+          }
+          @{ bundle = @{ windows = $windows } } | ConvertTo-Json -Depth 5 | Out-File -Encoding utf8 $overlay
+          "IAMB_SIGNING_CONFIG=$overlay" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          Write-Host "Windows signing prepared ($env:MODE)."
+      - name: Build the installer (Windows)
+        if: runner.os == 'Windows'
+        working-directory: apps/desktop
+        env:
+          # For WINDOWS_SIGN_COMMAND: the credentials the signing client reads (docs/release.md).
+          WINDOWS_SIGN_CREDENTIALS: ${{ steps.signing.outputs.mode == 'sign-command' && secrets.WINDOWS_SIGN_CREDENTIALS || '' }}
+        run: |
+          config=(--config "$GITHUB_WORKSPACE/apps/desktop/release/tauri.windows.json")
+          if [ -n "${IAMB_SIGNING_CONFIG:-}" ]; then config+=(--config "$IAMB_SIGNING_CONFIG"); fi
+          pnpm tauri build --ci "${config[@]}"
+      - name: Remove the signing material (Windows)
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if ($env:IAMB_SIGNING_THUMBPRINT) { Remove-Item -Path "Cert:\CurrentUser\My\$env:IAMB_SIGNING_THUMBPRINT" -DeleteKey -ErrorAction SilentlyContinue }
+          if ($env:IAMB_SIGNING_CONFIG) { Remove-Item -Path $env:IAMB_SIGNING_CONFIG -ErrorAction SilentlyContinue }
+
+      - name: Build the package (Linux)
+        if: runner.os == 'Linux'
+        working-directory: apps/desktop
+        run: pnpm tauri build --ci --config "$GITHUB_WORKSPACE/apps/desktop/release/tauri.linux.json"
+
+      # ---- All ------------------------------------------------------------------------------
+      - name: Collect the installer
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SIGNED: ${{ steps.signing.outputs.signed }}
+          MODE: ${{ steps.signing.outputs.mode }}
+        run: |
+          shopt -s nullglob
+          case "$RUNNER_OS" in
+            macOS)   files=(target/universal-apple-darwin/release/bundle/dmg/*.dmg) ;;
+            Windows) files=(target/release/bundle/nsis/*-setup.exe) ;;
+            Linux)   files=(target/release/bundle/deb/*.deb) ;;
+          esac
+          [ "${#files[@]}" -eq 1 ] || { echo "expected one installer, found ${#files[@]}: ${files[*]}" >&2; exit 1; }
+          mkdir -p dist
+          cp "${files[0]}" dist/
+          printf '{"version":"%s","signed":%s,"mode":"%s","installer":"%s"}\n' \
+            "$VERSION" "$SIGNED" "$MODE" "$(basename "${files[0]}")" > dist/build-info.json
+          cat dist/build-info.json
+      - name: Job summary
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          MODE: ${{ steps.signing.outputs.mode }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          {
+            echo "### Installer: $PLATFORM, version $VERSION"
+            echo
+            ls dist | grep -v build-info.json | sed 's/^/- /'
+            echo
+            case "$PLATFORM:$MODE" in
+              macos:developer-id) echo "**Signed** with the Developer ID certificate, hardened runtime, **notarized**; tickets stapled to the app and the disk image." ;;
+              macos:*) echo "**UNSIGNED** (ad-hoc signature only, not notarized): Gatekeeper blocks the first open; see docs/release.md. Add the APPLE_* secrets to sign." ;;
+              windows:certificate) echo "**Signed** (Authenticode, certificate from WINDOWS_CERTIFICATE, timestamped)." ;;
+              windows:sign-command) echo "**Signed** through WINDOWS_SIGN_COMMAND." ;;
+              windows:*) echo "**UNSIGNED**: SmartScreen warns about an unknown publisher; see docs/release.md. Add WINDOWS_CERTIFICATE or WINDOWS_SIGN_COMMAND to sign." ;;
+              linux:*) echo "Unsigned (Linux packages are not signed by this pipeline)." ;;
+            esac
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.platform }}
+          path: dist/
+          if-no-files-found: error
+
+  smoke:
+    name: install smoke test (${{ matrix.platform }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, platform: macos }
+          - { os: windows-latest, platform: windows }
+          - { os: ubuntu-latest, platform: linux }
+    steps:
+      # Only the smoke scripts; nothing is built on this runner.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: apps/desktop/release/smoke
+      - uses: actions/download-artifact@v4
+        with:
+          name: installer-${{ matrix.platform }}
+          path: dist
+      - name: Install, check, start, uninstall (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          field() { python3 -c "import json,sys; v=json.load(open('dist/build-info.json'))[sys.argv[1]]; print(str(v).lower() if isinstance(v, bool) else v)" "$1"; }
+          apps/desktop/release/smoke/macos.sh "dist/$(field installer)" "$(field version)" "$(field signed)"
+      - name: Install, check, start, uninstall (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $info = Get-Content -Raw dist/build-info.json | ConvertFrom-Json
+          ./apps/desktop/release/smoke/windows.ps1 -Installer (Resolve-Path "dist/$($info.installer)").Path `
+            -Version $info.version -Signed ($info.signed.ToString().ToLower())
+      - name: Install, check, start, uninstall (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          field() { python3 -c "import json,sys; print(json.load(open('dist/build-info.json'))[sys.argv[1]])" "$1"; }
+          apps/desktop/release/smoke/linux.sh "dist/$(field installer)" "$(field version)"

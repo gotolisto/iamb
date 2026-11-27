@@ -120,13 +120,17 @@ fn samples() -> Value {
         Wire::Response(r) => template::preview_from(r.into_result().expect("ok")).expect("preview"),
         _ => panic!("not a response"),
     };
+    // The refusal of a link that may not be opened (`link.rs`).
+    let link_refused: CommandError = iamb_desktop::link::checked("javascript:alert(1)")
+        .expect_err("refused")
+        .into();
     json!({
         "statuses": statuses,
         "events": events,
         "snippets": snippets,
         "snippet": snippet,
         "error": error,
-        "template": { "parsed": parsed, "preview": preview },
+        "template": { "parsed": parsed, "preview": preview, "link_refused": link_refused },
         "form": form_samples(),
     })
 }

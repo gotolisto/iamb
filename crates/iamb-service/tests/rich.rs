@@ -28,7 +28,7 @@ fn png(tag: u8) -> Vec<u8> {
 fn rich_library(with_image_bytes: bool) -> (TempDir, String) {
     let dir = TempDir::new().expect("temp dir");
     seed(dir.path(), common::LIBRARY);
-    let mut store = Store::open(dir.path()).expect("store");
+    let mut store = common::open_store(dir.path());
     let profile = store
         .list_profiles(iamb_store::ListOptions::LIVE)
         .expect("profiles")[0]
@@ -322,7 +322,7 @@ fn the_editor_adds_an_image_previews_it_and_saving_links_it() {
     }
     drop(ui);
     let dir = h.stop();
-    let store = Store::open(dir.path()).expect("store");
+    let store = common::open_store(dir.path());
     let links = store
         .list_snippet_attachments(iamb_store::ListOptions::LIVE)
         .expect("links");

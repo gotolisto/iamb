@@ -16,6 +16,11 @@ export interface LibraryEnv {
   /** Global pause is on. */
   paused: boolean;
   /**
+   * The pause was kept from before the service started: it outlives a quit, a logout and a
+   * restart of the machine, so the user may not remember it.
+   */
+  pausedKept?: boolean;
+  /**
    * Asks to be told when the window is about to close. `blocked()` says whether there is
    * something to ask first; if so the window stays open and `onBlocked` is called. The returned
    * function removes the guard.
@@ -39,4 +44,6 @@ export interface LibraryEnv {
   onQuitRequested?: ((handler: () => void) => () => void) | undefined;
   /** Ends Iamb (after `onQuitRequested`). */
   quit?: (() => Promise<void>) | undefined;
+  /** "Start it again" in the "Iamb is not running" banner: starts the background service again. */
+  restartService?: (() => Promise<void>) | undefined;
 }

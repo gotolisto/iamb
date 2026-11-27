@@ -222,7 +222,8 @@ fn a_screen_lock_or_sign_out_forgets_the_remembered_form_values() {
             }
             _ => unreachable!("matched above"),
         }
-        ui.call(RequestBody::ReopenLastForm {}).expect("sent");
+        ui.call(RequestBody::ReopenLastForm { focus: None })
+            .expect("sent");
         h.settle();
         assert!(
             diagnostic_codes(&mut ui).contains(&"no_last_form".to_owned()),

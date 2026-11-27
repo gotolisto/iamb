@@ -108,9 +108,10 @@ begin
                          'snapshot: ' || r::text);
     r := iamb_test.call('tom', 'api.visible_folders(iamb_test.dev(''tom''), 1)');
     perform iamb_test.eq(jsonb_array_length(r -> 'folders'), 0, 'visible_folders after removal');
-    -- History and conflicts: still a party, but no version of a row he may no longer read (G5).
+    -- History and conflicts: a conflict on a row he may no longer read is, for him, not there
+    -- (G5, G13; security review 4.3, finding 2).
     r := iamb_test.call('tom', format('api.get_conflict(iamb_test.dev(''tom''), 1, %L)', cid));
-    perform iamb_test.eq(r ->> 'error', 'forbidden', 'get_conflict after removal');
+    perform iamb_test.eq(r ->> 'error', 'not_found', 'get_conflict after removal');
     perform iamb_test.ok(r -> 'versions' is null, 'no version in the answer');
     perform iamb_test.eq(iamb_test.visible('tom', 'history'), -1, 'history is unreadable');
     -- Writes are refused.

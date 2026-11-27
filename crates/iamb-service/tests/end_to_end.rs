@@ -506,10 +506,14 @@ fn roles_are_enforced_and_missing_counterparts_say_so() {
             .map_err(|e| e.remote_code()),
         Err(Some(ErrorCode::NotPermitted))
     );
-    assert_eq!(
-        sync.call(RequestBody::OutboxRead { limit: 1 })
-            .map_err(|e| e.remote_code()),
-        Err(Some(ErrorCode::NotImplemented))
+    // The Sync group is answered (task 4.4).
+    let answer = sync.call(RequestBody::OutboxRead {
+        limit: 1,
+        phase: None,
+    });
+    assert!(
+        matches!(answer, Ok(ResponseBody::Changes { .. })),
+        "{answer:?}"
     );
     // Only the UI host may say that one of its panels has the keyboard.
     assert_eq!(

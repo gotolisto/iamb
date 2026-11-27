@@ -35,7 +35,7 @@ All Rust crates live in one Cargo workspace under `crates/`, all named `iamb-*`
 | `iamb-platform-windows` | library | platform | Windows implementations of the platform traits | Anything not behind the traits |
 | `iamb-platform-macos` | library | platform | macOS implementations of the platform traits | Anything not behind the traits |
 | `iamb-service` | binary | core, store, ipc, platform(+os) | The background service: listener → engine → injector, owns the store, serves IPC, supervises | Network code of any kind |
-| `iamb-sync` | library + thin binary | core, ipc | Sync agent: account session, push, pull, live updates, media transfer, account endpoint | Access to key events |
+| `iamb-sync` | library + thin binary | core, ipc, platform (the service endpoint's name and the peer policy only); networking through `rustls`, `ureq` and `tungstenite` (task 4.4, `crates/iamb-sync/README.md`) | Sync agent: account session, push, pull, live updates, media transfer, account endpoint | Access to key events |
 | `iamb-cli` | binary `iamb` | core, store, ipc, platform | Command-line tool: add, list, remove, import, dry-run expand | — |
 | `iamb-desktop` | binary | core (model types only), ipc, platform(+os) | Tauri shell (`apps/desktop/src-tauri`): tray icon, windows, focus hand-back, bridges UI commands to `iamb-ipc` | Engine or store logic |
 | `iamb-testkit` | library (dev) | core, platform | Scripted typing sessions, fake clock, fixture libraries, the spec example loader, compatibility harness | — |
@@ -126,12 +126,39 @@ is started again, whose first report brings the next verdict.
 
 Single instance is guaranteed by an exclusive lock on `run/supervisor.lock`.
 
+"Start it again" and "Restart the helper" reach the supervisor through a file, not yet through
+the control pipe of ADR-0023: the UI host creates the empty file `run/restart-worker` (created
+new, so a link or a FIFO in its place is neither followed nor opened) and starts the supervisor,
+which exits when one already runs. The running supervisor looks for the file every 200 ms,
+removes it, asks the worker to stop by closing its standard input (killed after a second) and
+starts a new one at once. The file has no peer verification: only the user can create it in
+`run/` (§3.3), and it can do nothing a process of the user cannot already do by ending the
+worker. It means "restart the worker" only; a stop, and what updates need, wait for the pipe
+(`iamb_service::supervisor`, "Restart requests"; §8).
+
 Packaging ([ADR-0021](decisions/0021-packaging-and-permissions.md)): on macOS the service is a
 signed helper app with a stable bundle identifier inside `Iamb.app`, registered as a login item
 through the system's login-item API by the main app, so that Accessibility and Input Monitoring
 grants belong to the helper and survive updates. On Windows the supervisor is registered under the
 per-user Run key. Updates are applied by the UI host, which asks the supervisor to stop the worker,
 replaces the files, and asks it to start again ([ADR-0023](decisions/0023-updates.md)).
+
+The UI host is supervised by its end, not by a heartbeat (`iamb_service::supervisor`, "The UI
+host"). On macOS the supervisor never starts it as its own child: the system judges a program the
+helper spawns as the helper, with the helper's keyboard permissions, so the supervisor has the
+system open `Iamb.app` (`/usr/bin/open -g -W -a`), as the UI host has the system open the helper,
+after checking that the app is the bundle around the helper (resolved path, no links, Iamb's
+bundle identifier; a signature check follows with signed builds). `open` does not pass the app's
+exit status on, so the UI host leaves `run/desktop.quit` when it ends on purpose (its "Quit", and
+a quit by the system: a logout, a restart, a "quit" Apple event, which ends the process inside
+AppKit, so the marker is left as the event loop ends), and there only an end without it is
+restarted. Where the supervisor sees the UI host's own exit status (Windows, Linux) the status
+decides and the marker is not read: status 0 is a quit, and a marker left beside a crash by
+another process does not turn the crash into one. A UI host that steps aside for another one
+already running for its data root exits with 0 and leaves no marker. Everywhere, a UI host that
+exits with status 64 (a usage error), is ended with `SIGTERM`, or fails five starts in a row
+within a second each is not started again. On macOS a `SIGTERM` (an installer, `killall`) cannot
+be told from a crash behind `open`, so it is restarted there.
 
 ### 3.3 Files on disk
 
@@ -142,7 +169,9 @@ replaces the files, and asks it to start again ([ADR-0023](decisions/0023-update
 | Attachments | `attachments/<profile id>/<sha256>` | same |
 | Logs | `logs/<process>.log` (rotated, 5 × 1 MB) | same |
 | Locks | `run/supervisor.lock`, `run/store.lock`, `run/desktop.lock` (one UI host per data root) | same |
+| Signals between processes | `run/restart-worker` (UI host to supervisor: restart the worker, §3.2), `run/desktop.quit` (the UI host ended on purpose, §3.2); empty files, taken by removing them | same |
 | Endpoints | `run/service.sock`, `run/sync.sock` | `\\.\pipe\iamb-service-<user SID>-<secret>`, `\\.\pipe\iamb-sync-<user SID>-<secret>`; each secret (128 random bits, new for every bind) in `run/service.pipe`, `run/sync.pipe`; `run/service.pipe.lock`, `run/sync.pipe.lock` |
+| Pause | `run/paused` while Iamb is paused, so that a worker started afresh (a crash, a restart, a logout, a restart of the machine) starts paused, and says so (`ServiceStatus.paused_kept`: "Iamb is still paused"). Only a regular file counts, looked at without following a link; anything else there means not paused and is removed (`iamb_service::worker::engine`, "Pause across a restart") | same |
 
 On Linux (development and the command-line tool only) the data root is `$XDG_DATA_HOME/iamb/`.
 Setting `IAMB_DATA_DIR` overrides the data root on every OS; tests always set it.
@@ -348,7 +377,15 @@ one is refused; cancelling a form drops its waiting submit; `Overflow` drops any
 The engine sees focus events and requests in the order the service delivers them, and the two
 arrive from different threads. The service therefore forwards an explicit request only after it
 has delivered the focus change for the window the request will type into (the focus token's
-window, once the UI host has handed focus back).
+window, once the UI host has handed focus back). The "Fill in the last form again" shortcut reads
+the focus token at the press, as the palette's shortcut does, so it runs under the verdict of the
+window it was pressed in, never under the one before. `ReopenLastForm` carries the token of the
+window it is for when the UI host knows it (an optional `focus`, as `ExpandSnippet`'s: the tray
+menu and the palette send the window they hand the focus back to), and then waits for that
+window alone: on Windows the click on the icon can bring the shell's taskbar to the front, and
+neither the taskbar reported last nor another window reported next decides it. One without a
+token that arrives while the last focus delivered is Iamb's own window waits for the next focus
+change to another window, for the same time limit, instead of being refused there.
 
 Keys typed into Iamb's own windows are not expanded: the focus thread reports `own_window` for the
 UI host's process. The one exception is the onboarding test field, which the UI host declares with
@@ -576,7 +613,7 @@ left at the cargo name). On Linux the endpoint names no executable and the role 
 | --- | --- | --- |
 | Library | `ListFolders`, `ListSnippets(query)`, `ListSnippetSummaries(query, offset, limit)`, `GetSnippet`, `PutSnippet(snippet, tags)`, `DeleteSnippet`, `CheckAbbreviation(abbreviation, trigger, snippet)`, `PutFolder`, `DeleteFolder`, `PutTag`, `ListTags`, `DeleteTag`, `Search(text)`, `Import(path, format)`, `Export(path, format)`, `Health`, `RecentSnippets(limit)`, `ListPendingReviews`, `ApproveSnippet(id, rev)`, `PutAttachment(path, file_name, folder)` | `LibraryChanged(revision, changed rows)` |
 | Engine control | `GetStatus`, `SetPaused`, `ExpandSnippet(id, focus)`, `DryRun(typed)`, `GetPermissions`, `OpenPermissionSettings(kind)`, `SetTestField(window)` | `StatusChanged`, `PaletteRequested(focus)` |
-| Forms | `FormAck(session)`, `FormSubmit(session, values)`, `FormCancel(session)`, `ReopenLastForm`, `PanelFocus(panel, shown)` | `FormRequested(session, spec, focus, last_values)` |
+| Forms | `FormAck(session)`, `FormSubmit(session, values)`, `FormCancel(session)`, `ReopenLastForm(focus?)`, `PanelFocus(panel, shown)` | `FormRequested(session, spec, focus, last_values)` |
 | Templates | `ParseTemplate(source)`, `RenderPreview(source, values, rich)` | — |
 | Diagnostics | `RecentDiagnostics` | `DiagnosticAdded` |
 | Settings | `GetSettings`, `PutSetting`, `ListExclusions`, `PutExclusion`, `ResetUsage` | `SettingsChanged` |
@@ -606,9 +643,10 @@ line, its tags and why it is broken, if it is); `CheckAbbreviation` answers the 
 (the snippet that holds the abbreviation, the ones it would hide or be hidden by) from the
 snapshot without writing; a `Search` hit says which field matched and where; `LibraryChanged`
 names the snippets, folders and tags a change touched, or nothing when it may have touched any
-(an import); `PutSetting("palette_hotkey")` registers the chord before it stores it and answers
-`conflict` when the system refuses it (the old chord stays); and every diagnostic carries its
-time.
+(an import); `PutSetting` of a shortcut (`palette_hotkey`, and `reopen_form_hotkey` and
+`pause_hotkey`, whose presses do what `ReopenLastForm` and `SetPaused` do) registers the chord
+before it stores it and answers `conflict` when the system refuses it (the old chord stays); and
+every diagnostic carries its time.
 
 The Sync group as the sync design fixes it ([`sync-design.md`](sync-design.md) §7.2, §9): what
 `OutboxRead` returns is one change per row, ready to send (the row as it is now, the base revision
@@ -837,6 +875,32 @@ Threat model: Iamb protects typed text from itself (bugs, logs, sync), from othe
 machine, and from other members of shared folders. It does not defend against malware already
 running as the same user, which can observe the keyboard directly.
 
+On macOS a process of the same user cannot observe the keyboard until the user grants it, and the
+grant belongs to the helper app (ADR-0021), so the helper must not lend it out:
+
+- it never starts another program as its own child, which the system would judge as the helper
+  (§3.2): the UI host is opened through the system, and a release build refuses `--ui-host`
+  on either platform and `--platform mock` (the mock is for development builds; Linux, which
+  has no native platform, keeps it);
+- any process of the user can have the system start the helper with arguments of its choosing
+  (`open -n … --args …`). A release build of the helper therefore runs for the default data root
+  only (`--data-dir` and `IAMB_DATA_DIR` naming another are refused,
+  `iamb_service::paths::helper_may_use_root`), so a process cannot point a granted helper at a
+  library it wrote elsewhere and have it typed. The default is built from the home directory the
+  user database gives for the account (`getpwuid_r`), not from `HOME`, which the caller of `open`
+  sets (`open --env`). This does not stop a process that writes into the
+  default data root itself, the user's own folder: that, like other malware of the same user, is
+  outside this threat model. Development builds accept any data root.
+
+The UI host and the supervisor talk through two empty files in `run/` until the control pipe of
+ADR-0023 exists (§3.2, §3.3): `run/restart-worker` and `run/desktop.quit`. Neither has the peer
+verification of §6.1; both rest on `run/` being the user's alone, and on what they can do: restart
+the worker, and keep a UI host that ended from being started again (on macOS; elsewhere the
+supervisor reads the UI host's exit status instead). The same holds for `run/paused`, which the
+worker keeps itself: a process of the user that creates or removes it changes the pause at the
+next worker start, which is no more than `SetPaused` can do, without the endpoint's peer check. Neither may grow another
+meaning (a stop, an update) without the pipe.
+
 **Crash handling (rule 9).** The supervisor and the worker do two things first in `main`
 (`iamb_service::crash`); the UI host does the same (`iamb_desktop::crash`, process name
 `desktop`):
@@ -896,7 +960,7 @@ real machines:
 The architecture fixes the frame ([ADR-0016](decisions/0016-sync-frame.md)). Task 4.1 fills it in:
 [`sync-design.md`](sync-design.md) has the server's tables and policies, the protocol, the rules for
 every conflict (`C1` to `C25` on the server, `D1` to `D17` on the device), the threat model for
-sharing and 84 conflict scenarios with their outcomes, which are also in `spec/sync/scenarios.toml`
+sharing and 89 conflict scenarios with their outcomes, which are also in `spec/sync/scenarios.toml`
 for the simulation of task 4.4 ([ADR-0027](decisions/0027-sync-protocol-and-conflict-rules.md),
 [ADR-0028](decisions/0028-data-model-for-sync.md),
 [ADR-0029](decisions/0029-server-readable-content.md)). In short: the last write is the one the

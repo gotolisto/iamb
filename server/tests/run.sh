@@ -17,7 +17,7 @@ if [[ $(id -u) -eq 0 ]]; then
     runas=${IAMB_TEST_USER:-postgres}
     id "$runas" >/dev/null 2>&1 || runas=nobody
     exec runuser -u "$runas" -- env PG_BIN="${PG_BIN:-}" KEEP="${KEEP:-}" SKIP_REAPPLY="${SKIP_REAPPLY:-}" \
-        IAMB_TEST_PORT="${IAMB_TEST_PORT:-}" TMPDIR=/tmp "$0" "$@"
+        IAMB_TEST_PORT="${IAMB_TEST_PORT:-}" IAMB_SAFEUPDATE="${IAMB_SAFEUPDATE:-}" TMPDIR=/tmp "$0" "$@"
 fi
 
 if [[ -z "${PG_BIN:-}" ]]; then
@@ -52,7 +52,24 @@ max_connections = 40
 fsync = off
 synchronous_commit = off
 full_page_writes = off
+temp_file_limit = '256MB'
 EOF
+# `temp_file_limit`: no statement of the suite needs more than a few MB of temporary files. With
+# the limit, a function that starts to write them without bound (re-verification N2: one cascade
+# list wrote gigabytes) fails its test here instead of filling the disk of whoever runs the suite.
+# On the platform the role the REST interface connects with loads `safeupdate`, which refuses an
+# UPDATE or DELETE without a WHERE clause, also inside a definer function (security review 4.3,
+# finding 14). Where the library is installed (`make install` of pg-safeupdate, or the file
+# `safeupdate.so` in the package library directory) every session of the test cluster loads it, so
+# a statement without a WHERE fails here as it would there. Without it, the catalog check of
+# `21_where_clauses.sql` is what guards against such a statement. IAMB_SAFEUPDATE=0 switches it off.
+safeupdate="not installed; only the catalog check of 21_where_clauses guards"
+pkglib=$("$PG_BIN/pg_config" --pkglibdir 2>/dev/null || true)
+[[ -z "$pkglib" ]] && pkglib=$(cd "$PG_BIN/../lib" 2>/dev/null && pwd || true)
+if [[ "${IAMB_SAFEUPDATE:-1}" != "0" && -n "$pkglib" && -f "$pkglib/safeupdate.so" ]]; then
+    echo "session_preload_libraries = 'safeupdate'" >> "$work/data/postgresql.conf"
+    safeupdate="loaded in every session"
+fi
 "$PG_BIN/pg_ctl" -D "$work/data" -l "$work/server.log" -w start >/dev/null
 
 psql() { "$PG_BIN/psql" -X -q -v ON_ERROR_STOP=1 "$@"; }
@@ -108,6 +125,12 @@ if [[ -z "$filter" || "restore" == *"$filter"* ]]; then
     run_one "restore" restore_test
 fi
 
+# The restore script's reading of the function log (security review 4.3, finding 13).
+if [[ -z "$filter" || "restore_parse" == *"$filter"* ]]; then
+    parse_test() { python3 -I "$here/restore_parse_test.py"; }
+    run_one "restore_parse" parse_test
+fi
+
 # §11.6: a push of 200 ops and a cascade of 2,000 rows against push's 20 s time-out.
 if [[ -z "$filter" || "perf" == *"$filter"* ]]; then
     perf_test() { psql -U postgres -d "$1" -f "$here/perf.sql" -At | tail -1 > "$work/perf.json"; }
@@ -128,6 +151,7 @@ if [[ -z "$filter" ]]; then
 fi
 
 echo
+echo "safeupdate: $safeupdate"
 echo "server tests: $pass passed, $fail failed"
 if (( fail > 0 )); then
     printf '  failed: %s\n' "${failed[@]}"

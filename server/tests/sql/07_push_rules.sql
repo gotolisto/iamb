@@ -123,7 +123,7 @@ declare
     t uuid := iamb_test.id(); ft uuid := iamb_test.id(); bf uuid := iamb_test.id();
     r jsonb; lim jsonb;
 begin
-    delete from iamb_test.actor;
+    delete from iamb_test.actor where true;
     perform iamb_test.new_user('ines'); perform iamb_test.new_user('tom');
     perform iamb_test.hello('ines', 'Ines'); perform iamb_test.hello('tom', 'Tom');
     pi := iamb_test.personal('ines'); pt := iamb_test.personal('tom');
@@ -149,7 +149,9 @@ begin
         iamb_test.op_folder(m2, pi, m, 'under another profile'),
         iamb_test.op_folder(iamb_test.id(), pt, null, 'in another profile')));
     perform iamb_test.eq(iamb_test.st(r, 1), 'rejected:parent_gone', 'a parent the writer cannot read');
-    perform iamb_test.eq(iamb_test.st(r, 2), 'rejected:forbidden', 'a folder in another profile');
+    -- A profile the caller has no grant in answers like one that does not exist, and is not
+    -- locked (security review 4.3, findings 6 and 10).
+    perform iamb_test.eq(iamb_test.st(r, 2), 'rejected:parent_gone', 'a folder in another profile');
     r := iamb_test.push('ines', jsonb_build_array(
         iamb_test.op_snippet(s, l1, ';s', 's'), iamb_test.op_snippet(sd, l1, ';d', 'd'),
         iamb_test.op_tag(t, pi, 'tag')));

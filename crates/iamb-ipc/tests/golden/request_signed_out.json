@@ -1,0 +1,9 @@
+{
+  "body": {
+    "confirmed": false,
+    "keep": true,
+    "type": "signed_out"
+  },
+  "id": 59,
+  "kind": "request"
+}

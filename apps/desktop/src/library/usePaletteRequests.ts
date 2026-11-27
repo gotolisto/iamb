@@ -1,13 +1,15 @@
 import { useEffect, useRef } from "react";
 
-import type { LibraryRequest, PaletteLink } from "../palette/api";
+import type { LibraryRequest, LibraryRequestView, PaletteLink } from "../palette/api";
 
-/** What the library does for a request the palette left (task 3.6, flow 5). */
+/** What the library does for a request the palette or the menu left (task 3.6, flow 5; spec §4.1). */
 export interface PaletteRequestHandlers {
   /** "New snippet labelled “…”": a draft whose label is the text. */
   onNew: (label: string) => void;
   /** "Edit", "review", "open", or a pick made from this window: show the snippet. */
   onShow: (id: string) => void;
+  /** The menu's "Settings…" or "Why didn't it expand?": show that view. */
+  onView?: (view: LibraryRequestView) => void;
 }
 
 /**
@@ -28,6 +30,7 @@ export function usePaletteRequests(
 
   const run = useRef((request: LibraryRequest) => {
     if (request.kind === "new") latest.current.onNew(request.label);
+    else if (request.kind === "view") latest.current.onView?.(request.view);
     else latest.current.onShow(request.id);
   });
 

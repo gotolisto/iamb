@@ -1,6 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { describeFailure } from "../errors";
+import type { LoginState } from "./api";
 import { Choice, Row, Switch } from "./controls";
 import type { SectionProps } from "./section";
 import { type Theme, applyTheme, themeOf } from "./theme";
@@ -12,9 +13,25 @@ const THEMES: { value: Theme; label: string }[] = [
   { value: "dark", label: "Dark" },
 ];
 
-/** General: pause, the tray icon and the appearance (specification §4.7). */
+/** General: start at login, pause, the tray icon and the appearance (specification §4.7). */
 export function GeneralSection({ env, data, mac, offline }: SectionProps) {
-  const { messages, fail } = useMessages();
+  const { messages, set, fail } = useMessages();
+  // Start at login is the system's, not the service's: the UI host asks the system.
+  const loginItem = env.settings?.loginItem;
+  const [login, setLogin] = useState<LoginState | null>(null);
+  useEffect(() => {
+    if (!loginItem) return;
+    let live = true;
+    loginItem().then(
+      (state) => live && setLogin(state),
+      () => live && setLogin("unavailable"),
+    );
+    return () => {
+      live = false;
+    };
+  }, [loginItem]);
+  const startsAtLogin = login === "enabled" || login === "requires_approval";
+  const where = mac ? "Applications folder" : "Start menu";
   const values = data.values ?? {};
   const theme = themeOf(values["ui.theme"]);
   const trayShown = values["ui.tray_icon"] !== "off";
@@ -23,6 +40,37 @@ export function GeneralSection({ env, data, mac, offline }: SectionProps) {
 
   return (
     <>
+      {loginItem && (
+        <Row
+          label="Start Iamb when I log in"
+          help={
+            login === "requires_approval"
+              ? "macOS asks you to approve this once, in System Settings, under Login Items."
+              : login === "unavailable"
+                ? `This copy of Iamb cannot start at login. Open it from the ${where}.`
+                : undefined
+          }
+          message={messages.login ?? null}
+        >
+          {(ids) => (
+            <Switch
+              on={startsAtLogin}
+              labelledBy={ids.label}
+              describedBy={ids.describedBy}
+              disabled={login === null || login === "unavailable"}
+              onChange={(on) => {
+                set("login", null);
+                loginItem(on).then(setLogin, () =>
+                  set("login", {
+                    kind: "error",
+                    text: `Iamb could not change this. It is not a problem: you can start it from the ${where}.`,
+                  }),
+                );
+              }}
+            />
+          )}
+        </Row>
+      )}
       <Row
         label="Expand snippets as I type"
         help="Turn this off to pause Iamb everywhere. The menu has the same switch."

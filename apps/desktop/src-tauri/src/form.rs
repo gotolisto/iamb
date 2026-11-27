@@ -818,7 +818,12 @@ impl FormController {
     ///
     /// The call's errors.
     pub fn reopen_last(&self) -> Result<(), CommandError> {
-        match self.service.call(RequestBody::ReopenLastForm {}) {
+        self.reopen(None)
+    }
+
+    fn reopen(&self, focus: Option<FocusToken>) -> Result<(), CommandError> {
+        let focus = focus.map(iamb_ipc::FocusRef::from);
+        match self.service.call(RequestBody::ReopenLastForm { focus }) {
             Ok(_) => Ok(()),
             Err(e) => Err(crate::bridge::command(e)),
         }
@@ -826,9 +831,12 @@ impl FormController {
 
     /// [`reopen_last`](Self::reopen_last) for the window `target` (the tray menu's: the menu
     /// took the foreground, `crate::palette`): the focus goes back to that window first, as a
-    /// palette pick gives it back, since `ReopenLastForm` runs against the window that has the
-    /// focus when it arrives. A window that will not take the focus is logged; the request is
-    /// sent anyway, and the service refuses it where it cannot type.
+    /// palette pick gives it back, and the request names that window, so that the service
+    /// waits for its focus change and decides under its verdict, not under the window reported
+    /// before (the shell's taskbar) or the one reported next (the beta review's
+    /// re-verification, N4). A window that will not take the focus is logged; the request is
+    /// sent anyway, and ends with `request_focus_timeout` when the window never gets it. Without
+    /// a target, or when it is one of Iamb's own windows, the request names none.
     ///
     /// # Errors
     ///
@@ -844,7 +852,7 @@ impl FormController {
             ));
         }
         (self.on_request)(crate::notice::Asked::Reopen, None);
-        self.reopen_last()
+        self.reopen(target.filter(|token| token.pid() != self.own_pid))
     }
 
     /// Stops the thread (an open form is left to the service, which cancels it when the UI
@@ -1031,10 +1039,12 @@ impl Flow {
         .map(|_| ())
     }
 
-    /// Ends the form on the Rust side: the front end forgets, the values are overwritten.
+    /// Ends the form on the Rust side: the values are overwritten, then the front end forgets.
+    /// In this order a front end (or a test) that hears `Closed` and asks for the current form
+    /// finds none, as with the palette's `finish`.
     fn close(&mut self, session: u64) {
-        self.cfg.host.send(&FormEvent::Closed { session });
         forget(lock(&self.current).take());
+        self.cfg.host.send(&FormEvent::Closed { session });
     }
 
     fn requested(&mut self, mut request: Request) {

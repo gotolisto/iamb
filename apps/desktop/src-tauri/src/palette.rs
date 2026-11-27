@@ -37,7 +37,7 @@
 //!    `FormRequested`, and the form panel takes over: the palette has hidden and released the
 //!    keyboard before the service hears the pick, so the two never hold it together). When
 //!    the focus cannot be given back nothing is sent: the panel comes back and the front end
-//!    says so. "Fill in … again" does the same with `ReopenLastForm`.
+//!    says so. "Fill in … again" does the same with `ReopenLastForm { focus }`.
 //! 6. Esc ([`Pick::Close`]): the panel hides, the focus goes back, `PanelFocus { shown: false }`.
 //!    Nothing else is sent.
 //! 7. Opened from Iamb's own window (the global shortcut while the library had the focus, or
@@ -159,6 +159,21 @@ pub enum LibraryRequest {
         /// The snippet's id.
         id: String,
     },
+    /// Show one of the window's views (the menu's "Settings…" and "Why didn't it expand?").
+    View {
+        /// Which.
+        view: LibraryView,
+    },
+}
+
+/// A view of the library window a [`LibraryRequest::View`] opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LibraryView {
+    /// Settings.
+    Settings,
+    /// "Why didn't it expand?".
+    Diagnostics,
 }
 
 impl std::fmt::Debug for LibraryRequest {
@@ -167,6 +182,7 @@ impl std::fmt::Debug for LibraryRequest {
         match self {
             Self::New { .. } => f.write_str("LibraryRequest::New { label: <redacted> }"),
             Self::Show { id } => write!(f, "LibraryRequest::Show {{ id: {id} }}"),
+            Self::View { view } => write!(f, "LibraryRequest::View {{ view: {view:?} }}"),
         }
     }
 }
@@ -827,7 +843,9 @@ impl Flow {
                 id,
                 focus: open.token.map(FocusRef::from),
             },
-            Pick::FillAgain => RequestBody::ReopenLastForm {},
+            Pick::FillAgain => RequestBody::ReopenLastForm {
+                focus: open.token.map(FocusRef::from),
+            },
         };
         self.cfg.host.hide();
         open.visible = false;

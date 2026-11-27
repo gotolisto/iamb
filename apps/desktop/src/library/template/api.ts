@@ -98,6 +98,7 @@ export const TEMPLATE_COMMANDS = [
   "template_preview",
   "template_add_attachment",
   "template_try_form",
+  "template_open_link",
 ] as const;
 
 export type TemplateCommand = (typeof TEMPLATE_COMMANDS)[number];
@@ -134,6 +135,12 @@ export interface TemplateService {
    * nothing is typed anywhere.
    */
   tryForm?(fields: FieldView[], label: string, abbreviation: string): Promise<Record<string, string> | null>;
+  /**
+   * Opens a link of the formatted preview in the system browser (UX specification §9 rule 8).
+   * The Rust side opens only `http`, `https` and `mailto` addresses without credentials and
+   * refuses the rest with `link_refused`.
+   */
+  openLink?(url: string): Promise<void>;
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
@@ -264,6 +271,9 @@ export function createTemplateService(invoke: TemplateInvoke, invokeRaw?: Templa
       if (answer === null) return null;
       if (!isObject(answer) || !Object.values(answer).every((v) => typeof v === "string")) throw unexpected;
       return answer as Record<string, string>;
+    },
+    async openLink(url) {
+      await invoke("template_open_link", { url });
     },
   };
   if (invokeRaw) {

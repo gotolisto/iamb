@@ -1,0 +1,11 @@
+{
+  "body": {
+    "reason": "server_error",
+    "seqs": [
+      4
+    ],
+    "type": "set_blocked"
+  },
+  "id": 56,
+  "kind": "request"
+}

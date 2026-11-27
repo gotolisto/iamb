@@ -1,0 +1,13 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "bundle": {
+    "targets": ["nsis"],
+    "externalBin": ["../release/out/iamb-service"],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerHooks": "../release/windows/hooks.nsh"
+      }
+    }
+  }
+}

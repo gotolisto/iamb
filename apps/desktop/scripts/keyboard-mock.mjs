@@ -27,7 +27,7 @@ export const mock = (config) => {
   };
   for (const s of config.snippets ?? []) seed(s);
   const settings = { ...(config.settings ?? {}) };
-  const state = { saved: [], picked: [], submitted: [], cancelled: 0, puts: [], events: [] };
+  const state = { saved: [], picked: [], submitted: [], cancelled: 0, puts: [], events: [], opened: 0 };
   window.__mock = { snippets, settings, state };
 
   const summary = (s) => ({
@@ -180,7 +180,15 @@ export const mock = (config) => {
         case "onboarding_permissions":
           return { accessibility: "not_required", inputMonitoring: "not_required" };
         case "onboarding_login_item":
+        case "settings_login_item":
           return "enabled";
+        case "settings_about":
+          return { version: "0.1.0", logFolder: "/home/test/.local/share/iamb/logs" };
+        case "settings_open_log_folder":
+          state.opened += 1;
+          return null;
+        case "app_restart_service":
+          return null;
         case "onboarding_finish":
           return { paletteHotkey: "Ctrl+Shift+Space", hotkeyRefused: false };
         case "onboarding_restart_helper":

@@ -1,0 +1,16 @@
+{
+  "body": {
+    "roots": [
+      {
+        "folder_id": "02020202-0202-0202-0202-020202020202",
+        "granted_at": 1763400000000,
+        "permission": "edit",
+        "profile_id": "09090909-0909-0909-0909-090909090909",
+        "via": "share"
+      }
+    ],
+    "type": "set_access"
+  },
+  "id": 55,
+  "kind": "request"
+}

@@ -1,12 +1,47 @@
 {
   "body": {
-    "ids": [
-      1,
-      2,
-      3
+    "results": [
+      {
+        "adjusted": [],
+        "cascade": [],
+        "conflict": null,
+        "key": {
+          "id": "01010101-0101-0101-0101-010101010101",
+          "kind": "snippet"
+        },
+        "op_id": "08080808-0808-0808-0808-080808080808",
+        "origin": null,
+        "reason": null,
+        "replayed": false,
+        "repush": false,
+        "row": {
+          "entity": "snippet",
+          "row": {
+            "abbreviation": "brb",
+            "body": "be right back",
+            "case_mode": "insensitive",
+            "created_at": 1763400000000,
+            "deleted_at": null,
+            "enabled": true,
+            "folder_id": "02020202-0202-0202-0202-020202020202",
+            "id": "01010101-0101-0101-0101-010101010101",
+            "kind": "plain",
+            "label": "Back soon",
+            "rev": 0,
+            "trigger": "delimiter",
+            "updated_at": 1763400000000,
+            "updated_by": null,
+            "word_start": true
+          }
+        },
+        "seqs": [
+          1
+        ],
+        "status": "applied"
+      }
     ],
     "type": "outbox_ack"
   },
-  "id": 39,
+  "id": 41,
   "kind": "request"
 }

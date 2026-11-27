@@ -112,7 +112,17 @@ fn persists_locale() {
 
 #[test]
 fn persists_palette_hotkey() {
-    persists("palette_hotkey", "Ctrl+Alt+K");
+    persists("palette_hotkey", "Ctrl+Shift+K");
+}
+
+#[test]
+fn persists_reopen_form_hotkey() {
+    persists("reopen_form_hotkey", "Ctrl+Shift+F");
+}
+
+#[test]
+fn persists_pause_hotkey() {
+    persists("pause_hotkey", "Ctrl+Shift+P");
 }
 
 #[test]
@@ -154,8 +164,8 @@ fn persists_ui_crash_reports() {
 }
 
 /// The keys the service's own source reads: `map.get("…")` and `settings.get("…")` of the
-/// engine's settings and the worker's start, and the `…_KEY` constants of the handlers and the
-/// platform crate.
+/// engine's settings and the worker's start, the worker's `HOTKEY_SETTINGS` table, and the `…_KEY`
+/// constant of the platform crate.
 fn keys_the_service_reads() -> BTreeSet<String> {
     let root = app_dir().join("../../..");
     let mut found = BTreeSet::new();
@@ -179,11 +189,13 @@ fn keys_the_service_reads() -> BTreeSet<String> {
         take(&text, "map.get(\"", "\")");
         take(&text, "settings.get(\"", "\")");
     }
-    take(
-        &read(&root.join("crates/iamb-service/src/worker/handlers.rs")),
-        "PALETTE_HOTKEY_KEY: &str = \"",
-        "\";",
-    );
+    // The shortcuts' settings: the keys of the worker's `HOTKEY_SETTINGS` table.
+    let worker = read(&root.join("crates/iamb-service/src/worker/mod.rs"));
+    let table = &worker[worker
+        .find("HOTKEY_SETTINGS: [")
+        .expect("HOTKEY_SETTINGS not found")..];
+    let table = &table[..table.find("];").expect("HOTKEY_SETTINGS end")];
+    take(table, "(\"", "\"");
     take(
         &read(&root.join("crates/iamb-platform/src/injection_settings.rs")),
         "INJECTION_SETTINGS_KEY: &str = \"",
@@ -313,12 +325,12 @@ fn a_chord_another_app_holds_is_a_conflict_and_the_old_one_stays() {
     settings::put_setting(&bridge, "palette_hotkey", Some("Ctrl+Shift+Space")).expect("registered");
     service
         .os
-        .reserve_chord(Chord::parse("Ctrl+Alt+J").expect("chord"));
+        .reserve_chord(Chord::parse("Ctrl+Shift+J").expect("chord"));
     assert_eq!(
         code(settings::put_setting(
             &bridge,
             "palette_hotkey",
-            Some("Ctrl+Alt+J")
+            Some("Ctrl+Shift+J")
         )),
         "conflict"
     );

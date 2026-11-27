@@ -9,3 +9,5 @@ Status: accepted (approved by the owner on 2026-11-18)
 **Consequences.** The no-network rule holds. A failed update leaves the old worker binary in place and running. The supervisor gains two control messages (stop, start) on a private pipe to the UI host with the peer verification of ADR-0006.
 
 **Rejected.** An updater inside the service (network code next to keystrokes). A separate elevated updater service (needs administrator rights to install).
+
+**Note (2026-11-22, the beta-gap review's finding 5).** Before the pipe exists, "Start it again" and "Restart the helper" use a stand-in: the UI host leaves the empty file `run/restart-worker`, which the supervisor takes as "restart the worker". It has no peer verification, rests on `run/` being the user's alone, and can do nothing the user's processes cannot already do by ending the worker (architecture §3.2, §8). It must not carry a stop or an update; those need the pipe this ADR decides.

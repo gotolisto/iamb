@@ -1,0 +1,18 @@
+{
+  "body": {
+    "lost": {
+      "device_epoch": "e1",
+      "epoch": "e2",
+      "profiles": {
+        "09090909-0909-0909-0909-090909090909": 40
+      },
+      "started_at": 1763400000000
+    },
+    "scope": {
+      "kind": "all"
+    },
+    "type": "reconcile_begin"
+  },
+  "id": 52,
+  "kind": "request"
+}

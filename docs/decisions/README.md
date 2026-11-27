@@ -34,3 +34,5 @@ See the [architecture document](../architecture.md) for how they fit together.
 | [ADR-0027](0027-sync-protocol-and-conflict-rules.md) | Sync rules: the server's order, writes through functions, deletes as writes, nothing unsent is overwritten (proposed) |
 | [ADR-0028](0028-data-model-for-sync.md) | The data model for sync: no uniqueness on the server, derived share ids, server-written memberships, access entries, authorship of content (proposed) |
 | [ADR-0029](0029-server-readable-content.md) | Synced content is readable by the server in version 1; the server never interprets it (proposed) |
+| [ADR-0030](0030-installers.md) | Installers: a universal macOS disk image, a per-user NSIS installer, signing only when the owner's secrets exist (proposed) |
+| [ADR-0031](0031-conflicts-follow-access.md) | A conflict offers a version only to who could read it, a party takes part only while they can read the row, a restore is judged as a push, and a request locks only what its caller has a part in (proposed) |

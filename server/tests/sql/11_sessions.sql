@@ -81,7 +81,7 @@ do $$
 declare
     r jsonb; c text; n integer;
 begin
-    delete from iamb_test.actor;
+    delete from iamb_test.actor where true;
     perform iamb_test.new_user('ines'); perform iamb_test.new_device('lost', 'ines');
     perform iamb_test.hello('ines', 'Ines'); perform iamb_test.hello('lost');
     r := iamb_test.call('ines', 'api.revoke_device(iamb_test.dev(''ines''), 1, iamb_test.dev(''lost''))');
@@ -124,7 +124,7 @@ do $$
 declare
     r jsonb;
 begin
-    delete from iamb_test.actor;
+    delete from iamb_test.actor where true;
     perform iamb_test.new_user('ines'); perform iamb_test.hello('ines', 'Ines');
     perform iamb_test.new_device('pw', 'ines', 'password');
     r := iamb_test.hello('pw');

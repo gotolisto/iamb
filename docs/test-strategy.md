@@ -149,7 +149,10 @@ only in a PR that says why, e.g. a new bench, an accepted slowdown or a runner i
   in < 2 s.
 - Leak rule 1: least-squares slope of memory over hours 1–72 (first hour is warm-up), multiplied by
   71 h, is < 5 MB.
-- Leak rule 2: mean memory of the last hour minus mean of hour 1 is < 5 MB.
+- Leak rule 2: within one worker life, mean memory of the life's last hour minus mean of its hour 2
+  (the hour after its warm-up) is < 5 MB. The life is the last one if it holds both windows, else the
+  longest that does; if none does, the rule is skipped, not passed. Never across lives: each worker
+  settles at its own plateau.
 - Handle and thread counts return to their hour-1 range after each kill and stay flat.
 - Expansion correctness during the run ≥ 99.9%.
 
@@ -277,9 +280,17 @@ artifact `soak-<run id>`):
   edit builds a new snapshot while the old one is in use; the allocator keeps the high-water
   mark). A 2-minute window reported that climb as a 20 MB leak.
 - **Warm-up in both leak rules.** §5.2 calls hour 1 warm-up for rule 1. The harness applies the
-  same to rule 2: it compares the last `W` with `[W, 2W]` (hour 2 in the lab), not with hour 1,
-  which would charge the climb above to the 5 MB budget. Every worker life has its own warm-up
-  `W`; samples inside it count for neither leak rule nor for the handle and thread ranges.
+  same to rule 2: it compares the last `V` of one worker life with the first `V` after that life's
+  warm-up (`[start + W, start + W + V]`; hour 2 of the first life in the lab), not with hour 1,
+  which would charge the climb above to the 5 MB budget. `V` is `W`, or half of the life's settled
+  stretch (its length minus `W`) when that is shorter, as it is for every life of the CI run. Every
+  worker life has its own warm-up `W`; samples inside it count for neither leak rule nor for the
+  handle and thread ranges.
+- **Rule 2 within one life.** Two lives settle at different plateaus (a worker started later holds
+  a different allocator state), and a nightly run failed with no leak when rule 2 compared life 1
+  with life 8. The windows therefore come from one life: the last, else the longest that holds both
+  windows (each at least two samples, not overlapping), else the rule is reported skipped with the
+  reason. A real leak in one life still fails it.
 - **Leaks across kills.** A kill resets the worker's memory, which would hide a leak in a plain
   slope. Rule 1 therefore uses the least-squares slope pooled within worker lives (one intercept
   per life), times `D − W`.
@@ -1022,3 +1033,56 @@ Results (2026-11-21):
 | Hosted tests | all pass | 17 of 17 SQL files (all but the concurrency file, which needs a superuser), rolled back; the authentication checks as listed in the README |
 | Push of 200 ops | < 20 s | 0.21-0.31 s locally, 0.44 s on the hosted project |
 | Cascade of 2,000 rows | < 20 s | 1.4 s locally, 4.6 s on the hosted project |
+
+## 10. Sync client (task 4.4)
+
+The sync agent (`crates/iamb-sync`, README there) is tested against a model of the server written
+in Rust (`iamb_sync::model`, feature `model`): revisions and the feed, the twelve places of a
+change, LWW with history and conflicts (C3, with ADR-0031: a party sees only the versions it may
+read, and only while it can read the row), deletes and the folder cascade (C5 to C7) with the
+restored folder, the tree rules (C8), shares and access (§5.4, `folder_visible` and
+`folder_revoked`), receipts and repeats (C15), positions and `device_conflict` (C25), sessions and
+sign-outs, the plan limits that are set, backups and restores with epochs, lost lines and the
+operator's replay of what took access away (C18), and the refusals of §6. The model checks I7
+after every commit. The agent runs against it through the same `Transport` trait as the HTTPS
+transport, and the device side is the real store (`iamb_store::Store`, in memory or on disk).
+
+- **Scenario replay** (`crates/iamb-testkit/tests/sync_replay.rs`): every scenario of
+  `spec/sync/scenarios.toml` runs through the real store and agent against the model, from its
+  start state through its steps, and the outcome is derived, not taken from the file: the server's
+  rows, versions, history and conflicts, and each device's rows, kept changes and outbox are
+  compared with the stated outcome field by field (a device may hold a tombstone or nothing for a
+  server tombstone, as I1 says). The scenarios that reach their outcome are listed in the test, so
+  that a change that breaks one fails. CI: every PR (the `Test` step).
+- **Two-device simulation** (`crates/iamb-sync/tests/simulation.rs`): seeded, deterministic runs
+  on a simulated clock with the design's cadence (250 ms debounce, the poke 50 to 400 ms after the
+  commit, polling every 2 s or 60 s while the channel is down, backoff), random edits of every kind
+  (snippets, folders, tags, links, shares and edits by a member of a family group in about a third
+  of the runs), offline periods (some longer than 30 days), lost requests and answers, restarts
+  between the outbox write and the push and between the commit and the receipt, clock skew of up
+  to an hour either way, live-channel outages, sessions that end at the authentication service,
+  sign-outs by hand (online and offline) and sign-ins again, a copied data directory used beside
+  the original (about one run in ten, C25), and a backup and a restore of the server in about one
+  run in eight. After each run every device signs in, comes online and syncs, and the run checks
+  I1 to I7, with the twelve places of §1 as the definition of a lost edit. It measures, for each
+  write made while the writer and another device of the account were online and signed in, the
+  time until that device holds it. CI: 120 runs in every PR (`cargo test -p iamb-sync --features
+  model`, Linux), 1,000 in the nightly workflow (`IAMB_SYNC_SIM_RUNS=1000`).
+
+Results (2026-11-22, 1,000 runs, seeds 1 to 1,000):
+
+| KPI or check | Target | Result |
+| --- | --- | --- |
+| Lost edits (I2, the twelve places) | 0 | 0 of 57,469 local changes (place 1: 24,147, place 2: 18,385, place 4: 1,799, place 5: 476, place 6: 199, place 7: 11,787, place 9: 308, place 12: 368) |
+| Invariants I1 to I7 | 0 violations | 0 |
+| Online devices agree | p95 within 5 s | p95 4.18 s, p50 0.99 s, p90 2.08 s, p99 15.1 s, max 227 s; 16,245 of 17,048 writes (95.3%) within 5 s; 26 never settled (the other device never held that revision, mostly because the row left it first: a delete whose tombstone it may drop, I1, or the end of a share) |
+| Runs with a restore of the server / with shares / with a copied data directory | some | 114 / 352 / 114; 682 sign-outs and as many sign-ins |
+| Scenario replay | every scenario reaches its outcome | 81 of 87; 0 differ; 6 not replayed: another protocol version (S44), a first sign-in with a local library (S48, D9), copying a held snippet (S56, a review of D10), rows on some devices only at the start (S83), attachment rows written locally (S73, S84, task 4.6) |
+
+The tail of the agreement times comes from the injected faults and the design's own exception
+(§6.7): lost requests and answers retried with backoff, a live channel that is down (polling every
+2 s), and a resync after a sign-in or a restore. One stated outcome was wrong and was corrected:
+S60 (with the second pull of §6.7 step 4 the copy that is behind is the installation C25 catches,
+not the original). Against the hosted project nothing was run in this task: the 4.3 probe
+`server/tests/hosted_rest_writes.py` now opens real sessions without a mailbox, which is what a
+short two-device run of the real agent there needs.

@@ -590,11 +590,11 @@ describe("Step 5: Done", () => {
     expect(await screen.findByText("Choose a shortcut for search")).toBeTruthy();
     const recorder = screen.getByRole("button", { name: "Choose a shortcut for search" });
     recorder.focus();
-    r.refuseChord("Ctrl+Alt+K");
-    fireEvent.keyDown(recorder, { key: "k", code: "KeyK", ctrlKey: true, altKey: true });
+    r.refuseChord("Ctrl+Shift+K");
+    fireEvent.keyDown(recorder, { key: "K", code: "KeyK", ctrlKey: true, shiftKey: true });
     expect(await screen.findByText("Another app already uses this shortcut.")).toBeTruthy();
-    fireEvent.keyDown(recorder, { key: "j", code: "KeyJ", ctrlKey: true, altKey: true });
-    await waitFor(() => expect(r.settings).toEqual([{ key: "palette_hotkey", value: "Ctrl+Alt+J" }]));
+    fireEvent.keyDown(recorder, { key: "J", code: "KeyJ", ctrlKey: true, shiftKey: true });
+    await waitFor(() => expect(r.settings).toEqual([{ key: "palette_hotkey", value: "Ctrl+Shift+J" }]));
     expect(await screen.findByText(/Forgot an abbreviation\? Press/)).toBeTruthy();
   });
 });

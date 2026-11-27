@@ -59,6 +59,41 @@ pub async fn settings_put(
     Ok(())
 }
 
+/// "Start Iamb when I log in" in Settings → General: registers (`Some(true)`) or removes
+/// (`Some(false)`) the login item, or only reads it (`None`). Not a service setting: the UI host
+/// asks the system (specification §11.1).
+#[tauri::command]
+pub async fn settings_login_item(
+    window: WebviewWindow,
+    enabled: Option<bool>,
+) -> Res<crate::onboarding::LoginView> {
+    super::commands::caller(&window, &[super::windows::LIBRARY])?;
+    super::onboarding_commands::login_item(enabled).await
+}
+
+/// Settings → About: the version and the log folder.
+#[tauri::command]
+pub async fn settings_about(
+    ui: State<'_, Arc<Ui>>,
+    window: WebviewWindow,
+) -> Res<settings::AboutView> {
+    super::commands::caller(&window, &[super::windows::LIBRARY])?;
+    Ok(settings::AboutView {
+        version: crate::VERSION.to_owned(),
+        log_folder: ui.logs.display().to_string(),
+    })
+}
+
+/// "Open the log folder" in Settings → About.
+#[tauri::command]
+pub async fn settings_open_log_folder(ui: State<'_, Arc<Ui>>, window: WebviewWindow) -> Res<()> {
+    super::commands::caller(&window, &[super::windows::LIBRARY])?;
+    let folder = ui.logs.clone();
+    tauri::async_runtime::spawn_blocking(move || settings::open_folder(&folder))
+        .await
+        .map_err(|_| CommandError::new("internal", "the request did not finish"))?
+}
+
 /// The apps where Iamb does not expand.
 #[tauri::command]
 pub async fn settings_list_exclusions(

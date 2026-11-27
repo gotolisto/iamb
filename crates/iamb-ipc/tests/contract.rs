@@ -95,12 +95,12 @@ fn another_protocol_version_is_refused_with_a_clear_error() {
     let os = MockPlatform::new();
     server(&os);
     let mut stream = raw(&os);
-    // A client of the previous version (it would misread a diagnostic, which always carries
-    // its time since protocol 3, and a preview).
-    match hello(&mut stream, 2, "ui") {
+    // A client of the previous version (it would misread the Sync group's answers, which
+    // changed in protocol 4).
+    match hello(&mut stream, 3, "ui") {
         Wire::Refused { error } => {
             assert_eq!(error.code, ErrorCode::UnsupportedProtocol);
-            assert!(error.message.contains("protocol 3"), "{}", error.message);
+            assert!(error.message.contains("protocol 4"), "{}", error.message);
         }
         other => panic!("expected a refusal, got {}", other.name()),
     }
@@ -236,7 +236,7 @@ fn one_of_each_group() -> Vec<(Group, RequestBody)> {
     vec![
         (Group::Library, RequestBody::ListFolders {}),
         (Group::EngineControl, RequestBody::GetStatus {}),
-        (Group::Forms, RequestBody::ReopenLastForm {}),
+        (Group::Forms, RequestBody::ReopenLastForm { focus: None }),
         (
             Group::Templates,
             RequestBody::ParseTemplate {

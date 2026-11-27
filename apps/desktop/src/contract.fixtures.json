@@ -147,6 +147,7 @@
         "listener": true,
         "memoryLocked": true,
         "paused": false,
+        "pausedKept": false,
         "revision": 3,
         "snippets": 12,
         "suspended": true,
@@ -155,6 +156,10 @@
     }
   ],
   "template": {
+    "link_refused": {
+      "code": "link_refused",
+      "message": "Iamb opens only web and email links"
+    },
     "parsed": {
       "error": {
         "code": "E_UNKNOWN_ATTR",

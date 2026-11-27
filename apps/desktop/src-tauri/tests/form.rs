@@ -12,6 +12,7 @@ mod common;
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -26,7 +27,7 @@ use iamb_desktop::form::{
 use iamb_desktop::log::Logger;
 use iamb_desktop::timing::wall_ms;
 use iamb_ipc::{EventBody, RequestBody, ResponseBody, Role};
-use iamb_platform::mock::MockWindow;
+use iamb_platform::mock::{Injected, InjectionPoint, MockWindow};
 use iamb_platform::{FocusInspector, FocusToken, PeerPolicy};
 
 /// What the panel was asked to do.
@@ -360,6 +361,49 @@ fn a_form_is_acknowledged_shown_and_its_text_lands_in_the_target_window() {
     // can say it has passed.
     std::thread::sleep(Duration::from_millis(2200));
     assert!(!diagnostic_codes(&service).contains(&"form_not_acknowledged".to_owned()));
+    host.stop();
+}
+
+/// Insert gives the focus back to a window that never lost it (the panel does not activate):
+/// as on the real systems, that is no focus change, so nothing reaches the engine behind the
+/// submit. A change reported for it would come through the focus thread, after the submit
+/// that went to the engine straight away, and cancel the expansion; here any report is held
+/// until the injector is about to start, the order a busy machine can produce.
+#[test]
+fn the_hand_back_to_the_window_that_kept_the_focus_does_not_cancel_the_submit() {
+    let service = Service::start(Endpoint::Mock);
+    let host = Host::start(&service);
+    service.type_text("hi ");
+    let session = host.panel.wait_shown(0);
+    service.os.hold_focus_reports(true);
+    let (at, arrived) = mpsc::channel();
+    let (go, wait) = mpsc::channel::<()>();
+    service
+        .os
+        .script_at(InjectionPoint::BeforeStartMarker, move |os| {
+            os.hold_focus_reports(false);
+            let _ = at.send(());
+            let _ = wait.recv_timeout(T);
+        });
+    host.form
+        .submit(session, values("Name", "Ada"))
+        .expect("submitted");
+    arrived
+        .recv_timeout(T)
+        .expect("the injector reached its start marker");
+    // Whatever was held has reached the engine before the injector goes on.
+    service.worker().sync();
+    go.send(()).expect("the injector waits");
+    wait_text(&service, "Hello Ada! ");
+    assert!(
+        !service
+            .os
+            .injected()
+            .iter()
+            .any(|i| matches!(i, Injected::Cancelled(..))),
+        "{:?}",
+        service.os.injected()
+    );
     host.stop();
 }
 

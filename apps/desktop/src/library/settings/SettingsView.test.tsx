@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { SETTING_KEYS, type SettingKey } from "./api";
 import { PRIVACY_STATEMENTS } from "./PrivacySection";
 import { SettingsView } from "./SettingsView";
+import { Failure } from "../testkit";
 import { type Rig, emitEvent, rig } from "./testkit";
 
 afterEach(() => {
@@ -55,6 +56,18 @@ const CASES: Record<SettingKey, (r: Rig) => Promise<void>> = {
     await user.click(screen.getByRole("button", { name: /^Search snippets/ }));
     await user.keyboard("{Control>}{Shift>}k{/Shift}{/Control}");
     await waitFor(() => expect(stored(r, "palette_hotkey")).toBe("Ctrl+Shift+K"));
+  },
+  reopen_form_hotkey: async (r) => {
+    const user = await open(r, "Shortcuts");
+    await user.click(screen.getByRole("button", { name: /^Fill in the last form again/ }));
+    await user.keyboard("{Control>}{Shift>}f{/Shift}{/Control}");
+    await waitFor(() => expect(stored(r, "reopen_form_hotkey")).toBe("Ctrl+Shift+F"));
+  },
+  pause_hotkey: async (r) => {
+    const user = await open(r, "Shortcuts");
+    await user.click(screen.getByRole("button", { name: /^Pause or resume/ }));
+    await user.keyboard("{Control>}{Shift>}p{/Shift}{/Control}");
+    await waitFor(() => expect(stored(r, "pause_hotkey")).toBe("Ctrl+Shift+P"));
   },
   injection_overrides: async (r) => {
     const user = await open(r, "Apps");
@@ -376,6 +389,32 @@ describe("Dates", () => {
 });
 
 describe("Shortcuts", () => {
+  it("has the two shortcuts that are unset by default, each cleared with Backspace", async () => {
+    const r = rig({ pause_hotkey: "Ctrl+Alt+P" });
+    const user = await open(r, "Shortcuts");
+    const again = screen.getByRole("button", { name: /^Fill in the last form again/ });
+    expect(again.textContent).toContain("Not set");
+    expect(again.getAttribute("aria-describedby")).toBeTruthy();
+    const pause = screen.getByRole("button", { name: /^Pause or resume/ });
+    expect(pause.textContent).toContain("Ctrl");
+    // Only the search shortcut has a default to offer.
+    expect(screen.queryAllByRole("button", { name: /^Use / })).toHaveLength(1);
+    await user.click(pause);
+    await user.keyboard("{Backspace}");
+    await waitFor(() => expect(stored(r, "pause_hotkey")).toBeUndefined());
+  });
+
+  it("says when another app already uses a shortcut", async () => {
+    const r = rig();
+    r.settings.api.putSetting = async () => {
+      throw new Failure("conflict", "the system refused this shortcut");
+    };
+    const user = await open(r, "Shortcuts");
+    await user.click(screen.getByRole("button", { name: /^Pause or resume/ }));
+    await user.keyboard("{Control>}{Shift>}p{/Shift}{/Control}");
+    expect((await screen.findByRole("alert")).textContent).toBe("Another app already uses this shortcut");
+  });
+
   it("says Not set before there is a shortcut and offers the default", async () => {
     const r = rig();
     const user = await open(r, "Shortcuts");
@@ -427,10 +466,10 @@ describe("Shortcuts", () => {
 
   it("says Another app already uses this shortcut, and keeps the old one", async () => {
     const r = rig({ palette_hotkey: "Ctrl+Shift+Space" });
-    r.settings.takeChord("Ctrl+Alt+J");
+    r.settings.takeChord("Ctrl+Shift+J");
     const user = await open(r, "Shortcuts");
     await user.click(screen.getByRole("button", { name: /^Search snippets/ }));
-    await user.keyboard("{Control>}{Alt>}j{/Alt}{/Control}");
+    await user.keyboard("{Control>}{Shift>}j{/Shift}{/Control}");
     expect((await screen.findByRole("alert")).textContent).toBe("Another app already uses this shortcut");
     expect(stored(r, "palette_hotkey")).toBe("Ctrl+Shift+Space");
   });

@@ -531,9 +531,9 @@ fn the_palette_shortcut_is_registered_when_its_setting_changes() {
         [(palette, chord("Ctrl+Shift+Space"))]
     );
     // Another application holds this one: refused, and the old one stays.
-    h.os.reserve_chord(chord("Ctrl+Alt+K"));
+    h.os.reserve_chord(chord("Ctrl+Shift+K"));
     assert_eq!(
-        put(&mut ui, Some("Ctrl+Alt+K")),
+        put(&mut ui, Some("Ctrl+Shift+K")),
         Err(Some(ErrorCode::Conflict))
     );
     assert_eq!(
@@ -552,8 +552,11 @@ fn the_palette_shortcut_is_registered_when_its_setting_changes() {
         put(&mut ui, Some("Ctrl+Nope")),
         Err(Some(ErrorCode::Invalid))
     );
-    assert_eq!(put(&mut ui, Some("Ctrl+Alt+J")), Ok(()));
-    assert_eq!(h.os.registered_hotkeys(), [(palette, chord("Ctrl+Alt+J"))]);
+    assert_eq!(put(&mut ui, Some("Ctrl+Shift+J")), Ok(()));
+    assert_eq!(
+        h.os.registered_hotkeys(),
+        [(palette, chord("Ctrl+Shift+J"))]
+    );
     assert_eq!(put(&mut ui, None), Ok(()));
     assert!(h.os.registered_hotkeys().is_empty());
 }

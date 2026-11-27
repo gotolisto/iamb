@@ -6,6 +6,7 @@
       "listener": true,
       "memory_locked": true,
       "paused": false,
+      "paused_kept": false,
       "pid": 4242,
       "revision": 3,
       "snippets": 12,

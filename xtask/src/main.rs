@@ -5,9 +5,12 @@
 //!   `xtask/banned-terms.sha256`.
 //! - `bench-baseline` and `bench-compare` build the benchmark baseline and run the regression
 //!   gate (see `bench.rs` and `docs/test-strategy.md` §3).
+//! - `release-version` prints the release version and checks that it has one source and, with
+//!   `--tag`, that the tag matches it (see `release.rs` and `docs/release.md`).
 
 mod bench;
 mod json;
+mod release;
 mod scan;
 
 use std::collections::{BTreeSet, HashSet};
@@ -20,7 +23,8 @@ use scan::{Digest, digest_of, format_hit, normalise, parse_hex, scan_bytes, scan
 
 const USAGE: &str = "usage: cargo xtask banned-terms [check | add <term...> | hash <term...>]\n       \
                      cargo xtask bench-baseline [--out <file>] <run-dir> <run-dir>...\n       \
-                     cargo xtask bench-compare [--baseline <file>] <run-1-dir> <run-2-dir>";
+                     cargo xtask bench-compare [--baseline <file>] <run-1-dir> <run-2-dir>\n       \
+                     cargo xtask release-version [--tag <tag>]";
 const LIST_HEADER: &str = "# SHA-256 digests of normalised banned terms (lowercase, tokens joined by one space).\n\
 # Managed by `cargo xtask banned-terms add`; never write the terms themselves in the repo.\n";
 
@@ -66,6 +70,11 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 bench::Gate::NotArmed | bench::Gate::Pass => ExitCode::SUCCESS,
                 bench::Gate::Fail => ExitCode::from(1),
             })
+        }
+        Some("release-version") => {
+            let version = release::run(&args[1..], &root())?;
+            say(&version)?;
+            Ok(ExitCode::SUCCESS)
         }
         _ => Err(USAGE.to_owned()),
     }

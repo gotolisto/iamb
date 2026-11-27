@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 77052d02a4fd1114d912063138d886c26ab2f37cb736f9fb23f20fa00ffc59ae # shrinks to spec = Spec { folders: [(6362566710099363254, "a/\\B", 1), (12678186323240927869, "B\r;1;", 2)], tags: [("\"ς;☕,a", false)], snippets: [SnippetSpec { abbreviation: "BB1ς\"éBa", label: "é\r'\t\n\n\n\n#{;}", body: "\\a\n☕a;\n\n{é\\#{☕\n☕", folder: 2183368510525308193, tags: [4609013012200366509], trigger: true, case_mode: 0, word_start: false, enabled: true, rich: false }, SnippetSpec { abbreviation: "éς", label: "/é\r/{{éς\n\\\t\"", body: "☕☕\r{}", folder: 12669835255889627690, tags: [], trigger: true, case_mode: 1, word_start: false, enabled: true, rich: true }] }
+cc c7a53c017c9a1f6d456a266c1aae95cd757ff647ba7f443a8986882f20f6120c # shrinks to spec = Spec { folders: [(0, "a", 0)], tags: [], snippets: [] }

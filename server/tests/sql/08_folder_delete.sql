@@ -11,7 +11,7 @@ begin
     perform iamb_test.new_user('ines'); perform iamb_test.new_device('ines_b', 'ines');
     perform iamb_test.hello('ines', 'Ines'); perform iamb_test.hello('ines_b');
     pi := iamb_test.personal('ines');
-    update iamb.server_state set cascade_max = 3;
+    update iamb.server_state set cascade_max = 3 where id;
     r := iamb_test.push('ines', jsonb_build_array(
         iamb_test.op_folder(f, pi, null, 'F'), iamb_test.op_folder(g, pi, f, 'G'), iamb_test.op_folder(h, pi, g, 'H'),
         iamb_test.op_folder(o, pi, null, 'Other'),
@@ -68,7 +68,7 @@ begin
     r := iamb_test.push('ines', jsonb_build_array(del));
     perform iamb_test.ok(iamb_test.st(r) = 'applied' and (r -> 'results' -> 0 ->> 'replayed')::boolean
                          and jsonb_array_length(r -> 'results' -> 0 -> 'cascade') = 7, 'replayed with entries');
-    update iamb.server_state set cascade_max = 2000;
+    update iamb.server_state set cascade_max = 2000 where id;
 end $$;
 
 -- A share is ended only by who may end it (S76): a member with `edit` may not delete a folder

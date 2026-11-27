@@ -20,6 +20,18 @@ const listbox = () => screen.getByRole("listbox", { name: "All snippets" });
 const rowNames = () => within(listbox()).getAllByRole("option").map((o) => o.getAttribute("aria-label") ?? "");
 
 describe("the library window", () => {
+  it("says in its status line that Iamb is paused, and when the pause is from before", async () => {
+    const line = () => document.querySelector(".status-line")?.textContent;
+    const first = await renderLibrary(base());
+    expect(line()).toBe("Iamb is on");
+    first.unmount();
+    const second = await renderLibrary(base(), { paused: true });
+    expect(line()).toBe("Iamb is paused");
+    second.unmount();
+    await renderLibrary(base(), { paused: true, pausedKept: true });
+    expect(line()).toBe("Iamb is still paused");
+  });
+
   it("shows the folders, tags and snippets the service holds", async () => {
     await renderLibrary(base());
     expect(await screen.findByRole("option", { name: /^Thanks for your order, abbreviation semicolon rty/ })).toBeTruthy();

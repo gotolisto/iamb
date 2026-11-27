@@ -9,12 +9,12 @@ import type { UiEvent } from "../../ipc";
 import type { LibraryEnv } from "../env";
 import { Library } from "../Library";
 import { Failure, createFake, envFor } from "../testkit";
-import type { Diagnostic, Exclusion, SettingsApi, TestResult } from "./api";
+import type { Diagnostic, Exclusion, LoginState, SettingsApi, TestResult } from "./api";
 import { unknownFormatCode } from "./model";
 
 export function createFakeSettings(
   initial: Record<string, string> = {},
-  options: { diagnostics?: Diagnostic[]; exclusions?: Exclusion[] } = {},
+  options: { diagnostics?: Diagnostic[]; exclusions?: Exclusion[]; login?: LoginState | null } = {},
 ) {
   const values = new Map<string, string>(Object.entries(initial));
   const exclusions: Exclusion[] = [...(options.exclusions ?? [])];
@@ -24,6 +24,10 @@ export function createFakeSettings(
   const tests = new Map<string, TestResult>();
   const calls: string[] = [];
   let down: string | null = null;
+  // The login item, as the system has it; `null` refuses every change.
+  let login: LoginState | null = options.login ?? "enabled";
+  let refuseLogin = false;
+  let refuseOpen = false;
 
   const guard = () => {
     if (down) throw new Failure(down, "the service is not connected");
@@ -84,6 +88,22 @@ export function createFakeSettings(
       guard();
       return [...diagnostics].sort((a, b) => b.at - a.at);
     },
+    about: async () => {
+      calls.push("about");
+      return { version: "0.1.0", logFolder: "/Users/test/Library/Application Support/Iamb/logs" };
+    },
+    openLogFolder: async () => {
+      calls.push("openLogFolder");
+      if (refuseOpen) throw new Failure("unavailable", "Iamb could not open the folder");
+    },
+    loginItem: async (enabled) => {
+      calls.push(`loginItem ${String(enabled)}`);
+      if (login === null || (refuseLogin && enabled !== undefined)) {
+        throw new Failure("unavailable", "the system refused the login item");
+      }
+      if (enabled !== undefined && login !== "unavailable") login = enabled ? "enabled" : "disabled";
+      return login;
+    },
     testAbbreviation: async (typed) => {
       calls.push("testAbbreviation");
       guard();
@@ -109,6 +129,16 @@ export function createFakeSettings(
     },
     /** The last stored value of a key. */
     stored: (key: string) => values.get(key),
+    /** The login item as the system has it now. */
+    login: () => login,
+    /** The file manager cannot be started from now on. */
+    refuseOpenFolder: () => {
+      refuseOpen = true;
+    },
+    /** The system refuses to change the login item from now on. */
+    refuseLoginChanges: () => {
+      refuseLogin = true;
+    },
   };
 }
 
@@ -127,7 +157,7 @@ export interface Rig {
 export function rig(
   initial: Record<string, string> = {},
   over: Partial<LibraryEnv> = {},
-  options: { diagnostics?: Diagnostic[]; exclusions?: Exclusion[] } = {},
+  options: { diagnostics?: Diagnostic[]; exclusions?: Exclusion[]; login?: LoginState | null } = {},
 ): Rig {
   const settings = createFakeSettings(initial, options);
   const library = createFake();

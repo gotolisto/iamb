@@ -223,7 +223,76 @@ describe("the formatted preview", () => {
     expect(preview.querySelector("kbd")).toBeTruthy();
   });
 
-  it("keeps a column's alignment without inline style, and shows a link as text that cannot be tabbed to", async () => {
+  async function withLink(openLink: ((url: string) => Promise<void>) | undefined) {
+    const { s } = service({
+      parts: [
+        { part: "formatted", html: '<p><a href="https://example.com/a?b=1&amp;c=2">site</a></p>', plain: "site" },
+      ],
+      cursor: null,
+      fields: [],
+      error: null,
+    });
+    if (openLink) s.openLink = openLink;
+    await setup("x", s);
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 200));
+    });
+    await flush();
+    return screen.getByRole("link", { name: "site" });
+  }
+
+  it("keeps a link a link, with its address as the tooltip", async () => {
+    const link = await withLink(vi.fn(() => Promise.resolve()));
+    expect(link.getAttribute("href")).toBe("https://example.com/a?b=1&c=2");
+    expect(link.getAttribute("title")).toBe("https://example.com/a?b=1&c=2");
+    link.focus();
+    expect(document.activeElement).toBe(link);
+  });
+
+  it("opens a clicked link in the system browser and does not navigate", async () => {
+    const open = vi.fn(() => Promise.resolve());
+    const link = await withLink(open);
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    link.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledWith("https://example.com/a?b=1&c=2");
+    const aux = new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 });
+    link.dispatchEvent(aux);
+    expect(aux.defaultPrevented).toBe(true);
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens a focused link on Enter, once, and other keys do nothing", async () => {
+    const open = vi.fn(() => Promise.resolve());
+    const link = await withLink(open);
+    link.focus();
+    const space = new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true });
+    link.dispatchEvent(space);
+    expect(open).not.toHaveBeenCalled();
+    const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    link.dispatchEvent(enter);
+    // Prevented, so the browser makes no click of its own: a second open and a navigation.
+    expect(enter.defaultPrevented).toBe(true);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledWith("https://example.com/a?b=1&c=2");
+  });
+
+  it("does not navigate, and does not fail, when the link cannot be opened", async () => {
+    const link = await withLink(vi.fn(() => Promise.reject({ code: "link_refused", message: "no" })));
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    link.dispatchEvent(click);
+    await flush();
+    expect(click.defaultPrevented).toBe(true);
+    // Without an opener at all (a service that has none) a click is still harmless.
+    cleanup();
+    const bare = await withLink(undefined);
+    const again = new MouseEvent("click", { bubbles: true, cancelable: true });
+    bare.dispatchEvent(again);
+    expect(again.defaultPrevented).toBe(true);
+  });
+
+  it("keeps a column's alignment without inline style, and keeps a link focusable", async () => {
     const { s } = service({
       parts: [
         {
@@ -247,8 +316,8 @@ describe("the formatted preview", () => {
     expect(preview.querySelector("th:last-child")?.getAttribute("data-align")).toBe("right");
     expect(preview.querySelector("td")?.getAttribute("data-align")).toBe("center");
     const link = preview.querySelector("a") as HTMLAnchorElement;
-    expect(link.hasAttribute("href")).toBe(false);
+    expect(link.getAttribute("href")).toBe("https://example.com/a?b=1&c=2");
     expect(link.getAttribute("title")).toBe("https://example.com/a?b=1&c=2");
-    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.getByRole("link", { name: "site" })).toBe(link);
   });
 });

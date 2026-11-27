@@ -1,0 +1,34 @@
+{
+  "id": 19,
+  "kind": "response",
+  "result": {
+    "changes": [
+      {
+        "author_self": false,
+        "base_rev": 3,
+        "cascade": [
+          {
+            "base_rev": 5,
+            "key": {
+              "id": "01010101-0101-0101-0101-010101010101",
+              "kind": "snippet"
+            }
+          }
+        ],
+        "follows": [
+          "07070707-0707-0707-0707-070707070707"
+        ],
+        "id": "02020202-0202-0202-0202-020202020202",
+        "kind": "folder",
+        "op_id": "08080808-0808-0808-0808-080808080808",
+        "repush": null,
+        "row": null,
+        "seqs": [
+          1,
+          2
+        ]
+      }
+    ],
+    "type": "changes"
+  }
+}
