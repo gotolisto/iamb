@@ -232,7 +232,7 @@ function Log({
       env.onEvent((event) => {
         if (event.type === "diagnostic_added") {
           const { code, snippet, app, at } = event;
-          setEntries((old) => mergeEntries([{ code, snippet, app, at }], old));
+          setEntries((old) => mergeEntries([{ code, snippet, app, detail: event.detail ?? null, at }], old));
         } else if (event.type === "settings_changed") {
           void api.getSettings().then(
             (v) => alive.current && setEnterOrTab(/[\n\t]/.test(v.delimiters ?? "")),
@@ -259,7 +259,10 @@ function Log({
   const rows = useMemo(
     () =>
       entries
-        .map((d) => ({ d, r: render(d.code, { label: d.snippet ? (labels[d.snippet] ?? null) : null, app: d.app, mac }) }))
+        .map((d) => ({
+          d,
+          r: render(d.code, { label: d.snippet ? (labels[d.snippet] ?? null) : null, app: d.app, mac, detail: d.detail ?? null }),
+        }))
         .filter((x) => technical || !x.r.technical),
     [entries, labels, mac, technical],
   );
@@ -326,6 +329,7 @@ function Log({
                       )}
                     </span>
                   )}
+                  {r.reason && <span className="code-small dx-reason">{r.reason}</span>}
                 </div>
                 {r.action && (r.action !== "open_snippet" || d.snippet) ? (
                   <button type="button" className="button" onClick={() => act(r.action as ReasonAction, d)}>

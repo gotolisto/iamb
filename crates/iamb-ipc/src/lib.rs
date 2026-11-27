@@ -37,12 +37,13 @@ pub use error::IpcError;
 pub use frame::{FrameError, MAX_FRAME_LEN, read_frame, write_frame};
 pub use log::{Direction, MessageLog, MessageRecord, NoLog};
 pub use messages::{
-    AttachmentRef, ChangedRows, ConflictPolicy, EventBody, ExcludedEntry, FocusRef, GrantState,
-    HealthReport, InjectionStatus, PanelKind, PendingReview, PermissionName, PreviewBlank,
-    PreviewCursor, PreviewPart, RequestBody, ResponseBody, SUMMARY_LINE_CHARS, SearchField,
-    SearchHit, ServiceStatus, ShadowedEntry, SnippetQuery, SnippetSummary, SyncStatus, TAG_COLORS,
-    TagEntry, TemplateAttribute, TemplateErrorInfo, TemplateToken, TransferFormat, UnusedEntry,
-    WireAction, WireAttachment, WireDiagnostic, WireExclusion, WireField, WireValues, key_named,
+    AttachmentRef, ChangedRows, ConflictPolicy, DiagnosticDetail, EventBody, ExcludedEntry,
+    FocusRef, GrantState, HealthReport, InjectionStatus, PanelKind, PendingReview, PermissionName,
+    PreviewBlank, PreviewCursor, PreviewPart, RequestBody, ResponseBody, SUMMARY_LINE_CHARS,
+    SearchField, SearchHit, ServiceStatus, ShadowedEntry, SnippetQuery, SnippetSummary, SyncStatus,
+    TAG_COLORS, TagEntry, TemplateAttribute, TemplateErrorInfo, TemplateToken, TransferFormat,
+    UnusedEntry, WireAction, WireAttachment, WireDiagnostic, WireExclusion, WireField, WireValues,
+    key_named,
 };
 pub use protocol::{
     DecodeError, ErrorBody, ErrorCode, Group, Hello, PROTOCOL_VERSION, Request, Response, Role,

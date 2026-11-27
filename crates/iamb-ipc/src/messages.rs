@@ -36,7 +36,7 @@ use iamb_core::sync::{
     OpResult, OutboxPhase, ReconcileScope, RemoteRow, RowRef, SyncInfo,
 };
 use iamb_core::template::{FieldKind, FieldSpec, KeyName};
-use iamb_platform::FocusToken;
+use iamb_platform::{FocusToken, UnknownReason};
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::Group;
@@ -393,10 +393,64 @@ pub struct WireDiagnostic {
     /// The application, for suspensions and refused requests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub app: Option<String>,
+    /// A technical detail of the reason: for `suspended_unknown_focus` and
+    /// `refused_unknown_focus`, why the platform could not judge the focused field. One of a
+    /// closed set of words, so it can hold no typed text, application or window by its type
+    /// (§8 rule 4). Optional, added after protocol 3: older peers send none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<DiagnosticDetail>,
     /// When it was recorded (UTC milliseconds). Every entry carries it (since protocol 3): the
     /// service stamps each one as it records it, and a dry run's diagnostics with the time of
     /// the dry run.
     pub at: Timestamp,
+}
+
+/// The technical detail of a diagnostic ([`WireDiagnostic::detail`]): why the focused field
+/// could not be judged, the platform's [`UnknownReason`]. On the wire its snake-case name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticDetail {
+    /// `timeout`.
+    Timeout,
+    /// `elevated`.
+    Elevated,
+    /// `not_inspectable`.
+    NotInspectable,
+    /// `no_focus`.
+    NoFocus,
+    /// `focus_moved`.
+    FocusMoved,
+    /// A word of a newer peer that this version does not know: decoded as this, so that the
+    /// entry still arrives, and shown as nothing.
+    #[serde(other)]
+    Other,
+}
+
+impl DiagnosticDetail {
+    /// The word on the wire; `None` for [`Other`](Self::Other).
+    #[must_use]
+    pub const fn code(self) -> Option<&'static str> {
+        match self {
+            Self::Other => None,
+            Self::Timeout => Some(UnknownReason::Timeout.code()),
+            Self::Elevated => Some(UnknownReason::Elevated.code()),
+            Self::NotInspectable => Some(UnknownReason::NotInspectable.code()),
+            Self::NoFocus => Some(UnknownReason::NoFocus.code()),
+            Self::FocusMoved => Some(UnknownReason::FocusMoved.code()),
+        }
+    }
+}
+
+impl From<UnknownReason> for DiagnosticDetail {
+    fn from(reason: UnknownReason) -> Self {
+        match reason {
+            UnknownReason::Timeout => Self::Timeout,
+            UnknownReason::Elevated => Self::Elevated,
+            UnknownReason::NotInspectable => Self::NotInspectable,
+            UnknownReason::NoFocus => Self::NoFocus,
+            UnknownReason::FocusMoved => Self::FocusMoved,
+        }
+    }
 }
 
 impl WireDiagnostic {
@@ -407,6 +461,7 @@ impl WireDiagnostic {
             snippet: None,
             expansion: None,
             app: None,
+            detail: None,
             at,
         }
     }
@@ -419,6 +474,7 @@ impl WireDiagnostic {
             snippet: d.snippet,
             expansion: d.expansion.map(iamb_core::engine::ExpansionId::raw),
             app: d.app.as_ref().map(|a| a.0.clone()),
+            detail: None,
             at,
         }
     }
@@ -1896,6 +1952,31 @@ mod tests {
             format!("{:?}", EventBody::SettingsChanged {}),
             "settings_changed"
         );
+    }
+
+    #[test]
+    fn the_detail_of_a_diagnostic_is_one_of_its_words() {
+        use iamb_platform::UnknownReason;
+        for reason in UnknownReason::ALL {
+            let detail = DiagnosticDetail::from(reason);
+            assert_eq!(detail.code(), Some(reason.code()));
+            assert_eq!(
+                serde_json::to_value(detail).expect("encodes"),
+                serde_json::Value::String(reason.code().to_owned())
+            );
+            assert_eq!(
+                serde_json::from_value::<DiagnosticDetail>(serde_json::json!(reason.code()))
+                    .expect("decodes"),
+                detail
+            );
+        }
+        // A word of a newer peer, or anything else, is not carried along.
+        for other in ["a_reason_of_a_newer_iamb", "Timeout", "<script>"] {
+            let decoded: DiagnosticDetail =
+                serde_json::from_value(serde_json::json!(other)).expect("decodes");
+            assert_eq!(decoded, DiagnosticDetail::Other, "{other}");
+            assert_eq!(decoded.code(), None);
+        }
     }
 
     #[test]

@@ -30,7 +30,9 @@
 
 use std::collections::BTreeMap;
 
-use iamb_ipc::{RequestBody, ResponseBody, Secret, WireAction, WireDiagnostic, WireExclusion};
+use iamb_ipc::{
+    DiagnosticDetail, RequestBody, ResponseBody, Secret, WireAction, WireDiagnostic, WireExclusion,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::bridge::{Bridge, command};
@@ -120,6 +122,9 @@ pub struct DiagnosticView {
     pub snippet: Option<String>,
     /// The app, if any.
     pub app: Option<String>,
+    /// The technical detail of the reason, if any (for an unknown focus: why the field could
+    /// not be judged, as a code).
+    pub detail: Option<String>,
     /// When it was recorded (UTC milliseconds).
     pub at: i64,
 }
@@ -130,6 +135,7 @@ impl From<&WireDiagnostic> for DiagnosticView {
             code: d.code.clone(),
             snippet: d.snippet.map(|id| id.to_string()),
             app: d.app.clone(),
+            detail: d.detail.and_then(DiagnosticDetail::code).map(str::to_owned),
             at: d.at.0,
         }
     }

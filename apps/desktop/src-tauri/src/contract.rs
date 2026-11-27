@@ -18,7 +18,7 @@
 //! | `library_changed` | `library_changed` |
 //! | `form_requested` | `form_requested` (session, snippet, fields; never the remembered values or the focus token). The form panel itself is fed by `crate::form` on its own event, `iamb:form`, sent to the `form` window only, with the values (task 3.5) |
 //! | `palette_requested` | `palette_requested` (the focus token stays in Rust) |
-//! | `diagnostic_added` | `diagnostic_added` (code, snippet, app and time) |
+//! | `diagnostic_added` | `diagnostic_added` (code, snippet, app, detail and time) |
 //! | `settings_changed` | `settings_changed` |
 //! | `expansion_finished` | `expansion_finished` (nothing else: the front end plays the sound) |
 //!
@@ -29,8 +29,8 @@
 
 use iamb_core::model::{Id, Snippet, SnippetKind, Trigger};
 use iamb_ipc::{
-    ChangedRows, ErrorBody, EventBody, RequestBody, ResponseBody, ServiceStatus, SnippetQuery,
-    WireDiagnostic, WireField,
+    ChangedRows, DiagnosticDetail, ErrorBody, EventBody, RequestBody, ResponseBody, ServiceStatus,
+    SnippetQuery, WireDiagnostic, WireField,
 };
 use serde::{Deserialize, Serialize};
 
@@ -373,6 +373,8 @@ pub enum UiEvent {
         snippet: Option<String>,
         /// The app it happened in, if the service named one.
         app: Option<String>,
+        /// The technical detail of the reason, if the service gave one.
+        detail: Option<String>,
         /// When it was recorded (UTC milliseconds).
         at: i64,
     },
@@ -426,6 +428,10 @@ fn diagnostic(entry: &WireDiagnostic) -> UiEvent {
         code: entry.code.clone(),
         snippet: entry.snippet.map(|id| id.to_string()),
         app: entry.app.clone(),
+        detail: entry
+            .detail
+            .and_then(DiagnosticDetail::code)
+            .map(str::to_owned),
         at: entry.at.0,
     }
 }

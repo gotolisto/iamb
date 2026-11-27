@@ -47,6 +47,8 @@ export interface Diagnostic {
   code: string;
   snippet: string | null;
   app: string | null;
+  /** A technical detail of the reason (for an unknown focus: why, as a code); absent from an older host. */
+  detail?: string | null;
   /** UTC milliseconds. */
   at: number;
 }
@@ -133,7 +135,14 @@ export function isExclusion(v: unknown): v is Exclusion {
 }
 
 export function isDiagnostic(v: unknown): v is Diagnostic {
-  return isObject(v) && isStr(v.code) && isStrOrNull(v.snippet) && isStrOrNull(v.app) && isNum(v.at);
+  return (
+    isObject(v) &&
+    isStr(v.code) &&
+    isStrOrNull(v.snippet) &&
+    isStrOrNull(v.app) &&
+    (v.detail === undefined || isStrOrNull(v.detail)) &&
+    isNum(v.at)
+  );
 }
 
 export function isTestResult(v: unknown): v is TestResult {

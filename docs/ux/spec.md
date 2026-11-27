@@ -534,7 +534,7 @@ health. The code is shown small after the sentence for people who look things up
 | `E_…` | "“*Label*” has an error" · the sentence of §6.1 · "Nothing was typed." [Open snippet] | "This snippet has an error." [Open it] |
 | `suspended_secure_field` | "Not expanding in a password field" · "Iamb stores no keys there." | — |
 | `suspended_excluded_app` | "Not expanding in *App*" · "You excluded this app." [Manage apps] | — |
-| `suspended_unknown_focus` | "Not expanding in *App*" · "Iamb cannot see into this window, so it stays out." (Windows adds "It may be running as administrator.") | — |
+| `suspended_unknown_focus` | "Not expanding in *App*" · "Iamb cannot see into this window, so it stays out." (Windows adds "It may be running as administrator." when the reason is `elevated`.) Under it, small, the technical reason: "Reason: timeout / not inspectable / elevated / focus moved / no focus" | — |
 | `suspended_composing` | "Not expanding while your keyboard composes text" · "An input method is on." | — |
 | `refused_secure_field` | "“*Label*” was not inserted: the cursor was in a password field" | "The cursor is in a password field. Iamb does not type there." |
 | `refused_excluded_app` | "“*Label*” was not inserted: you excluded *App*" | "You excluded this app." |

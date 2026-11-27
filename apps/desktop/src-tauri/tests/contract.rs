@@ -206,6 +206,7 @@ fn every_event_the_ui_role_hears_is_forwarded_as_promised() {
             code: "injection_cancelled".to_owned(),
             snippet: Some(id(1).to_string()),
             app: None,
+            detail: None,
             at: 1_763_400_000_500,
         })
     );

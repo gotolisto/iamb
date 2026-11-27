@@ -42,7 +42,7 @@ fn open(field: Field) -> Option<TestWindow> {
 fn observed(session: &mut Session, wanted: Observation) -> Observation {
     let mut last = Observation::Failed;
     eventually(|| {
-        last = session.observe();
+        last = session.observe().observation;
         (last == wanted).then_some(())
     });
     last
@@ -59,6 +59,7 @@ fn ui_automation_tells_a_password_field_from_a_text_field() {
     let plain = Observation::Element {
         password: false,
         control_type: control_type::EDIT,
+        process: std::process::id(),
     };
     assert_eq!(observed(&mut session, plain), plain);
 
@@ -68,6 +69,7 @@ fn ui_automation_tells_a_password_field_from_a_text_field() {
             Observation::Element {
                 password: true,
                 control_type: control_type::EDIT,
+                process: std::process::id(),
             },
         ),
         (
@@ -75,6 +77,7 @@ fn ui_automation_tells_a_password_field_from_a_text_field() {
             Observation::Element {
                 password: false,
                 control_type: BUTTON,
+                process: std::process::id(),
             },
         ),
         (Field::Plain, plain),
@@ -121,7 +124,10 @@ fn the_system_tells_the_kind_of_the_focused_control() {
             skip("the test window lost the foreground");
             return;
         }
-        assert_eq!(desk.control(front), kind, "{field:?}");
+        let control = desk.control(front);
+        assert_eq!(control.kind, kind, "{field:?}");
+        assert_eq!(control.pid, std::process::id(), "{field:?}");
+        assert_ne!(control.window, 0, "{field:?}");
     }
 }
 

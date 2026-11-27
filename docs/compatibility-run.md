@@ -105,7 +105,13 @@ first. How a password field is detected, and what is not, is in the module docs 
 3. **W19, password manager.** Start the app fresh, so that the master password field is the first
    thing it ever has the focus on. Type `;cpt1` and a space: same pass as in step 1. Lock, unlock
    and repeat once.
-4. **Extra, not cells:** steps 1 and 2 in Microsoft Edge and in Mozilla Firefox.
+4. **Extra, not cells:** steps 1 and 2 in Microsoft Edge and in Mozilla Firefox. Also in an
+   application built on the system's web view (Iamb's own onboarding test field, a chat app): a
+   field there must expand within a few seconds of clicking into it. When a window stays
+   "unknown focus", note the "Reason: …" line under the entry (timeout, not inspectable,
+   elevated, focus moved, no focus). `cargo test -p iamb-platform-windows --test browser_engine
+   -- --ignored --test-threads 1` checks Edge's text area and password field by itself and
+   prints how long the answer took to settle.
 5. **Extra, known limit: a password prompt in a terminal.** In Windows Terminal run
    `runas /user:nobody cmd` and type `;cpt1` and a space at the password prompt. Windows does not
    tell that a console is asking for a password, so today this expands; record what happened.

@@ -156,6 +156,17 @@
 //! changed after it and the injector stopped there) and `injection_clipboard_not_restorable` (the clipboard held
 //! content its snapshot could not save whole, and the expansion needed a paste). Like every
 //! diagnostic they name the snippet and the app, nothing typed.
+//!
+//! # Why the focus is unknown
+//!
+//! The focus thread sends with an `Unknown` verdict the platform's reason
+//! ([`UnknownReason`]), and logs it (the reason only). While that verdict is in force, the
+//! diagnostics `suspended_unknown_focus` and `refused_unknown_focus` carry the reason's code as
+//! their technical detail ([`WireDiagnostic::detail`]: `timeout`, `elevated`,
+//! `not_inspectable`, `no_focus`, `focus_moved`), so that "Why didn't it expand?" can tell a
+//! window of an elevated program from one that did not answer in time. A palette or reopen
+//! hotkey pressed with no window in front is refused with `no_focus`. An `Unknown` the service
+//! decides itself (a stopped watcher) carries none.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -176,7 +187,7 @@ use iamb_ipc::{
 };
 use iamb_platform::{
     CancelReason, FocusChange, FocusToken, InjectionOutcome, InjectionRequest, KeyTarget,
-    ListenerEvent, Routed, TypedHandoff, split_actions,
+    ListenerEvent, Routed, TypedHandoff, UnknownReason, split_actions,
 };
 
 use super::keys::KeyQueue;
@@ -422,6 +433,9 @@ pub(crate) struct EngineThread {
     /// The last verdict for the current focus, as the focus thread sent it; `None` until the
     /// verdict for the latest focus change is in.
     verdict: Option<SecureState>,
+    /// Why the platform could not judge the field, while `verdict` is `Unknown` for that
+    /// reason: the detail of the `unknown focus` diagnostics.
+    unknown: Option<UnknownReason>,
 }
 
 impl EngineThread {
@@ -471,6 +485,7 @@ impl EngineThread {
             panel: None,
             panel_lease,
             verdict: None,
+            unknown: None,
         }
     }
 
@@ -561,8 +576,9 @@ impl EngineThread {
 
     /// A verdict from the focus thread (or the watcher check): noted, and delivered as
     /// `own_window` while a panel has the keyboard (module docs).
-    fn deliver_verdict(&mut self, state: SecureState) {
+    fn deliver_verdict(&mut self, state: SecureState, unknown: Option<UnknownReason>) {
         self.verdict = Some(state);
+        self.unknown = unknown.filter(|_| state == SecureState::Unknown);
         let state = if self.panel.is_some() {
             SecureState::OwnWindow
         } else {
@@ -687,18 +703,19 @@ impl EngineThread {
                 }
             }
             EngineMsg::FocusChanged(change) => self.on_focus(change),
-            EngineMsg::Verdict(mut state) => {
+            EngineMsg::Verdict(mut state, mut unknown) => {
                 if self.watcher_down {
                     // A verdict for a focus the stopped watcher last saw (an exclusion change
                     // judges it again): the focus may be anywhere by now.
                     state = SecureState::Unknown;
+                    unknown = None;
                 }
                 // The disturb in `deliver_verdict`, as it is wired, never finds a capture:
                 // each verdict follows its own `FocusChanged`, which disturbed already, and the
                 // engine is suspended between the two, so nothing can be armed. It stays so
                 // the hand-off's writer duty (disturb before every event that clears the
                 // buffer) does not rest on that.
-                self.deliver_verdict(state);
+                self.deliver_verdict(state, unknown);
             }
             EngineMsg::Injected { expansion, outcome } => {
                 self.handoff.finish(expansion);
@@ -862,9 +879,12 @@ impl EngineThread {
             // "Fill in the last form again" (UX specification §5.1): as `ReopenLastForm`, for the
             // window that had the focus at the press, under that window's verdict (module docs).
             Routed::Hotkey(id) if id == REOPEN_FORM_HOTKEY => {
-                match self.shared.platform.focus_token() {
-                    Ok(token) => self.on_request(Explicit::Reopen, Some(token)),
-                    Err(_) => self.shared.diagnostic(coded("refused_unknown_focus")),
+                if let Ok(token) = self.shared.platform.focus_token() {
+                    self.on_request(Explicit::Reopen, Some(token));
+                } else {
+                    let mut d = coded("refused_unknown_focus");
+                    d.detail = Some(UnknownReason::NoFocus.into());
+                    self.shared.diagnostic(d);
                 }
             }
             // "Pause or resume" (§5.1).
@@ -966,7 +986,7 @@ impl EngineThread {
             self.shared.logger.warn(format_args!(
                 "the focus watcher stopped; the focus counts as unknown until it runs again"
             ));
-            self.deliver_verdict(SecureState::Unknown);
+            self.deliver_verdict(SecureState::Unknown, None);
         }
         let _ = platform.unwatch();
         match platform.watch(super::focus_sink(self.shared.focus_tx.clone())) {
@@ -987,6 +1007,7 @@ impl EngineThread {
         // Anything else that clears the engine's buffer disturbs a capture.
         self.handoff.disturb();
         self.verdict = None;
+        self.unknown = None;
         self.handle(Event::FocusChanged(change.app.app.clone()));
         let token = change.token;
         let own = change.app.own;
@@ -1110,6 +1131,15 @@ impl EngineThread {
                         && wire.code == "injection_cancelled"
                     {
                         code.clone_into(&mut wire.code);
+                    }
+                    if let Some(reason) = self.unknown
+                        && self.verdict == Some(SecureState::Unknown)
+                        && matches!(
+                            wire.code.as_str(),
+                            "suspended_unknown_focus" | "refused_unknown_focus"
+                        )
+                    {
+                        wire.detail = Some(reason.into());
                     }
                     if answers_a_reopen(&wire.code, reopening) {
                         self.reopen_waiting = false;

@@ -63,7 +63,8 @@ pub(crate) enum ControlKind {
 }
 
 /// What UI Automation said about the focused element. By construction this holds no name,
-/// no value and no text: two facts about the element's kind, nothing of its content.
+/// no value and no text: two facts about the element's kind and the process that provides it,
+/// nothing of its content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Observation {
     /// There is a focused element.
@@ -72,6 +73,9 @@ pub(crate) enum Observation {
         password: bool,
         /// Its control type.
         control_type: i32,
+        /// The process that provides it (`ProcessId`): which window the answer is about, for a
+        /// late answer (`inspect`).
+        process: u32,
     },
     /// The system named no focused element.
     NoElement,
@@ -152,6 +156,7 @@ pub(crate) const fn classify(kind: ControlKind, observation: Observation) -> Jud
         Observation::Element {
             password: false,
             control_type,
+            ..
         } => {
             if matches!(kind, ControlKind::WebEngine) && is_shell(control_type) {
                 Judgement::passing(UnknownReason::NotInspectable)
@@ -170,6 +175,7 @@ mod tests {
         Observation::Element {
             password,
             control_type,
+            process: 40,
         }
     }
 

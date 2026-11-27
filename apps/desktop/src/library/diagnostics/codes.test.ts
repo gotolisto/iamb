@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { KNOWN_CODES, TEMPLATE_ERROR_CODES, reasonOf, render } from "./reasons";
+import { KNOWN_CODES, type ReasonContext, TEMPLATE_ERROR_CODES, reasonOf, render } from "./reasons";
 
 // The sources, as text (the page has no file system): the service's, the engine's reasons, the
 // template errors, and the specification.
@@ -15,6 +15,7 @@ const sources = import.meta.glob(
     "../../../../../crates/iamb-core/src/engine/io.rs",
     "../../../../../crates/iamb-core/src/template/error.rs",
     "../../../../../docs/ux/spec.md",
+    "../../../../../crates/iamb-platform/src/focus.rs",
   ],
   { query: "?raw", import: "default", eager: true },
 ) as Record<string, string>;
@@ -143,7 +144,7 @@ describe("the sentences follow the specification's table (§6.2)", () => {
   });
 
   it("writes the words of the table", () => {
-    const ctx = { label: "Late delivery", app: "Notes", mac: true };
+    const ctx: ReasonContext = { label: "Late delivery", app: "Notes", mac: true };
     const win = { ...ctx, mac: false };
     const say = (code: string, c = ctx) => {
       const r = render(code, c);
@@ -152,8 +153,12 @@ describe("the sentences follow the specification's table (§6.2)", () => {
     expect(say("suspended_secure_field")).toBe("Not expanding in a password field · Iamb stores no keys there.");
     expect(say("suspended_excluded_app")).toBe("Not expanding in Notes · You excluded this app.");
     expect(say("suspended_unknown_focus")).toBe("Not expanding in Notes · Iamb cannot see into this window, so it stays out.");
-    expect(say("suspended_unknown_focus", win)).toBe(
+    expect(say("suspended_unknown_focus", win)).toBe("Not expanding in Notes · Iamb cannot see into this window, so it stays out.");
+    expect(say("suspended_unknown_focus", { ...win, detail: "elevated" })).toBe(
       "Not expanding in Notes · Iamb cannot see into this window, so it stays out. It may be running as administrator.",
+    );
+    expect(say("suspended_unknown_focus", { ...ctx, detail: "elevated" })).toBe(
+      "Not expanding in Notes · Iamb cannot see into this window, so it stays out.",
     );
     expect(say("suspended_composing")).toBe("Not expanding while your keyboard composes text · An input method is on.");
     expect(say("refused_secure_field")).toBe("“Late delivery” was not inserted: the cursor was in a password field");
@@ -175,6 +180,34 @@ describe("the sentences follow the specification's table (§6.2)", () => {
     expect(say("no_last_form")).toBe("There is no earlier form to fill in again · Answers are kept for 30 minutes.");
     expect(say("unknown_snippet")).toBe("The snippet no longer exists");
     expect(say("not_a_delimiter")).toBe("“Late delivery” did not expand: Enter and Tab do not count as the end of a word");
+  });
+
+  it("names the technical reason of an unknown focus in words", () => {
+    const reason = (detail: string | null) => render("suspended_unknown_focus", { label: null, app: "x", mac: false, detail }).reason;
+    expect(reason("timeout")).toBe("Reason: timeout");
+    expect(reason("not_inspectable")).toBe("Reason: not inspectable");
+    expect(reason("elevated")).toBe("Reason: elevated");
+    expect(reason("focus_moved")).toBe("Reason: focus moved");
+    expect(reason("no_focus")).toBe("Reason: no focus");
+    // A value this version does not know is not shown, whatever it holds; none is no line.
+    for (const other of ["a_reason_of_a_newer_iamb", "other", "<b>typed</b>", "toString", "__proto__"]) {
+      expect(reason(other), other).toBeNull();
+    }
+    expect(reason(null)).toBeNull();
+    expect(render("suspended_secure_field", { label: null, app: null, mac: false }).reason).toBeNull();
+  });
+
+  it("knows the words of every reason the platform crate can give", () => {
+    const platform = read("crates/iamb-platform/src/focus.rs");
+    const from = platform.indexOf("pub const fn code(", platform.indexOf("impl UnknownReason {"));
+    expect(from).toBeGreaterThan(-1);
+    const body = platform.slice(from, platform.indexOf("\n    }\n", from));
+    const codes = [...body.matchAll(/"([a-z_]+)"/g)].map((m) => m[1] as string);
+    expect(codes.length).toBe(5);
+    for (const code of codes) {
+      const line = render("suspended_unknown_focus", { label: null, app: null, mac: false, detail: code }).reason;
+      expect(line, code).not.toContain("_");
+    }
   });
 
   it("offers the buttons of the table", () => {

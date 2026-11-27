@@ -67,6 +67,8 @@ export type UiEvent =
       code: string;
       snippet: string | null;
       app: string | null;
+      /** A technical detail of the reason (for an unknown focus: why, as a code); absent from an older service. */
+      detail?: string | null;
       /** UTC milliseconds. */
       at: number;
     }
@@ -257,6 +259,7 @@ export function isUiEvent(v: unknown): v is UiEvent {
         typeof v.code === "string" &&
         (v.snippet === null || typeof v.snippet === "string") &&
         (v.app === null || typeof v.app === "string") &&
+        (v.detail === undefined || v.detail === null || typeof v.detail === "string") &&
         typeof v.at === "number"
       );
     default:
