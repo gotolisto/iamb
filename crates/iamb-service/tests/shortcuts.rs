@@ -434,6 +434,66 @@ fn editing_chords_and_chords_that_type_are_refused_by_the_service() {
 }
 
 #[test]
+fn a_fill_in_again_answered_form_open_does_not_keep_the_answers_longer() {
+    // Round 2's R4: a `ReopenLastForm` answered with `form_open` left its flag set, so the next
+    // form that opened with the answers (typed, not asked for again) renewed their time once.
+    let ttl = Duration::from_secs(2);
+    let h = Harness::start_with(LIBRARY, |c| c.form_values_ttl = ttl);
+    let mut ui = h.client(Role::Ui);
+    fill_in_once(&h, &mut ui);
+    let submitted = Instant::now();
+
+    // A form is open: "Fill in again" is answered with `form_open`.
+    std::thread::sleep(Duration::from_millis(300));
+    let session = open_typed_form(&h, &mut ui);
+    ui.call(RequestBody::ReopenLastForm { focus: None })
+        .expect("asked");
+    h.settle();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !diagnostic_codes(&mut ui).contains(&"form_open".to_owned()) {
+        assert!(Instant::now() < deadline, "no form_open");
+        h.settle();
+    }
+    ui.call(RequestBody::FormCancel { session })
+        .expect("cancel");
+
+    // A typed form that opens with the answers is not a use of them.
+    std::thread::sleep(
+        (submitted + Duration::from_secs(1)).saturating_duration_since(Instant::now()),
+    );
+    let session = open_typed_form(&h, &mut ui);
+    ui.call(RequestBody::FormCancel { session })
+        .expect("cancel");
+
+    // Past the time from the submit: the answers are gone.
+    std::thread::sleep(
+        (submitted + ttl + Duration::from_millis(300)).saturating_duration_since(Instant::now()),
+    );
+    h.settle();
+    ui.call(RequestBody::ReopenLastForm { focus: None })
+        .expect("asked");
+    h.settle();
+    assert_eq!(
+        forms_within(&mut ui, Duration::from_millis(300)),
+        [],
+        "the answers were kept longer"
+    );
+    assert!(diagnostic_codes(&mut ui).contains(&"no_last_form".to_owned()));
+}
+
+/// Types `hi ` in the editor and waits for its form; returns the session.
+fn open_typed_form(h: &Harness, ui: &mut Client) -> u64 {
+    h.os.type_text("hi ");
+    let EventBody::FormRequested { session, .. } =
+        wait_event(ui, |e| matches!(e, EventBody::FormRequested { .. }))
+    else {
+        unreachable!("matched above")
+    };
+    ui.call(RequestBody::FormAck { session }).expect("ack");
+    session
+}
+
+#[test]
 fn a_refused_fill_in_again_does_not_keep_the_answers_longer() {
     // The answers are kept for a while after their last use (30 minutes; here 1.5 s). A press
     // in a password field is refused there and must not count as a use (the beta-gap review's
@@ -512,6 +572,47 @@ fn a_pause_outlives_a_worker_restart() {
     ui.call(RequestBody::SetPaused { paused: true })
         .expect("paused");
     assert_eq!(pause_state(&mut ui), (true, false));
+}
+
+#[test]
+fn a_directory_that_is_not_empty_in_its_place_is_moved_aside_and_the_pause_kept() {
+    // The review's round 2, R1: such a directory could be neither removed nor replaced, so a
+    // pause was lost at the next start, and only the log said so.
+    let dir = Harness::start(LIBRARY).stop();
+    let run = dir.path().join("run");
+    let file = run.join("paused");
+    std::fs::create_dir(&file).expect("dir");
+    std::fs::write(file.join("inside"), b"kept").expect("a file inside");
+
+    let h = Harness::start_in(dir, |_| {});
+    let mut ui = h.client(Role::Ui);
+    assert_eq!(
+        pause_state(&mut ui),
+        (false, false),
+        "a directory paused it"
+    );
+    ui.call(RequestBody::SetPaused { paused: true })
+        .expect("paused");
+    assert!(
+        std::fs::symlink_metadata(&file).is_ok_and(|m| m.file_type().is_file()),
+        "the pause file is not there"
+    );
+    // Nothing of the user's is lost: the directory is beside it, as it was.
+    let aside = run.join("paused.aside-1");
+    assert_eq!(
+        std::fs::read(aside.join("inside")).expect("moved aside whole"),
+        b"kept"
+    );
+    drop(ui);
+    let dir = h.stop();
+
+    let h = Harness::start_in(dir, |_| {});
+    let mut ui = h.client(Role::Ui);
+    assert_eq!(
+        pause_state(&mut ui),
+        (true, true),
+        "the pause was lost to the directory"
+    );
 }
 
 #[test]

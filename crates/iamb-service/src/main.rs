@@ -21,10 +21,12 @@
 //! installed helper does not start the UI host as its child at all: it has the system open
 //! `Iamb.app` (`ui_host_plan`).
 //!
-//! A release build of the macOS helper runs for the default data root only (`--data-dir` and
-//! `IAMB_DATA_DIR` naming another are refused; `iamb_service::paths::helper_may_use_root`). The
-//! default is built from the home directory the user database gives for this account
-//! (`getpwuid_r`), not from `HOME`, which whoever starts the helper chooses (`open --env`).
+//! A release build of the macOS helper runs for the account's default data root only
+//! (`iamb_service::paths::choose_data_root`): it is built from the home directory the user
+//! database gives for this account (`getpwuid_r`), not from `HOME`, which whoever starts the
+//! helper chooses (`open --env`), and is used whatever `HOME` says; `--data-dir` and
+//! `IAMB_DATA_DIR` naming another root are refused. A refusal is written to the log of the
+//! default root as well as to standard error, which nobody reads at login (round 2's R2).
 //!
 //! `--platform mock` runs the worker against the in-memory mock platform: development and CI
 //! only. A release build refuses it where the system has a native platform (Windows, macOS):
@@ -148,9 +150,26 @@ fn main() -> ExitCode {
         Ok(None) => return ExitCode::SUCCESS,
         Err(e) => return fail(&e),
     };
-    let dirs = match DataDirs::resolve(args.data_dir.as_deref()) {
-        Ok(dirs) => dirs,
-        Err(e) => return fail(&e.to_string()),
+    let restricted = launched_from_helper() && !cfg!(debug_assertions);
+    let dirs = match iamb_service::paths::choose_data_root(
+        args.data_dir.as_deref(),
+        |k| std::env::var_os(k),
+        restricted,
+        account_home().as_deref(),
+    ) {
+        iamb_service::paths::RootChoice::Use(root) => DataDirs::new(root),
+        iamb_service::paths::RootChoice::Refuse { reason, log_to } => {
+            if let Some(root) = log_to {
+                let process = if args.supervise.unwrap_or_else(launched_as_login_item) {
+                    "supervisor"
+                } else {
+                    "worker"
+                };
+                Logger::open(&DataDirs::new(root).logs(), process)
+                    .error(format_args!("not started: {reason}"));
+            }
+            return fail(reason);
+        }
     };
     let choice = args
         .platform
@@ -164,14 +183,6 @@ fn main() -> ExitCode {
         return fail(&format!(
             "--platform mock is for development builds on this system; {USAGE}"
         ));
-    }
-    if !iamb_service::paths::helper_may_use_root(
-        launched_from_helper(),
-        !cfg!(debug_assertions),
-        dirs.root(),
-        account_home().as_deref(),
-    ) {
-        return fail("the installed helper serves the default data root only");
     }
     // The data root is the user's alone, wherever it is (§3.3; the 2.8 review's finding 20:
     // on Windows a root outside the profile would otherwise keep its parent's permissions).

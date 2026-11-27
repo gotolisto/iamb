@@ -29,18 +29,20 @@ use windows_sys::Win32::Security::{
 
 use crate::endpoint::own_sid;
 
-/// The Windows directory (`GetWindowsDirectoryW`, normally `C:\Windows`), so that the UI host
-/// starts `explorer.exe` by its full path rather than through `PATH` (the beta-gap review's
-/// finding 7). `None` when the system does not say.
+/// The system's Windows directory (`GetSystemWindowsDirectoryW`, normally `C:\Windows`), so
+/// that the UI host starts `explorer.exe` by its full path rather than through `PATH` (the
+/// beta-gap review's finding 7). Not `GetWindowsDirectoryW`, which gives a per-user directory to
+/// a program not marked as aware of Terminal Services (round 2's R4). `None` when the system
+/// does not say.
 #[must_use]
 pub fn windows_directory() -> Option<PathBuf> {
     use std::os::windows::ffi::OsStringExt;
-    use windows_sys::Win32::System::SystemInformation::GetWindowsDirectoryW;
+    use windows_sys::Win32::System::SystemInformation::GetSystemWindowsDirectoryW;
     let mut units = [0_u16; 520];
     let capacity = u32::try_from(units.len()).unwrap_or(0);
     // SAFETY: the buffer holds `capacity` units; the call writes at most that many and returns
     // the number written (without the terminating null), or the size needed when it is larger.
-    let count = unsafe { GetWindowsDirectoryW(units.as_mut_ptr(), capacity) };
+    let count = unsafe { GetSystemWindowsDirectoryW(units.as_mut_ptr(), capacity) };
     let count = usize::try_from(count)
         .ok()
         .filter(|n| *n > 0 && *n < units.len())?;

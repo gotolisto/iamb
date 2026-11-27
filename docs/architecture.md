@@ -171,7 +171,7 @@ be told from a crash behind `open`, so it is restarted there.
 | Locks | `run/supervisor.lock`, `run/store.lock`, `run/desktop.lock` (one UI host per data root) | same |
 | Signals between processes | `run/restart-worker` (UI host to supervisor: restart the worker, §3.2), `run/desktop.quit` (the UI host ended on purpose, §3.2); empty files, taken by removing them | same |
 | Endpoints | `run/service.sock`, `run/sync.sock` | `\\.\pipe\iamb-service-<user SID>-<secret>`, `\\.\pipe\iamb-sync-<user SID>-<secret>`; each secret (128 random bits, new for every bind) in `run/service.pipe`, `run/sync.pipe`; `run/service.pipe.lock`, `run/sync.pipe.lock` |
-| Pause | `run/paused` while Iamb is paused, so that a worker started afresh (a crash, a restart, a logout, a restart of the machine) starts paused, and says so (`ServiceStatus.paused_kept`: "Iamb is still paused"). Only a regular file counts, looked at without following a link; anything else there means not paused and is removed (`iamb_service::worker::engine`, "Pause across a restart") | same |
+| Pause | `run/paused` while Iamb is paused, so that a worker started afresh (a crash, a restart, a logout, a restart of the machine) starts paused, and says so (`ServiceStatus.paused_kept`: "Iamb is still paused"). Only a regular file counts, looked at without following a link; anything else there means not paused and is removed (a directory that is not empty is moved aside to `run/paused.aside-<n>`, so the pause can still be kept) (`iamb_service::worker::engine`, "Pause across a restart") | same |
 
 On Linux (development and the command-line tool only) the data root is `$XDG_DATA_HOME/iamb/`.
 Setting `IAMB_DATA_DIR` overrides the data root on every OS; tests always set it.
@@ -885,10 +885,12 @@ grant belongs to the helper app (ADR-0021), so the helper must not lend it out:
 - any process of the user can have the system start the helper with arguments of its choosing
   (`open -n … --args …`). A release build of the helper therefore runs for the default data root
   only (`--data-dir` and `IAMB_DATA_DIR` naming another are refused,
-  `iamb_service::paths::helper_may_use_root`), so a process cannot point a granted helper at a
+  `iamb_service::paths::choose_data_root`), so a process cannot point a granted helper at a
   library it wrote elsewhere and have it typed. The default is built from the home directory the
   user database gives for the account (`getpwuid_r`), not from `HOME`, which the caller of `open`
-  sets (`open --env`). This does not stop a process that writes into the
+  sets (`open --env`), and is used whatever `HOME` says. A refusal (another root named, or no
+  answer from the user database) is written to the default root's log as well as to standard
+  error. This does not stop a process that writes into the
   default data root itself, the user's own folder: that, like other malware of the same user, is
   outside this threat model. Development builds accept any data root.
 
