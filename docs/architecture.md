@@ -85,7 +85,7 @@ Plain threads and bounded channels, no async runtime
 | Listener | Runs the OS hook or event tap and the hotkey registration; translates each key; stamps it with a sequence number and, where the OS says, the window it goes to; puts it in the key queue (§8 rule 1) and pushes a notice to the engine channel; returns |
 | Engine | Owns the keystroke buffer and the current snapshot; turns events into actions; sends a heartbeat to the supervisor every 500 ms |
 | Injector | Executes action lists against the OS; reports start and end of each injection |
-| Focus | Watches the focused app and window; answers "is this a secure field?" with a 100 ms timeout |
+| Focus | Watches the focused app and window; answers "is this a secure field?" with a 100 ms timeout (300 ms for the first look at another window, `FIRST_LOOK_TIMEOUT`) |
 | Store | Owns the SQLite connection; performs every write; builds a new immutable snapshot after a change to library content or engine settings |
 | Readers | One per IPC client (at most 8). Read requests, search and dry runs are answered from the snapshot without touching the store thread |
 

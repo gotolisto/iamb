@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use iamb_core::engine::SecureState;
 use iamb_platform::{
-    EventSink, FieldSecurity, FocusChange, FocusToken, InjectionRequest, PlatformError,
-    SECURE_STATE_TIMEOUT, TypedHandoff, UnknownReason, verdict,
+    EventSink, FIRST_LOOK_TIMEOUT, FieldSecurity, FocusChange, FocusToken, InjectionRequest,
+    PlatformError, SECURE_STATE_TIMEOUT, TypedHandoff, UnknownReason, verdict,
 };
 
 use super::{
@@ -33,13 +33,16 @@ pub(crate) fn injector(
 }
 
 /// The focus thread: turns each focus change into `FocusChanged` and, after asking the OS
-/// whether the field is secure (at most 100 ms), the verdict. Iamb's own windows, exclusions
-/// and the onboarding test field are applied by [`verdict`]; anything the OS cannot answer in
-/// time is `Unknown`, which keeps the engine suspended (§4.1: fail closed).
+/// whether the field is secure (at most 300 ms for the first look at another window, 100 ms
+/// otherwise: `FIRST_LOOK_TIMEOUT`, `SECURE_STATE_TIMEOUT`), the verdict. Iamb's own windows,
+/// exclusions and the onboarding test field are applied by [`verdict`]; anything the OS cannot
+/// answer in time is `Unknown`, which keeps the engine suspended (§4.1: fail closed).
 pub(crate) fn focus(shared: &Shared, rx: &Receiver<FocusMsg>) {
     let mut current: Option<FocusChange> = None;
     // The reason last logged, and for which window: logged again only when it changes.
     let mut logged: Option<(FocusToken, UnknownReason)> = None;
+    // The window judged last: the first look at another one may wait longer.
+    let mut judged: Option<FocusToken> = None;
     while let Ok(msg) = rx.recv() {
         WakeCounters::bump(&shared.wakes.focus);
         let change = match msg {
@@ -62,7 +65,13 @@ pub(crate) fn focus(shared: &Shared, rx: &Receiver<FocusMsg>) {
         if !shared.to_engine(EngineMsg::FocusChanged(change)) {
             break;
         }
-        let field = shared.platform.secure_state(&token, SECURE_STATE_TIMEOUT);
+        let timeout = if judged == Some(token) {
+            SECURE_STATE_TIMEOUT
+        } else {
+            FIRST_LOOK_TIMEOUT
+        };
+        judged = Some(token);
+        let field = shared.platform.secure_state(&token, timeout);
         let excluded = shared.view.get().is_excluded(&app.app.0);
         let test_field = *shared
             .test_field

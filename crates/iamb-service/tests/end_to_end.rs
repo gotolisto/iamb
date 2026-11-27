@@ -184,12 +184,27 @@ fn entries_with(c: &mut iamb_ipc::Client, code: &str) -> Vec<(Option<String>, Op
 }
 
 #[test]
+fn the_first_look_at_another_window_waits_longer() {
+    // An application that answers in 200 ms: too slow for 100 ms, in time for the first look
+    // at its window (`FIRST_LOOK_TIMEOUT`, 300 ms).
+    let h = Harness::start(LIBRARY);
+    let slowish = h.os.open_window(
+        MockWindow::new("org.example.slowish", 500).inspect_delay(Duration::from_millis(200)),
+    );
+    h.os.focus(slowish).expect("open");
+    h.worker().sync();
+    h.os.type_text("brb ");
+    h.settle();
+    assert_eq!(h.text(slowish), "be right back ");
+}
+
+#[test]
 fn an_unknown_focus_says_why_the_field_could_not_be_judged() {
     let h = Harness::start(LIBRARY);
     let admin =
         h.os.open_window(MockWindow::new("org.example.admin", 200).elevated());
     let slow = h.os.open_window(
-        MockWindow::new("org.example.slow", 300).inspect_delay(Duration::from_millis(250)),
+        MockWindow::new("org.example.slow", 300).inspect_delay(Duration::from_millis(600)),
     );
     let bank =
         h.os.open_window(MockWindow::new("org.example.bank", 400).secure());
@@ -261,7 +276,7 @@ fn secure_fields_excluded_apps_and_own_windows_suspend() {
         h.os.open_window(MockWindow::new("org.example.bank", 200).secure());
     let palette = h.os.open_window(MockWindow::new("iamb-desktop", 300).own());
     let slow = h.os.open_window(
-        MockWindow::new("org.example.slow", 400).inspect_delay(Duration::from_millis(250)),
+        MockWindow::new("org.example.slow", 400).inspect_delay(Duration::from_millis(600)),
     );
     for window in [bank, palette, slow] {
         h.os.focus(window).expect("open");

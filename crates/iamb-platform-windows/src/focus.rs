@@ -11,10 +11,12 @@
 //! | `secure` | every system | the steps of `secure_state`, against a small `Desk` trait |
 //! | `rules` | every system | which window events are reported, when a window is reported again, the wait of `restore_focus` |
 //! | `os` | Windows | each system call behind a small safe function |
-//! | `uia` | Windows | UI Automation: the two interfaces and three methods the question needs |
+//! | `uia` | Windows | UI Automation: the three interfaces and the methods the question needs, one call per question |
+//! | `diagnose` | every system (the run: Windows) | `iamb-service --diagnose-focus`: each focus change, the answer and the verdict, as lines |
 //! | `watch` | Windows | the window-event hooks and their message loop |
 //!
-//! The first five make no system call and are tested on the Linux build machine.
+//! The first five, and the lines of `diagnose`, make no system call and are tested on the Linux
+//! build machine.
 //!
 //! # What each call does
 //!
@@ -87,8 +89,8 @@
 //! safe to use:
 //!
 //! - **Fresh.** It is used within a quarter of a second, counted from when the probe obtained
-//!   the focused element (the first of its calls; the properties follow), not from when the
-//!   last property came back; an older one is dropped and the application asked afresh. A
+//!   the focused element, which it does together with the element's properties in one call
+//!   (`uia`); an older one is dropped and the application asked afresh. A
 //!   field that turns into a password field without a focus change (a page that changes the
 //!   type of its field) in that quarter of a second is the same race every answer has between
 //!   the application answering and the verdict arriving.
@@ -154,7 +156,10 @@
 //!   on, which the first question switches on.
 //! - **Editable regions a browser engine reports as the page itself** (an editable `body`
 //!   in a frame, as some older web editors use) are `Unknown`, because the page as a whole
-//!   is also what the engine shows before its tree exists. Nothing expands there.
+//!   is also what the engine shows before its tree exists. Nothing expands there. An editable
+//!   region the engine reports as a *custom* element is believed once the engine says it has
+//!   the keyboard focus and is not a window's own element (`classify`, "A control without a
+//!   kind"); one reported as the document or the window itself is not.
 //! - **Focus events of lists that follow typing.** An application that moves the
 //!   accessibility focus to an entry of a suggestion list while the user types raises focus
 //!   events, each of which is reported and clears what the engine holds. Dropping them
@@ -169,7 +174,9 @@
 //!
 //! This module reads a window's handle, class and style, its process id, the path of the
 //! process's executable (kept as the file name only), its privilege level, and from UI
-//! Automation the focused element's control type and `IsPassword`. It never reads a window
+//! Automation the focused element's control type, `IsPassword`, `HasKeyboardFocus`, whether it
+//! is a window's own element, its providing process and its framework's name (compared with
+//! the system's names and not kept). It never reads a window
 //! title, an element's name or value, or any text, and the UI Automation methods that
 //! could are not even declared (`uia`). Nothing here logs. Errors carry the name of a
 //! system call and its code.
@@ -179,6 +186,7 @@
 #![cfg_attr(not(windows), allow(dead_code))]
 
 mod classify;
+mod diagnose;
 mod identity;
 mod inspect;
 mod rules;
@@ -194,6 +202,8 @@ mod watch;
 #[cfg(all(test, windows))]
 mod os_tests;
 
+#[cfg(windows)]
+pub use diagnose::diagnose_focus;
 #[cfg(windows)]
 pub(crate) use os::keyboard_focus;
 #[cfg(windows)]
@@ -270,6 +280,11 @@ mod windows {
     }
 
     impl Platform {
+        /// Reports what the inspection does from now on (`diagnose`).
+        pub(crate) fn trace_focus(&self, tracer: super::inspect::Tracer) {
+            self.focus.inspector.set_tracer(tracer);
+        }
+
         /// Runs `work` with the running watcher, if there is one and its lock is free. Not
         /// waited for: `watch` and `unwatch` hold the lock while the watcher thread starts and
         /// stops, and that thread may be the caller's sink.

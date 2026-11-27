@@ -39,10 +39,10 @@
 //! at the later question would say: a field that turned into a password field in between, with
 //! no focus change, is not in it. The freshness bound keeps "in between" to a quarter of a
 //! second, the window of every answer's own race with such a change. It is counted from the
-//! moment the probe **obtained the focused element** ([`Probed::chosen`]), not from when its
-//! last property came back: the element is chosen by the first call into the application, and
-//! for an application where every call is slow the property calls after it can take seconds,
-//! during which the focus may move to another element of the page without an event. A question about another
+//! moment the probe **obtained the focused element** ([`Probed::chosen`]). The probe obtains the
+//! element and its properties in one call (`uia`, "One call into the application"), so that
+//! moment is when the answer arrives: an answer that comes late is fresh when it comes, and the
+//! watcher's report for it, made at once, uses it. A question about another
 //! window or control, after another focus change, or that may not take one, drops it: the late
 //! answer then goes nowhere, as before. The caller also checks which process provided the
 //! element ([`Answer::Late`]).
@@ -70,7 +70,32 @@ pub(crate) struct Probed {
     /// When the system named the focused element (for no element or a failed call: when the
     /// probe returned). The freshness of a late answer is counted from here (module docs).
     pub(crate) chosen: Instant,
+    /// How long the calls into the application took (for `--diagnose-focus`).
+    pub(crate) took: Duration,
 }
+
+/// What the inspection reports to a tracer (`diagnose`): durations and kinds, never content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TraceEvent {
+    /// A probe returned.
+    Probed {
+        /// What it saw.
+        observation: Observation,
+        /// How long its calls into the application took.
+        took: Duration,
+        /// How long after the question was asked the answer arrived.
+        after_question: Duration,
+        /// The question had stopped waiting: this is a late answer, arriving this long after.
+        late_by: Option<Duration>,
+    },
+    /// A late answer served a question, this long after its element was chosen.
+    LateTaken(Duration),
+    /// A late answer was refused as too old, this long after its element was chosen.
+    LateTooOld(Duration),
+}
+
+/// Where an inspector reports what it does (`diagnose`).
+pub(crate) type Tracer = Arc<dyn Fn(TraceEvent) + Send + Sync>;
 
 /// Asks the system about the focused element. Used on the thread that opened it.
 pub(crate) trait Probe {
@@ -120,6 +145,8 @@ struct Mail {
     closed: bool,
     /// Called once, when the answer arrives (module docs).
     wake: Option<Wake>,
+    /// When the question stopped waiting, if it did before the answer came.
+    gave_up: Option<Instant>,
 }
 
 /// How a wait for a mailbox ended.
@@ -134,16 +161,26 @@ impl Mailbox {
         self.mail.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The inspection thread's side: the answer, then the wake (outside the lock).
-    fn deliver(&self, probed: Probed) {
-        let wake = {
+    /// The inspection thread's side: the answer, then the wake (outside the lock). Returns
+    /// when the question stopped waiting, if it had.
+    fn deliver(&self, probed: Probed) -> Option<Instant> {
+        let (wake, gave_up) = {
             let mut mail = self.mail();
             mail.answer = Some((probed.observation, probed.chosen));
-            mail.wake.take()
+            (mail.wake.take(), mail.gave_up)
         };
         self.arrived.notify_all();
         if let Some(wake) = wake {
             wake();
+        }
+        gave_up
+    }
+
+    /// The question stops waiting, unless the answer is there.
+    fn give_up(&self) {
+        let mut mail = self.mail();
+        if mail.answer.is_none() {
+            mail.gave_up = Some(Instant::now());
         }
     }
 
@@ -223,6 +260,8 @@ pub(crate) enum Answer {
 
 /// One question.
 struct Job {
+    /// When it was asked.
+    asked: Instant,
     /// When the caller stops waiting.
     deadline: Instant,
     reply: Reply,
@@ -261,6 +300,8 @@ pub(crate) struct Inspector<S: ProbeSource> {
     live: Arc<AtomicUsize>,
     /// [`LATE_ANSWER_FRESH`], other in tests.
     late_fresh: Duration,
+    /// Told what the inspection does, for `--diagnose-focus`; none normally.
+    tracer: Arc<Mutex<Option<Tracer>>>,
 }
 
 /// What a question may do with the answer of an earlier one (module docs).
@@ -291,6 +332,23 @@ impl<S: ProbeSource> Inspector<S> {
             slot: Mutex::new(Slot::default()),
             live: Arc::new(AtomicUsize::new(0)),
             late_fresh: LATE_ANSWER_FRESH,
+            tracer: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Reports from now on what the inspection does to `tracer` (`diagnose`).
+    pub(crate) fn set_tracer(&self, tracer: Tracer) {
+        *self.tracer.lock().unwrap_or_else(PoisonError::into_inner) = Some(tracer);
+    }
+
+    fn trace(&self, event: TraceEvent) {
+        let tracer = self
+            .tracer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if let Some(tracer) = tracer {
+            tracer(event);
         }
     }
 
@@ -339,10 +397,14 @@ impl<S: ProbeSource> Inspector<S> {
         {
             match late.mailbox.wait(deadline) {
                 Waited::Arrived(observation, chosen) if chosen.elapsed() <= self.late_fresh => {
+                    self.trace(TraceEvent::LateTaken(chosen.elapsed()));
                     return Answer::Late(observation);
                 }
                 // Too old: the field may have changed since. Ask afresh.
-                Waited::Arrived(..) | Waited::Closed => {}
+                Waited::Arrived(_, chosen) => {
+                    self.trace(TraceEvent::LateTooOld(chosen.elapsed()));
+                }
+                Waited::Closed => {}
                 Waited::TimedOut => {
                     // Still not there: the next report again waits for it, and its arrival
                     // calls this question's wake.
@@ -356,6 +418,7 @@ impl<S: ProbeSource> Inspector<S> {
         }
         let mailbox = Arc::new(Mailbox::default());
         let job = Job {
+            asked: now,
             deadline,
             reply: Reply(Arc::clone(&mailbox)),
         };
@@ -366,6 +429,7 @@ impl<S: ProbeSource> Inspector<S> {
         match mailbox.wait(deadline) {
             Waited::Arrived(observation, _) => Answer::Observed(observation),
             Waited::TimedOut => {
+                mailbox.give_up();
                 if opened.load(Ordering::SeqCst) {
                     self.give_up(id);
                     if let Some(subject) = subject {
@@ -420,6 +484,7 @@ impl<S: ProbeSource> Inspector<S> {
         let (jobs, queue) = mpsc::channel::<Job>();
         let opened = Arc::new(AtomicBool::new(false));
         let source = Arc::clone(&self.source);
+        let tracer = Arc::clone(&self.tracer);
         let is_open = Arc::clone(&opened);
         self.live.fetch_add(1, Ordering::SeqCst);
         // Moved into the thread; dropped with the closure if the thread cannot be created.
@@ -438,7 +503,20 @@ impl<S: ProbeSource> Inspector<S> {
                     if Instant::now() >= job.deadline {
                         continue;
                     }
-                    job.reply.0.deliver(probe.observe());
+                    let probed = probe.observe();
+                    let gave_up = job.reply.0.deliver(probed);
+                    let tracer = tracer
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .clone();
+                    if let Some(tracer) = tracer {
+                        tracer(TraceEvent::Probed {
+                            observation: probed.observation,
+                            took: probed.took,
+                            after_question: probed.chosen.saturating_duration_since(job.asked),
+                            late_by: gave_up.map(|at| probed.chosen.saturating_duration_since(at)),
+                        });
+                    }
                 }
             })
             .ok()?;
@@ -572,9 +650,11 @@ pub(crate) mod fake {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .pop_front();
+            let started = Instant::now();
             let now = |observation| Probed {
                 observation,
                 chosen: Instant::now(),
+                took: started.elapsed(),
             };
             match step {
                 Some(Step::Answer(observation)) => now(observation),
@@ -588,6 +668,7 @@ pub(crate) mod fake {
                     Probed {
                         observation,
                         chosen,
+                        took: started.elapsed(),
                     }
                 }
                 None => now(Observation::Failed),
@@ -630,11 +711,13 @@ mod tests {
         password: false,
         control_type: 50004,
         process: 40,
+        detail: super::super::classify::Detail::NONE,
     };
     const PASSWORD: Observation = Observation::Element {
         password: true,
         control_type: 50004,
         process: 40,
+        detail: super::super::classify::Detail::NONE,
     };
 
     /// Waits until `inspector` has `count` threads.
@@ -1059,6 +1142,67 @@ mod tests {
         );
         assert_eq!(source.0.asked(), 2);
         assert!(wakes.try_recv().is_err(), "no wake for an answer in time");
+    }
+
+    #[test]
+    fn a_tracer_hears_each_answer_and_whether_it_came_late() {
+        let source = FakeSource::default();
+        source.0.push(Step::Answer(PLAIN));
+        let (step, release) = hang(PASSWORD);
+        source.0.push(step);
+        let inspector = Inspector::new(source.clone());
+        let (heard, events) = mpsc::channel();
+        inspector.set_tracer(Arc::new(move |event| {
+            let _ = heard.send(event);
+        }));
+        inspector.wait_open();
+        let (woken, wakes) = mpsc::channel();
+
+        // In time: no `late_by`.
+        assert_eq!(
+            inspector.observe(first(SUBJECT, &woken), LONG),
+            Answer::Observed(PLAIN)
+        );
+        match events.recv_timeout(LONG).expect("traced") {
+            TraceEvent::Probed {
+                observation,
+                late_by,
+                ..
+            } => {
+                assert_eq!(observation, PLAIN);
+                assert_eq!(late_by, None);
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // Late: `late_by` is set when it arrives, and its use is traced too.
+        assert_eq!(
+            inspector.observe(first(SUBJECT, &woken), SHORT),
+            Answer::TimedOut
+        );
+        release.send(()).expect("the thread still waits");
+        wakes.recv_timeout(LONG).expect("woken");
+        match events.recv_timeout(LONG).expect("traced") {
+            TraceEvent::Probed {
+                observation,
+                late_by,
+                after_question,
+                ..
+            } => {
+                assert_eq!(observation, PASSWORD);
+                assert!(late_by.is_some());
+                assert!(after_question >= SHORT, "{after_question:?}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            inspector.observe(again(SUBJECT, &woken), LONG),
+            Answer::Late(PASSWORD)
+        );
+        assert!(matches!(
+            events.recv_timeout(LONG).expect("traced"),
+            TraceEvent::LateTaken(_)
+        ));
     }
 
     #[test]
