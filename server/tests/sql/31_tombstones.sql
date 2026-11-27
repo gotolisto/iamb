@@ -251,7 +251,7 @@ declare
 begin
     perform iamb_test.new_device('ines2', 'ines'); perform iamb_test.hello('ines2');
     r1 := iamb_test.rev('snippet', s2);
-    perform iamb_test.push('ines', jsonb_build_array(iamb_test.op_snippet(s2, f2, ';priv', 'The PIN is 4711.', r1)));
+    perform iamb_test.push('ines', jsonb_build_array(iamb_test.op_snippet(s2, f2, ';priv', 'The PIN is 4711, zebra-quartz.', r1)));
     perform iamb_test.push('ines', jsonb_build_array(iamb_test.op_delete('snippet', s2, iamb_test.rev('snippet', s2))));
     rdel := iamb_test.rev('snippet', s2);
     perform iamb_test.push('ines', jsonb_build_array(iamb_test.op_share(f2, g, 'edit')));
@@ -265,17 +265,17 @@ begin
     r := iamb_test.call('tom', format('api.get_conflict(iamb_test.dev(''tom''), 1, %L)', c));
     perform iamb_test.eq((select jsonb_agg(v -> 'row' -> 'body' order by (v ->> 'rev')::bigint) from jsonb_array_elements(r -> 'versions') v),
                          '["Ask me."]'::jsonb, 'what Tom is offered');
-    perform iamb_test.ok(r::text not like '%4711%', 'the deleted content is not in his answer');
+    perform iamb_test.ok(r::text not like '%zebra-quartz%', 'the deleted content is not in his answer');
     r := iamb_test.call('tom', format('api.resolve_conflict(iamb_test.dev(''tom''), 1, %L, ''restore'', %s)', c, rdel));
     perform iamb_test.ok(r ->> 'error' = 'invalid' and (select body from iamb.snippet where id = s2) = 'Tom was here', 'and he cannot restore it: ' || r::text);
     -- A guess of the deleted content, sent with the tombstone's revision as its base, is answered
     -- like any other write (C17): the server does not name the owner as its author.
     first := (iamb_test.push('tom', jsonb_build_array(iamb_test.op_snippet(s2, f2, ';priv', 'The PIN is 4710.', rdel))) -> 'results' -> 0 -> 'origin' ->> 'content_by')::uuid;
-    second := (iamb_test.push('tom', jsonb_build_array(iamb_test.op_snippet(s2, f2, ';priv', 'The PIN is 4711.', rdel))) -> 'results' -> 0 -> 'origin' ->> 'content_by')::uuid;
+    second := (iamb_test.push('tom', jsonb_build_array(iamb_test.op_snippet(s2, f2, ';priv', 'The PIN is 4711, zebra-quartz.', rdel))) -> 'results' -> 0 -> 'origin' ->> 'content_by')::uuid;
     perform iamb_test.ok(first is not distinct from second, 'the right guess is answered like the wrong one: ' || coalesce(first::text, 'nobody') || ', ' || coalesce(second::text, 'nobody'));
     -- The owner is offered all of it.
     r := iamb_test.call('ines', format('api.get_conflict(iamb_test.dev(''ines''), 1, %L)', (select id from iamb.conflict where row_id = s2 and state = 'open')));
-    perform iamb_test.ok(r::text like '%4711%', 'the owner is offered the deleted version');
+    perform iamb_test.ok(r::text like '%zebra-quartz%', 'the owner is offered the deleted version');
     perform iamb_test.check_all();
 end $$;
 
