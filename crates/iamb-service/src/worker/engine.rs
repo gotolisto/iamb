@@ -140,9 +140,9 @@
 //!
 //! Only a regular file counts, looked at without following a link (the beta review's
 //! re-verification, N5): anything else in its place (a link, a dangling one too, a directory, a
-//! FIFO) means "not paused" and is removed, when pausing, when resuming and at the start (a
-//! directory only when empty; one that is not stays, with a warning, and still means "not
-//! paused"). The status says when the pause was kept from before this worker
+//! FIFO) means "not paused" and is removed, when pausing, when resuming and at the start. A
+//! directory that is not empty is moved aside instead, to `paused.aside-<n>` in `run/`, so that
+//! the file can still be created and the pause kept (the review's round 2, R1). The status says when the pause was kept from before this worker
 //! ([`ServiceStatus::paused_kept`](iamb_ipc::ServiceStatus)), so that the menu, the library and
 //! "Why didn't it expand?" can say so: such a pause outlives a quit, a logout and a restart of
 //! the machine.
@@ -206,8 +206,8 @@ pub const PAUSED_FILE: &str = "paused";
 ///
 /// # Errors
 ///
-/// Something that is not a regular file is there and could not be removed (a directory that
-/// is not empty); it still means "not paused".
+/// Something that is not a regular file is there and could be neither removed nor moved
+/// aside; it still means "not paused".
 pub(crate) fn pause_kept(path: &std::path::Path) -> std::io::Result<bool> {
     match std::fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_file() => Ok(true),
@@ -223,7 +223,7 @@ pub(crate) fn pause_kept(path: &std::path::Path) -> std::io::Result<bool> {
 ///
 /// # Errors
 ///
-/// I/O errors; a directory that is not empty in its place.
+/// I/O errors.
 pub(crate) fn keep_pause_file(path: &std::path::Path, on: bool) -> std::io::Result<()> {
     let create = || {
         std::fs::OpenOptions::new()
@@ -253,10 +253,15 @@ pub(crate) fn keep_pause_file(path: &std::path::Path, on: bool) -> std::io::Resu
 }
 
 /// Removes the entry at `path` itself (a link, not what it points to); `dir` when it is a
-/// directory, which must be empty.
+/// directory. A directory that cannot be removed (it is not empty) is moved aside instead, to
+/// a new name beside it ([`move_aside`]; the review's round 2, R1): otherwise a pause could not
+/// be kept, and only the log would say so.
 fn remove_entry(path: &std::path::Path, dir: bool) -> std::io::Result<()> {
     let removed = if dir {
-        std::fs::remove_dir(path)
+        std::fs::remove_dir(path).or_else(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => Err(e),
+            _ => move_aside(path).map(drop),
+        })
     } else {
         std::fs::remove_file(path)
     };
@@ -264,6 +269,42 @@ fn remove_entry(path: &std::path::Path, dir: bool) -> std::io::Result<()> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         other => other,
     }
+}
+
+/// Renames the entry at `path` to `<name>.aside-<n>` beside it, with the first `n` that names
+/// nothing yet, and returns the new path. `rename` moves the entry itself and follows no link;
+/// the directory is `run/`, the user's alone, so the name chosen stays free.
+fn move_aside(path: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    for n in 1..=1000_u32 {
+        let aside = path.with_file_name(format!("{name}.aside-{n}"));
+        match std::fs::symlink_metadata(&aside) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::rename(path, &aside)?;
+                return Ok(aside);
+            }
+            Err(e) => return Err(e),
+            Ok(_) => {}
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "no free name to move the entry aside",
+    ))
+}
+
+/// Whether a diagnostic with `code` answers a `ReopenLastForm` that went to the engine, so that
+/// the form it may still open no longer renews the answers' time (the beta-gap review's
+/// finding 8; round 2's R4: `form_open` and `request_cancelled` were left out). `reopening`:
+/// the diagnostic came out of the `ReopenLastForm` event itself, where a `request_cancelled`
+/// is for the request it replaced, not for it.
+fn answers_a_reopen(code: &str, reopening: bool) -> bool {
+    code.starts_with("refused_")
+        || matches!(code, "no_last_form" | "form_open")
+        || (code == "request_cancelled" && !reopening)
 }
 
 /// How long a parked request waits for the focus change of its window: the UI host's
@@ -1051,6 +1092,7 @@ impl EngineThread {
 
     /// Runs one event through the engine and carries out its actions.
     fn handle(&mut self, event: Event) {
+        let reopening = matches!(event, Event::ReopenLastForm);
         let env = Env {
             shared: &self.shared,
             now: (self.shared.clock)(),
@@ -1069,7 +1111,7 @@ impl EngineThread {
                     {
                         code.clone_into(&mut wire.code);
                     }
-                    if wire.code.starts_with("refused_") || wire.code == "no_last_form" {
+                    if answers_a_reopen(&wire.code, reopening) {
                         self.reopen_waiting = false;
                     }
                     self.shared.diagnostic(wire);

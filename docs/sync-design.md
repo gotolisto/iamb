@@ -83,7 +83,7 @@ It checks this together with the other invariants:
 
 | | Invariant |
 | --- | --- |
-| I1 | **Convergence.** When all devices are online and idle, every device of a user holds exactly the live rows the server shows that user, in the same revisions, and no row the server does not show that user; rows blocked on that device (place 5) are the exception. For a row the server holds as a tombstone, the device holds the same tombstone or nothing |
+| I1 | **Convergence.** When all devices are online and idle, every device of a user holds exactly the live rows the server shows that user, in the same revisions, and no row the server does not show that user; rows blocked on that device (place 5) are the exception. For a row the server holds as a tombstone and shows that user, the device holds the same tombstone or nothing. A tombstone the server does not show the user, because the row was deleted before the user's access to it began (§5.4), is a row the server does not show that user: the device holds nothing of it, also not the live copy it may have held under an earlier access (D3) |
 | I2 | **No lost edit**, as defined above |
 | I3 | **Revisions only grow.** No device replaces a row by an older revision of it. The one exception is the reconcile after the server was restored from a backup: rows the backup held, rows only the server writes, and rows the device may not write and whose version its user did not write, are taken as the server has them; only what the restore lost is held back and sent again (D7) |
 | I4 | **No access leak.** After a device has synced past the end of an access, it holds none of the rows that access gave it, and no tag, attachment or file that only those rows made readable (D6, D16). A device that is signed out cannot sync; one that was signed out without the server's word holds such rows set aside, where nothing uses or shows them, until the sync after its next sign-in and for 30 days at most (D14) |
@@ -246,8 +246,8 @@ of the owner's:
 | --- | --- |
 | `F` and every folder below it | The share |
 | Every snippet in those folders, with who wrote its content and when | It is in a readable folder |
-| The links between those snippets and tags, and the tag rows those links name (name and colour) | A tag is visible with the snippets that carry it (architecture §7) |
-| The links between those snippets and attachments, the attachment rows they name, and the stored files of exactly those attachments | A rich snippet is useless without its images |
+| The links between those snippets and tags, and the tag rows those links name (name and colour), while the tag is live | A tag is visible with the snippets that carry it (architecture §7) |
+| The links between those snippets and attachments, the attachment rows they name while they are live, and the stored files of exactly those attachments | A rich snippet is useless without its images |
 | The share row itself, and other shares of those folders with groups the member is in | So that the device can show "Shared by Ines · you can use" |
 | The owner's personal profile row (id, kind, the fixed name, the owner's id) and the owner's display name | A folder names its profile |
 
@@ -269,6 +269,19 @@ has, which the service can count from the snapshot.
 
 A folder below `F` whose parent a user cannot read is delivered with an empty parent and shown at
 the top level (architecture §7). That happens only for a sub-folder shared by itself.
+
+**A share carries what is in the folder when it begins, and what comes after.** A deleted row
+stays on the server as a tombstone for 30 days, with the content it had (§5.12). A tombstone is
+read by who deleted the row and by those who could read the row before it was deleted, and by
+nobody else: a snippet, a sub-folder, a link or a tag that was deleted before `F` was shared, or
+before a member joined the group, does not reach that member, through no read and not as an id
+(§5.4, §5.13). For them it is a row that does not exist, and no write of theirs brings it back
+(C5, C7, C13). If someone who can read it restores it, it is a live row again and reaches every
+reader of the folder as a new revision. What is true of versions a write replaced (§5.6,
+ADR-0031) is true of what a delete left behind. A deleted tag or attachment row of the owner's is
+not carried at all: a link gives its row while the row is live, so the name of a deleted tag does
+not stay on a member's device, and does not reach one that comes later, because a snippet still
+has a link to it (C10). (S90, S91, S92)
 
 ### 4.5 "Exactly one folder and nothing else"
 
@@ -335,6 +348,7 @@ Task 4.3 tests every line (§11.5).
   | --- | --- | --- |
   | `session_ok()` | Whether the token's session still exists in `auth.sessions`, was opened by one of Iamb's ways of signing in (the token's `amr` claim against `server_state.sign_in_methods`, C25) and has a device row that is not revoked | Every policy |
   | `member_of(profile)`, `role_in(profile)` | Whether the caller has a live membership in the group; their role | The policies on `membership`, `profile`, `folder_share`, `tag`, `attachment`, `invitation`, `user_profile` |
+  | `member_before(profile, rev)` | Whether the caller has a live membership in the group that began before that revision | The policies on `tag` and `attachment`, for a deleted row of a group (§5.13) |
   | `shares_group_with(user)` | Whether the caller and that account have a live membership in one group | The policy on `user_profile` |
   | `own_address()` | The caller's confirmed email address, or null when it is not confirmed (§5.8) | The policy on `invitation` |
   | `enter(device, protocol, call)` | An error code or null, and the current epoch, which every answer names, a refusal included (§6.1, D14). It checks the session and the way it was opened (`session_refused`, C25) and the device row (C25; in a function that writes or issues a position it takes the row's lock first and checks the row afterwards, C24), compares the protocol with the server's range (C23), counts the call in `rate_bucket` (§6.8) and notes `device.last_seen_at` (at most once an hour). It never changes `server_state`, `epoch`, a feed or another device's row: a device that reports more than the server holds is answered `server_behind`, and a line goes to the function log (C18) | Every function of `api`, as its first statement |
@@ -450,9 +464,64 @@ must not count as older than the emptying (S88, S89). Until its request has ende
 A deleted folder keeps exactly the entries it would have if it were live, computed from the
 shares and memberships that are live now, until the purge removes them. So the owner of a
 deleted folder, the members of the group that owns it, and the members who reach it through a
-live share of a folder above it can read its tombstone. A folder whose own share was deleted
+live share of a folder above it can read its tombstone, **if their entry is older than the
+delete**. A folder whose own share was deleted
 with it (C6) has no entry for the people that share served: for them the folder ends as any
 share ends, with `folder_revoked` (C21).
+
+**An entry reads a tombstone only when it began before the delete.** A row that is read through
+an access entry (a folder through its own entry; a snippet, and a link of that snippet, through
+the entry for the snippet's folder; a share through the entry for its folder) is readable through
+it while it is live, and as a tombstone only when the reader deleted the row (`updated_by`), or
+the tombstone's revision is above the entry's `since_rev`. A tombstone's revision is the revision
+of its delete: no write changes a deleted row except one that makes it live. So the comparison
+says whether the user could read the row, in a state of the server the user could have seen,
+before it was deleted; a row deleted in the request that made the entry was never such a row. For
+everybody else the row is not there: no policy shows it, the feed's entry for it is delivered as
+null, a snapshot leaves it out, `rows` answers null, a cascade answer says `gone`, and
+`visible_folders` and `access` do not name a deleted folder they may not read. The entry itself
+stays, because a folder that comes back needs it; it gives nothing while the folder is deleted.
+
+- **Who deleted a row reads its tombstone**, as who wrote a version is offered it (§5.6). It is
+  not a courtesy: a device that creates a folder and, still offline, deletes a folder above it
+  sends both in one push, the new folder is created and deleted in one request, and no entry for
+  it can be older than its delete. The device must get the tombstones of what it made, in the
+  answer to that push, or it would hold them live for good (I1).
+- **A snippet that changes its folder leaves its deleted links behind.** A link is read through
+  the entry for its snippet's folder, and a snippet can move: into a folder whose readers could
+  not read it when a link was deleted, or into one that is younger than that delete. So the
+  server removes a snippet's deleted links, with their history, when the snippet changes its
+  folder, as the purge would 30 days after their delete (§5.12). What it holds of a snippet's
+  deleted links was therefore deleted while the snippet was where it is now, and the entry says
+  the right thing about each. A device that holds such a link as deleted keeps it until its own
+  purge (D8); one that still held it live has the entry of the delete in its feed, which is
+  delivered as null.
+- **A tag or an attachment row is not in a folder.** Its tombstone is read by the owner of its
+  personal profile, and by a member of its group whose membership began before the delete. Through
+  a link from a shared snippet the row is read only while it is live: when it is deleted, the
+  readers it had through links get its entry as null and their devices drop it, with the links to
+  it, which count for nothing while it is deleted (C10, D3); when it comes back, its entry brings
+  the links again (§5.5; S92). The snippet that carries the link can move as well, and no entry
+  would say the right thing about a deleted row that is reached through it.
+
+**What a device holds of a withheld tombstone.** Nothing, and the rules that exist see to it; no
+new one is needed on the device. There are two halves to it. *A device never holds a live copy of
+a row whose tombstone it cannot get.* A reader for whom a tombstone is withheld either never had
+the row, or had it under an entry that ended. An entry never ends silently: its end puts
+`folder_revoked` for the top of the lost tree into the reader's feed (C21), or the folder arrives
+as a null row, and either purges the tree on the device, tombstones and unsent changes included
+(D3, D6). When the new entry begins, `folder_visible` makes the device fetch the tree's live rows
+and remove what it holds of the tree that the fetch did not bring (D6). A device that was away
+for all of it applies the feed in order and does the same; the entry of a delete that the reader
+could have seen, still in the feed, is now delivered as null and removes the row (D3). A device
+whose position is too old resyncs: the snapshot does not hold the row and the resync removes it
+(D7), and a change to the row that the device had not sent is pushed, answered `rejected: gone`
+and kept in the list of changes that were not synced (C13, D5). *And the server never withholds a
+tombstone that a device holds under an access that still stands.* Whether a tombstone is readable
+depends on its revision, on who deleted it and on the entry, none of which changes while the
+entry stands; the one row that hangs on something that moves, a link, is removed from the server
+when its snippet moves. So what a reader could read once stays readable until that access ends or
+the row is purged, and the two-device simulation holds I1 and I4 with these rules (S91).
 
 `iamb_private.refresh_access` recomputes the entries for the folders, groups or users a change
 touches and is called, in the same transaction, by everything that can change them: a folder's
@@ -493,6 +562,8 @@ Rules for task 4.2:
   it. The writer's own feed gets it too: that is how the other devices of the same account hear of
   the change. A snippet that becomes readable for a user through a move brings its links: each gets
   a `row` entry for that user, and the tags and attachments they name come with the page (§6.4). A
+  tag or an attachment row that comes back from a delete brings its live links the same way, for
+  the readers who had lost the row (§5.4). A
   new member's feed gets a `row` entry for the group's profile and for each live membership of the
   group. For a user who can no longer read a row after the write, the entry is delivered as null
   (§6.4). A device treats a null folder as the end of that tree, except the parts of it that are
@@ -539,7 +610,9 @@ was in (for a folder's version, the folder itself; §5.4 `since_rev`); for a tag
 the tag's personal profile or have been a member of its group since before the version was
 replaced. A version that was written and replaced within one request (a request can name a row
 twice) was never the row in such a state: the history marks it (`within_request`), and only its
-writer is offered it. A
+writer is offered it. A deleted version, the tombstone that a later write replaced when it made
+the row live again, is offered as the tombstone was readable: to a reader whose access began
+before that delete, not merely before the restore (§5.4). A
 version that is not offered to a party is, for that party, not a version of the conflict: it is
 not listed and cannot be restored by them. Because parties can be offered different versions, an
 answer by one of them does not always close the conflict for the others: `closed_for` on the
@@ -674,7 +747,7 @@ behind is seen.
 
 | What | Rule |
 | --- | --- |
-| Tombstones of synced rows | Purged 30 days after `deleted_at`, children before parents, with their history, their conflicts, their links and their access entries. After that the row id is unknown to the server (C13) |
+| Tombstones of synced rows | Purged 30 days after `deleted_at`, children before parents, with their history, their conflicts, their links and their access entries. After that the row id is unknown to the server (C13). A deleted link goes earlier when its snippet changes its folder: the write that moves the snippet removes it, with its history (§5.4) |
 | Attachments nothing uses | An attachment row whose `unlinked_at` is more than `history_days` (90) old is deleted (a tombstone, purged 30 days later). The 90 days are those of the history, so that a version restored from a conflict still finds its images. When the last row for a `(profile, sha256)` is purged, the stored file and its `attachment_blob` row are removed |
 | Uploads under way | An `attachment_upload` row past `expires_at` is removed with its object |
 | Feed entries | Deleted after 30 days; `floor` raised |
@@ -692,6 +765,8 @@ one line to remember: **a device that was offline for more than 30 days resyncs*
 ### 5.13 Row-level security, in words
 
 Read rules. "Reads the folder" means a `folder_access` row for the caller and the folder exists.
+"Reads through it" a row means: the row is live, or the caller deleted it, or it was deleted after
+that entry began (its revision is above the entry's `since_rev`, §5.4).
 Every rule also requires `iamb_private.session_ok()`: a session that still exists and was opened by
 one of Iamb's ways of signing in, with a device row that is not revoked (C25). "Member of" and "role
 in" are the gate helpers of §5.1, never a subquery on `membership` itself.
@@ -700,13 +775,13 @@ in" are the gate helpers of §5.1, never a subquery on `membership` itself.
 | --- | --- |
 | `profile` | It is their personal profile; or they are a member of it; or they read a folder that belongs to it |
 | `membership` | It is their own (also as a tombstone); or it is live and they are a member of the same group |
-| `folder` | They read the folder (tombstones included, until the purge, §5.4) |
-| `folder_share` | They have `manage` on the folder; or they are a member of the group it names and read the folder |
-| `snippet` | They read its folder |
-| `tag` | The tag's profile is their personal profile or a group they are a member of; or a snippet they can read has a live link to it; or they wrote it last **and** have `edit` on at least one folder of its profile now |
-| `snippet_tag` | They can read its snippet |
+| `folder` | They read the folder, and read the row through that entry: a tombstone, until the purge, only when their access began before the delete (§5.4) |
+| `folder_share` | They have `manage` on the folder; or they are a member of the group it names and read the folder; in both cases they read the share's row through the folder's entry |
+| `snippet` | They read its folder, and read the row through that entry |
+| `tag` | The tag's profile is their personal profile; or it is a group they are a member of, and the tag is live or their membership began before it was deleted (`member_before`); or the tag is live and a snippet they can read has a live link to it; or they wrote it last **and** have `edit` on at least one folder of its profile now |
+| `snippet_tag` | They can read its snippet, and read the link's row through the entry for the snippet's folder |
 | `attachment` | As `tag`, with the links to attachments |
-| `snippet_attachment` | They can read its snippet |
+| `snippet_attachment` | As `snippet_tag` |
 | `user_profile` | It is their own; or they share a live group with that person; or that person owns a profile they can read |
 | `device` | It is their own |
 | `folder_access` | It is their own |
@@ -935,7 +1010,7 @@ row as the server has it now and as the caller may read it, with `origin` for a 
 when the caller may not read it or it does not exist. **`cascade` is on the result of a folder's
 delete, whatever its status except `partial`**: one entry for every row of the op's cascade list,
 with the row's revision and whether it is deleted after the request, or `gone` when the caller may
-not read it or it does not exist. An entry carries the whole row, with its origin, only where the
+not read it (a tombstone the caller may not read included, §5.4) or it does not exist. An entry carries the whole row, with its origin, only where the
 device does not hold that content: the row is live in a revision other than the base the list named
 for it. A row the device deleted with the folder therefore always gets an answer: deleted with it,
 still live because it had left the folder, or live because the delete was refused (D4, D5). The
@@ -965,8 +1040,9 @@ say what the store does with each result.
   issued last and the one that was presented for it: C25. A device asks for what comes after its
   position and stores `next` in the same transaction as the page's effects (D11).
 - A `row` entry carries the row as it is now, read through the caller's policies. `row` is **null**
-  when the row is no longer there for the caller: purged, or no longer readable. The device then
-  removes its copy (D3). A folder is delivered with an empty parent when the caller cannot read the
+  when the row is no longer there for the caller: purged, no longer readable, or deleted and a
+  tombstone the caller may not read because their access began after the delete (§5.4). The device
+  then removes its copy (D3). A folder is delivered with an empty parent when the caller cannot read the
   parent.
 - **A page is closed under references.** With each row the page carries every row it refers to (its
   folder and the folders above, the tag or attachment of a link, the profile) whose own entry is not
@@ -986,9 +1062,9 @@ say what the store does with each result.
 | Function | Returns | Used for |
 | --- | --- | --- |
 | `fetch_folder(folder, cursor)` | The live rows of the tree under `folder` that the caller can read: folders, snippets with their origin, links, the tags and attachments those links name (with whether the bytes are verified), the shares of those folders the caller may read, the owning profile; and `head`, the feed's head when the first page was read. Pages of at most 500 rows and about 4 MiB by `cursor`; a page holds at least one row | `folder_visible` (D6) |
-| `snapshot(position, cursor)` | The same for everything the caller can read, with the profiles and memberships, and tombstones the server still holds. Its first page carries `start`, a position at the feed's head; a device that has just registered presents the position it holds from before, or none (C25). When the position presented is of an older epoch, it also carries `lost`: for every profile the caller can read, the last revision of that profile the restored database held (its `backup_rev` in the epoch that followed the device's, or in the current one when the server does not know that epoch), with that epoch's id and `started_at` (C18) | Resync (D7) |
+| `snapshot(position, cursor)` | The same for everything the caller can read, with the profiles and memberships, and the tombstones the server still holds that the caller may read (§5.4). Its first page carries `start`, a position at the feed's head; a device that has just registered presents the position it holds from before, or none (C25). When the position presented is of an older epoch, it also carries `lost`: for every profile the caller can read, the last revision of that profile the restored database held (its `backup_rev` in the epoch that followed the device's, or in the current one when the server does not know that epoch), with that epoch's id and `started_at` (C18) | Resync (D7) |
 | `rows(refs)` | Up to 500 rows named by entity and id, each as the caller may read it now, or null | Catching up after a skipped row (D15) |
-| `visible_folders()` | The ids of all folders the caller can read. Answered for every protocol version from `protocol_oldest` on and for accounts whose plan has no sync | The access check (D7, D12) |
+| `visible_folders()` | The ids of all folders the caller can read, a deleted one only where the caller may read its tombstone. Answered for every protocol version from `protocol_oldest` on and for accounts whose plan has no sync | The access check (D7, D12) |
 | `access()` | The caller's access roots outside their personal profile: `root`, `profile`, `permission`, `via`, `granted_at`; and their role in each group | `SetAccess` (§7.1), after every page that held a visibility entry or a share, membership or profile row |
 | `users(ids)` | The display names of those of the given accounts the caller may see (§5.13) | Names of authors and members |
 | `members(group)` | §5.14 | The member list |
@@ -1320,7 +1396,8 @@ history, no feed entry, no conflict, whatever the base. (S05, S42, S43)
 **C5.** *A delete is a write.* Whichever of an edit and a delete arrives last wins. A stale
 `delete` deletes the row and, under C3, records `delete_over_edit` with the live version on
 offer. A `put` on a tombstone makes the row live again and, when stale, records
-`edit_over_delete` with the tombstone on offer. A `delete` of a tombstone is `unchanged`; a
+`edit_over_delete` with the tombstone on offer; a `put` on a tombstone the writer may not read is
+a `put` on a row that is gone (C13). A `delete` of a tombstone is `unchanged`; a
 `delete` of a row the server does not know is `unchanged` too, with no row in the answer. (S03,
 S04, S05, S18, S19, S20, S22, S50)
 
@@ -1350,7 +1427,9 @@ a deleted folder restores every deleted folder on the way up, if the writer may:
 top-level folder, `edit` on its parent for a sub-folder. Each restored folder gets a new
 revision and a `folder_restored` conflict between the writer and whoever deleted it. What was
 deleted with the folder stays deleted, and its shares stay deleted: access never comes back by
-itself. If the writer may not restore a folder on the way, the `put` is `rejected: parent_gone`.
+itself. If the writer may not restore a folder on the way, the `put` is `rejected: parent_gone`;
+the writer may not when the folder is a tombstone the writer cannot read (§5.4): restored, it would
+hand over a name the writer never had.
 Under C24 this holds for requests that arrive together as for those that arrive apart. (S15, S53)
 
 **C8.** *Structure is put right, not refused.* A folder `put` that would make the folder its own
@@ -1374,10 +1453,10 @@ decided on each device by the same precedence (D13). (S09, S10, S11, S25, S48, S
 
 **C10.** *Links are rows.* A link is created and deleted by itself; nothing cascades to it and it
 cascades nothing. It counts only while it and both rows it joins are live, and it is purged with
-either. A link to a tombstone is accepted and waits; a link to a row the server does not know is
+either; a deleted link is also removed when its snippet changes its folder (§5.4). A link to a tombstone is accepted and waits; a link to a row the server does not know is
 `rejected: parent_gone`. Two links for the same pair may exist; devices treat them as one, and a
 device that takes a tag or an image off a snippet deletes every live link of the pair (D3).
-(S17, S18, S19, S20, S21, S63, S64)
+(S17, S18, S19, S20, S21, S63, S64, S92)
 
 **C11.** *Sharing never wins by being late.* A share's id is derived from its folder and group,
 so a pair has one row. A `put` needs `manage` on the folder, a folder in a personal profile, the
@@ -1404,7 +1483,12 @@ somebody who holds the id already. (S30, S31, S34, S36, S39, S52, S62)
 **C13.** *Rows the server does not know.* A `put` with a base above 0 for an id the server does
 not have is `rejected: gone`: the row was purged more than 30 days after its delete, and it does
 not come back. The one exception is a re-push of a revision that a restore of the server lost
-(C18). A `put` with base 0 creates the row. A row whose folder, or other row it must refer to,
+(C18). A `put` with base 0 creates the row. **A tombstone the writer may not read (§5.4) is such
+a row for the writer**: a `put` with its id is `rejected: gone` whatever its base, the row stays
+deleted, and the device keeps the change and drops its copy (D5). Were the row restored instead,
+its live links would be live again with it (C10), and the writer would read tags and files that
+were never shared with them. A share is the exception: its id is derived, and who may write it is
+decided by `manage` on the folder alone (C11). A row whose folder, or other row it must refer to,
 is unknown to the server or unreadable for the writer is `rejected: parent_gone`; so is a tag, an
 attachment or a top-level folder that names a profile, and a share that names a group, in which
 the writer has no grant, whether it exists or not. (S23, S43, S59)
@@ -1650,7 +1734,9 @@ restores the folders above it, C7; a tombstone deletes the row, a folder with it
 conditions and the bound of C6: at most `cascade_max` rows per call, with `partial` and a repeated
 call for more), keeps the author its content had (C17), records no conflict for that write, and
 closes the conflict as an answer does (above). The version it replaces goes to the history like any other. A
-version whose history row has been purged answers `gone`. (S07, S85, S86, S87, S88)
+version whose history row has been purged answers `gone`. A deleted version (the tombstone that a
+restore of the row replaced) is offered as the tombstone itself is read: to a party whose access
+began before that delete (§5.4, §5.6). (S07, S85, S86, S87, S88)
 
 **C21.** *Visibility.* What a user may read follows from `folder_access` (§5.4), which the server
 keeps equal to §4.2 inside every transaction that changes a folder's place, a share or a
@@ -1659,12 +1745,15 @@ for its top goes into their feed; when it stops being readable while its rows st
 `folder_revoked`. That includes a shared folder its owner deletes: the share is deleted with it
 (C6), so the people the share served get `folder_revoked` and not tombstones they could no
 longer read, while those who read the folder as its owner, as members of the group that owns
-it, or through a live share of a folder above it get the tombstones. A tree that is revoked
+it, or through a live share of a folder above it get the tombstones. **A tree that becomes
+readable brings no tombstone**: what was deleted in it before the reader's access began is not
+theirs to read (§5.4), `folder_visible` is written only for a live folder, and the fetch that
+follows it returns live rows (§6.5). A tree that is revoked
 while part of it stays readable through another grant gets one entry: `folder_revoked` for its
 top with the parts that stay listed in `except`. A folder that is still reachable through
 another grant is not revoked; only its permission changes. Visibility entries are written in
 the order the grants changed and a device handles them in that order (D6). (S10, S11, S28, S29,
-S30, S35, S36, S37, S38, S61, S62, S65, S67, S82)
+S30, S35, S36, S37, S38, S61, S62, S65, S67, S82, S90, S91)
 
 **C22.** *Thirty days.* Tombstones, the feed and receipts are kept 30 days (§5.12). Inside that
 time every rule above applies whatever the delay. After it a deleted row is unknown (C13) and a
@@ -1899,7 +1988,12 @@ arrive with its `folder_revoked` in no fixed order (§5.5); handled this way, ea
 first, and the later ones find nothing left to do. The same is done wherever another rule removes a
 folder the server no longer shows the user (D5, D7, D15): a folder never goes without what the
 device holds in it. A null row for a snippet takes the snippet's links with it. A tombstone for a
-row the device does not have is ignored. No uniqueness check applies to rows from the server. A
+row the device does not have is ignored. A row that was deleted while the device's user could not
+read it, or before they could, never arrives as a tombstone (§5.4): if the device still holds it
+from an earlier access, it goes as a null row, with its tree when the access ended, in the fetch
+of the tree when the access began again (D6), or in a resync (D7). A tag or an attachment row of
+someone else's profile that is deleted arrives as a null row too, and the links to it go with it
+on the device; they come again with the row if it is restored (§5.5; S92). No uniqueness check applies to rows from the server. A
 folder whose chain of parents does not reach the top within eight steps is shown at the top level:
 the server never holds a cycle (C24), but a device can for the moment between a pull and the answer
 to its own push. A local change that takes a tag or an image off a snippet deletes every live link
@@ -2356,7 +2450,7 @@ tokens; what it writes to disk is attachment files and its log.
 
 | Who | What they can do | What limits it | What is left |
 | --- | --- | --- | --- |
-| A member who may only use a folder | Read the shared tree (§4.4) | No table accepts a direct write; `push` refuses them (C12); nothing outside the tree is readable, and a refused read looks like a row or file that does not exist | They can copy what they can read |
+| A member who may only use a folder | Read the shared tree (§4.4) | No table accepts a direct write; `push` refuses them (C12); nothing outside the tree is readable, and a refused read looks like a row or file that does not exist. What was deleted from the tree before their access began is not readable either, although the server keeps it for 30 days (§5.4) | They can copy what they can read. What was deleted while they could read the folder reaches their devices as a tombstone, with its content, until the purge |
 | A member who may change a folder | Add, change and delete snippets and sub-folders in the tree; add attachments | On every other member's device, content they wrote that presses keys, waits, reads the clipboard, includes another snippet or has several lines is held until approved (D10), under the author the server recorded. No client can set that author, and no write by the reader's own device, stale or not, and no copy can turn it into the reader's (C17, D10; S40, S55, S56). Their snippet can never take over an abbreviation that a snippet with the reader's own content uses, in a shared folder or in the folder owner's private ones, whatever creation time their device sends (D13; S54). They cannot rename, move, delete or unshare the shared folder itself, also when it is a sub-folder of the owner's tree (§4.3), and cannot delete a folder above the root of another share (C6; S76). Deletes are tombstones for 30 days; wrong bytes cannot be stored under a hash, and knowing a file's hash gives no way to read it or to learn that the owner has it, also not through an attachment row and a link of their own, which count for nothing until they have uploaded the bytes (§5.13, §6.11; S73), not by writing the hash into a snippet's body, which no device turns into a link (D16; S81), and not through a restore of the server, after which a row that someone else's device gives back has no creator (C19; S84); they cannot move content out of the tree, share it onward or change who sees it; the rate limits bound how fast they can add | Single-line text they write, without key presses and without including another snippet, expands on the others' devices without review, for abbreviations that none of the reader's own snippets use (ADR-0022 accepts this). They can delete the tree's content, which the owner must restore within 30 days. They can use up the owner's plan limit with rows (§5.10), and with files once they have really uploaded them (§5.9); an upload they only announce counts against themselves. What they are offered of a row's past is what they could read when it was the present (C3, C20; S85), and "Restore this version" lets them write nothing a push would not (S87) |
 | A removed member, or one whose share ended | Nothing new from the moment the removal commits: every policy and every function refuses them, including for the tags and attachment rows they wrote there and for the conflicts on rows they wrote (a conflict they were party to is not listed, not announced and not theirs to close any more, C20; S86), and unsent changes are refused (C12). What they still hold are ids, and the answers tell them nothing about those: an op on the group or the profile answers as for one that does not exist, a delete of a row as for an unknown id, and a repeated account call gives no revision of the group (C12, C13, §5.14). An offer of the ownership made to them ended with the membership (C16). Their devices purge the content at the next sync, and at the latest at the daily access check, which runs also on a device that is too old to sync (D6, D7, D12, D16) | — | What their devices already held they may have copied, and a device that never comes online again keeps its copy. The server cannot erase a device. The share dialog should say so. A device that was signed out without the server's word holds what was shared with it, set aside, for 30 days at most (D14). A restore of the server from a backup taken before the removal would make them a member again: the restore script makes the removal again from the function log before the server is opened, so they receive nothing, also not a folder that was shared after they were removed (C18; S79). Where the log does not name the call, they are a member again until the device from which they were removed has synced, which makes the removal again before it gives anything back (D7; S58, S80); if that device never comes back, until an owner or admin removes them again, which the notice after a restore asks owners to check. A removal that was taken back on another device, while the device that made it was offline, is made again by that device after a restore: its list errs towards less access |
 | Someone who holds a member's unlocked device | Read the library on it, and act as that member | The owner of the account revokes the device from another device, or signs out everywhere. The device row is marked revoked, and because every call and every policy checks it, access stops with that commit and not when a token expires. The platform cannot end one other session, so the revoked row is kept for as long as that session exists: the computer is refused whether it is switched on the next day or the next year, and the session cannot register another device (C25; S74). "Sign out everywhere" ends the sessions themselves. At the authentication service a revoked session is still a session: its holder can set a password there, and that opens nothing, because Iamb accepts only sessions opened by a link or code to the account's address or by an identity provider, and where the project has the hook no token is issued for a password at all; it cannot change the address without the old mailbox, nor link another identity (C25, the settings below; S83). Then they change what must change | The library on that device stays readable to whoever holds it; malware running as the user is outside the model (architecture §8). The holder of a revoked session can end the user's other sessions, which costs a sign-in on each and nothing else (D14). A computer that "sign out everywhere" reaches while it is switched off has no word from the server when it comes back, and sets shared folders aside for up to 30 days before it removes them (D14) |
@@ -2416,8 +2510,8 @@ member with `view`, former member, stranger, signed out).
 | | Guarantee |
 | --- | --- |
 | G1 | `folder_access` equals §4.2 after every commit (compared with the slow reference function, §5.4) |
-| G2 | A user reads a folder, a snippet, a link, a share only under §5.13; every table of §4.5 returns exactly the rows listed there, and nothing after the share ends |
-| G3 | A tag or an attachment row of someone else's profile is readable only while a readable snippet has a live link to it, or by the user who wrote the row last while that user has `edit` on a folder of the profile; after the share ends or the user is removed, not at all |
+| G2 | A user reads a folder, a snippet, a link, a share only under §5.13; every table of §4.5 returns exactly the rows listed there, and nothing after the share ends. A row that was deleted by someone else before the user's access to it began is returned by no table and no function, as a tombstone or otherwise: not by `pull`, `snapshot`, `rows`, a push's answers or a conflict; no write of that user makes it live again or restores a deleted folder they may not read; and the policies and `readers` agree on it for every user after every step of the tests |
+| G3 | A tag or an attachment row of someone else's profile is readable only while it is live and a readable snippet has a live link to it, or by the user who wrote the row last while that user has `edit` on a folder of the profile; after the share ends or the user is removed, not at all. A deleted tag or attachment row of a group is readable by a member only when the membership began before the delete |
 | G4 | No role a device can have may insert, update or delete in any table of `iamb`. Nothing in `iamb_private` or `api_service` can be called through the REST interface with a device's token. The gate helpers and the two reader helpers of §5.1 are the only functions of `iamb_private` that `authenticated` may execute; no gate helper returns a fact about anyone but the caller or changes anything but the caller's device row and rate counters, and the reader helpers change nothing and return the addresses of a group's members to its owner and admins, and the history rows of a conflict's versions to a party they are on offer to, and nothing to anyone else: whatever a device sends, `server_state`, `epoch`, every feed and every other device's row are as they were. `anon` can read nothing and call nothing |
 | G5 | `history` is unreadable directly; a history version is returned only by `get_conflict`, to a party of the conflict who can read the row now and who wrote that version or could read it while it was the row: a version from a folder the party could not read then, or replaced before the party's access to its folder began, is not returned, not listed and not restorable by that party, also when a later conflict took it over. "Could read" means in a state of the server the party could have seen: a version replaced in the request that began the party's access, and a version written and replaced within one request, are not such versions. The base version of a write (C3, C17) is found under the same rule |
 | G6 | `feed`, `feed_head`, `device` and `folder_access` rows are readable by their user only; a `conflict` by a party who can read its row; an `attachment_upload` by its uploader and by who manages the profile it is for |
@@ -2669,6 +2763,10 @@ How to read one:
 | S87 | A member cannot restore a version that puts a folder where a push may not | structure | restore-version-permission |
 | S88 | A version replaced in the same push that shares its folder is not handed to a member | sharing | conflict-version-same-push |
 | S89 | A folder name replaced in the same push that shares the folder above it is not handed to a member | sharing | folder-name-same-push |
+| S90 | What was deleted from a folder before it was shared does not reach the people it is shared with | sharing | tombstone-before-access |
+| S91 | A share ends, a snippet is rewritten and deleted, and the share begins again while a member's device is offline | sharing | tombstone-after-access-ended |
+| S92 | The owner deletes a tag that a shared snippet still carries, and brings it back | tags | deleted-tag-shared-snippet |
+| S93 | A device comes back after a month to a folder that was unshared, changed and shared again | sharing | tombstone-resync |
 
 #### S01 · Two devices change the same field of one snippet
 
@@ -6994,6 +7092,238 @@ c1, loser a2 (and, taken over, a1), shown to tom and ines, open.
 - A: shown conflict.
 - B: shown conflict.
 - C: shown conflict.
+
+#### S90 · What was deleted from a folder before it was shared does not reach the people it is shared with
+
+Category: sharing. Covers: tombstone-before-access. Rules: C6, C21, C22, D3, D6.
+
+**Start.** Ines and Tom are in the family group. Ines has the folder f1 with a sub-folder f1b;
+nothing is shared. Before she shares f1 she deletes a snippet that names a debt, and the sub-folder
+with the complaints. Then she shares f1 with the family, to use. Afterwards she deletes one more
+snippet.
+
+Devices: A (ines), C (tom). Profiles: `p-ines` (personal, ines), `p-tom` (personal, tom), `g-fam`
+(family, ines).
+
+| Row | Kind | Refers to | Rev | Fields |
+| --- | --- | --- | --- | --- |
+| `m-ines` | membership | group `g-fam`, user `ines` | 2 | role `owner` |
+| `m-tom` | membership | group `g-fam`, user `tom` | 6 | role `member` |
+| `f1` | folder | profile `p-ines` | 3 | name `Shop replies` |
+| `f1b` | folder | profile `p-ines`, parent `f1` | 4 | name `Complaints about the landlord` |
+| `s1` | snippet | folder `f1` | 5 | abbreviation `;hrs`, body `Open 9 to 5.` |
+| `s2` | snippet | folder `f1` | 7 | abbreviation `;lena`, body `Lena still owes 40 for March.` |
+| `s3` | snippet | folder `f1b` | 8 | abbreviation `;damp`, body `The damp in the back room is still not fixed.` |
+| `s4` | snippet | folder `f1` | 9 | abbreviation `;ret`, body `Returns within 14 days.` |
+
+**Steps.**
+
+1. `a1` · A deletes `s2`. Answer: `s2` `applied`.
+2. `a2` · A deletes `f1b`. On the server the change also writes `s3`. Answer: `f1b` `applied`. *The
+   server keeps the three deleted rows for 30 days, with their content (C22). Only Ines can read the
+   folder, so only her devices hold the tombstones.*
+3. `a3` · A creates the folder share `sh1` (folder `f1`, group `g-fam`): permission `view`. Answer:
+   `sh1` `applied`. *Tom's access to f1 begins here. folder_visible(f1) goes into his feed and his
+   device fetches the tree: f1, s1, s4 and the share. The server also has an access entry for Tom
+   for the deleted sub-folder, as for any folder below a share, and it gives him nothing: a
+   tombstone is read through an entry that began before the delete (§5.4). No read hands Tom s2, f1b
+   or s3: not the fetch, not a snapshot at his next sign-in, not a request for the rows by their
+   ids.*
+4. `a4` · A deletes `s4`. Answer: `s4` `applied`. *Tom could read s4 before it was deleted. Its
+   tombstone reaches his device as before, and the device keeps it until its purge (D8).*
+
+**Outcome.** Tom's device holds the folder and the snippet that is live in it, and the tombstone of
+the snippet that was deleted while he could read it. It holds nothing of the debt note, the
+sub-folder or the complaint: for Tom they were never there. Ines's devices hold all four deleted
+rows until the purge.
+
+| Row | Server | A | C |
+| --- | --- | --- | --- |
+| `m-ines` | live · start | = | = |
+| `m-tom` | live · start | = | = |
+| `f1` | live · start | = | = |
+| `f1b` | deleted · a2 | = | absent |
+| `s1` | live · start | = | = |
+| `s2` | deleted · a1 | = | absent |
+| `s3` | deleted · a2 | = | absent |
+| `s4` | deleted · a4 | = | = |
+| `sh1` | live · a3 | = | = |
+
+- History (replaced versions the server keeps): `f1b` start; `s2` start; `s3` start; `s4` start.
+- Conflicts: none.
+- A: shown nothing.
+- C: shown shared; permission `f1` view.
+
+#### S91 · A share ends, a snippet is rewritten and deleted, and the share begins again while a member's device is offline
+
+Category: sharing. Covers: tombstone-after-access-ended. Rules: C11, C21, D3, D6, D11.
+
+**Start.** Ines shares f1 with the family, to change. Tom's device holds the folder with s1 and s2,
+is offline, and Tom edits s2. Ines stops sharing the folder, writes something private into s2,
+deletes s2, and shares the folder again.
+
+Devices: A (ines), C (tom). Profiles: `p-ines` (personal, ines), `p-tom` (personal, tom), `g-fam`
+(family, ines).
+
+| Row | Kind | Refers to | Rev | Fields |
+| --- | --- | --- | --- | --- |
+| `m-ines` | membership | group `g-fam`, user `ines` | 2 | role `owner` |
+| `m-tom` | membership | group `g-fam`, user `tom` | 6 | role `member` |
+| `f1` | folder | profile `p-ines` | 3 | name `Shop replies` |
+| `s1` | snippet | folder `f1` | 5 | abbreviation `;hrs`, body `Open 9 to 5.` |
+| `s2` | snippet | folder `f1` | 8 | abbreviation `;key`, body `Ask at the counter for the key.` |
+| `sh1` | folder share | folder `f1`, group `g-fam` | 7 | permission `edit` |
+
+**Steps.**
+
+1. C goes offline.
+2. `c1` · C edits `s2`: body `Ask at the counter or ring the bell for the key.`.
+3. `a1` · A deletes `sh1`. Answer: `sh1` `applied`.
+4. `a2` · A edits `s2`: body `The spare key is under the blue pot.`. Answer: `s2` `applied`.
+5. `a3` · A deletes `s2`. Answer: `s2` `applied`. *Tom cannot read the folder while this happens:
+   nothing about s2 goes into his feed.*
+6. `a4` · A creates the folder share `sh1` (folder `f1`, group `g-fam`): permission `edit`. Answer:
+   `sh1` `applied`. *Tom's access begins anew, after the delete of s2 (C11, §5.4). The tombstone of
+   s2, with the text Ines wrote while the folder was hers alone, is not his to read: no fetch,
+   snapshot or request by id returns it.*
+7. C comes back online and syncs. *C still holds s2, live, in the version of the start, with Tom's
+   unsent edit. One page holds folder_revoked and then folder_visible for f1. On the first the
+   device purges the tree: s2 goes with it, and the unsent edit goes to the list of changes that
+   were not synced (D6). On the second it fetches the tree, which holds what is live: f1, s1 and the
+   share. The device never asks for s2 again, and had it asked, the answer would have been that the
+   row is not there.*
+
+**Outcome.** Tom's device holds the folder as the server shows it to him: with s1, without s2. It
+was not left with a live copy of a snippet whose delete it could not be told of, and it has not
+received what Ines wrote in between. His own edit of s2 is kept in the list of changes that were not
+synced. The device says that the folder was unshared and shared.
+
+| Row | Server | A | C |
+| --- | --- | --- | --- |
+| `m-ines` | live · start | = | = |
+| `m-tom` | live · start | = | = |
+| `f1` | live · start | = | = |
+| `s1` | live · start | = | = |
+| `s2` | deleted · a3 | = | absent |
+| `sh1` | live · a4 | = | = |
+
+- History (replaced versions the server keeps): `s2` start, a2; `sh1` start, a1.
+- Conflicts: none.
+- A: shown nothing.
+- C: shown revoked, kept, shared; kept for the user: c1; permission `f1` edit.
+
+#### S92 · The owner deletes a tag that a shared snippet still carries, and brings it back
+
+Category: tags. Covers: deleted-tag-shared-snippet. Rules: C5, C10, D3, D16.
+
+**Start.** Ines shares f1 with the family, to use. The snippet s1 in it carries her tag t1. She
+deletes the tag; the link from s1 to it stays, as links do (C10). Later she restores the tag.
+
+Devices: A (ines), C (tom). Profiles: `p-ines` (personal, ines), `p-tom` (personal, tom), `g-fam`
+(family, ines).
+
+| Row | Kind | Refers to | Rev | Fields |
+| --- | --- | --- | --- | --- |
+| `m-ines` | membership | group `g-fam`, user `ines` | 2 | role `owner` |
+| `m-tom` | membership | group `g-fam`, user `tom` | 6 | role `member` |
+| `f1` | folder | profile `p-ines` | 3 | name `Shop replies` |
+| `s1` | snippet | folder `f1` | 5 | abbreviation `;hrs`, body `Open 9 to 5.` |
+| `t1` | tag | profile `p-ines` | 8 | name `shop` |
+| `l1` | snippet tag | snippet `s1`, tag `t1` | 9 |  |
+| `sh1` | folder share | folder `f1`, group `g-fam` | 7 | permission `view` |
+
+**Steps.**
+
+1. `a1` · A deletes `t1`. Answer: `t1` `applied`. *Tom read the tag through the link from a snippet
+   he can read, and a link gives a tag only while the tag is live (§5.13). His feed gets an entry
+   for the tag, delivered as null: his device removes the tag's row. The link stays on both devices
+   and counts for nothing while the tag is deleted (C10).*
+2. `a2` · A restores the deleted `t1`. Answer: `t1` `applied`. *The tag is live again and the link
+   counts again. Tom's feed gets the tag and, with it, the link (§5.5): his device had dropped the
+   link with the tag.*
+
+**Outcome.** While the tag was deleted, Ines's devices held it as deleted and Tom's device did not
+hold it at all: a tag of someone else's profile leaves a device when it is deleted, as it does when
+the last link to it goes, and its name does not stay behind. Restored, the tag is on every device
+again, and the snippet carries it on every device.
+
+| Row | Server | A | C |
+| --- | --- | --- | --- |
+| `m-ines` | live · start | = | = |
+| `m-tom` | live · start | = | = |
+| `f1` | live · start | = | = |
+| `s1` | live · start | = | = |
+| `t1` | live · a2 | = | = |
+| `l1` | live · start | = | = |
+| `sh1` | live · start | = | = |
+
+- History (replaced versions the server keeps): `t1` start, a1.
+- Conflicts: none.
+- A: shown nothing.
+- C: shown nothing.
+
+#### S93 · A device comes back after a month to a folder that was unshared, changed and shared again
+
+Category: sharing. Covers: tombstone-resync. Rules: C13, C21, C22, D5, D7.
+
+**Start.** Ines shares f1 with the family, to change. Tom's device holds the folder with s1, s2 and
+s3, goes offline, and Tom edits s2. Ines stops sharing the folder. A month later she writes
+something private into s2, deletes s2 and s3, and shares the folder again. Tom's device comes back
+the day after: its position is older than the feed reaches.
+
+Devices: A (ines), C (tom). Profiles: `p-ines` (personal, ines), `p-tom` (personal, tom), `g-fam`
+(family, ines).
+
+| Row | Kind | Refers to | Rev | Fields |
+| --- | --- | --- | --- | --- |
+| `m-ines` | membership | group `g-fam`, user `ines` | 2 | role `owner` |
+| `m-tom` | membership | group `g-fam`, user `tom` | 6 | role `member` |
+| `f1` | folder | profile `p-ines` | 3 | name `Shop replies` |
+| `s1` | snippet | folder `f1` | 5 | abbreviation `;hrs`, body `Open 9 to 5.` |
+| `s2` | snippet | folder `f1` | 8 | abbreviation `;key`, body `Ask at the counter for the key.` |
+| `s3` | snippet | folder `f1` | 9 | abbreviation `;ret`, body `Returns within 14 days.` |
+| `sh1` | folder share | folder `f1`, group `g-fam` | 7 | permission `edit` |
+
+**Steps.**
+
+1. C goes offline.
+2. `c1` · C edits `s2`: body `Ask at the counter or ring the bell for the key.`.
+3. `a1` · A deletes `sh1`. Answer: `sh1` `applied`.
+4. 31 days pass. *The feed entries of that day, folder_revoked among them, and the share's tombstone
+   are purged (C22).*
+5. `a2` · A edits `s2`: body `The spare key is under the blue pot.`. Answer: `s2` `applied`.
+6. `a3` · A deletes `s2`. Answer: `s2` `applied`.
+7. `a4` · A deletes `s3`. Answer: `s3` `applied`.
+8. `a5` · A creates the folder share `sh1` (folder `f1`, group `g-fam`): permission `edit`. Answer:
+   `sh1` `applied`. *Tom's access begins anew, after both deletes. Their tombstones are not his to
+   read (§5.4).*
+9. C comes back online and syncs. Answer: `reset_required:expired`, `s2` `rejected:gone`. *C never
+   saw the folder leave: its position is older than the feed, so it resyncs (D7). The snapshot holds
+   f1, s1 and the share, and neither deleted snippet. C removes s3, which it held live, and leaves
+   s2 alone because of the unsent edit. The push of that edit names a row that, for Tom, is gone
+   (C13): the server refuses it and writes nothing, C keeps the edit for the user and removes the
+   row (D5). Had the server restored the snippet instead, Tom would have brought back a row Ines
+   deleted while the folder was hers alone, with whatever still hung on it.*
+
+**Outcome.** Tom's device holds the folder as the server shows it to him: with s1, without s2 and
+s3. It was told of neither delete and holds no live copy of either snippet; what Ines wrote into s2
+while the folder was not shared has not reached it. Tom's edit of s2 is kept in the list of changes
+that were not synced. On the server both snippets stay deleted.
+
+| Row | Server | A | C |
+| --- | --- | --- | --- |
+| `m-ines` | live · start | = | = |
+| `m-tom` | live · start | = | = |
+| `f1` | live · start | = | = |
+| `s1` | live · start | = | = |
+| `s2` | deleted · a3 | = | absent |
+| `s3` | deleted · a4 | = | absent |
+| `sh1` | live · a5 | = | = |
+
+- History (replaced versions the server keeps): `s2` start, a2; `s3` start.
+- Conflicts: none.
+- A: shown nothing.
+- C: shown kept; kept for the user: c1; permission `f1` edit.
 
 <!-- scenarios:end -->
 

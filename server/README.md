@@ -12,14 +12,16 @@ C24, §5.4, §5.6; ADR-0031) and the functions in migrations 11 to 18. The revie
 "Resolution" says for each finding what was done, which test holds it and what is left. The
 reviewer then checked the fixes ([`docs/reviews/4.3-security-reverify.md`](../docs/reviews/4.3-security-reverify.md))
 and found seven more points, one of them a way into another account's data that the first fix had
-left open; migrations 19 to 21 and the review's last section, "After the re-verification", are
-about those.
+left open; migrations 19 to 21 and the review's section "After the re-verification" are about
+those. One of the seven was a decision for the owner (a deleted row was handed, with its content,
+to whoever could read its folder later); migration 22 and the review's last section are what the
+owner decided.
 
 ## Layout
 
 | Path | What |
 | --- | --- |
-| `supabase/migrations/` | Twenty-one timestamped migrations, applied in order, each safe to apply again |
+| `supabase/migrations/` | Twenty-two timestamped migrations, applied in order, each safe to apply again |
 | `supabase/apply.sh` | Applies the migrations to a hosted project through the Management API |
 | `restore/restore.py` | The operator's restore script (C18) |
 | `tests/run.sh` | The local test runner: a throwaway Postgres cluster, the stand-in, the migrations (applied twice), every test |
@@ -58,6 +60,7 @@ The migrations:
 | `…120000_access_begins_after_the_request` | Re-verification N1: an access entry gets `since_rev` when its request has ended (`access_begin`, called by `feed_flush`); `history.within_request` for a version one request wrote and replaced |
 | `…120100_push_bounds_and_locks` | Re-verification N2, N3, N4: a cascade list names a row once, and whole rows are chosen from stored sizes before content is read, within one allowance per request; a push that is cut off is caught and counted; a profile is locked only for a caller who can write in it, and the id lock has a seeded 64-bit key (`server_state.lock_seed`); a restored folder is held to four levels |
 | `…120200_conflict_answers` | Re-verification N6: an answer closes a conflict for everybody only when the party is offered every version; otherwise for that party (`conflict.closed_for`) |
+| `…120300_tombstones_follow_access` | Re-verification N5, the owner's decision: a tombstone is read by who deleted the row and by a reader whose access began before the delete (`rev > since_rev`), in the policies of `folder`, `folder_share`, `snippet`, the two kinds of link, `tag` and `attachment`, in `readers`, the wire view, `cascade_answer`, `visible_folders` and `access`; a tag or attachment row is read through a link only while it is live (`member_before` for a group's); a `put` on a tombstone the writer may not read is `rejected: gone`, and `restore_chain` restores no folder the writer may not read; a snippet that changes its folder leaves its deleted links behind, and a tag that comes back brings its links (`write_row`); a deleted version is offered as the tombstone is read (`version_readable`) |
 
 ## The schema in brief
 
@@ -105,8 +108,8 @@ The migrations:
 | | Enforced by | Tested in |
 | --- | --- | --- |
 | G1 | `refresh_access` recomputes the entries of every profile a change touches, inside the changing transaction under the C24 locks; `access_reference` computes §4.2 independently, folder by folder | `check_access` after every step of every test, including each concurrency case; `06_access_rule`; `23_review_account` (after `accept_ownership`, which the earlier tests ran without a folder in the group) |
-| G2 | One read policy per table (§5.13), each requiring `session_ok()`; the wire view masks an unreadable parent | `03_outsider`, `04_viewer`, `05_removed_member`; `check_readers` compares the policies with `iamb_private.readers` for every actor and row after every step |
-| G3 | The `tag` and `attachment` policies (readable snippet with a live link, or writer with `edit` now) | `04_viewer`, `05_removed_member`, `12_attachments` |
+| G2 | One read policy per table (§5.13), each requiring `session_ok()`; the wire view masks an unreadable parent. A deleted row is read through an access entry only by who deleted it or when the entry began before the delete (`rev > since_rev`); `readers` says the same for the functions, `push_op` refuses a put on a tombstone the writer may not read (`rejected: gone`), and `restore_chain` a folder | `03_outsider`, `04_viewer`, `05_removed_member`, `31_tombstones` (deleted before a share, before a member joined, between two accesses, in the push that shared the folder; what a write may bring back; a device that held the row); `check_readers` compares the policies with `iamb_private.readers` for every actor and row after every step |
+| G3 | The `tag` and `attachment` policies (the row live and a readable snippet with a live link, or writer with `edit` now; a group's deleted row for a member since before the delete) | `04_viewer`, `05_removed_member`, `12_attachments`, `31_tombstones` |
 | G4 | No write privilege anywhere; `anon` has no schema; exactly the gate helpers granted; helpers check the caller's own session and device | `02_grants` (catalog and by trying; a device feeding other devices' ids to the helpers changes nothing) |
 | G5 | `history` has no grant and a false policy; `get_conflict` reads it through `conflict_history`, which returns a version only to a party who can read the row now and who wrote the version or could read it while it was the row (`version_readable`: an access entry for the version's folder whose `since_rev` is below the revision that replaced it). `push` finds a base version under the same rule. `since_rev` is taken when the request that made the entry has ended (`access_begin`), and a version one request wrote and replaced is its writer's alone (`within_request`): "could read" means in a state the reader could have seen | `05_removed_member`, `15_conflicts`, `22_review_conflicts`, `28_same_request` (the replacement and the sharing in one push); `check_access` also checks after every step that no entry was left without its starting revision |
 | G6 | Own-rows policies on `feed`, `feed_head`, `device`, `folder_access`; `conflict` and `conflict_version` by a party who can read the conflict's row; `attachment_upload` by its uploader and by who manages its profile | `03_outsider`, `22_review_conflicts`, `25_review_uploads` |
@@ -205,7 +208,7 @@ through `POST /v1/projects/<ref>/database/migrations`, one named migration per f
 already applied, with a pause between files (the API names each version after the current second).
 The migrations must run as `postgres` and say so if they do not. With the Supabase command-line tool,
 `supabase db push` from `server/` does the same. A new change is a new migration file: the hosted
-project already holds these twenty-one.
+project already holds these twenty-two.
 
 Besides the migrations, a project needs these settings (the hosted project has them; see below): the
 REST interface exposes `api,api_service` and nothing else; Realtime allows private channels only; the
@@ -269,10 +272,13 @@ lines are a reason to look (was the database restored? what does `rev_seq` hold 
 Project `gemyckdldyzcvrvwuivk` (`iamb`, Postgres 17, us-east-1), set up on 2026-11-21 through the
 Management API only.
 
-**Migrations applied**: the twenty-one files above, in order (`supabase_migrations.schema_migrations`;
+**Migrations applied**: the twenty-two files above, in order (`supabase_migrations.schema_migrations`;
 the first ten as versions 20261121131746 to 20261121133446, the eight of the review's follow-up on
-2026-11-21 and 22, the three after the re-verification on 2026-11-22). The last one was changed twice while its effect was measured there, and its
-statements were run again each time; the project holds the file as it is here.
+2026-11-21 and 22, the three after the re-verification on 2026-11-22, the one for its N5 on
+2026-11-27; that one was applied in a first form, corrected, and applied again after its record
+was deleted, so the record holds the file as it is). The last of the eight (`…110700_steady_plans`)
+was changed twice while its effect was measured there, and its statements were run again each
+time; the project holds the file as it is here.
 
 **Row-level security**: on for 29 of the 29 tables of `iamb` and for the two scratch tables of `iamb_private`; the exposed schemas `api` and `api_service`
 hold no table, and `public` holds none of Iamb's:
@@ -341,15 +347,18 @@ no setting): **TOTP enrolment off** (Authentication, Multi-Factor, TOTP). Iamb n
 an account that enrols and verifies one through the authentication service gets sessions whose `amr`
 holds `totp`, which Iamb refuses, until it signs in again without the factor (review 19).
 
-**Tests on the hosted project**: `hosted.sh`, 27 of 27 files passed (all but `20_concurrency`), each in a
+**Tests on the hosted project**: `hosted.sh`, 28 of 28 files passed (all but `20_concurrency`), each in a
 rolled-back transaction, through the Management API. Through the REST interface, as a device calls:
-`hosted_rest_writes.py`, 71 of 71 checks, after migrations 11 to 21; before migration 11 the same
+`hosted_rest_writes.py`, 86 of 86 checks, after migrations 11 to 22; before migration 11 the same
 script failed in its first call (`hello`: HTTP 400, "DELETE requires a WHERE clause") and in all
-that depend on it, and before migration 19 in the four checks of the re-verification's N1, N2 and
-N6 (the member was offered, and restored, the private version). `hosted_auth_probe.py --enable-hook` as below; `perf.sql` rolled
+that depend on it, before migration 19 in the four checks of the re-verification's N1, N2 and
+N6 (the member was offered, and restored, the private version), and before migration 22 in four
+of N5 (the member's snapshot held a snippet deleted before the folder was shared, and his put
+restored it). `hosted_auth_probe.py --enable-hook` as below; `perf.sql` rolled
 back: a push of 200 ops 0.42 to 0.55 s, a cascade of 2,000 rows 3.4 to 6.5 s over sixteen runs
 (before migration 18 the same delete took between 3 and 21 s, depending on the plan the pooled
-session had kept); after migration 21, 0.45 to 0.49 s and 3.5 to 4.4 s over three. Throwaway accounts left afterwards: 0; the row counts of every table equal
+session had kept); after migration 21, 0.45 to 0.49 s and 3.5 to 4.4 s over three; after
+migration 22, 0.44 to 0.52 s and 3.5 to 4.0 s over three. Throwaway accounts left afterwards: 0; the row counts of every table equal
 those before the runs (2 plans, 1 epoch, 1 `server_state`). The rolled-back
 runs advanced `rev_seq` (one early run moved it to the clock times 1,024 through `begin_epoch`; with no
 committed revision on the project it was set back to 1, and `begin_epoch` is no longer run there).
@@ -509,10 +518,11 @@ follow-up to the security review edited the design itself where the review's fin
   (`api_service.attachment_verified`, `api_service.delete_account_data`) and `api.check` are here.
 - Removing stored objects through the storage interface after the retention job's log lines (4.6).
 - The checks of §11.6 listed as left above.
-- **A decision of the owner's** (re-verification N5; the options and a recommendation are in the
-  review's §12.3): a deleted row keeps its content for 30 days, and `snapshot` and `rows` hand it
-  to whoever can read its folder now, also to somebody the folder was shared with after the
-  delete. Nothing was changed.
+- **The model of the server in `crates/iamb-sync`** does not have the rule of migration 22 yet
+  (a tombstone is read by who deleted the row and by those who could read it before; review
+  §13). The scenario replay and the simulation pass against it as it is, because a device ignores
+  a tombstone for a row it does not hold; a patch for the model, checked with 1,000 simulation
+  runs, and one more scenario that needs it were handed over with the migration.
 - **For task 4.6** (re-verification N7): an upload stays open when its uploader's right to write in
   the profile ends, and `api_service.attachment_verified` commits it without asking. The edge
   function must not be able to commit such an upload: end the uploads with the right, or refuse

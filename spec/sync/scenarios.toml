@@ -7430,3 +7430,404 @@ shown = ["conflict"]
 [scenario.outcome.device.C]
 same_as = "server"
 shown = ["conflict"]
+
+# ---------------------------------------------------------------------------------------------
+# A tombstone is read by those who could read the row before it was deleted (the re-verification
+# of task 4.3's fixes, N5; ADR-0031 point 6)
+# ---------------------------------------------------------------------------------------------
+
+[[scenario]]
+id = "S90"
+title = "What was deleted from a folder before it was shared does not reach the people it is shared with"
+category = "sharing"
+covers = ["tombstone-before-access"]
+rules = ["C6", "C21", "C22", "D3", "D6"]
+given = "Ines and Tom are in the family group. Ines has the folder f1 with a sub-folder f1b; nothing is shared. Before she shares f1 she deletes a snippet that names a debt, and the sub-folder with the complaints. Then she shares f1 with the family, to use. Afterwards she deletes one more snippet."
+
+[scenario.start]
+users = ["ines", "tom"]
+devices = [{ id = "A", user = "ines" }, { id = "C", user = "tom" }]
+profiles = [
+  { id = "p-ines", kind = "personal", owner = "ines" },
+  { id = "p-tom", kind = "personal", owner = "tom" },
+  { id = "g-fam", kind = "family", owner = "ines" },
+]
+rows = [
+  { id = "m-ines", entity = "membership", group = "g-fam", user = "ines", rev = 2, fields = { role = "owner" } },
+  { id = "m-tom", entity = "membership", group = "g-fam", user = "tom", rev = 6, fields = { role = "member" } },
+  { id = "f1", entity = "folder", profile = "p-ines", rev = 3, fields = { name = "Shop replies" } },
+  { id = "f1b", entity = "folder", profile = "p-ines", parent = "f1", rev = 4, fields = { name = "Complaints about the landlord" } },
+  { id = "s1", entity = "snippet", folder = "f1", rev = 5, fields = { abbreviation = ";hrs", body = "Open 9 to 5." } },
+  { id = "s2", entity = "snippet", folder = "f1", rev = 7, fields = { abbreviation = ";lena", body = "Lena still owes 40 for March." } },
+  { id = "s3", entity = "snippet", folder = "f1b", rev = 8, fields = { abbreviation = ";damp", body = "The damp in the back room is still not fixed." } },
+  { id = "s4", entity = "snippet", folder = "f1", rev = 9, fields = { abbreviation = ";ret", body = "Returns within 14 days." } },
+]
+
+[[scenario.step]]
+id = "a1"
+at = "A"
+do = "delete"
+row = "s2"
+answers = { s2 = "applied" }
+
+[[scenario.step]]
+id = "a2"
+at = "A"
+do = "delete"
+row = "f1b"
+cascade = ["s3"]
+answers = { f1b = "applied" }
+note = "The server keeps the three deleted rows for 30 days, with their content (C22). Only Ines can read the folder, so only her devices hold the tombstones."
+
+[[scenario.step]]
+id = "a3"
+at = "A"
+do = "create"
+entity = "folder_share"
+row = "sh1"
+folder = "f1"
+group = "g-fam"
+fields = { permission = "view" }
+answers = { sh1 = "applied" }
+note = "Tom's access to f1 begins here. folder_visible(f1) goes into his feed and his device fetches the tree: f1, s1, s4 and the share. The server also has an access entry for Tom for the deleted sub-folder, as for any folder below a share, and it gives him nothing: a tombstone is read through an entry that began before the delete (§5.4). No read hands Tom s2, f1b or s3: not the fetch, not a snapshot at his next sign-in, not a request for the rows by their ids."
+
+[[scenario.step]]
+id = "a4"
+at = "A"
+do = "delete"
+row = "s4"
+answers = { s4 = "applied" }
+note = "Tom could read s4 before it was deleted. Its tombstone reaches his device as before, and the device keeps it until its purge (D8)."
+
+[scenario.outcome]
+summary = "Tom's device holds the folder and the snippet that is live in it, and the tombstone of the snippet that was deleted while he could read it. It holds nothing of the debt note, the sub-folder or the complaint: for Tom they were never there. Ines's devices hold all four deleted rows until the purge."
+
+[scenario.outcome.server]
+rows = [
+  { row = "m-ines", state = "live", version = "start" },
+  { row = "m-tom", state = "live", version = "start" },
+  { row = "f1", state = "live", version = "start" },
+  { row = "f1b", state = "deleted", version = "a2" },
+  { row = "s1", state = "live", version = "start" },
+  { row = "s2", state = "deleted", version = "a1" },
+  { row = "s3", state = "deleted", version = "a2" },
+  { row = "s4", state = "deleted", version = "a4" },
+  { row = "sh1", state = "live", version = "a3" },
+]
+history = [
+  { row = "f1b", version = "start" },
+  { row = "s2", version = "start" },
+  { row = "s3", version = "start" },
+  { row = "s4", version = "start" },
+]
+conflicts = []
+
+[scenario.outcome.device.A]
+same_as = "server"
+shown = []
+
+[scenario.outcome.device.C]
+same_as = "server"
+rows = [
+  { row = "f1b", state = "absent" },
+  { row = "s2", state = "absent" },
+  { row = "s3", state = "absent" },
+]
+shown = ["shared"]
+access = { f1 = "view" }
+
+[[scenario]]
+id = "S91"
+title = "A share ends, a snippet is rewritten and deleted, and the share begins again while a member's device is offline"
+category = "sharing"
+covers = ["tombstone-after-access-ended"]
+rules = ["C11", "C21", "D3", "D6", "D11"]
+given = "Ines shares f1 with the family, to change. Tom's device holds the folder with s1 and s2, is offline, and Tom edits s2. Ines stops sharing the folder, writes something private into s2, deletes s2, and shares the folder again."
+
+[scenario.start]
+users = ["ines", "tom"]
+devices = [{ id = "A", user = "ines" }, { id = "C", user = "tom" }]
+profiles = [
+  { id = "p-ines", kind = "personal", owner = "ines" },
+  { id = "p-tom", kind = "personal", owner = "tom" },
+  { id = "g-fam", kind = "family", owner = "ines" },
+]
+rows = [
+  { id = "m-ines", entity = "membership", group = "g-fam", user = "ines", rev = 2, fields = { role = "owner" } },
+  { id = "m-tom", entity = "membership", group = "g-fam", user = "tom", rev = 6, fields = { role = "member" } },
+  { id = "f1", entity = "folder", profile = "p-ines", rev = 3, fields = { name = "Shop replies" } },
+  { id = "s1", entity = "snippet", folder = "f1", rev = 5, fields = { abbreviation = ";hrs", body = "Open 9 to 5." } },
+  { id = "s2", entity = "snippet", folder = "f1", rev = 8, fields = { abbreviation = ";key", body = "Ask at the counter for the key." } },
+  { id = "sh1", entity = "folder_share", folder = "f1", group = "g-fam", rev = 7, fields = { permission = "edit" } },
+]
+
+[[scenario.step]]
+at = "C"
+do = "offline"
+
+[[scenario.step]]
+id = "c1"
+at = "C"
+do = "edit"
+row = "s2"
+fields = { body = "Ask at the counter or ring the bell for the key." }
+
+[[scenario.step]]
+id = "a1"
+at = "A"
+do = "delete"
+row = "sh1"
+answers = { sh1 = "applied" }
+
+[[scenario.step]]
+id = "a2"
+at = "A"
+do = "edit"
+row = "s2"
+fields = { body = "The spare key is under the blue pot." }
+answers = { s2 = "applied" }
+
+[[scenario.step]]
+id = "a3"
+at = "A"
+do = "delete"
+row = "s2"
+answers = { s2 = "applied" }
+note = "Tom cannot read the folder while this happens: nothing about s2 goes into his feed."
+
+[[scenario.step]]
+id = "a4"
+at = "A"
+do = "create"
+entity = "folder_share"
+row = "sh1"
+folder = "f1"
+group = "g-fam"
+fields = { permission = "edit" }
+answers = { sh1 = "applied" }
+note = "Tom's access begins anew, after the delete of s2 (C11, §5.4). The tombstone of s2, with the text Ines wrote while the folder was hers alone, is not his to read: no fetch, snapshot or request by id returns it."
+
+[[scenario.step]]
+at = "C"
+do = "online"
+note = "C still holds s2, live, in the version of the start, with Tom's unsent edit. One page holds folder_revoked and then folder_visible for f1. On the first the device purges the tree: s2 goes with it, and the unsent edit goes to the list of changes that were not synced (D6). On the second it fetches the tree, which holds what is live: f1, s1 and the share. The device never asks for s2 again, and had it asked, the answer would have been that the row is not there."
+
+[scenario.outcome]
+summary = "Tom's device holds the folder as the server shows it to him: with s1, without s2. It was not left with a live copy of a snippet whose delete it could not be told of, and it has not received what Ines wrote in between. His own edit of s2 is kept in the list of changes that were not synced. The device says that the folder was unshared and shared."
+
+[scenario.outcome.server]
+rows = [
+  { row = "m-ines", state = "live", version = "start" },
+  { row = "m-tom", state = "live", version = "start" },
+  { row = "f1", state = "live", version = "start" },
+  { row = "s1", state = "live", version = "start" },
+  { row = "s2", state = "deleted", version = "a3" },
+  { row = "sh1", state = "live", version = "a4" },
+]
+history = [
+  { row = "s2", version = "start" },
+  { row = "s2", version = "a2" },
+  { row = "sh1", version = "start" },
+  { row = "sh1", version = "a1" },
+]
+conflicts = []
+
+[scenario.outcome.device.A]
+same_as = "server"
+shown = []
+
+[scenario.outcome.device.C]
+same_as = "server"
+rows = [{ row = "s2", state = "absent" }]
+shown = ["revoked", "kept", "shared"]
+kept = ["c1"]
+access = { f1 = "edit" }
+
+[[scenario]]
+id = "S92"
+title = "The owner deletes a tag that a shared snippet still carries, and brings it back"
+category = "tags"
+covers = ["deleted-tag-shared-snippet"]
+rules = ["C5", "C10", "D3", "D16"]
+given = "Ines shares f1 with the family, to use. The snippet s1 in it carries her tag t1. She deletes the tag; the link from s1 to it stays, as links do (C10). Later she restores the tag."
+
+[scenario.start]
+users = ["ines", "tom"]
+devices = [{ id = "A", user = "ines" }, { id = "C", user = "tom" }]
+profiles = [
+  { id = "p-ines", kind = "personal", owner = "ines" },
+  { id = "p-tom", kind = "personal", owner = "tom" },
+  { id = "g-fam", kind = "family", owner = "ines" },
+]
+rows = [
+  { id = "m-ines", entity = "membership", group = "g-fam", user = "ines", rev = 2, fields = { role = "owner" } },
+  { id = "m-tom", entity = "membership", group = "g-fam", user = "tom", rev = 6, fields = { role = "member" } },
+  { id = "f1", entity = "folder", profile = "p-ines", rev = 3, fields = { name = "Shop replies" } },
+  { id = "s1", entity = "snippet", folder = "f1", rev = 5, fields = { abbreviation = ";hrs", body = "Open 9 to 5." } },
+  { id = "t1", entity = "tag", profile = "p-ines", rev = 8, fields = { name = "shop" } },
+  { id = "l1", entity = "snippet_tag", snippet = "s1", tag = "t1", rev = 9 },
+  { id = "sh1", entity = "folder_share", folder = "f1", group = "g-fam", rev = 7, fields = { permission = "view" } },
+]
+
+[[scenario.step]]
+id = "a1"
+at = "A"
+do = "delete"
+row = "t1"
+answers = { t1 = "applied" }
+note = "Tom read the tag through the link from a snippet he can read, and a link gives a tag only while the tag is live (§5.13). His feed gets an entry for the tag, delivered as null: his device removes the tag's row. The link stays on both devices and counts for nothing while the tag is deleted (C10)."
+
+[[scenario.step]]
+id = "a2"
+at = "A"
+do = "undelete"
+row = "t1"
+answers = { t1 = "applied" }
+note = "The tag is live again and the link counts again. Tom's feed gets the tag and, with it, the link (§5.5): his device had dropped the link with the tag."
+
+[scenario.outcome]
+summary = "While the tag was deleted, Ines's devices held it as deleted and Tom's device did not hold it at all: a tag of someone else's profile leaves a device when it is deleted, as it does when the last link to it goes, and its name does not stay behind. Restored, the tag is on every device again, and the snippet carries it on every device."
+
+[scenario.outcome.server]
+rows = [
+  { row = "m-ines", state = "live", version = "start" },
+  { row = "m-tom", state = "live", version = "start" },
+  { row = "f1", state = "live", version = "start" },
+  { row = "s1", state = "live", version = "start" },
+  { row = "t1", state = "live", version = "a2" },
+  { row = "l1", state = "live", version = "start" },
+  { row = "sh1", state = "live", version = "start" },
+]
+history = [{ row = "t1", version = "start" }, { row = "t1", version = "a1" }]
+conflicts = []
+
+[scenario.outcome.device.A]
+same_as = "server"
+shown = []
+
+[scenario.outcome.device.C]
+same_as = "server"
+shown = []
+
+
+[[scenario]]
+id = "S93"
+title = "A device comes back after a month to a folder that was unshared, changed and shared again"
+category = "sharing"
+covers = ["tombstone-resync"]
+rules = ["C13", "C21", "C22", "D5", "D7"]
+given = "Ines shares f1 with the family, to change. Tom's device holds the folder with s1, s2 and s3, goes offline, and Tom edits s2. Ines stops sharing the folder. A month later she writes something private into s2, deletes s2 and s3, and shares the folder again. Tom's device comes back the day after: its position is older than the feed reaches."
+
+[scenario.start]
+users = ["ines", "tom"]
+devices = [{ id = "A", user = "ines" }, { id = "C", user = "tom" }]
+profiles = [
+  { id = "p-ines", kind = "personal", owner = "ines" },
+  { id = "p-tom", kind = "personal", owner = "tom" },
+  { id = "g-fam", kind = "family", owner = "ines" },
+]
+rows = [
+  { id = "m-ines", entity = "membership", group = "g-fam", user = "ines", rev = 2, fields = { role = "owner" } },
+  { id = "m-tom", entity = "membership", group = "g-fam", user = "tom", rev = 6, fields = { role = "member" } },
+  { id = "f1", entity = "folder", profile = "p-ines", rev = 3, fields = { name = "Shop replies" } },
+  { id = "s1", entity = "snippet", folder = "f1", rev = 5, fields = { abbreviation = ";hrs", body = "Open 9 to 5." } },
+  { id = "s2", entity = "snippet", folder = "f1", rev = 8, fields = { abbreviation = ";key", body = "Ask at the counter for the key." } },
+  { id = "s3", entity = "snippet", folder = "f1", rev = 9, fields = { abbreviation = ";ret", body = "Returns within 14 days." } },
+  { id = "sh1", entity = "folder_share", folder = "f1", group = "g-fam", rev = 7, fields = { permission = "edit" } },
+]
+
+[[scenario.step]]
+at = "C"
+do = "offline"
+
+[[scenario.step]]
+id = "c1"
+at = "C"
+do = "edit"
+row = "s2"
+fields = { body = "Ask at the counter or ring the bell for the key." }
+
+[[scenario.step]]
+id = "a1"
+at = "A"
+do = "delete"
+row = "sh1"
+answers = { sh1 = "applied" }
+
+[[scenario.step]]
+at = "server"
+do = "advance"
+days = 31
+note = "The feed entries of that day, folder_revoked among them, and the share's tombstone are purged (C22)."
+
+[[scenario.step]]
+id = "a2"
+at = "A"
+do = "edit"
+row = "s2"
+fields = { body = "The spare key is under the blue pot." }
+answers = { s2 = "applied" }
+
+[[scenario.step]]
+id = "a3"
+at = "A"
+do = "delete"
+row = "s2"
+answers = { s2 = "applied" }
+
+[[scenario.step]]
+id = "a4"
+at = "A"
+do = "delete"
+row = "s3"
+answers = { s3 = "applied" }
+
+[[scenario.step]]
+id = "a5"
+at = "A"
+do = "create"
+entity = "folder_share"
+row = "sh1"
+folder = "f1"
+group = "g-fam"
+fields = { permission = "edit" }
+answers = { sh1 = "applied" }
+note = "Tom's access begins anew, after both deletes. Their tombstones are not his to read (§5.4)."
+
+[[scenario.step]]
+at = "C"
+do = "online"
+answer = "reset_required:expired"
+answers = { s2 = "rejected:gone" }
+note = "C never saw the folder leave: its position is older than the feed, so it resyncs (D7). The snapshot holds f1, s1 and the share, and neither deleted snippet. C removes s3, which it held live, and leaves s2 alone because of the unsent edit. The push of that edit names a row that, for Tom, is gone (C13): the server refuses it and writes nothing, C keeps the edit for the user and removes the row (D5). Had the server restored the snippet instead, Tom would have brought back a row Ines deleted while the folder was hers alone, with whatever still hung on it."
+
+[scenario.outcome]
+summary = "Tom's device holds the folder as the server shows it to him: with s1, without s2 and s3. It was told of neither delete and holds no live copy of either snippet; what Ines wrote into s2 while the folder was not shared has not reached it. Tom's edit of s2 is kept in the list of changes that were not synced. On the server both snippets stay deleted."
+
+[scenario.outcome.server]
+rows = [
+  { row = "m-ines", state = "live", version = "start" },
+  { row = "m-tom", state = "live", version = "start" },
+  { row = "f1", state = "live", version = "start" },
+  { row = "s1", state = "live", version = "start" },
+  { row = "s2", state = "deleted", version = "a3" },
+  { row = "s3", state = "deleted", version = "a4" },
+  { row = "sh1", state = "live", version = "a5" },
+]
+history = [
+  { row = "s2", version = "start" },
+  { row = "s2", version = "a2" },
+  { row = "s3", version = "start" },
+]
+conflicts = []
+
+[scenario.outcome.device.A]
+same_as = "server"
+shown = []
+
+[scenario.outcome.device.C]
+same_as = "server"
+rows = [{ row = "s2", state = "absent" }, { row = "s3", state = "absent" }]
+shown = ["kept"]
+kept = ["c1"]
+access = { f1 = "edit" }

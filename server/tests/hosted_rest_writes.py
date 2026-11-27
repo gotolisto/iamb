@@ -16,7 +16,9 @@ What it does, with throwaway accounts (`iamb-rest-…@example.test`) that it rem
     `set_display_name`, `create_group`, `invite`, `accept_invitation`, `push` (folders, snippets, a
     share, a stale write that records a conflict, a folder delete with a cascade list, a put that is
     refused, and one request with an edit and the move of its folder into the shared tree, for the
-    re-verification's N1), `pull`, `get_conflict`, `resolve_conflict`, `members`, `attachment_upload_begin`,
+    re-verification's N1; a snippet deleted before its folder is shared, which the member then
+    reads by `pull`, `snapshot` and `rows` and tries to put back, for N5), `pull`, `rows`, `get_conflict`,
+    `resolve_conflict`, `members`, `attachment_upload_begin`,
     `attachment_upload_cancel`, `remove_member`, `revoke_device`, `sign_out_everywhere`;
   - checks every answer (HTTP 200 and the expected `error` or status), and that a revoked device is
     refused at once;
@@ -378,6 +380,36 @@ def run(pk):
     out = ok200("push (a cascade list that names a row twice)", a.push([
         delete("folder", str(uuid.uuid4()), 0, cascade=[{"entity": "snippet", "id": sp, "base_rev": 0}] * 2)]))
     check("blocked:invalid", statuses(out) == ["blocked:invalid"], str(statuses(out)))
+
+    # Re-verification N5, end to end: a snippet deleted before its folder is shared reaches the
+    # member by no read, and a put of his does not bring it back.
+    fq, sq, sk = (str(uuid.uuid4()) for _ in range(3))
+    out = ok200("push (owner: a third private folder with two snippets)", a.push([
+        folder(fq, p_owner, None, "Private three"), snippet(sq, fq, ";debt", "Lena still owes 40."), snippet(sk, fq, ";ok", "Stays.")]))
+    sq_rev = ((out.get("results") or [{}] * 2)[1].get("row") or {}).get("rev")
+    out = ok200("push (owner deletes one of them)", a.push([delete("snippet", sq, sq_rev)]))
+    check("applied", statuses(out) == ["applied"], str(statuses(out)))
+    share_q = sql(f"select iamb_private.share_id({q(fq)}, {q(g)}) as id")[0]["id"]
+    out = ok200("push (owner shares the folder, to change)", a.push([
+        op("folder_share", share_q, {"folder_id": fq, "profile_id": g, "permission": "edit"})]))
+    check("applied", statuses(out) == ["applied"], str(statuses(out)))
+    out = ok200("pull (member)", t.pull())
+    check("the folder is visible to the member, and no entry carries the deleted snippet",
+          any(e.get("kind") == "folder_visible" and e.get("folder") == fq for e in out.get("entries") or [])
+          and "owes 40" not in json.dumps(out))
+    out = ok200("snapshot (member)", t.snapshot())
+    ids_seen = {r.get("id") for r in out.get("rows") or []}
+    check("the member's snapshot has the folder and its live snippet, and not the one deleted before the share",
+          fq in ids_seen and sk in ids_seen and sq not in ids_seen and "owes 40" not in json.dumps(out), str(len(ids_seen)))
+    out = ok200("rows (member, the deleted snippet by its id)", t.call("rows", refs=[{"entity": "snippet", "id": sq}]))
+    check("null", [r.get("row") for r in out.get("rows") or []] == [None])
+    out = ok200("push (member: a put with the deleted snippet's id)", t.push([snippet(sq, fq, ";mine", "Member's text", 0)]))
+    check("rejected:gone, with no row", statuses(out) == ["rejected:gone"] and (out.get("results") or [{}])[0].get("row") is None,
+          str(statuses(out)))
+    out = ok200("snapshot (owner)", a.snapshot())
+    check("the owner still holds the tombstone, as she left it",
+          any(r.get("id") == sq and (r.get("row") or {}).get("deleted_at") and (r.get("row") or {}).get("body") == "Lena still owes 40."
+              for r in out.get("rows") or []))
 
     # A folder's delete with a cascade list (the largest scratch use of task 4.2).
     out = ok200("push (owner deletes the private folder with its snippet)", a.push([

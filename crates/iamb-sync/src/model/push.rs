@@ -359,6 +359,30 @@ impl Server {
     fn write(&mut self, tx: &mut Tx, key: RowRef, new: Stored) {
         self.touch(tx, key);
         let rev = new.row.meta().rev;
+        // A snippet that changes its folder leaves its deleted links behind (§5.4): what is
+        // left of them was deleted while the snippet was where it is now.
+        if let (AnyRow::Snippet(n), Some(AnyRow::Snippet(o))) =
+            (&new.row, self.st.rows.get(&key).map(|s| &s.row))
+            && n.folder_id != o.folder_id
+        {
+            let gone: Vec<RowRef> = self
+                .st
+                .rows
+                .values()
+                .filter(|s| match &s.row {
+                    AnyRow::SnippetTag(l) => l.snippet_id == key.id && l.meta.deleted_at.is_some(),
+                    AnyRow::SnippetAttachment(l) => {
+                        l.snippet_id == key.id && l.meta.deleted_at.is_some()
+                    }
+                    _ => false,
+                })
+                .map(|s| s.row.key())
+                .collect();
+            for k in gone {
+                self.st.rows.remove(&k);
+                self.st.history.retain(|h| h.key != k);
+            }
+        }
         if let Some(old) = self.st.rows.insert(key, new) {
             let old_rev = old.row.meta().rev;
             if !self
@@ -461,6 +485,16 @@ impl Server {
                 return false;
             };
             if x.meta.deleted_at.is_some() {
+                // A deleted folder the writer may not read is not there for the writer (C7).
+                if !self.can_read(
+                    user,
+                    RowRef {
+                        kind: RowKind::Folder,
+                        id: *f,
+                    },
+                ) {
+                    return false;
+                }
                 let ok = match x.parent_id {
                     None => self.manages(user, x.profile_id),
                     Some(p) => self.edit_on(user, p),
@@ -1167,7 +1201,10 @@ impl Server {
             }
             return out;
         };
-        // A put.
+        // A put. On a tombstone the writer may not read it is a put on a row that is gone (C13).
+        if cur.as_ref().is_some_and(|cv| deleted(&cv.row)) && !self.can_read(c.user, key) {
+            return Outcome::reason("rejected", "gone");
+        }
         if let Some(o) = self.check_refs(c.user, &sent, profile) {
             return o;
         }
@@ -1642,6 +1679,13 @@ impl Server {
         }
         let key = op.key;
         let cur = self.st.rows.get(&key).cloned();
+        // A put on a tombstone the writer may not read: the row is gone for them (C13).
+        if op.row.is_some()
+            && cur.as_ref().is_some_and(|cv| deleted(&cv.row))
+            && !self.can_read(c.user, key)
+        {
+            return Outcome::reason("rejected", "gone");
+        }
         if let Some(sent) = &op.row
             && let Some(o) = self.check_refs(c.user, sent, profile)
         {

@@ -61,7 +61,7 @@ begin
         elsif f.nspname = 'iamb_private' then
             perform iamb_test.eq(ok, f.proname in ('session_ok', 'member_of', 'role_in', 'shares_group_with',
                                                    'own_address', 'enter', 'position',
-                                                   'conflict_history', 'member_addresses'),
+                                                   'conflict_history', 'member_addresses', 'member_before'),
                                  'authenticated executes iamb_private.' || f.proname);
         else
             perform iamb_test.ok(not ok and has_function_privilege('service_role', f.oid, 'EXECUTE'),
@@ -84,7 +84,7 @@ begin
         if f.nspname = 'iamb_private' and f.prosecdef then
             perform iamb_test.ok(f.proname in ('session_ok', 'member_of', 'role_in', 'shares_group_with',
                                                'own_address', 'enter', 'position',
-                                               'conflict_history', 'member_addresses'), 'definer helper ' || f.proname);
+                                               'conflict_history', 'member_addresses', 'member_before'), 'definer helper ' || f.proname);
         end if;
     end loop;
     -- The token hook is executable by the authentication service's role and nobody else.

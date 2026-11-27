@@ -190,6 +190,33 @@ begin
     return jsonb_build_object('error', null, 'entries', entries, 'refs', refs, 'head', r -> 'head');
 end $$;
 
+-- A whole snapshot, page by page: its rows as one array. The actor's position becomes its `start`.
+create or replace function iamb_test.snapshot(p_name text) returns jsonb
+language plpgsql as $$
+declare
+    r    jsonb;
+    rows jsonb := '[]';
+    cur  text;
+    i    integer := 0;
+begin
+    loop
+        perform iamb_test.act(p_name);
+        r := api.snapshot(iamb_test.dev(p_name), 1, iamb_test.pos(p_name), cur);
+        perform iamb_test.act_owner();
+        if r ->> 'error' is not null then
+            raise exception 'snapshot for %: %', p_name, r::text;
+        end if;
+        if i = 0 then
+            update iamb_test.actor set position = r ->> 'start' where name = p_name;
+        end if;
+        rows := rows || (r -> 'rows');
+        cur := r ->> 'cursor';
+        i := i + 1;
+        exit when cur is null or i > 50;
+    end loop;
+    return rows;
+end $$;
+
 create or replace function iamb_test.personal(p_name text) returns uuid
 language sql stable as $$
     select p.id from iamb.profile p join iamb_test.actor a on a.user_id = p.owner_user_id

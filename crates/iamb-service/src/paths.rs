@@ -281,20 +281,71 @@ fn plist_string<'a>(text: &'a str, key: &str) -> Option<&'a str> {
     rest.find("</string>").map(|end| rest[..end].trim())
 }
 
-/// Whether the installed macOS helper may run for the data root `root` (the 2026-11 beta review,
-/// note to finding 1; architecture §8): a release build of the helper holds the user's keyboard
-/// permissions, so it serves the default data root only, not one another process of the user
-/// names with `--data-dir` or `IAMB_DATA_DIR` and filled with a library of its choosing. The
-/// default is built from `home`, the home directory the user database gives for this account
-/// (`getpwuid_r`), never from `HOME`: whoever starts the helper chooses its environment
-/// (`open --env HOME=…`). Without `home` the released helper serves no root. Development
-/// builds, and every executable outside the helper layout, may use any root.
+/// Which data root a process of this build is to use, or why it may use none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RootChoice {
+    /// The root to use.
+    Use(PathBuf),
+    /// None may be used, for this reason; `log_to` is a data root whose log should hear it as
+    /// well as standard error (nobody reads standard error at login).
+    Refuse {
+        /// Why, for the user.
+        reason: &'static str,
+        /// The data root of the log to write the reason to, if one is known.
+        log_to: Option<PathBuf>,
+    },
+}
+
+/// The data root for `flag` (`--data-dir`) and the environment (`get`), and, for the released
+/// macOS helper (`restricted`: the helper layout and a release build; the 2026-11 beta review,
+/// note to finding 1, and round 2's R2; architecture §8):
+///
+/// - The released helper holds the user's keyboard permissions, so it serves the account's own
+///   default data root only, not one another process of the user names with `--data-dir` or
+///   `IAMB_DATA_DIR` and filled with a library of its choosing. That root is built from `home`,
+///   the home directory the user database gives for this account (`getpwuid_r`), never from
+///   `HOME`, which whoever starts the helper chooses (`open --env HOME=…`).
+/// - Without `--data-dir` and `IAMB_DATA_DIR` it simply uses that root, whatever `HOME` says.
+///   Naming another root is refused, and the refusal is told in that root's log too.
+/// - Without `home` (the lookup failed) it serves no root; the refusal goes to the log of the
+///   root `HOME` gives, the only one there is to tell.
+///
+/// Everything else (development builds, every executable outside the helper layout) uses
+/// `flag`, else `IAMB_DATA_DIR`, else the system's default.
 #[must_use]
-pub fn helper_may_use_root(helper: bool, release: bool, root: &Path, home: Option<&Path>) -> bool {
-    !(helper && release)
-        || home
-            .filter(|h| h.has_root())
-            .is_some_and(|h| h.join(MAC_DATA_ROOT) == root)
+pub fn choose_data_root(
+    flag: Option<&Path>,
+    get: impl Fn(&str) -> Option<OsString>,
+    restricted: bool,
+    home: Option<&Path>,
+) -> RootChoice {
+    if !restricted {
+        return flag
+            .map(Path::to_path_buf)
+            .or_else(|| default_root(get))
+            .map_or(
+                RootChoice::Refuse {
+                    reason: "cannot find a data directory; pass --data-dir or set IAMB_DATA_DIR",
+                    log_to: None,
+                },
+                RootChoice::Use,
+            );
+    }
+    let named = flag
+        .map(Path::to_path_buf)
+        .or_else(|| nonempty(get("IAMB_DATA_DIR")));
+    let account = home.filter(|h| h.has_root()).map(|h| h.join(MAC_DATA_ROOT));
+    match (named, account) {
+        (_, None) => RootChoice::Refuse {
+            reason: "the installed helper cannot find this account's home directory in the user database",
+            log_to: system_root(get),
+        },
+        (Some(named), Some(account)) if named != account => RootChoice::Refuse {
+            reason: "the installed helper serves the default data root only",
+            log_to: Some(account),
+        },
+        (_, Some(account)) => RootChoice::Use(account),
+    }
 }
 
 /// The macOS data root under the home directory.
@@ -437,35 +488,74 @@ mod tests {
     }
 
     #[test]
-    fn the_released_helper_serves_the_default_data_root_only() {
+    fn the_released_helper_serves_the_accounts_default_data_root_only() {
         let home = Path::new("/Users/ada");
-        let default = home.join("Library/Application Support/Iamb");
-        assert!(helper_may_use_root(true, true, &default, Some(home)));
-        // Another root, whether from IAMB_DATA_DIR or --data-dir, is refused.
-        assert!(!helper_may_use_root(
-            true,
-            true,
-            Path::new("/tmp/elsewhere"),
-            Some(home)
+        let account = home.join("Library/Application Support/Iamb");
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |k: &str| {
+                pairs
+                    .iter()
+                    .find(|(key, _)| *key == k)
+                    .map(|(_, v)| OsString::from(*v))
+            }
+        };
+        let fake_home = env(&[("HOME", "/tmp/fake")]);
+        // R2: nothing named, and `HOME` is not the account's: the account's root is used, not
+        // refused, and not the one `HOME` gives.
+        assert_eq!(
+            choose_data_root(None, fake_home, true, Some(home)),
+            RootChoice::Use(account.clone())
+        );
+        assert_eq!(
+            choose_data_root(None, env(&[("HOME", "/Users/ada")]), true, Some(home)),
+            RootChoice::Use(account.clone())
+        );
+        // Naming the account's own root is fine; naming another is refused, told in the
+        // account's log.
+        assert_eq!(
+            choose_data_root(Some(&account), fake_home, true, Some(home)),
+            RootChoice::Use(account.clone())
+        );
+        for (flag, get) in [
+            (Some(Path::new("/tmp/elsewhere")), env(&[])),
+            (None, env(&[("IAMB_DATA_DIR", "/tmp/elsewhere")])),
+            (
+                Some(Path::new("/tmp/fake/Library/Application Support/Iamb")),
+                env(&[]),
+            ),
+        ] {
+            assert_eq!(
+                choose_data_root(flag, get, true, Some(home)),
+                RootChoice::Refuse {
+                    reason: "the installed helper serves the default data root only",
+                    log_to: Some(account.clone()),
+                }
+            );
+        }
+        // No answer from the user database (or not an absolute home): no root, and the
+        // refusal goes to the log of the root `HOME` gives, where there is one.
+        for home in [None, Some(Path::new("")), Some(Path::new("Users/ada"))] {
+            let RootChoice::Refuse { reason, log_to } =
+                choose_data_root(None, env(&[("HOME", "/Users/ada")]), true, home)
+            else {
+                panic!("a root without the account's home");
+            };
+            assert!(reason.contains("user database"), "{reason}");
+            assert_eq!(log_to, system_root(env(&[("HOME", "/Users/ada")])));
+        }
+        // A development build, or not the helper: the usual order, any root.
+        assert_eq!(
+            choose_data_root(Some(Path::new("/tmp/x")), env(&[]), false, None),
+            RootChoice::Use(PathBuf::from("/tmp/x"))
+        );
+        assert_eq!(
+            choose_data_root(None, env(&[("IAMB_DATA_DIR", "/tmp/y")]), false, None),
+            RootChoice::Use(PathBuf::from("/tmp/y"))
+        );
+        assert!(matches!(
+            choose_data_root(None, env(&[]), false, None),
+            RootChoice::Refuse { log_to: None, .. }
         ));
-        // The default under a home that is not the account's (`HOME` set by the caller) is
-        // another root too; without the account's home nothing is served.
-        assert!(!helper_may_use_root(
-            true,
-            true,
-            Path::new("/tmp/fake/Library/Application Support/Iamb"),
-            Some(home)
-        ));
-        assert!(!helper_may_use_root(true, true, &default, None));
-        assert!(!helper_may_use_root(
-            true,
-            true,
-            Path::new("Library/Application Support/Iamb"),
-            Some(Path::new(""))
-        ));
-        // A development build, or not the helper: any root.
-        assert!(helper_may_use_root(true, false, Path::new("/tmp/x"), None));
-        assert!(helper_may_use_root(false, true, Path::new("/tmp/x"), None));
     }
 
     #[cfg(unix)]
