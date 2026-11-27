@@ -28,8 +28,8 @@
 
 use iamb_core::model::{Id, Snippet, SnippetKind, Trigger};
 use iamb_ipc::{
-    ChangedRows, ErrorBody, EventBody, RequestBody, ResponseBody, ServiceStatus, SnippetQuery,
-    WireDiagnostic, WireField,
+    ChangedRows, DiagnosticDetail, ErrorBody, EventBody, RequestBody, ResponseBody, ServiceStatus,
+    SnippetQuery, WireDiagnostic, WireField,
 };
 use serde::{Deserialize, Serialize};
 
@@ -423,7 +423,10 @@ fn diagnostic(entry: &WireDiagnostic) -> UiEvent {
         code: entry.code.clone(),
         snippet: entry.snippet.map(|id| id.to_string()),
         app: entry.app.clone(),
-        detail: entry.detail.clone(),
+        detail: entry
+            .detail
+            .and_then(DiagnosticDetail::code)
+            .map(str::to_owned),
         at: entry.at.0,
     }
 }

@@ -20,16 +20,18 @@
 //! (`rules::Settle`).
 //!
 //! Every report of a real change (an event, or the focus as it is at the start) first adds one
-//! to the platform's count of focus changes, the `epoch`; a report again after a pause does
-//! not. An answer of UI Automation that came too late for its question may serve a later
-//! question only while that count is unchanged (`inspect`, "A late answer"): the count goes up
-//! before the service hears of the change, so no question about a change can be served an
-//! answer from before it.
+//! to the platform's count of focus changes, the `epoch` (`rules::Counts`); a report again does not.
+//! A report again (after a pause, or at once when a late answer of UI Automation arrived) is
+//! marked as one, for its window and the count, before it is made; a change clears the mark. An
+//! answer that came too late for its question may serve only a question that finds that mark
+//! for its own window and the count as it is (`inspect`, "A late answer"): the count goes up
+//! before the service hears of a change, so no question about a change can be served an answer
+//! from before it.
 
 use std::cell::{Cell, RefCell};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, SyncSender};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -38,8 +40,9 @@ use iamb_platform::{FocusChange, FocusSink, PlatformError, Result};
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::UI::Accessibility::HWINEVENTHOOK;
 
+use super::inspect::Wake;
 use super::os::{self, EventHook, Message};
-use super::rules::{EventKind, Settle, reportable};
+use super::rules::{Counts, EventKind, Settle, reportable};
 use super::secure::Front;
 
 /// How often `stop` tries to post the message that ends the loop to a full queue.
@@ -54,7 +57,7 @@ struct Watcher {
     /// The timer that is running for `settle`, if any.
     timer: Option<usize>,
     /// The platform's count of reported focus changes (module docs).
-    epoch: Arc<AtomicU64>,
+    counts: Arc<Counts>,
 }
 
 impl Watcher {
@@ -73,7 +76,7 @@ impl Watcher {
         self.settle.event(front.window);
         // Before the report: a question about this change must not be served an answer
         // obtained before it (module docs).
-        self.epoch.fetch_add(1, Ordering::SeqCst);
+        self.counts.count_change();
         self.report(front);
     }
 
@@ -121,10 +124,27 @@ impl Watcher {
         self.timer = None;
         match os::foreground() {
             // Not a real event: the count of `settle` goes on.
-            Some(front) if front.window == self.settle.window() => self.report(front),
+            Some(front) if front.window == self.settle.window() => {
+                self.counts.mark_again(front.window);
+                self.report(front);
+            }
             // The window in front changed and no event said so. Report that.
             Some(front) => self.changed(front),
             None => {}
+        }
+    }
+
+    /// The late answer about `window` arrived: report it again now, while it is fresh, if it
+    /// is still the window in front and the one last reported.
+    fn late_answer(&mut self, window: u64) {
+        match os::foreground() {
+            Some(front) if front.window == window && self.settle.window() == window => {
+                self.cancel_timer();
+                self.counts.mark_again(window);
+                self.report(front);
+            }
+            // Another window: its own report asks afresh.
+            _ => {}
         }
     }
 
@@ -188,7 +208,12 @@ extern "system" fn on_event(
 
 /// The watcher thread: installs the hooks, reports the focus as it is, announces itself and
 /// serves the hooks until the stop message.
-fn run(sink: Box<dyn FocusSink>, epoch: Arc<AtomicU64>, ready: &SyncSender<Result<u32>>) {
+fn run(
+    sink: Box<dyn FocusSink>,
+    counts: Arc<Counts>,
+    alive: &AtomicBool,
+    ready: &SyncSender<Result<u32>>,
+) {
     os::create_message_queue();
     let hooks = EventHook::install(EventKind::Foreground, on_event).and_then(|foreground| {
         EventHook::install(EventKind::Focus, on_event).map(|focus| [foreground, focus])
@@ -207,7 +232,7 @@ fn run(sink: Box<dyn FocusSink>, epoch: Arc<AtomicU64>, ready: &SyncSender<Resul
                 last: None,
                 settle: Settle::default(),
                 timer: None,
-                epoch,
+                counts,
             });
         })
         .is_ok();
@@ -225,11 +250,16 @@ fn run(sink: Box<dyn FocusSink>, epoch: Arc<AtomicU64>, ready: &SyncSender<Resul
             match os::next_message() {
                 Message::Stop | Message::Failed(_) => break,
                 Message::LookAgain(window) => with_watcher(|watcher| watcher.look_again(window)),
+                Message::LateAnswer(window) => {
+                    with_watcher(|watcher| watcher.late_answer(window));
+                }
                 Message::Timer(id) => with_watcher(|watcher| watcher.timer(id)),
                 Message::Other => {}
             }
         }
     }
+    // From here on no late answer may post to this thread's id (`Running::late_answer_wake`).
+    alive.store(false, Ordering::SeqCst);
     with_watcher(Watcher::cancel_timer);
     // The hooks go first, so that no event finds the state gone; then the sink is dropped.
     drop(hooks);
@@ -240,18 +270,26 @@ fn run(sink: Box<dyn FocusSink>, epoch: Arc<AtomicU64>, ready: &SyncSender<Resul
 pub(super) struct Running {
     thread: JoinHandle<()>,
     thread_id: u32,
+    /// True while the thread serves its message loop.
+    alive: Arc<AtomicBool>,
 }
 
 /// Starts the watcher thread. Returns once its hooks are installed and the focus as it is
-/// has been reported to `sink`. Each real change it reports adds one to `epoch`.
-pub(super) fn start(sink: Box<dyn FocusSink>, epoch: Arc<AtomicU64>) -> Result<Running> {
+/// has been reported to `sink`. Each real change it reports is counted in `counts`.
+pub(super) fn start(sink: Box<dyn FocusSink>, counts: Arc<Counts>) -> Result<Running> {
     let (ready, announced) = mpsc::sync_channel(1);
+    let alive = Arc::new(AtomicBool::new(true));
+    let in_thread = Arc::clone(&alive);
     let thread = std::thread::Builder::new()
         .name("iamb-focus-watch".to_owned())
-        .spawn(move || run(sink, epoch, &ready))
+        .spawn(move || run(sink, counts, &in_thread, &ready))
         .map_err(|error| os::thread_error(&error))?;
     match announced.recv() {
-        Ok(Ok(thread_id)) => Ok(Running { thread, thread_id }),
+        Ok(Ok(thread_id)) => Ok(Running {
+            thread,
+            thread_id,
+            alive,
+        }),
         Ok(Err(error)) => {
             let _ = thread.join();
             Err(error)
@@ -281,6 +319,21 @@ impl Running {
             // stays unknown, which is the safe side.
             let _ = os::post_thread_message(self.thread_id, os::WM_LOOK_AGAIN, window);
         }
+    }
+
+    /// What the inspection thread calls when the late answer about `window` arrives: asks
+    /// this thread to report the window again at once. Posts nothing once the thread has left
+    /// its loop, so that its id, which the system may give to another thread, gets no message.
+    pub(super) fn late_answer_wake(&self, window: u64) -> Option<Wake> {
+        let window = usize::try_from(window).ok()?;
+        let alive = Arc::clone(&self.alive);
+        let thread_id = self.thread_id;
+        Some(Box::new(move || {
+            if alive.load(Ordering::SeqCst) {
+                // Not posted: the window is reported again at the next pause instead.
+                let _ = os::post_thread_message(thread_id, os::WM_LATE_ANSWER, window);
+            }
+        }))
     }
 
     /// Ends the thread and waits for it, which drops the sink. On an error the thread may

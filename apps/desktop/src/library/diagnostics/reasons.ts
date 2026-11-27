@@ -208,7 +208,10 @@ export function reasonOf(code: string): Reason {
   );
 }
 
-/** The words of the technical details the service sends; one it does not know is shown as it came. */
+/**
+ * The words of the technical details the service sends. A value this version does not know is
+ * not shown: the detail is one of a closed set of words, and anything else is not one of them.
+ */
 const DETAIL_WORDS: Record<string, string> = {
   timeout: "timeout",
   elevated: "elevated",
@@ -219,8 +222,8 @@ const DETAIL_WORDS: Record<string, string> = {
 
 /** "Reason: not inspectable", for an entry with a technical detail; null without one. */
 export function reasonLine(detail: string | null | undefined): string | null {
-  if (!detail) return null;
-  return `Reason: ${DETAIL_WORDS[detail] ?? detail}`;
+  const words = detail && Object.hasOwn(DETAIL_WORDS, detail) ? DETAIL_WORDS[detail] : undefined;
+  return words ? `Reason: ${words}` : null;
 }
 
 export interface Rendered {

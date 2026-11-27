@@ -80,17 +80,33 @@
 //! **A late answer.** An application that answers UI Automation, but slower than the 100 ms
 //! the service waits, would time out at every report if each asked afresh: every call is as
 //! slow as the one before, and each would start another inspection thread. So the answer of a
-//! question that timed out is kept, and the next report of the same window takes it, provided
-//! the watcher has reported no focus change since (`inspect`, "A late answer"). Why that is
-//! safe: the watcher counts every focus change it reports, and counts it *before* the service
-//! hears of it, so the question about a change, a move into a password field included, is never
-//! served an answer obtained before that change; it asks afresh. A late answer is therefore
-//! about the element the window had focused after the last change the watcher saw: what a
-//! fresh call would have said had it been fast enough. (A change the watcher has not seen yet
-//! is the race every answer has, fresh or late: its own report follows and is judged afresh.)
-//! The window must still be in front before and after (step 1), the answer is classified as
-//! any other (a password element is `Secure`, a browser engine's shell is still not believed),
-//! no late answer older than 10 s is used, and without a running watcher none at all.
+//! question that timed out is kept, and **its arrival makes the watcher report the window again
+//! at once**. That report's question takes it if it arrived at most 250 ms before and nothing
+//! has changed since (`inspect`, "A late answer"). What it is: the field **as it was when the
+//! application answered**, not what a call made at the later question would say. Why it is
+//! safe to use:
+//!
+//! - **Fresh.** It is used within a quarter of a second of the application's answer, counted
+//!   from its arrival; an older one is dropped and the application asked afresh. A field that
+//!   turns into a password field without a focus change (a page that changes the type of its
+//!   field) in that quarter of a second is the same race every answer has between the
+//!   application answering and the verdict arriving.
+//! - **Only for a report again.** Only a question for a report the watcher made again of the
+//!   same window (after a pause, or for the arrival) may take it: the watcher marks such a
+//!   report, with the count of focus changes, just before it makes it. Every change, the
+//!   watcher's and the service's own reading of the focus (`focus_now`, for keys that went to a
+//!   window the watcher did not report), adds to the count and clears the mark, before anyone
+//!   hears of it. So the question about a change, a move into a password field included, is
+//!   never served an answer obtained before it; it asks afresh. (A change the watcher has not
+//!   seen yet is the race every answer has: its own report follows and is judged afresh.)
+//! - **About the same control.** The question names the window, the control with the keyboard
+//!   focus in it and that control's kind; a late answer serves only the same three.
+//! - **About this window.** The element must be provided by the window's process or by the
+//!   process of the focused control's window (an embedded engine's); otherwise the answer is
+//!   `Unknown(NotInspectable)`. Process ancestry is not read: it cannot be told reliably.
+//! - The window must still be in front before and after (step 1), the answer is classified as
+//!   any other (a password element is `Secure`, a browser engine's shell is still not
+//!   believed), and without a running watcher no late answer is kept or used.
 //!
 //! # Windows of applications built on a browser engine (web views)
 //!
@@ -187,7 +203,6 @@ pub(crate) use windows::State;
 #[cfg(windows)]
 mod windows {
     use std::fmt;
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError};
     use std::time::Duration;
 
@@ -197,7 +212,7 @@ mod windows {
     };
 
     use super::inspect::Inspector;
-    use super::rules::{Seen, await_front};
+    use super::rules::{Counts, Seen, await_front};
     use super::{os, secure, uia, watch};
     use crate::Platform;
     use crate::listener::keys::VK_UNASSIGNED;
@@ -210,8 +225,8 @@ mod windows {
     pub(crate) struct State {
         inspector: Inspector<uia::Source>,
         watcher: Mutex<Option<watch::Running>>,
-        /// How many focus changes the watchers of this platform have reported (`watch`).
-        epoch: Arc<AtomicU64>,
+        /// The count of focus changes and the mark of a report again (`watch`).
+        counts: Arc<Counts>,
     }
 
     impl Default for State {
@@ -219,7 +234,7 @@ mod windows {
             Self {
                 inspector: Inspector::new(uia::Source),
                 watcher: Mutex::new(None),
-                epoch: Arc::new(AtomicU64::new(0)),
+                counts: Arc::new(Counts::default()),
             }
         }
     }
@@ -253,6 +268,23 @@ mod windows {
         }
     }
 
+    impl Platform {
+        /// Runs `work` with the running watcher, if there is one and its lock is free. Not
+        /// waited for: `watch` and `unwatch` hold the lock while the watcher thread starts and
+        /// stops, and that thread may be the caller's sink.
+        fn with_watcher<T>(&self, work: impl FnOnce(&watch::Running) -> T) -> Option<T> {
+            let watcher = match self.focus.watcher.try_lock() {
+                Ok(watcher) => watcher,
+                Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+                Err(TryLockError::WouldBlock) => return None,
+            };
+            watcher
+                .as_ref()
+                .filter(|running| running.is_running())
+                .map(work)
+        }
+    }
+
     /// Makes this process the one that sent the last input, which is what lets it hand the
     /// foreground on: one release of a key no keyboard has, marked as Iamb's output so that
     /// the listener drops it.
@@ -268,30 +300,28 @@ mod windows {
         }
 
         fn secure_state(&self, target: &FocusToken, timeout: Duration) -> FieldSecurity {
-            // A late answer may serve this question only while a watcher counts the focus
-            // changes (`inspect`, "A late answer").
-            let epoch = self
-                .is_watching()
-                .then(|| self.focus.epoch.load(Ordering::SeqCst));
+            let window = target.window();
+            // A late answer may serve only a report the watcher made again of this window,
+            // with nothing counted since (`inspect`, "A late answer"). Without a running
+            // watcher none is kept or used.
+            let watching = self.with_watcher(|running| {
+                let epoch = self.focus.counts.epoch();
+                secure::Watching {
+                    epoch,
+                    again: self.focus.counts.take_again(window, epoch),
+                    wake: running.late_answer_wake(window),
+                }
+            });
             let judgement = secure::judge(
                 &os::SystemDesk,
                 &self.focus.inspector,
                 target,
-                epoch,
+                watching,
                 timeout,
             );
             if judgement.look_again {
-                // Not waited for: `watch` and `unwatch` hold the lock while the watcher
-                // thread starts and stops, and that thread may be the caller's sink. If the
-                // window is not reported again its state stays unknown.
-                let watcher = match self.focus.watcher.try_lock() {
-                    Ok(watcher) => Some(watcher),
-                    Err(TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
-                    Err(TryLockError::WouldBlock) => None,
-                };
-                if let Some(watcher) = watcher.as_deref().and_then(Option::as_ref) {
-                    watcher.look_again(target.window());
-                }
+                // If the window is not reported again its state stays unknown.
+                let _ = self.with_watcher(|running| running.look_again(window));
             }
             judgement.field
         }
@@ -305,6 +335,10 @@ mod windows {
         /// One reading of the window in front gives both the token and the application, as
         /// the watcher builds its reports (the close-out review's C3).
         fn focus_now(&self) -> Result<FocusChange> {
+            // The service reads the focus itself because the watcher may have missed a
+            // change: counted as one, so that no late answer from before serves it (the
+            // late-answer review's finding L3).
+            self.focus.counts.count_change();
             os::foreground()
                 .map(|front| FocusChange {
                     app: os::identity_of(front),
@@ -366,7 +400,7 @@ mod windows {
             // The first question follows the first report at once: have the automation
             // library loading by then.
             self.focus.inspector.warm();
-            *watcher = Some(watch::start(sink, Arc::clone(&self.focus.epoch))?);
+            *watcher = Some(watch::start(sink, Arc::clone(&self.focus.counts))?);
             Ok(())
         }
 

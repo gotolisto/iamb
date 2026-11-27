@@ -12,6 +12,7 @@
 //! | --- | --- | --- |
 //! | both | 2 | `Release` |
 //! | `IUIAutomation` | 8 | `GetFocusedElement` |
+//! | `IUIAutomationElement` | 20 | `get_CurrentProcessId` |
 //! | `IUIAutomationElement` | 21 | `get_CurrentControlType` |
 //! | `IUIAutomationElement` | 35 | `get_CurrentIsPassword` |
 //!
@@ -19,7 +20,7 @@
 //!
 //! Nothing here can read what a field holds. The methods that would (`get_CurrentName`, the
 //! value and text patterns, the property getters) have no name in these tables, so no code
-//! in this crate can call them; the two that are called return a number and a yes or no.
+//! in this crate can call them; the three that are called return two numbers and a yes or no.
 
 use std::ffi::c_void;
 use std::mem::offset_of;
@@ -65,8 +66,9 @@ struct ElementMethods {
     release: Release,
     /// `SetFocus`, `GetRuntimeId`, the four `Find` methods, `BuildUpdatedCache`, the four
     /// property-value getters, the four pattern getters, `GetCachedParent`,
-    /// `GetCachedChildren`, `get_CurrentProcessId`.
-    _before_control_type: [usize; 18],
+    /// `GetCachedChildren`.
+    _before_process_id: [usize; 17],
+    get_current_process_id: unsafe extern "system" fn(this: *mut c_void, process: *mut i32) -> i32,
     get_current_control_type:
         unsafe extern "system" fn(this: *mut c_void, control_type: *mut i32) -> i32,
     /// `get_CurrentLocalizedControlType`, `get_CurrentName`, `get_CurrentAcceleratorKey`,
@@ -83,6 +85,7 @@ const _: () = {
     assert!(offset_of!(AutomationMethods, release) == 2 * SLOT);
     assert!(offset_of!(AutomationMethods, get_focused_element) == 8 * SLOT);
     assert!(offset_of!(ElementMethods, release) == 2 * SLOT);
+    assert!(offset_of!(ElementMethods, get_current_process_id) == 20 * SLOT);
     assert!(offset_of!(ElementMethods, get_current_control_type) == 21 * SLOT);
     assert!(offset_of!(ElementMethods, get_current_is_password) == 35 * SLOT);
 };
@@ -144,6 +147,20 @@ impl Element {
             Err(())
         } else {
             Ok(is_password != 0)
+        }
+    }
+
+    /// The process that provides the element.
+    fn process(&self) -> Result<u32, ()> {
+        let mut process = 0;
+        // SAFETY: the method is called on its own object with a valid place for the process
+        // id, a 32-bit number.
+        let result =
+            unsafe { (self.methods().get_current_process_id)(self.0.as_ptr(), &raw mut process) };
+        if result < 0 {
+            Err(())
+        } else {
+            Ok(process.cast_unsigned())
         }
     }
 
@@ -231,10 +248,15 @@ impl Probe for Session {
             Ok(None) => return Observation::NoElement,
             Err(()) => return Observation::Failed,
         };
-        match (element.is_password(), element.control_type()) {
-            (Ok(password), Ok(control_type)) => Observation::Element {
+        match (
+            element.is_password(),
+            element.control_type(),
+            element.process(),
+        ) {
+            (Ok(password), Ok(control_type), Ok(process)) => Observation::Element {
                 password,
                 control_type,
+                process,
             },
             _ => Observation::Failed,
         }

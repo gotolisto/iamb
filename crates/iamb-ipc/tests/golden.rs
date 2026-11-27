@@ -18,13 +18,13 @@ use iamb_core::sync::{
     RowRef, SyncInfo,
 };
 use iamb_ipc::{
-    AttachmentRef, ChangedRows, ConflictPolicy, ErrorBody, ErrorCode, EventBody, ExcludedEntry,
-    FocusRef, GrantState, HealthReport, Hello, InjectionStatus, PROTOCOL_VERSION, PanelKind,
-    PendingReview, PermissionName, PreviewBlank, PreviewCursor, PreviewPart, Request, RequestBody,
-    Response, ResponseBody, Role, SearchField, SearchHit, Secret, ServiceStatus, ShadowedEntry,
-    SnippetQuery, SnippetSummary, SyncStatus, TagEntry, TemplateAttribute, TemplateErrorInfo,
-    TemplateToken, TransferFormat, UnusedEntry, Welcome, Wire, WireAction, WireAttachment,
-    WireDiagnostic, WireExclusion, WireField,
+    AttachmentRef, ChangedRows, ConflictPolicy, DiagnosticDetail, ErrorBody, ErrorCode, EventBody,
+    ExcludedEntry, FocusRef, GrantState, HealthReport, Hello, InjectionStatus, PROTOCOL_VERSION,
+    PanelKind, PendingReview, PermissionName, PreviewBlank, PreviewCursor, PreviewPart, Request,
+    RequestBody, Response, ResponseBody, Role, SearchField, SearchHit, Secret, ServiceStatus,
+    ShadowedEntry, SnippetQuery, SnippetSummary, SyncStatus, TagEntry, TemplateAttribute,
+    TemplateErrorInfo, TemplateToken, TransferFormat, UnusedEntry, Welcome, Wire, WireAction,
+    WireAttachment, WireDiagnostic, WireExclusion, WireField,
 };
 
 fn id(n: u8) -> Id {
@@ -110,7 +110,7 @@ fn unknown_focus_diagnostic() -> WireDiagnostic {
         snippet: None,
         expansion: None,
         app: Some("org.example.chat".to_owned()),
-        detail: Some("timeout".to_owned()),
+        detail: Some(DiagnosticDetail::Timeout),
         at: Timestamp(1_763_400_000_600),
     }
 }

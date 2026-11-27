@@ -24,30 +24,38 @@
 //! An application that answers, only slower than the caller waits (a browser engine that has
 //! just switched its accessibility on, a toolkit busy starting), would time out at every
 //! question if each one asked afresh: each call takes as long as the one before. So a question
-//! may name its [`Subject`]: the window it is about and the watcher's count of the focus changes
-//! it has reported. When such a question times out, the given-up thread's answer is kept for
-//! when it comes, and the next question about the **same subject** waits for that answer
-//! instead of asking again (and starting another thread). It is the answer about the element
-//! the window had focused after the last focus change the watcher saw, which is what a fresh
-//! call would have said had it been fast enough. A question about another window, or after
-//! another focus change, drops it: the late answer then goes nowhere, as before. A question
-//! without a subject never uses one, and none is used once [`LATE_ANSWER_LIFETIME`] has passed
-//! since the question it was asked for (a field can change without a focus change, which only a
-//! fresh call would see; the watcher's reports again are over well before).
+//! may name its [`Subject`]: the window it is about, the control with the keyboard focus in it
+//! and that control's kind, and the watcher's count of the focus changes it has reported. When
+//! such a question times out, the given-up thread's answer is kept for when it comes, and:
+//!
+//! - **its arrival wakes the watcher** (the question's [`Wake`]), which reports the window again
+//!   at once, so the answer is used when it is new, not at the next pause;
+//! - the next question about the **same subject** that **may take a late answer** (only a report
+//!   the watcher made again, not one of a change: the caller decides) takes it if it arrived at
+//!   most [`LATE_ANSWER_FRESH`] ago, or waits for it if it has not arrived yet. One that has waited
+//!   longer is dropped and the application asked afresh.
+//!
+//! A late answer is the field **as it was when the application answered**, not what a call made
+//! at the later question would say: a field that turned into a password field in between, with
+//! no focus change, is not in it. The freshness bound keeps "in between" to a quarter of a
+//! second, the window of every answer's own race with such a change. A question about another
+//! window or control, after another focus change, or that may not take one, drops it: the late
+//! answer then goes nowhere, as before. The caller also checks which process provided the
+//! element ([`Answer::Late`]).
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
-use super::classify::Observation;
+use super::classify::{ControlKind, Observation};
 
 /// The most inspection threads at a time: the one in use and those given up that still wait
 /// for an application.
 pub(crate) const MAX_WORKERS: usize = 4;
 
-/// How long after its question a late answer may still serve another one (module docs).
-pub(crate) const LATE_ANSWER_LIFETIME: Duration = Duration::from_secs(10);
+/// How long after its arrival a late answer may still serve a question (module docs).
+pub(crate) const LATE_ANSWER_FRESH: Duration = Duration::from_millis(250);
 
 /// Asks the system about the focused element. Used on the thread that opened it.
 pub(crate) trait Probe {
@@ -70,16 +78,117 @@ pub(crate) trait ProbeSource: Send + Sync + 'static {
 pub(crate) struct Subject {
     /// The window asked about.
     pub(crate) window: u64,
-    /// How many focus changes the watcher had reported when the question was asked.
+    /// The control with the keyboard focus in it (its window handle; the window itself when
+    /// the system names none).
+    pub(crate) control: u64,
+    /// That control's kind.
+    pub(crate) kind: ControlKind,
+    /// How many focus changes had been counted when the question was asked.
     pub(crate) epoch: u64,
 }
 
-/// The answer of a given-up thread, still to come.
+/// Called on the inspection thread when the answer of a given-up question arrives.
+pub(crate) type Wake = Box<dyn FnOnce() + Send>;
+
+/// Where the inspection thread puts the answer of one question.
+#[derive(Default)]
+struct Mailbox {
+    mail: Mutex<Mail>,
+    arrived: Condvar,
+}
+
+#[derive(Default)]
+struct Mail {
+    /// The answer and when it arrived.
+    answer: Option<(Observation, Instant)>,
+    /// The thread dropped the question (skipped it, or ended).
+    closed: bool,
+    /// Called once, when the answer arrives (module docs).
+    wake: Option<Wake>,
+}
+
+/// How a wait for a mailbox ended.
+enum Waited {
+    Arrived(Observation, Instant),
+    Closed,
+    TimedOut,
+}
+
+impl Mailbox {
+    fn mail(&self) -> MutexGuard<'_, Mail> {
+        self.mail.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The inspection thread's side: the answer, then the wake (outside the lock).
+    fn deliver(&self, observation: Observation) {
+        let wake = {
+            let mut mail = self.mail();
+            mail.answer = Some((observation, Instant::now()));
+            mail.wake.take()
+        };
+        self.arrived.notify_all();
+        if let Some(wake) = wake {
+            wake();
+        }
+    }
+
+    fn close(&self) {
+        self.mail().closed = true;
+        self.arrived.notify_all();
+    }
+
+    /// Waits for the answer until `deadline`.
+    fn wait(&self, deadline: Instant) -> Waited {
+        let mut mail = self.mail();
+        loop {
+            if let Some((observation, at)) = mail.answer {
+                return Waited::Arrived(observation, at);
+            }
+            if mail.closed {
+                return Waited::Closed;
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Waited::TimedOut;
+            }
+            mail = self
+                .arrived
+                .wait_timeout(mail, left)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
+    }
+
+    /// Has `wake` called when the answer arrives; at once if it is already there.
+    fn set_wake(&self, wake: Wake) {
+        let now = {
+            let mut mail = self.mail();
+            if mail.answer.is_some() {
+                Some(wake)
+            } else {
+                mail.wake = Some(wake);
+                None
+            }
+        };
+        if let Some(wake) = now {
+            wake();
+        }
+    }
+}
+
+/// The question's end of a mailbox, held by the job: dropped unanswered, it closes the box.
+struct Reply(Arc<Mailbox>);
+
+impl Drop for Reply {
+    fn drop(&mut self) {
+        self.0.close();
+    }
+}
+
+/// The answer of a given-up thread, still to come or not yet used.
 struct Late {
     subject: Subject,
-    /// When the question it was asked for was asked.
-    asked: Instant,
-    answered: Receiver<Observation>,
+    mailbox: Arc<Mailbox>,
 }
 
 /// How a question ended.
@@ -87,6 +196,10 @@ struct Late {
 pub(crate) enum Answer {
     /// The probe answered in time.
     Observed(Observation),
+    /// The answer of an earlier question about the same subject, which arrived after that
+    /// question had stopped waiting (module docs). The caller checks that the element is the
+    /// window's before it believes it.
+    Late(Observation),
     /// It did not.
     TimedOut,
     /// There is no probe: the thread could not be created or could not open one.
@@ -97,7 +210,7 @@ pub(crate) enum Answer {
 struct Job {
     /// When the caller stops waiting.
     deadline: Instant,
-    reply: SyncSender<Observation>,
+    reply: Reply,
 }
 
 /// The way to an inspection thread.
@@ -131,8 +244,27 @@ pub(crate) struct Inspector<S: ProbeSource> {
     source: Arc<S>,
     slot: Mutex<Slot>,
     live: Arc<AtomicUsize>,
-    /// [`LATE_ANSWER_LIFETIME`], shorter in tests.
-    late_lifetime: Duration,
+    /// [`LATE_ANSWER_FRESH`], other in tests.
+    late_fresh: Duration,
+}
+
+/// What a question may do with the answer of an earlier one (module docs).
+pub(crate) struct Lateness {
+    /// What the question is about; `None`: no late answer is kept or taken.
+    pub(crate) subject: Option<Subject>,
+    /// The question may take a late answer (a report again, not one of a change).
+    pub(crate) may_take: bool,
+    /// Called when the answer of this question arrives after it stopped waiting.
+    pub(crate) wake: Option<Wake>,
+}
+
+impl Lateness {
+    /// No late answer at all.
+    pub(crate) const NONE: Self = Self {
+        subject: None,
+        may_take: false,
+        wake: None,
+    };
 }
 
 impl<S: ProbeSource> Inspector<S> {
@@ -143,14 +275,14 @@ impl<S: ProbeSource> Inspector<S> {
             source: Arc::new(source),
             slot: Mutex::new(Slot::default()),
             live: Arc::new(AtomicUsize::new(0)),
-            late_lifetime: LATE_ANSWER_LIFETIME,
+            late_fresh: LATE_ANSWER_FRESH,
         }
     }
 
-    /// The same inspector with another lifetime of a late answer.
+    /// The same inspector with another freshness bound of a late answer.
     #[cfg(test)]
-    pub(crate) const fn with_late_lifetime(mut self, lifetime: Duration) -> Self {
-        self.late_lifetime = lifetime;
+    pub(crate) const fn with_late_fresh(mut self, fresh: Duration) -> Self {
+        self.late_fresh = fresh;
         self
     }
 
@@ -172,54 +304,68 @@ impl<S: ProbeSource> Inspector<S> {
         }
     }
 
-    /// Asks the probe and waits for the answer for at most `timeout`. With a `subject`, a late
-    /// answer to an earlier question about the same subject serves this one (module docs).
-    pub(crate) fn observe(&self, subject: Option<Subject>, timeout: Duration) -> Answer {
+    /// Asks the probe and waits for the answer for at most `timeout`. `lateness` says whether
+    /// an answer that comes too late is kept, and whether one kept earlier may serve this
+    /// question (module docs).
+    pub(crate) fn observe(&self, lateness: Lateness, timeout: Duration) -> Answer {
+        let Lateness {
+            subject,
+            may_take,
+            wake,
+        } = lateness;
         let now = Instant::now();
         // A limit the clock cannot express is as good as a day.
         let timeout = timeout.min(Duration::from_hours(24));
         let deadline = now + timeout;
         let late = self.slot().late.take();
         if let Some(late) = late
+            && may_take
             && Some(late.subject) == subject
-            && late.asked.elapsed() <= self.late_lifetime
         {
-            match late.answered.recv_timeout(timeout) {
-                Ok(observation) => return Answer::Observed(observation),
-                Err(RecvTimeoutError::Timeout) => {
-                    // Still not there: it is waited for again by the next question.
+            match late.mailbox.wait(deadline) {
+                Waited::Arrived(observation, at) if at.elapsed() <= self.late_fresh => {
+                    return Answer::Late(observation);
+                }
+                // Too old: the field may have changed since. Ask afresh.
+                Waited::Arrived(..) | Waited::Closed => {}
+                Waited::TimedOut => {
+                    // Still not there: the next report again waits for it, and its arrival
+                    // calls this question's wake.
+                    if let Some(wake) = wake {
+                        late.mailbox.set_wake(wake);
+                    }
                     self.slot().late = Some(late);
                     return Answer::TimedOut;
                 }
-                // The thread ended without an answer: ask afresh.
-                Err(RecvTimeoutError::Disconnected) => {}
             }
         }
-        let left = deadline.saturating_duration_since(Instant::now());
-        let (reply, answered) = mpsc::sync_channel(1);
-        let (id, opened) = match self.submit(Job { deadline, reply }) {
+        let mailbox = Arc::new(Mailbox::default());
+        let job = Job {
+            deadline,
+            reply: Reply(Arc::clone(&mailbox)),
+        };
+        let (id, opened) = match self.submit(job) {
             Ok(worker) => worker,
             Err(answer) => return answer,
         };
-        match answered.recv_timeout(left) {
-            Ok(observation) => Answer::Observed(observation),
-            Err(RecvTimeoutError::Timeout) => {
+        match mailbox.wait(deadline) {
+            Waited::Arrived(observation, _) => Answer::Observed(observation),
+            Waited::TimedOut => {
                 if opened.load(Ordering::SeqCst) {
                     self.give_up(id);
                     if let Some(subject) = subject {
-                        self.slot().late = Some(Late {
-                            subject,
-                            asked: now,
-                            answered,
-                        });
+                        if let Some(wake) = wake {
+                            mailbox.set_wake(wake);
+                        }
+                        self.slot().late = Some(Late { subject, mailbox });
                     }
                 }
                 Answer::TimedOut
             }
             // The thread dropped the question: it skipped it because the time was over, or
             // it ended.
-            Err(RecvTimeoutError::Disconnected) if Instant::now() >= deadline => Answer::TimedOut,
-            Err(RecvTimeoutError::Disconnected) => {
+            Waited::Closed if Instant::now() >= deadline => Answer::TimedOut,
+            Waited::Closed => {
                 self.give_up(id);
                 Answer::Unavailable
             }
@@ -273,11 +419,11 @@ impl<S: ProbeSource> Inspector<S> {
                 is_open.store(true, Ordering::SeqCst);
                 // Ends when the inspector has dropped the sender: given up, or gone.
                 while let Ok(job) = queue.recv() {
+                    // A question whose time is over is dropped, which closes its mailbox.
                     if Instant::now() >= job.deadline {
                         continue;
                     }
-                    // A caller that stopped waiting has dropped the receiver.
-                    let _ = job.reply.send(probe.observe());
+                    job.reply.0.deliver(probe.observe());
                 }
             })
             .ok()?;
@@ -444,10 +590,12 @@ mod tests {
     const PLAIN: Observation = Observation::Element {
         password: false,
         control_type: 50004,
+        process: 40,
     };
     const PASSWORD: Observation = Observation::Element {
         password: true,
         control_type: 50004,
+        process: 40,
     };
 
     /// Waits until `inspector` has `count` threads.
@@ -468,10 +616,16 @@ mod tests {
             0,
             "no thread before the first question"
         );
-        assert_eq!(inspector.observe(None, LONG), Answer::Observed(PLAIN));
-        assert_eq!(inspector.observe(None, LONG), Answer::Observed(PASSWORD));
         assert_eq!(
-            inspector.observe(None, LONG),
+            inspector.observe(Lateness::NONE, LONG),
+            Answer::Observed(PLAIN)
+        );
+        assert_eq!(
+            inspector.observe(Lateness::NONE, LONG),
+            Answer::Observed(PASSWORD)
+        );
+        assert_eq!(
+            inspector.observe(Lateness::NONE, LONG),
             Answer::Observed(Observation::NoElement)
         );
         assert_eq!(inspector.workers(), 1);
@@ -489,13 +643,16 @@ mod tests {
         inspector.wait_open();
 
         let started = Instant::now();
-        assert_eq!(inspector.observe(None, SHORT), Answer::TimedOut);
+        assert_eq!(inspector.observe(Lateness::NONE, SHORT), Answer::TimedOut);
         let waited = started.elapsed();
         assert!(waited >= SHORT, "{waited:?}");
         assert!(waited < Duration::from_secs(5), "{waited:?}");
 
         // The next question is served by a fresh thread while the first still hangs.
-        assert_eq!(inspector.observe(None, LONG), Answer::Observed(PLAIN));
+        assert_eq!(
+            inspector.observe(Lateness::NONE, LONG),
+            Answer::Observed(PLAIN)
+        );
         assert_eq!(inspector.workers(), 2);
 
         // The hung call returns: its late answer goes nowhere and its thread ends.
@@ -517,13 +674,13 @@ mod tests {
         let inspector = Inspector::new(source.clone());
         for _ in 0..MAX_WORKERS {
             inspector.wait_open();
-            assert_eq!(inspector.observe(None, SHORT), Answer::TimedOut);
+            assert_eq!(inspector.observe(Lateness::NONE, SHORT), Answer::TimedOut);
         }
         assert_eq!(inspector.workers(), MAX_WORKERS);
 
         // Every thread hangs: answered at once, without another thread and without asking.
         let started = Instant::now();
-        assert_eq!(inspector.observe(None, LONG), Answer::TimedOut);
+        assert_eq!(inspector.observe(Lateness::NONE, LONG), Answer::TimedOut);
         assert!(started.elapsed() < Duration::from_secs(5));
         assert_eq!(inspector.workers(), MAX_WORKERS);
         assert_eq!(source.0.asked(), u32::try_from(MAX_WORKERS).expect("small"));
@@ -531,7 +688,10 @@ mod tests {
         // One returns: there is room again.
         releases.remove(0).send(()).expect("the thread still waits");
         wait_for_workers(&inspector, MAX_WORKERS - 1);
-        assert_eq!(inspector.observe(None, LONG), Answer::Observed(PASSWORD));
+        assert_eq!(
+            inspector.observe(Lateness::NONE, LONG),
+            Answer::Observed(PASSWORD)
+        );
         drop(releases);
         wait_for_workers(&inspector, 1);
     }
@@ -543,14 +703,17 @@ mod tests {
         *source.0.open_gate.lock().expect("not poisoned") = Some(gate);
         let inspector = Inspector::new(source.clone());
 
-        assert_eq!(inspector.observe(None, SHORT), Answer::TimedOut);
+        assert_eq!(inspector.observe(Lateness::NONE, SHORT), Answer::TimedOut);
         assert_eq!(inspector.workers(), 1);
         open.send(()).expect("the thread waits to open");
 
         // The same thread serves the next question. The first one's time was over when the
         // thread got to it, so it was skipped: the probe is asked once and its first answer
         // goes to the second question.
-        assert_eq!(inspector.observe(None, LONG), Answer::Observed(PLAIN));
+        assert_eq!(
+            inspector.observe(Lateness::NONE, LONG),
+            Answer::Observed(PLAIN)
+        );
         assert_eq!(inspector.workers(), 1);
         assert_eq!(source.0.asked(), 1);
     }
@@ -562,7 +725,10 @@ mod tests {
         inspector.warm();
         inspector.warm();
         assert_eq!(inspector.workers(), 1);
-        assert_eq!(inspector.observe(None, LONG), Answer::Observed(PLAIN));
+        assert_eq!(
+            inspector.observe(Lateness::NONE, LONG),
+            Answer::Observed(PLAIN)
+        );
         assert_eq!(inspector.workers(), 1);
     }
 
@@ -571,13 +737,16 @@ mod tests {
         let source = FakeSource::answering(&[PLAIN]);
         *source.0.refuse_open.lock().expect("not poisoned") = true;
         let inspector = Inspector::new(source.clone());
-        assert_eq!(inspector.observe(None, LONG), Answer::Unavailable);
+        assert_eq!(inspector.observe(Lateness::NONE, LONG), Answer::Unavailable);
         wait_for_workers(&inspector, 0);
         assert_eq!(source.0.asked(), 0);
 
         // Once the system lets it open, the next question is served.
         *source.0.refuse_open.lock().expect("not poisoned") = false;
-        assert_eq!(inspector.observe(None, LONG), Answer::Observed(PLAIN));
+        assert_eq!(
+            inspector.observe(Lateness::NONE, LONG),
+            Answer::Observed(PLAIN)
+        );
     }
 
     #[test]
@@ -586,48 +755,133 @@ mod tests {
         let (step, _release) = hang(PLAIN);
         source.0.push(step);
         let inspector = Inspector::new(source);
-        assert_eq!(inspector.observe(None, Duration::ZERO), Answer::TimedOut);
+        assert_eq!(
+            inspector.observe(Lateness::NONE, Duration::ZERO),
+            Answer::TimedOut
+        );
     }
 
     #[test]
     fn a_limit_too_large_for_the_clock_is_accepted() {
         let inspector = Inspector::new(FakeSource::answering(&[PLAIN]));
         assert_eq!(
-            inspector.observe(None, Duration::MAX),
+            inspector.observe(Lateness::NONE, Duration::MAX),
             Answer::Observed(PLAIN)
         );
     }
 
     const SUBJECT: Subject = Subject {
         window: 0x1_0000_0A10,
+        control: 0x1_0000_0A20,
+        kind: ControlKind::WebEngine,
         epoch: 7,
     };
 
+    /// A question about `subject` that keeps a late answer and may take one, with a wake that
+    /// says on `woken` when the late answer arrived.
+    fn again(subject: Subject, woken: &mpsc::Sender<()>) -> Lateness {
+        let woken = woken.clone();
+        Lateness {
+            subject: Some(subject),
+            may_take: true,
+            wake: Some(Box::new(move || {
+                let _ = woken.send(());
+            })),
+        }
+    }
+
+    /// The first question of a change: keeps a late answer, may not take one.
+    fn first(subject: Subject, woken: &mpsc::Sender<()>) -> Lateness {
+        Lateness {
+            may_take: false,
+            ..again(subject, woken)
+        }
+    }
+
     #[test]
-    fn a_late_answer_serves_the_next_question_about_the_same_subject() {
+    fn a_late_answer_wakes_the_watcher_and_serves_the_report_it_makes() {
         let source = FakeSource::default();
         let (step, release) = hang(PASSWORD);
         source.0.push(step);
         source.0.push(Step::Answer(PLAIN));
         let inspector = Inspector::new(source.clone());
         inspector.wait_open();
+        let (woken, wakes) = mpsc::channel();
 
-        assert_eq!(inspector.observe(Some(SUBJECT), SHORT), Answer::TimedOut);
-        // The application answers after the caller stopped waiting.
-        release.send(()).expect("the thread still waits");
-        // Asked again about the same window, with no focus change since: that answer, without
-        // asking the application again.
         assert_eq!(
-            inspector.observe(Some(SUBJECT), LONG),
-            Answer::Observed(PASSWORD)
+            inspector.observe(first(SUBJECT, &woken), SHORT),
+            Answer::TimedOut
+        );
+        assert!(wakes.try_recv().is_err(), "nothing arrived yet");
+        // The application answers after the caller stopped waiting: the watcher is woken at
+        // once, and the report it makes takes the answer without asking again.
+        release.send(()).expect("the thread still waits");
+        wakes
+            .recv_timeout(LONG)
+            .expect("the arrival wakes the watcher");
+        assert_eq!(
+            inspector.observe(again(SUBJECT, &woken), LONG),
+            Answer::Late(PASSWORD)
         );
         assert_eq!(source.0.asked(), 1);
         // It serves one question: the next one asks.
         assert_eq!(
-            inspector.observe(Some(SUBJECT), LONG),
+            inspector.observe(again(SUBJECT, &woken), LONG),
             Answer::Observed(PLAIN)
         );
         assert_eq!(source.0.asked(), 2);
+    }
+
+    #[test]
+    fn a_late_answer_that_waited_too_long_is_not_taken() {
+        // Finding M1 of the late-answer review: the field may have become a password field
+        // since the application answered.
+        let source = FakeSource::default();
+        let (step, release) = hang(PLAIN);
+        source.0.push(step);
+        source.0.push(Step::Answer(PASSWORD));
+        let inspector = Inspector::new(source.clone()).with_late_fresh(SHORT);
+        inspector.wait_open();
+        let (woken, wakes) = mpsc::channel();
+        assert_eq!(
+            inspector.observe(first(SUBJECT, &woken), SHORT),
+            Answer::TimedOut
+        );
+        release.send(()).expect("the thread still waits");
+        wakes.recv_timeout(LONG).expect("woken");
+        // The report comes after the bound, counted from the arrival.
+        std::thread::sleep(SHORT * 3);
+        assert_eq!(
+            inspector.observe(again(SUBJECT, &woken), LONG),
+            Answer::Observed(PASSWORD)
+        );
+        assert_eq!(source.0.asked(), 2);
+    }
+
+    #[test]
+    fn the_bound_counts_from_the_arrival_not_from_the_question() {
+        let source = FakeSource::default();
+        let (step, release) = hang(PLAIN);
+        source.0.push(step);
+        let inspector = Inspector::new(source.clone()).with_late_fresh(SHORT * 3);
+        inspector.wait_open();
+        let (woken, _wakes) = mpsc::channel();
+        assert_eq!(
+            inspector.observe(first(SUBJECT, &woken), SHORT),
+            Answer::TimedOut
+        );
+        // Long after the question, the answer arrives while a report again waits for it.
+        std::thread::sleep(SHORT * 4);
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(SHORT);
+            release.send(()).expect("the thread still waits");
+        });
+        assert_eq!(
+            inspector.observe(again(SUBJECT, &woken), LONG),
+            Answer::Late(PLAIN)
+        );
+        releaser.join().expect("released");
+        assert_eq!(source.0.asked(), 1);
     }
 
     #[test]
@@ -637,74 +891,85 @@ mod tests {
         source.0.push(step);
         let inspector = Inspector::new(source.clone());
         inspector.wait_open();
+        let (woken, _wakes) = mpsc::channel();
 
         // Three questions while the first call is still running: one call, one thread.
-        for _ in 0..3 {
-            assert_eq!(inspector.observe(Some(SUBJECT), SHORT), Answer::TimedOut);
+        assert_eq!(
+            inspector.observe(first(SUBJECT, &woken), SHORT),
+            Answer::TimedOut
+        );
+        for _ in 0..2 {
+            assert_eq!(
+                inspector.observe(again(SUBJECT, &woken), SHORT),
+                Answer::TimedOut
+            );
         }
         assert_eq!(source.0.asked(), 1);
         assert_eq!(inspector.workers(), 1);
         release.send(()).expect("the thread still waits");
         assert_eq!(
-            inspector.observe(Some(SUBJECT), LONG),
-            Answer::Observed(PLAIN)
+            inspector.observe(again(SUBJECT, &woken), LONG),
+            Answer::Late(PLAIN)
         );
         wait_for_workers(&inspector, 0);
     }
 
     #[test]
-    fn a_late_answer_never_serves_another_window_or_a_later_focus_change() {
-        let other_window = Subject {
-            window: 0x1_0000_0B20,
-            ..SUBJECT
-        };
-        let after_a_change = Subject {
-            epoch: SUBJECT.epoch + 1,
-            ..SUBJECT
-        };
-        for later in [Some(other_window), Some(after_a_change), None] {
+    fn a_late_answer_never_serves_another_window_control_or_count_or_a_change() {
+        let others = [
+            Subject {
+                window: 0x1_0000_0B20,
+                ..SUBJECT
+            },
+            // Finding L2 of the late-answer review: the focus moved to another control of
+            // the same window before the change was counted.
+            Subject {
+                control: 0x1_0000_0C30,
+                ..SUBJECT
+            },
+            Subject {
+                kind: ControlKind::Other,
+                ..SUBJECT
+            },
+            Subject {
+                epoch: SUBJECT.epoch + 1,
+                ..SUBJECT
+            },
+        ];
+        let (woken, _wakes) = mpsc::channel();
+        let cases = others
+            .iter()
+            .map(|other| again(*other, &woken))
+            .chain([first(SUBJECT, &woken), Lateness::NONE]);
+        for later in cases {
+            let label = format!("{:?} may take: {}", later.subject, later.may_take);
             let source = FakeSource::default();
             let (step, release) = hang(PLAIN);
             source.0.push(step);
             source.0.push(Step::Answer(PASSWORD));
             let inspector = Inspector::new(source.clone());
             inspector.wait_open();
-            assert_eq!(inspector.observe(Some(SUBJECT), SHORT), Answer::TimedOut);
+            assert_eq!(
+                inspector.observe(first(SUBJECT, &woken), SHORT),
+                Answer::TimedOut
+            );
             release.send(()).expect("the thread still waits");
             // The late "plain" is not taken: the application is asked again, and says
             // "password".
             assert_eq!(
                 inspector.observe(later, LONG),
                 Answer::Observed(PASSWORD),
-                "{later:?}"
+                "{label}"
             );
-            assert_eq!(source.0.asked(), 2, "{later:?}");
+            assert_eq!(source.0.asked(), 2, "{label}");
             // And it is gone: not even the first subject gets it now.
             source.0.push(Step::Answer(PASSWORD));
             assert_eq!(
-                inspector.observe(Some(SUBJECT), LONG),
+                inspector.observe(again(SUBJECT, &woken), LONG),
                 Answer::Observed(PASSWORD),
-                "{later:?}"
+                "{label}"
             );
         }
-    }
-
-    #[test]
-    fn an_old_late_answer_is_not_taken() {
-        let source = FakeSource::default();
-        let (step, release) = hang(PLAIN);
-        source.0.push(step);
-        source.0.push(Step::Answer(PASSWORD));
-        let inspector = Inspector::new(source.clone()).with_late_lifetime(SHORT);
-        inspector.wait_open();
-        assert_eq!(inspector.observe(Some(SUBJECT), SHORT), Answer::TimedOut);
-        release.send(()).expect("the thread still waits");
-        std::thread::sleep(SHORT * 2);
-        assert_eq!(
-            inspector.observe(Some(SUBJECT), LONG),
-            Answer::Observed(PASSWORD)
-        );
-        assert_eq!(source.0.asked(), 2);
     }
 
     #[test]
@@ -715,13 +980,15 @@ mod tests {
         source.0.push(Step::Answer(PASSWORD));
         let inspector = Inspector::new(source.clone());
         inspector.wait_open();
-        assert_eq!(inspector.observe(None, SHORT), Answer::TimedOut);
+        assert_eq!(inspector.observe(Lateness::NONE, SHORT), Answer::TimedOut);
         release.send(()).expect("the thread still waits");
+        let (woken, wakes) = mpsc::channel();
         assert_eq!(
-            inspector.observe(Some(SUBJECT), LONG),
+            inspector.observe(again(SUBJECT, &woken), LONG),
             Answer::Observed(PASSWORD)
         );
         assert_eq!(source.0.asked(), 2);
+        assert!(wakes.try_recv().is_err(), "no wake for an answer in time");
     }
 
     #[test]

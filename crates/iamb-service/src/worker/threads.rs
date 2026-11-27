@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use iamb_core::engine::SecureState;
 use iamb_platform::{
-    EventSink, FieldSecurity, FocusChange, InjectionRequest, PlatformError, SECURE_STATE_TIMEOUT,
-    TypedHandoff, verdict,
+    EventSink, FieldSecurity, FocusChange, FocusToken, InjectionRequest, PlatformError,
+    SECURE_STATE_TIMEOUT, TypedHandoff, UnknownReason, verdict,
 };
 
 use super::{
@@ -38,6 +38,8 @@ pub(crate) fn injector(
 /// time is `Unknown`, which keeps the engine suspended (§4.1: fail closed).
 pub(crate) fn focus(shared: &Shared, rx: &Receiver<FocusMsg>) {
     let mut current: Option<FocusChange> = None;
+    // The reason last logged, and for which window: logged again only when it changes.
+    let mut logged: Option<(FocusToken, UnknownReason)> = None;
     while let Ok(msg) = rx.recv() {
         WakeCounters::bump(&shared.wakes.focus);
         let change = match msg {
@@ -69,17 +71,24 @@ pub(crate) fn focus(shared: &Shared, rx: &Receiver<FocusMsg>) {
             == Some(token);
         let state = verdict(&app, field, excluded, test_field);
         // Why the field could not be judged, when that is what keeps the engine suspended. The
-        // log line names the reason only: no application, no window (§8).
+        // log line names the reason only: no application, no window (§8). It is written when
+        // the reason changes, not at every look: a line per look would be a timed trace of
+        // the user's moves between fields (the late-answer review's finding L5).
         let unknown = match field {
-            FieldSecurity::Unknown(reason) if state == SecureState::Unknown => {
+            FieldSecurity::Unknown(reason) if state == SecureState::Unknown => Some(reason),
+            _ => None,
+        };
+        if let Some(reason) = unknown {
+            if logged != Some((token, reason)) {
                 shared.logger.info(format_args!(
                     "the focused field could not be judged: {}",
                     reason.code()
                 ));
-                Some(reason)
+                logged = Some((token, reason));
             }
-            _ => None,
-        };
+        } else if logged.is_some_and(|(window, _)| window != token) {
+            logged = None;
+        }
         if !shared.to_engine(EngineMsg::Verdict(state, unknown)) {
             break;
         }

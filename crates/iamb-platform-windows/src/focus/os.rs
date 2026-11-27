@@ -31,15 +31,18 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WINEVENT_OUTOFCONTEXT, WM_APP, WM_QUIT, WM_TIMER, WM_USER,
 };
 
-use super::classify::{self, ControlKind};
+use super::classify;
 use super::identity;
 use super::rules::{EventKind, Relation};
-use super::secure::{Desk, Front, Privilege};
+use super::secure::{Control, Desk, Front, Privilege};
 use crate::listener::os::{last_error, os_error};
 
 /// Thread message to the watcher: the state of the window whose handle is the message's
 /// first parameter could not be told; report it again after a pause.
 pub(super) const WM_LOOK_AGAIN: u32 = WM_APP + 1;
+/// Thread message to the watcher: the late answer about the window whose handle is the
+/// message's first parameter has arrived; report it again now.
+pub(super) const WM_LATE_ANSWER: u32 = WM_APP + 2;
 /// Ends the watcher thread's message loop.
 pub(super) const WM_STOP: u32 = WM_QUIT;
 
@@ -301,13 +304,18 @@ impl Desk for SystemDesk {
         }
     }
 
-    fn control(&self, front: Front) -> ControlKind {
+    fn control(&self, front: Front) -> Control {
         let window = handle(front.window);
         let control = focused_control(window).unwrap_or(window);
         // SAFETY: a stale handle is answered with 0. The call reads what the system keeps
         // about the window and sends it no message.
         let style = unsafe { GetWindowLongW(control, GWL_STYLE) }.cast_unsigned();
-        classify::control_kind(&real_class(control), style)
+        Control {
+            window: number(control),
+            // A window that is gone meanwhile has no process; 0 is no process's id.
+            pid: owner(control).map_or(0, |(_, pid)| pid),
+            kind: classify::control_kind(&real_class(control), style),
+        }
     }
 }
 
@@ -497,6 +505,8 @@ pub(super) enum Message {
     Failed(i64),
     /// Report this window again after a pause.
     LookAgain(u64),
+    /// A late answer about this window arrived: report it again now.
+    LateAnswer(u64),
     /// The timer with this id is due.
     Timer(usize),
     /// Anything else.
@@ -523,6 +533,7 @@ pub(super) fn next_message() -> Message {
     }
     match message.message {
         WM_LOOK_AGAIN => Message::LookAgain(message.wParam as u64),
+        WM_LATE_ANSWER => Message::LateAnswer(message.wParam as u64),
         WM_TIMER => Message::Timer(message.wParam),
         _ => Message::Other,
     }

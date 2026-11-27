@@ -1,5 +1,7 @@
 //! The watcher's decisions, and the wait of `restore_focus`. No system call.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use iamb_platform::PlatformError;
@@ -52,8 +54,8 @@ pub(crate) const fn reportable(kind: EventKind, moved: bool, relation: Relation)
 /// reason that may pass (milliseconds): about 7.5 s in all. A browser engine builds its
 /// accessibility tree only once it is first asked, and a large page (an application built on an
 /// engine) takes seconds for that; an application that answers slower than the service waits
-/// answers the next report from its late answer (`inspect`). The first pauses are short, so that
-/// a small page or a busy moment costs little.
+/// is reported again as soon as its late answer arrives (`inspect`). The first pauses are
+/// short, so that a small page or a busy moment costs little.
 pub(crate) const LOOK_AGAIN_MS: [u32; 5] = [150, 400, 1000, 2000, 4000];
 
 /// When to report the window in front again.
@@ -91,6 +93,43 @@ impl Settle {
         let pause = LOOK_AGAIN_MS.get(self.asked).copied()?;
         self.asked += 1;
         Some(pause)
+    }
+}
+
+/// The count of focus changes and the mark of a report again, shared by the watchers of one
+/// platform and its `secure_state` (`watch`).
+#[derive(Debug, Default)]
+pub(crate) struct Counts {
+    epoch: AtomicU64,
+    /// The window and count of the last report again, until a question takes it.
+    again: Mutex<Option<(u64, u64)>>,
+}
+
+impl Counts {
+    fn again(&self) -> std::sync::MutexGuard<'_, Option<(u64, u64)>> {
+        self.again.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The count as it is.
+    pub(crate) fn epoch(&self) -> u64 {
+        self.epoch.load(Ordering::SeqCst)
+    }
+
+    /// A change of the focus: before it is reported (or, for the service's own reading, before
+    /// the focus is read).
+    pub(crate) fn count_change(&self) {
+        *self.again() = None;
+        self.epoch.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// The next report of `window` is a report again.
+    pub(crate) fn mark_again(&self, window: u64) {
+        *self.again() = Some((window, self.epoch()));
+    }
+
+    /// Takes the mark: true when it is for `window` at count `epoch`.
+    pub(crate) fn take_again(&self, window: u64, epoch: u64) -> bool {
+        self.again().take() == Some((window, epoch))
     }
 }
 
@@ -205,6 +244,34 @@ mod tests {
         assert_eq!(settle.look_again(7), Some(LOOK_AGAIN_MS[0]));
         // Before any event nothing is reported again.
         assert_eq!(Settle::default().look_again(7), None);
+    }
+
+    #[test]
+    fn a_report_again_is_marked_for_its_window_and_count_and_taken_once() {
+        let counts = Counts::default();
+        counts.count_change();
+        let epoch = counts.epoch();
+        counts.mark_again(7);
+        assert!(counts.take_again(7, epoch));
+        assert!(!counts.take_again(7, epoch), "taken once");
+        // Another window, or another count, does not match (and still uses the mark up).
+        counts.mark_again(7);
+        assert!(!counts.take_again(8, epoch));
+        assert!(!counts.take_again(7, epoch));
+        counts.mark_again(7);
+        assert!(!counts.take_again(7, epoch + 1));
+    }
+
+    #[test]
+    fn a_change_clears_the_mark_of_a_report_again() {
+        // Finding L3 of the late-answer review: a change the service read itself, or one the
+        // watcher reported after the mark, makes the question one about a change.
+        let counts = Counts::default();
+        counts.mark_again(7);
+        let epoch = counts.epoch();
+        counts.count_change();
+        assert!(!counts.take_again(7, epoch));
+        assert!(!counts.take_again(7, counts.epoch()));
     }
 
     #[test]

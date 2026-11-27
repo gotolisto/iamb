@@ -189,8 +189,10 @@ describe("the sentences follow the specification's table (§6.2)", () => {
     expect(reason("elevated")).toBe("Reason: elevated");
     expect(reason("focus_moved")).toBe("Reason: focus moved");
     expect(reason("no_focus")).toBe("Reason: no focus");
-    // A reason of a newer service is shown as it came; none is no line.
-    expect(reason("a_reason_of_a_newer_iamb")).toBe("Reason: a_reason_of_a_newer_iamb");
+    // A value this version does not know is not shown, whatever it holds; none is no line.
+    for (const other of ["a_reason_of_a_newer_iamb", "other", "<b>typed</b>", "toString", "__proto__"]) {
+      expect(reason(other), other).toBeNull();
+    }
     expect(reason(null)).toBeNull();
     expect(render("suspended_secure_field", { label: null, app: null, mac: false }).reason).toBeNull();
   });

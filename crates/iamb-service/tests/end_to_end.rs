@@ -132,7 +132,14 @@ fn entries_with(c: &mut iamb_ipc::Client, code: &str) -> Vec<(Option<String>, Op
         ResponseBody::Diagnostics { entries } => entries
             .into_iter()
             .filter(|e| e.code == code)
-            .map(|e| (e.app, e.detail))
+            .map(|e| {
+                (
+                    e.app,
+                    e.detail
+                        .and_then(iamb_ipc::DiagnosticDetail::code)
+                        .map(str::to_owned),
+                )
+            })
             .collect(),
         other => panic!("unexpected {other:?}"),
     }
@@ -172,6 +179,40 @@ fn an_unknown_focus_says_why_the_field_could_not_be_judged() {
     assert_eq!(
         entries_with(&mut c, "suspended_secure_field"),
         [(Some("org.example.bank".to_owned()), None)]
+    );
+
+    // The worker's log names the reason, once per window and reason, and nothing else: the
+    // window judged again (an exclusion change) adds no line.
+    h.os.focus(admin).expect("open");
+    h.worker().sync();
+    c.call(RequestBody::PutExclusion {
+        app_id: "org.example.other".to_owned(),
+        display_name: String::new(),
+        excluded: true,
+    })
+    .expect("stored");
+    h.worker().sync();
+    let log = std::fs::read_to_string(h.dirs().logs().join("worker.log")).expect("log");
+    let lines: Vec<&str> = log
+        .lines()
+        .filter(|l| l.contains("could not be judged"))
+        .collect();
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|l| l.ends_with("could not be judged: elevated"))
+            .count(),
+        2,
+        "once at the first focus, once when it came back from another window: {lines:?}"
+    );
+    assert_eq!(
+        lines.iter().filter(|l| l.ends_with(": timeout")).count(),
+        1,
+        "{lines:?}"
+    );
+    assert!(
+        lines.iter().all(|l| !l.contains("org.example")),
+        "{lines:?}"
     );
 }
 

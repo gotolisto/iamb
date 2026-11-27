@@ -883,7 +883,7 @@ impl EngineThread {
                     self.on_request(Explicit::Reopen, Some(token));
                 } else {
                     let mut d = coded("refused_unknown_focus");
-                    d.detail = Some(UnknownReason::NoFocus.code().to_owned());
+                    d.detail = Some(UnknownReason::NoFocus.into());
                     self.shared.diagnostic(d);
                 }
             }
@@ -1139,7 +1139,7 @@ impl EngineThread {
                             "suspended_unknown_focus" | "refused_unknown_focus"
                         )
                     {
-                        wire.detail = Some(reason.code().to_owned());
+                        wire.detail = Some(reason.into());
                     }
                     if answers_a_reopen(&wire.code, reopening) {
                         self.reopen_waiting = false;
