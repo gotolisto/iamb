@@ -1,6 +1,7 @@
 // The sentences of "Why didn't it expand?" (specification §6.2): one entry for every reason code
-// the service emits. A diagnostic carries a code, a snippet and an app, never typed text, so a
-// sentence can name only the snippet's label and the app (architecture §8 rule 4).
+// the service emits. A diagnostic carries a code, a snippet, an app and sometimes a technical
+// detail of the reason (a code too), never typed text, so a sentence can name only the snippet's
+// label and the app (architecture §8 rule 4).
 //
 // `diagnostics.test.ts` reads the service's sources and fails when a code it emits has no entry
 // here, so a new code cannot reach the log as a bare code by accident.
@@ -16,8 +17,13 @@ export interface ReasonContext {
   label: string | null;
   /** The app's id or name, when the service named one. */
   app: string | null;
-  /** Windows adds a hint to one sentence. */
+  /** The page runs on macOS. */
   mac: boolean;
+  /**
+   * The technical detail of the reason, a code: for an unknown focus, why the field could not be
+   * judged (`timeout`, `elevated`, `not_inspectable`, `no_focus`, `focus_moved`).
+   */
+  detail?: string | null;
 }
 
 export interface Reason {
@@ -77,8 +83,10 @@ const REASONS: Record<string, Reason> = {
   },
   suspended_unknown_focus: {
     title: (c) => `Not expanding in ${appName(c)}`,
+    // The hint only when Windows said the window's program has a higher privilege level: for
+    // any other reason it would send the user looking in the wrong place.
     detail: (c) =>
-      `Iamb cannot see into this window, so it stays out.${c.mac ? "" : " It may be running as administrator."}`,
+      `Iamb cannot see into this window, so it stays out.${!c.mac && c.detail === "elevated" ? " It may be running as administrator." : ""}`,
   },
   suspended_composing: fixed("Not expanding while your keyboard composes text", "An input method is on."),
 
@@ -200,6 +208,21 @@ export function reasonOf(code: string): Reason {
   );
 }
 
+/** The words of the technical details the service sends; one it does not know is shown as it came. */
+const DETAIL_WORDS: Record<string, string> = {
+  timeout: "timeout",
+  elevated: "elevated",
+  not_inspectable: "not inspectable",
+  no_focus: "no focus",
+  focus_moved: "focus moved",
+};
+
+/** "Reason: not inspectable", for an entry with a technical detail; null without one. */
+export function reasonLine(detail: string | null | undefined): string | null {
+  if (!detail) return null;
+  return `Reason: ${DETAIL_WORDS[detail] ?? detail}`;
+}
+
 export interface Rendered {
   title: string;
   detail: string | null;
@@ -207,6 +230,8 @@ export interface Rendered {
   technical: boolean;
   /** The code, shown small for template errors and for technical entries. */
   code: string | null;
+  /** The technical detail of the reason ("Reason: timeout"), shown small under the entry. */
+  reason: string | null;
 }
 
 /** The words of one entry. */
@@ -219,5 +244,6 @@ export function render(code: string, c: ReasonContext): Rendered {
     action: reason.action ?? null,
     technical: reason.technical === true,
     code: isTemplate ? code : null,
+    reason: reasonLine(c.detail),
   };
 }

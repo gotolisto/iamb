@@ -74,8 +74,40 @@
 //! **Looking again.** The service asks once per reported focus change. When the answer is
 //! unknown for a reason that may pass (a busy application, an engine still building its
 //! tree, the automation library still loading), the watcher reports the same window again
-//! after 150 ms, 400 ms and 1 s. After that the state stays unknown, and the engine
-//! suspended, until the focus changes.
+//! after 150 ms, 400 ms, 1 s, 2 s and 4 s (`rules::LOOK_AGAIN_MS`). After that the state stays
+//! unknown, and the engine suspended, until the focus changes.
+//!
+//! **A late answer.** An application that answers UI Automation, but slower than the 100 ms
+//! the service waits, would time out at every report if each asked afresh: every call is as
+//! slow as the one before, and each would start another inspection thread. So the answer of a
+//! question that timed out is kept, and the next report of the same window takes it, provided
+//! the watcher has reported no focus change since (`inspect`, "A late answer"). Why that is
+//! safe: the watcher counts every focus change it reports, and counts it *before* the service
+//! hears of it, so the question about a change, a move into a password field included, is never
+//! served an answer obtained before that change; it asks afresh. A late answer is therefore
+//! about the element the window had focused after the last change the watcher saw: what a
+//! fresh call would have said had it been fast enough. (A change the watcher has not seen yet
+//! is the race every answer has, fresh or late: its own report follows and is judged afresh.)
+//! The window must still be in front before and after (step 1), the answer is classified as
+//! any other (a password element is `Secure`, a browser engine's shell is still not believed),
+//! no late answer older than 10 s is used, and without a running watcher none at all.
+//!
+//! # Windows of applications built on a browser engine (web views)
+//!
+//! An application that shows its interface in an embedded browser engine (the system's web
+//! view, as Iamb's own window does) has its top-level window in its own process, and the
+//! engine's windows, the one with the keyboard focus among them, in a process of the engine
+//! that the application started. The answer does not depend on that split: the token, the
+//! privilege check and the "in front" rule are about the top-level window and its process;
+//! the engine's windows are child windows of it, whose input state the system shares with the
+//! top-level window's thread, so the focused control read in step 3 is the engine's window
+//! (`Chrome_RenderWidgetHostHWND`, a browser engine: `classify`); and UI Automation finds the
+//! focused element in whichever process holds it. What such a window does need is time: the
+//! engine switches its accessibility on when the first question arrives and builds the tree of
+//! a large page in the background, and its first answers may be slow (`Timeout`) or the page
+//! as a whole (`NotInspectable`). That is what "looking again" and "a late answer" are for.
+//! Whatever the reason, the `suspended_unknown_focus` diagnostic now names it, so a window that
+//! stays unknown says why.
 //!
 //! # Limits
 //!
@@ -155,7 +187,8 @@ pub(crate) use windows::State;
 #[cfg(windows)]
 mod windows {
     use std::fmt;
-    use std::sync::{Mutex, MutexGuard, PoisonError, TryLockError};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError};
     use std::time::Duration;
 
     use iamb_platform::{
@@ -177,6 +210,8 @@ mod windows {
     pub(crate) struct State {
         inspector: Inspector<uia::Source>,
         watcher: Mutex<Option<watch::Running>>,
+        /// How many focus changes the watchers of this platform have reported (`watch`).
+        epoch: Arc<AtomicU64>,
     }
 
     impl Default for State {
@@ -184,6 +219,7 @@ mod windows {
             Self {
                 inspector: Inspector::new(uia::Source),
                 watcher: Mutex::new(None),
+                epoch: Arc::new(AtomicU64::new(0)),
             }
         }
     }
@@ -232,7 +268,18 @@ mod windows {
         }
 
         fn secure_state(&self, target: &FocusToken, timeout: Duration) -> FieldSecurity {
-            let judgement = secure::judge(&os::SystemDesk, &self.focus.inspector, target, timeout);
+            // A late answer may serve this question only while a watcher counts the focus
+            // changes (`inspect`, "A late answer").
+            let epoch = self
+                .is_watching()
+                .then(|| self.focus.epoch.load(Ordering::SeqCst));
+            let judgement = secure::judge(
+                &os::SystemDesk,
+                &self.focus.inspector,
+                target,
+                epoch,
+                timeout,
+            );
             if judgement.look_again {
                 // Not waited for: `watch` and `unwatch` hold the lock while the watcher
                 // thread starts and stops, and that thread may be the caller's sink. If the
@@ -319,7 +366,7 @@ mod windows {
             // The first question follows the first report at once: have the automation
             // library loading by then.
             self.focus.inspector.warm();
-            *watcher = Some(watch::start(sink)?);
+            *watcher = Some(watch::start(sink, Arc::clone(&self.focus.epoch))?);
             Ok(())
         }
 

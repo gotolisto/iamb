@@ -8,7 +8,10 @@
 //! 3. The control with the keyboard focus is looked at by its window class and style
 //!    (`classify`). A system edit control answers the question by itself.
 //! 4. For any other control the inspection thread asks UI Automation, within what is left of
-//!    the caller's time. No answer in time is `Unknown(Timeout)`.
+//!    the caller's time. No answer in time is `Unknown(Timeout)`. While the watcher runs, the
+//!    question names the window and the watcher's count of reported focus changes (`epoch`),
+//!    so that an answer that came too late for the question before serves this one when
+//!    nothing has changed since (`inspect`, "A late answer").
 //! 5. The window must still be in front. If it is not, the answer just obtained may be about
 //!    another window and is thrown away: `Unknown(FocusMoved)`.
 //!
@@ -20,7 +23,7 @@ use std::time::{Duration, Instant};
 use iamb_platform::{FieldSecurity, FocusToken, UnknownReason};
 
 use super::classify::{ControlKind, Judgement, classify};
-use super::inspect::{Answer, Inspector, ProbeSource};
+use super::inspect::{Answer, Inspector, ProbeSource, Subject};
 
 /// The window in front.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,11 +73,13 @@ fn in_front<D: Desk>(desk: &D, target: &FocusToken) -> Result<Front, UnknownReas
 }
 
 /// Whether the focused field of window `target` is a password field, waiting at most
-/// `timeout` for the application.
+/// `timeout` for the application. `epoch` is the watcher's count of the focus changes it has
+/// reported, `None` when no watcher runs (then no late answer is used).
 pub(crate) fn judge<D: Desk, S: ProbeSource>(
     desk: &D,
     inspector: &Inspector<S>,
     target: &FocusToken,
+    epoch: Option<u64>,
     timeout: Duration,
 ) -> Judgement {
     let started = Instant::now();
@@ -97,7 +102,11 @@ pub(crate) fn judge<D: Desk, S: ProbeSource>(
                 // The caller gave no time to ask in; asking again would be no different.
                 unknown(UnknownReason::Timeout)
             } else {
-                match inspector.observe(left) {
+                let subject = epoch.map(|epoch| Subject {
+                    window: target.window(),
+                    epoch,
+                });
+                match inspector.observe(subject, left) {
                     Answer::Observed(observation) => classify(kind, observation),
                     Answer::TimedOut => Judgement::passing(UnknownReason::Timeout),
                     Answer::Unavailable => Judgement::passing(UnknownReason::NotInspectable),
@@ -117,7 +126,7 @@ mod tests {
     use std::collections::VecDeque;
 
     use super::super::classify::Observation;
-    use super::super::inspect::fake::{FakeSource, hang};
+    use super::super::inspect::fake::{FakeSource, Step, hang};
     use super::*;
 
     const LONG: Duration = Duration::from_secs(10);
@@ -199,7 +208,7 @@ mod tests {
             let desk = FakeDesk::showing(control);
             // Even without any time to wait in.
             assert_eq!(
-                judge(&desk, &inspector, &EDITOR.token(), Duration::ZERO),
+                judge(&desk, &inspector, &EDITOR.token(), None, Duration::ZERO),
                 Judgement::settled(field)
             );
             assert_eq!(source.0.asked(), 0);
@@ -246,7 +255,7 @@ mod tests {
             let inspector = Inspector::new(source.clone());
             let desk = FakeDesk::showing(control);
             assert_eq!(
-                judge(&desk, &inspector, &EDITOR.token(), LONG),
+                judge(&desk, &inspector, &EDITOR.token(), None, LONG),
                 expected,
                 "{control:?} {observation:?}"
             );
@@ -262,7 +271,7 @@ mod tests {
         // Another window is in front: nothing is read, nothing is asked.
         let desk = FakeDesk::showing(ControlKind::Other).fronts(&[Some(OTHER)]);
         assert_eq!(
-            judge(&desk, &inspector, &EDITOR.token(), LONG),
+            judge(&desk, &inspector, &EDITOR.token(), None, LONG),
             unknown(UnknownReason::FocusMoved)
         );
         assert_eq!(desk.controls_read.get(), 0);
@@ -274,14 +283,14 @@ mod tests {
         };
         let desk = FakeDesk::showing(ControlKind::Other).fronts(&[Some(reused)]);
         assert_eq!(
-            judge(&desk, &inspector, &EDITOR.token(), LONG),
+            judge(&desk, &inspector, &EDITOR.token(), None, LONG),
             unknown(UnknownReason::FocusMoved)
         );
 
         // Nothing is in front.
         let desk = FakeDesk::showing(ControlKind::Other).fronts(&[None]);
         assert_eq!(
-            judge(&desk, &inspector, &EDITOR.token(), LONG),
+            judge(&desk, &inspector, &EDITOR.token(), None, LONG),
             unknown(UnknownReason::NoFocus)
         );
         assert_eq!(source.0.asked(), 0);
@@ -298,14 +307,14 @@ mod tests {
             let inspector = Inspector::new(source.clone());
             let desk = FakeDesk::showing(ControlKind::Other).fronts(&[Some(EDITOR), after]);
             assert_eq!(
-                judge(&desk, &inspector, &EDITOR.token(), LONG),
+                judge(&desk, &inspector, &EDITOR.token(), None, LONG),
                 unknown(reason)
             );
             assert_eq!(source.0.asked(), 1);
 
             let desk = FakeDesk::showing(ControlKind::PasswordEdit).fronts(&[Some(EDITOR), after]);
             assert_eq!(
-                judge(&desk, &inspector, &EDITOR.token(), LONG),
+                judge(&desk, &inspector, &EDITOR.token(), None, LONG),
                 unknown(reason)
             );
         }
@@ -322,7 +331,7 @@ mod tests {
             let mut desk = FakeDesk::showing(ControlKind::PlainEdit);
             desk.privilege = privilege;
             assert_eq!(
-                judge(&desk, &inspector, &EDITOR.token(), LONG),
+                judge(&desk, &inspector, &EDITOR.token(), None, LONG),
                 unknown(reason)
             );
             assert_eq!(desk.controls_read.get(), 0);
@@ -341,7 +350,7 @@ mod tests {
 
         let started = Instant::now();
         assert_eq!(
-            judge(&desk, &inspector, &EDITOR.token(), SHORT),
+            judge(&desk, &inspector, &EDITOR.token(), None, SHORT),
             Judgement::passing(UnknownReason::Timeout)
         );
         let waited = started.elapsed();
@@ -356,10 +365,83 @@ mod tests {
         let inspector = Inspector::new(source.clone());
         let desk = FakeDesk::showing(ControlKind::Other);
         assert_eq!(
-            judge(&desk, &inspector, &EDITOR.token(), Duration::ZERO),
+            judge(&desk, &inspector, &EDITOR.token(), None, Duration::ZERO),
             unknown(UnknownReason::Timeout)
         );
         assert_eq!(source.0.asked(), 0);
+    }
+
+    #[test]
+    fn a_slow_application_is_judged_by_its_late_answer_while_nothing_changed() {
+        for (observation, field) in [
+            (element(false, 50004), FieldSecurity::Normal),
+            (element(true, 50004), FieldSecurity::Secure),
+        ] {
+            let source = FakeSource::default();
+            let (step, release) = hang(observation);
+            source.0.push(step);
+            let inspector = Inspector::new(source.clone());
+            inspector.wait_open();
+            let desk = FakeDesk::showing(ControlKind::WebEngine);
+            assert_eq!(
+                judge(&desk, &inspector, &EDITOR.token(), Some(3), SHORT),
+                Judgement::passing(UnknownReason::Timeout)
+            );
+            release.send(()).expect("the thread still waits");
+            // The watcher reports the window again (no focus change since): the answer that
+            // came late is the one of the window's field.
+            assert_eq!(
+                judge(&desk, &inspector, &EDITOR.token(), Some(3), LONG),
+                Judgement::settled(field)
+            );
+            assert_eq!(source.0.asked(), 1);
+        }
+    }
+
+    #[test]
+    fn a_late_answer_is_not_taken_after_a_focus_change_or_without_a_watcher() {
+        for later in [Some(4), None] {
+            let source = FakeSource::default();
+            let (step, release) = hang(element(false, 50004));
+            source.0.push(step);
+            source.0.push(Step::Answer(element(true, 50004)));
+            let inspector = Inspector::new(source.clone());
+            inspector.wait_open();
+            let desk = FakeDesk::showing(ControlKind::WebEngine);
+            assert_eq!(
+                judge(&desk, &inspector, &EDITOR.token(), Some(3), SHORT),
+                Judgement::passing(UnknownReason::Timeout)
+            );
+            release.send(()).expect("the thread still waits");
+            // The user moved into a password field (a focus change was reported): the late
+            // "plain field" is about the field before and is not taken.
+            assert_eq!(
+                judge(&desk, &inspector, &EDITOR.token(), later, LONG),
+                Judgement::settled(FieldSecurity::Secure),
+                "{later:?}"
+            );
+            assert_eq!(source.0.asked(), 2);
+        }
+    }
+
+    #[test]
+    fn a_late_answer_for_a_window_no_longer_in_front_is_never_taken() {
+        let source = FakeSource::default();
+        let (step, release) = hang(element(false, 50004));
+        source.0.push(step);
+        let inspector = Inspector::new(source.clone());
+        inspector.wait_open();
+        let desk = FakeDesk::showing(ControlKind::Other);
+        assert_eq!(
+            judge(&desk, &inspector, &EDITOR.token(), Some(3), SHORT),
+            Judgement::passing(UnknownReason::Timeout)
+        );
+        release.send(()).expect("the thread still waits");
+        let desk = FakeDesk::showing(ControlKind::Other).fronts(&[Some(OTHER)]);
+        assert_eq!(
+            judge(&desk, &inspector, &EDITOR.token(), Some(3), LONG),
+            unknown(UnknownReason::FocusMoved)
+        );
     }
 
     #[test]
@@ -369,7 +451,7 @@ mod tests {
         let inspector = Inspector::new(source);
         let desk = FakeDesk::showing(ControlKind::Other);
         assert_eq!(
-            judge(&desk, &inspector, &EDITOR.token(), LONG),
+            judge(&desk, &inspector, &EDITOR.token(), None, LONG),
             Judgement::passing(UnknownReason::NotInspectable)
         );
     }

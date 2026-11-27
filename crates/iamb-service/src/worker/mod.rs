@@ -72,7 +72,7 @@ use iamb_ipc::{EventBody, InjectionStatus, PanelKind, ServiceStatus, WireDiagnos
 use iamb_platform::{
     DEFAULT_EVENT_CAPACITY, EventSink, FocusChange, FocusSink, FocusToken, InjectionOutcome,
     InjectionRequest, LocalEndpoint, MemoryRegion, PeerPolicy, Platform, SessionEvent, SessionSink,
-    TypedHandoff,
+    TypedHandoff, UnknownReason,
 };
 use iamb_store::{Store, StoreError};
 
@@ -306,8 +306,10 @@ pub(crate) enum EngineMsg {
     Key,
     /// From the focus thread, before it inspects the field.
     FocusChanged(FocusChange),
-    /// From the focus thread: the verdict for the change before it.
-    Verdict(SecureState),
+    /// From the focus thread: the verdict for the change before it, and, when the platform
+    /// could not judge the field, why (the technical detail of the `unknown focus`
+    /// diagnostics).
+    Verdict(SecureState, Option<UnknownReason>),
     /// From the injector thread.
     Injected {
         expansion: ExpansionId,

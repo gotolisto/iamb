@@ -77,6 +77,11 @@
   font: var(--type-caption);
 }
 
+/* The technical detail of the reason ("Reason: timeout"), for bug reports. */
+.library-root .dx-what .dx-reason {
+  font: var(--type-code-small);
+}
+
 .library-root .dx-empty,
 .library-root .dx-foot {
   margin: 0;

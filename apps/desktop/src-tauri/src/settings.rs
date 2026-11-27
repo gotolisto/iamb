@@ -119,6 +119,9 @@ pub struct DiagnosticView {
     pub snippet: Option<String>,
     /// The app, if any.
     pub app: Option<String>,
+    /// The technical detail of the reason, if any (for an unknown focus: why the field could
+    /// not be judged, as a code).
+    pub detail: Option<String>,
     /// When it was recorded (UTC milliseconds).
     pub at: i64,
 }
@@ -129,6 +132,7 @@ impl From<&WireDiagnostic> for DiagnosticView {
             code: d.code.clone(),
             snippet: d.snippet.map(|id| id.to_string()),
             app: d.app.clone(),
+            detail: d.detail.clone(),
             at: d.at.0,
         }
     }

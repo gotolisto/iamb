@@ -113,6 +113,31 @@ pub enum UnknownReason {
     FocusMoved,
 }
 
+impl UnknownReason {
+    /// Every reason, in declaration order.
+    pub const ALL: [Self; 5] = [
+        Self::Timeout,
+        Self::Elevated,
+        Self::NotInspectable,
+        Self::NoFocus,
+        Self::FocusMoved,
+    ];
+
+    /// The stable snake-case code: the technical detail of an `unknown focus` diagnostic
+    /// (`WireDiagnostic::detail`) and the word the worker's log uses. It names the reason
+    /// only: never an application, a window or anything typed (architecture §8).
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Timeout => "timeout",
+            Self::Elevated => "elevated",
+            Self::NotInspectable => "not_inspectable",
+            Self::NoFocus => "no_focus",
+            Self::FocusMoved => "focus_moved",
+        }
+    }
+}
+
 /// What the OS says about the focused field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FieldSecurity {
@@ -320,6 +345,21 @@ mod tests {
         assert_eq!(token.window(), 0xDEAD_BEEF_0001);
         assert_eq!(token, FocusToken::from_raw(token.pid(), token.window()));
         assert_ne!(token, FocusToken::from_raw(42, 1));
+    }
+
+    #[test]
+    fn every_unknown_reason_has_its_own_stable_code() {
+        let codes: Vec<&str> = UnknownReason::ALL.iter().map(|r| r.code()).collect();
+        assert_eq!(
+            codes,
+            [
+                "timeout",
+                "elevated",
+                "not_inspectable",
+                "no_focus",
+                "focus_moved"
+            ]
+        );
     }
 
     #[test]

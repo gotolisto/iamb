@@ -49,8 +49,12 @@ pub(crate) const fn reportable(kind: EventKind, moved: bool, relation: Relation)
 }
 
 /// The pauses before the watcher reports a window again whose state could not be told for a
-/// reason that may pass (milliseconds).
-pub(crate) const LOOK_AGAIN_MS: [u32; 3] = [150, 400, 1000];
+/// reason that may pass (milliseconds): about 7.5 s in all. A browser engine builds its
+/// accessibility tree only once it is first asked, and a large page (an application built on an
+/// engine) takes seconds for that; an application that answers slower than the service waits
+/// answers the next report from its late answer (`inspect`). The first pauses are short, so that
+/// a small page or a busy moment costs little.
+pub(crate) const LOOK_AGAIN_MS: [u32; 5] = [150, 400, 1000, 2000, 4000];
 
 /// When to report the window in front again.
 ///
@@ -181,6 +185,15 @@ mod tests {
         assert_eq!(settle.look_again(7), Some(LOOK_AGAIN_MS[0]));
         settle.event(8);
         assert_eq!(settle.look_again(8), Some(LOOK_AGAIN_MS[0]));
+    }
+
+    #[test]
+    fn the_reports_again_give_a_slow_engine_several_seconds() {
+        let total: u32 = LOOK_AGAIN_MS.iter().sum();
+        assert!(total >= 5_000, "{total} ms");
+        // Not so long that a window stays unknown for ever without saying so.
+        assert!(total <= 10_000, "{total} ms");
+        assert!(LOOK_AGAIN_MS[0] <= 200, "the first look comes soon");
     }
 
     #[test]

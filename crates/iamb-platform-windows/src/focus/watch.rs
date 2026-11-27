@@ -18,9 +18,18 @@
 //!
 //! The same thread reports a window again after a pause when `secure_state` asks for it
 //! (`rules::Settle`).
+//!
+//! Every report of a real change (an event, or the focus as it is at the start) first adds one
+//! to the platform's count of focus changes, the `epoch`; a report again after a pause does
+//! not. An answer of UI Automation that came too late for its question may serve a later
+//! question only while that count is unchanged (`inspect`, "A late answer"): the count goes up
+//! before the service hears of the change, so no question about a change can be served an
+//! answer from before it.
 
 use std::cell::{Cell, RefCell};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, SyncSender};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -44,6 +53,8 @@ struct Watcher {
     settle: Settle,
     /// The timer that is running for `settle`, if any.
     timer: Option<usize>,
+    /// The platform's count of reported focus changes (module docs).
+    epoch: Arc<AtomicU64>,
 }
 
 impl Watcher {
@@ -60,6 +71,9 @@ impl Watcher {
     fn changed(&mut self, front: Front) {
         self.cancel_timer();
         self.settle.event(front.window);
+        // Before the report: a question about this change must not be served an answer
+        // obtained before it (module docs).
+        self.epoch.fetch_add(1, Ordering::SeqCst);
         self.report(front);
     }
 
@@ -174,7 +188,7 @@ extern "system" fn on_event(
 
 /// The watcher thread: installs the hooks, reports the focus as it is, announces itself and
 /// serves the hooks until the stop message.
-fn run(sink: Box<dyn FocusSink>, ready: &SyncSender<Result<u32>>) {
+fn run(sink: Box<dyn FocusSink>, epoch: Arc<AtomicU64>, ready: &SyncSender<Result<u32>>) {
     os::create_message_queue();
     let hooks = EventHook::install(EventKind::Foreground, on_event).and_then(|foreground| {
         EventHook::install(EventKind::Focus, on_event).map(|focus| [foreground, focus])
@@ -193,6 +207,7 @@ fn run(sink: Box<dyn FocusSink>, ready: &SyncSender<Result<u32>>) {
                 last: None,
                 settle: Settle::default(),
                 timer: None,
+                epoch,
             });
         })
         .is_ok();
@@ -228,12 +243,12 @@ pub(super) struct Running {
 }
 
 /// Starts the watcher thread. Returns once its hooks are installed and the focus as it is
-/// has been reported to `sink`.
-pub(super) fn start(sink: Box<dyn FocusSink>) -> Result<Running> {
+/// has been reported to `sink`. Each real change it reports adds one to `epoch`.
+pub(super) fn start(sink: Box<dyn FocusSink>, epoch: Arc<AtomicU64>) -> Result<Running> {
     let (ready, announced) = mpsc::sync_channel(1);
     let thread = std::thread::Builder::new()
         .name("iamb-focus-watch".to_owned())
-        .spawn(move || run(sink, &ready))
+        .spawn(move || run(sink, epoch, &ready))
         .map_err(|error| os::thread_error(&error))?;
     match announced.recv() {
         Ok(Ok(thread_id)) => Ok(Running { thread, thread_id }),

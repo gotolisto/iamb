@@ -8,6 +8,12 @@
         "code": "injection_cancelled",
         "expansion": 7,
         "snippet": "01010101-0101-0101-0101-010101010101"
+      },
+      {
+        "app": "org.example.chat",
+        "at": 1763400000600,
+        "code": "suspended_unknown_focus",
+        "detail": "timeout"
       }
     ],
     "type": "diagnostics"

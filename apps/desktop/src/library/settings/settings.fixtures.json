@@ -1,9 +1,17 @@
 {
   "diagnostics": [
     {
+      "app": "org.example.chat",
+      "at": 1763400000600,
+      "code": "suspended_unknown_focus",
+      "detail": "timeout",
+      "snippet": null
+    },
+    {
       "app": null,
       "at": 1763400000500,
       "code": "injection_cancelled",
+      "detail": null,
       "snippet": "01010101-0101-0101-0101-010101010101"
     }
   ],

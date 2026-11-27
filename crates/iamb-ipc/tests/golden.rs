@@ -98,7 +98,20 @@ fn diagnostic() -> WireDiagnostic {
         snippet: Some(id(1)),
         expansion: Some(7),
         app: None,
+        detail: None,
         at: Timestamp(1_763_400_000_500),
+    }
+}
+
+/// A suspension with its technical detail (added after protocol 3).
+fn unknown_focus_diagnostic() -> WireDiagnostic {
+    WireDiagnostic {
+        code: "suspended_unknown_focus".to_owned(),
+        snippet: None,
+        expansion: None,
+        app: Some("org.example.chat".to_owned()),
+        detail: Some("timeout".to_owned()),
+        at: Timestamp(1_763_400_000_600),
     }
 }
 
@@ -534,7 +547,7 @@ fn responses() -> Vec<ResponseBody> {
             error: None,
         },
         ResponseBody::Diagnostics {
-            entries: vec![diagnostic()],
+            entries: vec![diagnostic(), unknown_focus_diagnostic()],
         },
         ResponseBody::Settings {
             settings: BTreeMap::from([("locale".to_owned(), "de".to_owned())]),

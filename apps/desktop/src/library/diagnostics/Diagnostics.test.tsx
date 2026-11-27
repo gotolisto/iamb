@@ -166,14 +166,47 @@ describe("the log", () => {
     expect(await screen.findByText("Nothing has been held back since Iamb started.")).toBeTruthy();
   });
 
-  it("adds the administrator hint on Windows only", async () => {
-    const d = { diagnostics: [diagnostic({ code: "suspended_unknown_focus", app: "Terminal" })] };
-    show(rig({}, { mac: false }, d));
+  it("adds the administrator hint on Windows only, and only for a window of a higher privilege level", async () => {
+    const elevated = { diagnostics: [diagnostic({ code: "suspended_unknown_focus", app: "Terminal", detail: "elevated" })] };
+    show(rig({}, { mac: false }, elevated));
     expect(await screen.findByText(/It may be running as administrator\./)).toBeTruthy();
     document.body.innerHTML = "";
-    show(rig({}, { mac: true }, d));
+    show(rig({}, { mac: true }, elevated));
     await screen.findByText(/Iamb cannot see into this window, so it stays out\./);
     expect(screen.queryByText(/administrator/)).toBeNull();
+    // Any other reason, or none (an older service), on Windows: no hint.
+    for (const detail of ["timeout", "not_inspectable", null]) {
+      document.body.innerHTML = "";
+      const d = { diagnostics: [diagnostic({ code: "suspended_unknown_focus", app: "Terminal", detail })] };
+      show(rig({}, { mac: false }, d));
+      await screen.findByText(/Iamb cannot see into this window, so it stays out\./);
+      expect(screen.queryByText(/administrator/), String(detail)).toBeNull();
+    }
+  });
+
+  it("shows why the focus is unknown under the entry", async () => {
+    const r = rig({}, { mac: false }, {
+      diagnostics: [
+        diagnostic({ code: "suspended_unknown_focus", app: "whatsapp.root.exe", detail: "not_inspectable", at: T(9, 0) }),
+        diagnostic({ code: "suspended_secure_field", at: T(8, 0) }),
+      ],
+    });
+    show(r);
+    await screen.findByRole("list", { name: "Entries, newest first" });
+    expect(within(items()[0] as HTMLElement).getByText("Reason: not inspectable")).toBeTruthy();
+    expect(within(items()[1] as HTMLElement).queryByText(/Reason:/)).toBeNull();
+    // An entry heard live carries it too.
+    act(() =>
+      emitEvent(r.library, {
+        type: "diagnostic_added",
+        code: "suspended_unknown_focus",
+        snippet: null,
+        app: "snippingtool.exe",
+        detail: "timeout",
+        at: T(9, 30),
+      }),
+    );
+    expect(within(items()[0] as HTMLElement).getByText("Reason: timeout")).toBeTruthy();
   });
 });
 

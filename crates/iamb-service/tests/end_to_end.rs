@@ -123,6 +123,58 @@ fn declaring_the_test_field_again_keeps_what_is_being_typed() {
     assert_eq!(h.text(field), "be right back ");
 }
 
+/// The entries of the diagnostics ring with `code`, as (app, detail).
+fn entries_with(c: &mut iamb_ipc::Client, code: &str) -> Vec<(Option<String>, Option<String>)> {
+    match c
+        .call(RequestBody::RecentDiagnostics {})
+        .expect("diagnostics")
+    {
+        ResponseBody::Diagnostics { entries } => entries
+            .into_iter()
+            .filter(|e| e.code == code)
+            .map(|e| (e.app, e.detail))
+            .collect(),
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[test]
+fn an_unknown_focus_says_why_the_field_could_not_be_judged() {
+    let h = Harness::start(LIBRARY);
+    let admin =
+        h.os.open_window(MockWindow::new("org.example.admin", 200).elevated());
+    let slow = h.os.open_window(
+        MockWindow::new("org.example.slow", 300).inspect_delay(Duration::from_millis(250)),
+    );
+    let bank =
+        h.os.open_window(MockWindow::new("org.example.bank", 400).secure());
+    for window in [admin, slow, bank] {
+        h.os.focus(window).expect("open");
+        h.worker().sync();
+    }
+    let mut c = h.client(Role::Ui);
+    let unknown = entries_with(&mut c, "suspended_unknown_focus");
+    assert!(
+        unknown.contains(&(
+            Some("org.example.admin".to_owned()),
+            Some("elevated".to_owned())
+        )),
+        "{unknown:?}"
+    );
+    assert!(
+        unknown.contains(&(
+            Some("org.example.slow".to_owned()),
+            Some("timeout".to_owned())
+        )),
+        "{unknown:?}"
+    );
+    // Only an unknown focus carries a detail.
+    assert_eq!(
+        entries_with(&mut c, "suspended_secure_field"),
+        [(Some("org.example.bank".to_owned()), None)]
+    );
+}
+
 #[test]
 fn secure_fields_excluded_apps_and_own_windows_suspend() {
     let h = Harness::start(LIBRARY);

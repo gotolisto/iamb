@@ -393,6 +393,13 @@ pub struct WireDiagnostic {
     /// The application, for suspensions and refused requests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub app: Option<String>,
+    /// A technical detail of the reason, a stable snake-case code: for `suspended_unknown_focus`
+    /// and `refused_unknown_focus`, why the platform could not judge the focused field
+    /// (`timeout`, `elevated`, `not_inspectable`, `no_focus`, `focus_moved`; the platform's
+    /// `UnknownReason::code`). Never typed text, an application or a window (§8 rule 4).
+    /// Optional, added after protocol 3: older peers send none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
     /// When it was recorded (UTC milliseconds). Every entry carries it (since protocol 3): the
     /// service stamps each one as it records it, and a dry run's diagnostics with the time of
     /// the dry run.
@@ -407,6 +414,7 @@ impl WireDiagnostic {
             snippet: None,
             expansion: None,
             app: None,
+            detail: None,
             at,
         }
     }
@@ -419,6 +427,7 @@ impl WireDiagnostic {
             snippet: d.snippet,
             expansion: d.expansion.map(iamb_core::engine::ExpansionId::raw),
             app: d.app.as_ref().map(|a| a.0.clone()),
+            detail: None,
             at,
         }
     }
