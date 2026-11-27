@@ -173,12 +173,15 @@ fn form_values_pass_through_the_bridge_without_reaching_a_log() {
             values: Secret::new(BTreeMap::from([("Name".to_owned(), CANARY.to_owned())])),
         })
         .expect("submitted");
+    // The values and the space that finished the abbreviation are typed one after the other:
+    // wait for the whole text, not only the values.
+    let expected = format!("Hello {CANARY}! ");
     let deadline = Instant::now() + T;
-    while !service.text().contains(CANARY) && Instant::now() < deadline {
+    while service.text() != expected && Instant::now() < deadline {
         service.worker().settle();
         std::thread::sleep(Duration::from_millis(20));
     }
-    assert_eq!(service.text(), format!("Hello {CANARY}! "));
+    assert_eq!(service.text(), expected);
     bridge.stop();
     for entry in fs::read_dir(service.dirs().logs()).expect("logs") {
         let path = entry.expect("entry").path();
