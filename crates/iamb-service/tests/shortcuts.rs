@@ -32,8 +32,13 @@ fn put(ui: &mut Client, key: &str, value: Option<&str>) -> Result<(), Option<Err
 }
 
 fn paused(ui: &mut Client) -> bool {
+    pause_state(ui).0
+}
+
+/// `paused` and `paused_kept` of the status.
+fn pause_state(ui: &mut Client) -> (bool, bool) {
     match ui.call(RequestBody::GetStatus {}).expect("status") {
-        ResponseBody::Status { status } => status.paused,
+        ResponseBody::Status { status } => (status.paused, status.paused_kept),
         other => panic!("unexpected {other:?}"),
     }
 }
@@ -330,7 +335,8 @@ fn the_trays_fill_in_again_waits_for_the_focus_to_come_back_from_iambs_window() 
 
     h.os.hold_focus_reports(true);
     h.os.focus(h.editor).expect("window is open");
-    ui.call(RequestBody::ReopenLastForm {}).expect("asked");
+    ui.call(RequestBody::ReopenLastForm { focus: None })
+        .expect("asked");
     h.settle();
     assert_eq!(forms_within(&mut ui, Duration::from_millis(200)), []);
     h.os.hold_focus_reports(false);
@@ -348,10 +354,58 @@ fn the_trays_fill_in_again_waits_for_the_focus_to_come_back_from_iambs_window() 
     h.os.focus(menu).expect("window is open");
     h.settle();
     h.os.hold_focus_reports(true);
-    ui.call(RequestBody::ReopenLastForm {}).expect("asked");
+    ui.call(RequestBody::ReopenLastForm { focus: None })
+        .expect("asked");
     assert_eq!(forms_within(&mut ui, Duration::from_millis(1500)), []);
     assert!(diagnostic_codes(&mut ui).contains(&"request_focus_timeout".to_owned()));
     h.os.hold_focus_reports(false);
+}
+
+#[test]
+fn the_trays_fill_in_again_with_its_window_waits_for_that_window_alone() {
+    // On Windows the click on the icon can bring the shell's taskbar to the front, which is not
+    // one of Iamb's windows. The tray names the window it hands the focus back to (the
+    // re-verification's N4): the request waits for that window's report and nothing else's,
+    // neither the taskbar reported last nor another window reported next.
+    let h = Harness::start(LIBRARY);
+    let mut ui = h.client(Role::Ui);
+    fill_in_once(&h, &mut ui);
+    let taskbar = h.os.open_window(MockWindow::new("explorer.exe", 300));
+    let bank =
+        h.os.open_window(MockWindow::new("org.example.bank", 200).secure());
+    let other = h.os.open_window(MockWindow::new("org.example.other", 200));
+    let editor = Some(FocusRef::from(h.editor));
+
+    for next in [bank, other] {
+        // The taskbar is reported; the hand-back to the editor has not happened yet.
+        h.os.focus(taskbar).expect("window is open");
+        h.settle();
+        ui.call(RequestBody::ReopenLastForm { focus: editor })
+            .expect("asked");
+        h.settle();
+        assert_eq!(
+            forms_within(&mut ui, Duration::from_millis(200)),
+            [],
+            "the form opened for the taskbar"
+        );
+        // Another window's report comes first: it decides nothing.
+        h.os.focus(next).expect("window is open");
+        h.settle();
+        assert_eq!(
+            forms_within(&mut ui, Duration::from_millis(200)),
+            [],
+            "the form opened for the next window"
+        );
+        let codes = diagnostic_codes(&mut ui);
+        assert!(
+            !codes.contains(&"refused_secure_field".to_owned()),
+            "decided by the next window: {codes:?}"
+        );
+        // The editor's report releases it, for the editor.
+        h.os.focus(h.editor).expect("window is open");
+        h.settle();
+        assert_eq!(forms_within(&mut ui, Duration::from_millis(500)), [editor]);
+    }
 }
 
 #[test]
@@ -432,10 +486,15 @@ fn a_pause_outlives_a_worker_restart() {
     let dir = h.stop();
     assert!(dir.path().join("run").join("paused").is_file());
 
-    // A worker started afresh (a crash, "Restart the helper") is still paused.
+    // A worker started afresh (a crash, "Restart the helper") is still paused, and says that
+    // the pause is the one kept from before.
     let h = Harness::start_in(dir, |_| {});
     let mut ui = h.client(Role::Ui);
-    assert!(paused(&mut ui), "the pause was lost with the worker");
+    assert_eq!(
+        pause_state(&mut ui),
+        (true, true),
+        "the pause was lost with the worker"
+    );
     h.os.type_text("brb ");
     h.settle();
     assert_eq!(h.text(h.editor), "brb ");
@@ -448,7 +507,86 @@ fn a_pause_outlives_a_worker_restart() {
     assert!(!dir.path().join("run").join("paused").exists());
     let h = Harness::start_in(dir, |_| {});
     let mut ui = h.client(Role::Ui);
-    assert!(!paused(&mut ui));
+    assert_eq!(pause_state(&mut ui), (false, false));
+    // Paused in this worker: not a kept pause.
+    ui.call(RequestBody::SetPaused { paused: true })
+        .expect("paused");
+    assert_eq!(pause_state(&mut ui), (true, false));
+}
+
+#[test]
+fn only_a_regular_file_in_its_place_keeps_the_pause() {
+    // The re-verification's N5: what is in `run/paused` is looked at without following a link,
+    // and anything but a regular file means "not paused" and is removed.
+    let dir = Harness::start(LIBRARY).stop();
+    let file = dir.path().join("run").join("paused");
+
+    // A directory there: the worker starts resumed and removes it.
+    std::fs::create_dir(&file).expect("dir");
+    let h = Harness::start_in(dir, |_| {});
+    let mut ui = h.client(Role::Ui);
+    assert_eq!(
+        pause_state(&mut ui),
+        (false, false),
+        "a directory paused it"
+    );
+    drop(ui);
+    let dir = h.stop();
+    let file = dir.path().join("run").join("paused");
+    assert!(!file.exists(), "the directory was left");
+
+    // A directory that comes while paused: resuming removes it, and the next start is resumed.
+    let h = Harness::start_in(dir, |_| {});
+    let mut ui = h.client(Role::Ui);
+    ui.call(RequestBody::SetPaused { paused: true })
+        .expect("paused");
+    std::fs::remove_file(&file).expect("the pause file");
+    std::fs::create_dir(&file).expect("dir");
+    ui.call(RequestBody::SetPaused { paused: false })
+        .expect("resumed");
+    assert!(!file.exists(), "resuming left the directory");
+    drop(ui);
+    let dir = h.stop();
+    let h = Harness::start_in(dir, |_| {});
+    let mut ui = h.client(Role::Ui);
+    assert_eq!(
+        pause_state(&mut ui),
+        (false, false),
+        "paused although resumed"
+    );
+    drop(ui);
+    let dir = h.stop();
+
+    // A dangling link there: pausing puts a file in its place, so the pause is kept.
+    #[cfg(unix)]
+    {
+        let file = dir.path().join("run").join("paused");
+        let nowhere = dir.path().join("nowhere");
+        std::os::unix::fs::symlink(&nowhere, &file).expect("link");
+        let h = Harness::start_in(dir, |_| {});
+        let mut ui = h.client(Role::Ui);
+        assert_eq!(pause_state(&mut ui), (false, false));
+        assert!(
+            std::fs::symlink_metadata(&file).is_err(),
+            "the link was left at the start"
+        );
+        std::os::unix::fs::symlink(&nowhere, &file).expect("link again");
+        ui.call(RequestBody::SetPaused { paused: true })
+            .expect("paused");
+        assert!(
+            std::fs::symlink_metadata(&file).is_ok_and(|m| m.file_type().is_file()),
+            "pausing left the link"
+        );
+        drop(ui);
+        let dir = h.stop();
+        let h = Harness::start_in(dir, |_| {});
+        let mut ui = h.client(Role::Ui);
+        assert_eq!(
+            pause_state(&mut ui),
+            (true, true),
+            "the pause was lost to the link"
+        );
+    }
 }
 
 #[test]

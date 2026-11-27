@@ -149,9 +149,16 @@ helper spawns as the helper, with the helper's keyboard permissions, so the supe
 system open `Iamb.app` (`/usr/bin/open -g -W -a`), as the UI host has the system open the helper,
 after checking that the app is the bundle around the helper (resolved path, no links, Iamb's
 bundle identifier; a signature check follows with signed builds). `open` does not pass the app's
-exit status on, so the UI host leaves `run/desktop.quit` when it ends on purpose, and only an end
-without it is restarted. Everywhere, a UI host that exits with status 64 (a usage error), is ended
-with `SIGTERM`, or fails five starts in a row within a second each is not started again.
+exit status on, so the UI host leaves `run/desktop.quit` when it ends on purpose (its "Quit", and
+a quit by the system: a logout, a restart, a "quit" Apple event, which ends the process inside
+AppKit, so the marker is left as the event loop ends), and there only an end without it is
+restarted. Where the supervisor sees the UI host's own exit status (Windows, Linux) the status
+decides and the marker is not read: status 0 is a quit, and a marker left beside a crash by
+another process does not turn the crash into one. A UI host that steps aside for another one
+already running for its data root exits with 0 and leaves no marker. Everywhere, a UI host that
+exits with status 64 (a usage error), is ended with `SIGTERM`, or fails five starts in a row
+within a second each is not started again. On macOS a `SIGTERM` (an installer, `killall`) cannot
+be told from a crash behind `open`, so it is restarted there.
 
 ### 3.3 Files on disk
 
@@ -164,7 +171,7 @@ with `SIGTERM`, or fails five starts in a row within a second each is not starte
 | Locks | `run/supervisor.lock`, `run/store.lock`, `run/desktop.lock` (one UI host per data root) | same |
 | Signals between processes | `run/restart-worker` (UI host to supervisor: restart the worker, §3.2), `run/desktop.quit` (the UI host ended on purpose, §3.2); empty files, taken by removing them | same |
 | Endpoints | `run/service.sock`, `run/sync.sock` | `\\.\pipe\iamb-service-<user SID>-<secret>`, `\\.\pipe\iamb-sync-<user SID>-<secret>`; each secret (128 random bits, new for every bind) in `run/service.pipe`, `run/sync.pipe`; `run/service.pipe.lock`, `run/sync.pipe.lock` |
-| Pause | `run/paused` while Iamb is paused, so that a worker started afresh (a crash, a restart) starts paused (`iamb_service::worker::engine`, "Pause across a restart") | same |
+| Pause | `run/paused` while Iamb is paused, so that a worker started afresh (a crash, a restart, a logout, a restart of the machine) starts paused, and says so (`ServiceStatus.paused_kept`: "Iamb is still paused"). Only a regular file counts, looked at without following a link; anything else there means not paused and is removed (`iamb_service::worker::engine`, "Pause across a restart") | same |
 
 On Linux (development and the command-line tool only) the data root is `$XDG_DATA_HOME/iamb/`.
 Setting `IAMB_DATA_DIR` overrides the data root on every OS; tests always set it.
@@ -372,10 +379,13 @@ arrive from different threads. The service therefore forwards an explicit reques
 has delivered the focus change for the window the request will type into (the focus token's
 window, once the UI host has handed focus back). The "Fill in the last form again" shortcut reads
 the focus token at the press, as the palette's shortcut does, so it runs under the verdict of the
-window it was pressed in, never under the one before. `ReopenLastForm` carries no token; one that
-arrives while the last focus delivered is Iamb's own window (the tray menu on Windows, whose
-focus the UI host has just handed back) waits for the next focus change to another window, for
-the same time limit, instead of being refused there.
+window it was pressed in, never under the one before. `ReopenLastForm` carries the token of the
+window it is for when the UI host knows it (an optional `focus`, as `ExpandSnippet`'s: the tray
+menu and the palette send the window they hand the focus back to), and then waits for that
+window alone: on Windows the click on the icon can bring the shell's taskbar to the front, and
+neither the taskbar reported last nor another window reported next decides it. One without a
+token that arrives while the last focus delivered is Iamb's own window waits for the next focus
+change to another window, for the same time limit, instead of being refused there.
 
 Keys typed into Iamb's own windows are not expanded: the focus thread reports `own_window` for the
 UI host's process. The one exception is the onboarding test field, which the UI host declares with
@@ -603,7 +613,7 @@ left at the cargo name). On Linux the endpoint names no executable and the role 
 | --- | --- | --- |
 | Library | `ListFolders`, `ListSnippets(query)`, `ListSnippetSummaries(query, offset, limit)`, `GetSnippet`, `PutSnippet(snippet, tags)`, `DeleteSnippet`, `CheckAbbreviation(abbreviation, trigger, snippet)`, `PutFolder`, `DeleteFolder`, `PutTag`, `ListTags`, `DeleteTag`, `Search(text)`, `Import(path, format)`, `Export(path, format)`, `Health`, `RecentSnippets(limit)`, `ListPendingReviews`, `ApproveSnippet(id, rev)`, `PutAttachment(path, file_name, folder)` | `LibraryChanged(revision, changed rows)` |
 | Engine control | `GetStatus`, `SetPaused`, `ExpandSnippet(id, focus)`, `DryRun(typed)`, `GetPermissions`, `OpenPermissionSettings(kind)`, `SetTestField(window)` | `StatusChanged`, `PaletteRequested(focus)` |
-| Forms | `FormAck(session)`, `FormSubmit(session, values)`, `FormCancel(session)`, `ReopenLastForm`, `PanelFocus(panel, shown)` | `FormRequested(session, spec, focus, last_values)` |
+| Forms | `FormAck(session)`, `FormSubmit(session, values)`, `FormCancel(session)`, `ReopenLastForm(focus?)`, `PanelFocus(panel, shown)` | `FormRequested(session, spec, focus, last_values)` |
 | Templates | `ParseTemplate(source)`, `RenderPreview(source, values, rich)` | — |
 | Diagnostics | `RecentDiagnostics` | `DiagnosticAdded` |
 | Settings | `GetSettings`, `PutSetting`, `ListExclusions`, `PutExclusion`, `ResetUsage` | `SettingsChanged` |
@@ -885,7 +895,10 @@ grant belongs to the helper app (ADR-0021), so the helper must not lend it out:
 The UI host and the supervisor talk through two empty files in `run/` until the control pipe of
 ADR-0023 exists (§3.2, §3.3): `run/restart-worker` and `run/desktop.quit`. Neither has the peer
 verification of §6.1; both rest on `run/` being the user's alone, and on what they can do: restart
-the worker, and keep a UI host that ended from being started again. Neither may grow another
+the worker, and keep a UI host that ended from being started again (on macOS; elsewhere the
+supervisor reads the UI host's exit status instead). The same holds for `run/paused`, which the
+worker keeps itself: a process of the user that creates or removes it changes the pause at the
+next worker start, which is no more than `SetPaused` can do, without the endpoint's peer check. Neither may grow another
 meaning (a stop, an update) without the pipe.
 
 **Crash handling (rule 9).** The supervisor and the worker do two things first in `main`

@@ -357,6 +357,7 @@ pub(crate) enum EngineMsg {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct EngineStatus {
     pub paused: bool,
+    pub paused_kept: bool,
     pub suspended: bool,
     pub injection: InjectionStatus,
 }
@@ -480,6 +481,7 @@ impl Shared {
             version: crate::VERSION.to_owned(),
             pid: std::process::id(),
             paused: engine.paused,
+            paused_kept: engine.paused_kept,
             suspended: engine.suspended,
             injection: engine.injection,
             snippets: u64::try_from(view.snapshot.len()).unwrap_or(u64::MAX),

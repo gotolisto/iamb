@@ -15,6 +15,8 @@ export type ConnectionState = "connecting" | "connected" | "disconnected";
 export interface ServiceView {
   version: string;
   paused: boolean;
+  /** The pause was kept from before the service started (a quit, a logout, a restart). */
+  pausedKept: boolean;
   suspended: boolean;
   snippets: number;
   revision: number;
@@ -196,6 +198,7 @@ function isServiceView(v: unknown): v is ServiceView {
     isObject(v) &&
     typeof v.version === "string" &&
     typeof v.paused === "boolean" &&
+    typeof v.pausedKept === "boolean" &&
     typeof v.suspended === "boolean" &&
     typeof v.snippets === "number" &&
     typeof v.revision === "number" &&

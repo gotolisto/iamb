@@ -29,6 +29,7 @@ not confirmed.
 | Delimiter keys (punctuation, closing brackets, Enter, Tab) | `TypingSection.tsx`, `model.ts` | [Settings](settings.md#typing) | Documented |
 | Enter and Tab as delimiters, with a confirmation | `TypingSection.tsx` | [Settings](settings.md#typing), [Troubleshooting](troubleshooting.md#enter-and-tab-do-not-expand) | Documented |
 | Pause expansion (menu, switch and the sidebar status line) | `tray.rs`, `GeneralSection.tsx`, `Sidebar.tsx` | [Settings](settings.md#general), [Exclusions](exclusions.md#pause-everywhere) | Documented |
+| A pause kept across a quit, a logout and a restart ("Iamb is still paused") | `worker/engine.rs` (`run/paused`), `menu.rs`, `Library.tsx`, `Diagnostics.tsx` | [Exclusions](exclusions.md#pause-everywhere), [Troubleshooting](troubleshooting.md#nothing-expands-at-all) | Documented |
 | Turn a snippet on or off | `ListPane.tsx` | [Snippets](snippets.md#turn-a-snippet-on-or-off) | Documented |
 | Abbreviation rules (no spaces, 64 characters, unique) | `architecture.md` 4.4, `Editor.tsx` | [Snippets](snippets.md#abbreviation-rules) | Documented |
 | Shadowed and never-reached abbreviations | `architecture.md` 4.4, `health` | [Snippets](snippets.md#library-health) | Documented |

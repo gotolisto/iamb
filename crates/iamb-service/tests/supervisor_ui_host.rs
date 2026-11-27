@@ -1,8 +1,9 @@
 //! The supervisor starts the UI host (`supervisor` module docs, "The UI host"; architecture §3.2):
 //! at its own start, for its data root, again after an abnormal exit, and not again after status
-//! 0, a usage error or a quit it marked. Runs the real `iamb-service` binary against the mock platform, with a shell script standing
-//! in for `iamb-desktop`. Unix only, like `supervisor.rs`, and debug builds only: a release
-//! build refuses `--ui-host` (`tests/release_switches.rs`).
+//! 0 or a usage error, and a quit marker counts only behind a launcher. Runs the real
+//! `iamb-service` binary against the mock platform, with a shell script standing in for
+//! `iamb-desktop`. Unix only, like `supervisor.rs`, and debug builds only: a release build
+//! refuses `--ui-host` (`tests/release_switches.rs`).
 
 #![cfg(all(unix, debug_assertions))]
 
@@ -17,7 +18,7 @@ use tempfile::TempDir;
 
 const BIN: &str = env!("CARGO_BIN_EXE_iamb-service");
 
-/// An exit code of [`fake_ui_host`] that stands for "quit on purpose, leaving the marker".
+/// An exit code of [`fake_ui_host`] that stands for "leave the quit marker, then crash".
 const QUIT: i32 = 200;
 
 /// A stand-in UI host: appends its arguments to `starts.txt`, then exits with the status the
@@ -241,7 +242,7 @@ fn no_ui_host_is_started_with_no_ui_host_or_on_the_mock_platform_by_default() {
 }
 
 #[test]
-fn a_usage_error_or_a_marked_quit_ends_the_supervision() {
+fn a_usage_error_ends_the_supervision_and_a_marker_does_not_hide_a_crash() {
     // Status 64: the UI host cannot run with what it was given, and never will.
     let s = Supervisor::start(&["--ui-host", "HOST"], &[64]);
     s.wait_for("the end of its supervision", Duration::from_secs(10), |s| {
@@ -251,18 +252,33 @@ fn a_usage_error_or_a_marked_quit_ends_the_supervision() {
     thread::sleep(Duration::from_millis(1500));
     assert_eq!(s.starts().len(), 1, "{}", s.log());
 
-    // The quit marker counts whatever the status (on macOS `open` passes none on).
+    // A marker left beside a crash (by a second UI host that stepped aside, by anyone): where
+    // the exit status is the UI host's own, the status decides, and the UI host comes back
+    // (the re-verification's N2). The marker is taken all the same.
     let s = Supervisor::start(&["--ui-host", "HOST"], &[QUIT]);
-    s.wait_for("the end of its supervision", Duration::from_secs(10), |s| {
-        s.log().contains("not restarted")
+    s.wait_for("the second start", Duration::from_secs(10), |s| {
+        s.starts().len() == 2
     });
-    assert!(s.log().contains("Quit"), "{}", s.log());
-    thread::sleep(Duration::from_millis(1500));
-    assert_eq!(s.starts().len(), 1, "{}", s.log());
+    assert!(!s.log().contains("not restarted"), "{}", s.log());
     assert!(
         !s.data.path().join("run").join("desktop.quit").exists(),
         "the marker is taken"
     );
+}
+
+#[test]
+fn a_marker_created_while_the_ui_host_runs_does_not_turn_a_kill_into_a_quit() {
+    let s = Supervisor::start(&["--ui-host", "HOST"], &[]);
+    s.wait_for("the ui host's start", Duration::from_secs(10), |s| {
+        s.starts().len() == 1
+    });
+    fs::write(s.data.path().join("run").join("desktop.quit"), b"").expect("marker");
+    let pid = s.starts()[0].split(' ').next().expect("pid").to_owned();
+    let _ = Command::new("kill").args(["-9", &pid]).status();
+    s.wait_for("the restart", Duration::from_secs(10), |s| {
+        s.starts().len() == 2
+    });
+    assert!(!s.log().contains("(Quit)"), "{}", s.log());
 }
 
 #[test]

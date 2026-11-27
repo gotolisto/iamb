@@ -198,8 +198,13 @@ export type RefusedReason =
   | "key"
   /** A clipboard, undo or deletion chord every application uses (Ctrl+V, ⌘Z, …). */
   | "reserved"
-  /** A chord that types a character: AltGr, Option with a letter or digit, Ctrl+Alt on Windows. */
-  | "types";
+  /** A chord that types a character: AltGr, Option or Alt with a letter or digit. */
+  | "types"
+  /**
+   * Windows: Ctrl+Alt (with or without Shift) and a letter or digit. It is AltGr on many
+   * keyboards, so Iamb refuses it on every keyboard, also on one without AltGr.
+   */
+  | "ctrl_alt";
 
 export type Recorded =
   /** Only modifiers are down. */
@@ -258,7 +263,7 @@ export function recordChord(e: KeyLike, mac = false): Recorded {
   const onlyCtrlOrMeta = !e.altKey && !e.shiftKey && e.ctrlKey !== e.metaKey;
   if (onlyCtrlOrMeta && EDITING_KEYS.includes(key)) return { kind: "refused", reason: "reserved" };
   if (textKey && e.altKey && !e.ctrlKey && !e.metaKey) return { kind: "refused", reason: "types" };
-  if (!mac && textKey && e.ctrlKey && e.altKey && !e.metaKey) return { kind: "refused", reason: "types" };
+  if (!mac && textKey && e.ctrlKey && e.altKey && !e.metaKey) return { kind: "refused", reason: "ctrl_alt" };
   const parts = [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Meta", key].filter(
     (p): p is string => typeof p === "string",
   );
@@ -278,6 +283,8 @@ export function refusedText(reason: RefusedReason, mac: boolean): string {
       return mac
         ? "That shortcut types a character. Add Control or Command"
         : "That shortcut types a character on some keyboards. Use Ctrl+Shift, or add the Windows key";
+    case "ctrl_alt":
+      return "Iamb does not take Ctrl+Alt with a letter or digit on any keyboard, because it is AltGr on many and types a character. Use Ctrl+Shift, or add the Windows key";
   }
 }
 

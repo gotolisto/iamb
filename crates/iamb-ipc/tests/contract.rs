@@ -236,7 +236,7 @@ fn one_of_each_group() -> Vec<(Group, RequestBody)> {
     vec![
         (Group::Library, RequestBody::ListFolders {}),
         (Group::EngineControl, RequestBody::GetStatus {}),
-        (Group::Forms, RequestBody::ReopenLastForm {}),
+        (Group::Forms, RequestBody::ReopenLastForm { focus: None }),
         (
             Group::Templates,
             RequestBody::ParseTemplate {

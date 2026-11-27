@@ -14,7 +14,9 @@
 //!
 //! Exit status: 0 when it ended on purpose (it then also leaves `run/desktop.quit` for the
 //! supervisor, `DataDirs::mark_quit`), 64 for a usage error (the supervisor does not start it
-//! again), 70 after a panic, 1 for any other failure.
+//! again), 70 after a panic, 1 for any other failure. A UI host that finds another one running
+//! for its data root exits with 0 and leaves no marker: the marker would speak for the one
+//! that runs.
 //!
 //! Before anything else the process opts out of the operating system's crash dumps, and its
 //! panic hook writes a heap-free crash report and exits with status 70 (`iamb_desktop::crash`,
@@ -164,8 +166,10 @@ fn main() -> ExitCode {
     let _instance = match dirs.take_instance_lock() {
         Ok(Some(lock)) => lock,
         Ok(None) => {
+            // Status 0 and no quit marker: the marker says that the UI host the supervisor
+            // started quit, and this is another one (the beta review's re-verification, N2).
             log.info(format_args!("another ui host is running; exiting"));
-            return quit(&dirs, &log);
+            return ExitCode::SUCCESS;
         }
         Err(e) => return fail(&format!("cannot take the instance lock: {e}")),
     };

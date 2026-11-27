@@ -894,7 +894,7 @@ export function Library({ env }: { env: LibraryEnv }) {
   })();
 
   const status = {
-    text: !online ? (env.connection === "connecting" ? "Connecting…" : "Iamb is not running") : env.paused ? "Iamb is paused" : "Iamb is on",
+    text: !online ? (env.connection === "connecting" ? "Connecting…" : "Iamb is not running") : env.paused ? (env.pausedKept ? "Iamb is still paused" : "Iamb is paused") : "Iamb is on",
     paused: env.paused,
     running: online,
   };

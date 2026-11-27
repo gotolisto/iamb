@@ -147,6 +147,7 @@
         "listener": true,
         "memoryLocked": true,
         "paused": false,
+        "pausedKept": false,
         "revision": 3,
         "snippets": 12,
         "suspended": true,

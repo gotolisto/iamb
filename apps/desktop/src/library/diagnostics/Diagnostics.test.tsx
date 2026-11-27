@@ -21,6 +21,20 @@ const entries = () => screen.getByRole("list", { name: "Entries, newest first" }
 const items = () => within(entries()).getAllByRole("listitem");
 
 describe("the log", () => {
+  it("says when Iamb is paused, and when the pause is older than this start", async () => {
+    show(rig({}, { paused: true }));
+    expect(
+      await screen.findByText("Iamb is paused. Typed abbreviations do not expand, and nothing is listed here for them."),
+    ).toBeTruthy();
+    document.body.innerHTML = "";
+    show(rig({}, { paused: true, pausedKept: true }));
+    expect(await screen.findByText(/^Iamb is still paused: it has been since before it last started\./)).toBeTruthy();
+    document.body.innerHTML = "";
+    show(rig());
+    await screen.findByText("Nothing has been held back since Iamb started.");
+    expect(screen.queryByText(/^Iamb is (still )?paused/)).toBeNull();
+  });
+
   it("says nothing was held back, and that nothing is recorded but codes", async () => {
     show(rig());
     expect(await screen.findByText("Nothing has been held back since Iamb started.")).toBeTruthy();

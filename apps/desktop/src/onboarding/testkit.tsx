@@ -39,6 +39,7 @@ export function rig(options: RigOptions = {}) {
       : {
           version: "0.0.0",
           paused: false,
+          pausedKept: false,
           suspended: false,
           snippets: 0,
           revision: 1,
@@ -114,6 +115,7 @@ export function rig(options: RigOptions = {}) {
   const defaultService = (): ServiceView => ({
     version: "0.0.0",
     paused: false,
+    pausedKept: false,
     suspended: false,
     snippets: 0,
     revision: 1,

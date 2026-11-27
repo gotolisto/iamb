@@ -35,6 +35,14 @@ The library window does not show a banner for a missing permission in this versi
 
 <!-- TODO: the library window does not yet show a banner for missing permissions. -->
 
+## Nothing expands at all
+
+Iamb may be paused. A pause lasts until you resume, also across a quit, a logout and a restart of
+the computer. The menu says **Iamb is paused** or **Iamb is still paused**, and so does the status
+line at the bottom of the library window's sidebar; **Why didn't it expand?** says so at the top
+while Iamb is paused. To resume, choose **Pause Iamb** again in the menu or in the status line,
+or turn on **Expand snippets as I type** in [Settings](settings.md#general).
+
 ## Enter and Tab do not expand
 
 This is on purpose. Enter and Tab often do something in the app before Iamb can type: a chat sends

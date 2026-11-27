@@ -56,8 +56,15 @@ To change a shortcut, select its box and press the new keys. On Windows a shortc
 Windows key, and one other key. On macOS it needs Control, Option or Command, and one other key. A
 function key can stand alone. Iamb does not take the editing shortcuts every app uses (Ctrl or ⌘
 alone with C, V, X, Z, A or Y, and with Delete), nor a shortcut that types a character: Option
-(Alt) with a letter or digit, and on Windows Ctrl+Alt with a letter or digit, which is AltGr on
-many keyboards (add the Windows key, or use Ctrl+Shift). Backspace clears the shortcut. Esc leaves it as it was. If
+(Alt) with a letter or digit.
+
+On Windows, Iamb does not take Ctrl+Alt with a letter or digit (with or without Shift) on any
+keyboard. On many keyboards Ctrl+Alt is AltGr, which types characters such as @, € or ą, so a
+shortcut there would take those characters away. Iamb refuses it on keyboards without AltGr too,
+where Ctrl+Alt with a letter is a common pattern for shortcuts, because the keyboard layout can
+change at any time. Use Ctrl+Shift instead, or add the Windows key (Ctrl+Alt+Win+K works).
+
+Backspace clears the shortcut. Esc leaves it as it was. If
 another app already uses the shortcut, Iamb says so and keeps the old one. When the search shortcut
 is not the default, a button next to it puts the default back. The other two have no default.
 

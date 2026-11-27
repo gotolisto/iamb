@@ -215,12 +215,19 @@ fn setup(
     Ok(())
 }
 
+/// Whether the end of the event loop is a quit for the supervisor's quit marker: an exit
+/// requested with status 0, or one nobody requested (the system's quit on macOS).
+fn ends_on_purpose(requested: Option<i32>) -> bool {
+    requested.is_none_or(|code| code == 0)
+}
+
 /// Runs the UI host until it is asked to quit; returns the exit status.
 ///
 /// # Errors
 ///
 /// When the application cannot be built (no display, a broken configuration).
 pub fn run(dirs: DataDirs, options: &Options, log: &Arc<Logger>) -> tauri::Result<i32> {
+    let marker_dirs = dirs.clone();
     let setup_log = Arc::clone(log);
     let setup_options = options.clone();
     let app = tauri::Builder::default()
@@ -291,13 +298,24 @@ pub fn run(dirs: DataDirs, options: &Options, log: &Arc<Logger>) -> tauri::Resul
         .setup(move |app| setup(app, &dirs, &setup_log, &setup_options).map_err(Into::into))
         .build(tauri::generate_context!())?;
     let run_log = Arc::clone(log);
+    let mut requested: Option<i32> = None;
     let code = app.run_return(move |app, event| match event {
         // The windows closing is not a reason to quit (module docs); an explicit exit has a
         // code.
         RunEvent::ExitRequested {
             api, code: None, ..
         } => api.prevent_exit(),
+        RunEvent::ExitRequested { code, .. } => requested = code,
         RunEvent::Exit => {
+            // The quit marker is left here as well as by `main`: a quit by the system on macOS
+            // (a logout, a restart, a "quit" Apple event) ends the process inside AppKit once
+            // this event is handled, and `main` never sees it return (the beta review's
+            // re-verification, N6). A requested exit with another code is no quit.
+            if ends_on_purpose(requested)
+                && let Err(e) = marker_dirs.mark_quit()
+            {
+                run_log.warn(format_args!("cannot leave the quit marker: {}", e.kind()));
+            }
             if let Some(ui) = app.try_state::<Arc<Ui>>() {
                 ui.form.stop();
                 ui.palette.controller.stop();
@@ -309,4 +327,17 @@ pub fn run(dirs: DataDirs, options: &Options, log: &Arc<Logger>) -> tauri::Resul
         _ => {}
     });
     Ok(code)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ends_on_purpose;
+
+    #[test]
+    fn a_quit_nobody_requested_or_status_zero_leaves_the_marker() {
+        assert!(ends_on_purpose(None));
+        assert!(ends_on_purpose(Some(0)));
+        assert!(!ends_on_purpose(Some(1)));
+        assert!(!ends_on_purpose(Some(70)));
+    }
 }

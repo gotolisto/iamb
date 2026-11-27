@@ -76,10 +76,11 @@ impl DataDirs {
         self.run().join(QUIT_MARKER)
     }
 
-    /// Leaves `run/desktop.quit`: this UI host ends on purpose (the tray's "Quit", or another UI
-    /// host already runs for this data root). The supervisor that started it restarts a UI host
-    /// that ends without it; on macOS, where it has the system start the UI host, this marker is
-    /// the only way it can tell a quit from a crash (`iamb_service::supervisor`, "The UI host").
+    /// Leaves `run/desktop.quit`: this UI host ends on purpose (the tray's "Quit", or a quit by
+    /// the system, such as a logout on macOS). A UI host that steps aside for another one leaves
+    /// none (`main`). On macOS, where the supervisor has the system start the UI host, this
+    /// marker is the only way it can tell a quit from a crash; where it sees the UI host's own
+    /// exit status, the status decides (`iamb_service::supervisor`, "The UI host").
     ///
     /// # Errors
     ///

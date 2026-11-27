@@ -771,7 +771,7 @@ export function DoneStep(props: { heading: ReactNode; env: OnboardingEnv; snippe
       );
     } else if (result.kind === "refused") {
       setChordProblem(
-        result.reason === "reserved" || result.reason === "types"
+        result.reason === "reserved" || result.reason === "types" || result.reason === "ctrl_alt"
           ? `${refusedText(result.reason, mac)}.`
           : "Choose a shortcut with Ctrl, Alt or ⌘ and one other key.",
       );

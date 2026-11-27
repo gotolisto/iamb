@@ -12,8 +12,12 @@ use std::time::{Duration, Instant};
 const BIN: &str = env!("CARGO_BIN_EXE_iamb-service");
 
 /// Runs the binary with `args`; its exit code (`None`: still running after 5 s, then killed)
-/// and what it wrote to standard error.
+/// and what it wrote to standard error. Standard error goes to a file, not a pipe: a supervisor
+/// that was wrongly accepted hands it on to its children, which would keep a pipe open.
 fn run(args: &[&str], data: &std::path::Path) -> (Option<i32>, String) {
+    let out = tempfile::TempDir::new().expect("temp dir");
+    let err_path = out.path().join("stderr.txt");
+    let err_file = std::fs::File::create(&err_path).expect("stderr file");
     let mut child = Command::new(BIN)
         .args(args)
         .arg("--data-dir")
@@ -21,7 +25,7 @@ fn run(args: &[&str], data: &std::path::Path) -> (Option<i32>, String) {
         .env_remove("IAMB_DATA_DIR")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
+        .stderr(err_file)
         .spawn()
         .expect("runs");
     let start = Instant::now();
@@ -36,19 +40,28 @@ fn run(args: &[&str], data: &std::path::Path) -> (Option<i32>, String) {
         }
         thread::sleep(Duration::from_millis(20));
     };
-    let mut err = String::new();
-    if let Some(mut pipe) = child.stderr.take() {
-        let _ = std::io::Read::read_to_string(&mut pipe, &mut err);
-    }
+    // The worker of a supervisor that was wrongly accepted follows it out.
+    thread::sleep(Duration::from_millis(300));
+    let err = std::fs::read_to_string(&err_path).unwrap_or_default();
     (code, err)
+}
+
+/// A program for `--ui-host` that does nothing and exits at once: this test binary, which
+/// refuses the arguments the supervisor passes.
+fn harmless_program() -> String {
+    std::env::current_exe()
+        .expect("own path")
+        .to_string_lossy()
+        .into_owned()
 }
 
 #[test]
 fn a_release_build_refuses_the_ui_host_switch_on_either_platform() {
     let data = tempfile::TempDir::new().expect("temp dir");
+    let program = harmless_program();
     for platform in ["mock", "native"] {
         let (code, err) = run(
-            &["--supervise", "--platform", platform, "--ui-host", BIN],
+            &["--supervise", "--platform", platform, "--ui-host", &program],
             data.path(),
         );
         assert_eq!(code, Some(1), "--platform {platform}: {err}");

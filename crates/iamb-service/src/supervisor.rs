@@ -45,10 +45,14 @@
 //! only (no heartbeat): an abnormal end restarts it after the same backoff as the worker's, with
 //! its own count. These end its supervision ([`UiHostEnd`]):
 //!
-//! - a quit: the UI host leaves `run/desktop.quit` when it ends on purpose (the tray's "Quit", or
-//!   another UI host already runs for this data root and this one stepped aside). The supervisor
-//!   removes the marker before each start. Where the exit status is the UI host's own, status 0
-//!   counts as a quit as well;
+//! - a quit: where the exit status is the UI host's own, status 0 (the tray's "Quit", or another
+//!   UI host already runs for this data root and this one stepped aside). Behind a launcher
+//!   ([`Program::launcher`], macOS) the status says nothing, and the UI host leaves
+//!   `run/desktop.quit` when it ends on purpose (the tray's "Quit", a quit by the system); the
+//!   supervisor removes the marker before each start and takes it after each end, and only
+//!   behind a launcher does it count. Where the status is visible a marker is not read: one left
+//!   by another process (a UI host that stepped aside used to leave one, the beta review's
+//!   re-verification N2) must not turn a crash into a quit;
 //! - a usage error, status [`EXIT_USAGE`] (64): the UI host cannot run with what it was given (a
 //!   data root that is not UTF-8), and never will;
 //! - an end by `SIGTERM` (Unix): someone ended it on purpose (a task manager, an installer that
@@ -213,19 +217,21 @@ enum RunEnd {
 }
 
 /// Reads the end of one run: `status` (`None`: it could not be started or waited for),
-/// whether the quit marker was found, and whether `status` is a launcher's.
+/// whether the quit marker was found, and whether `status` is a launcher's. The marker counts
+/// behind a launcher only (module docs).
 fn judge(status: Option<ExitStatus>, marker: bool, launcher: bool) -> RunEnd {
-    if marker {
-        return RunEnd::Final(UiHostEnd::Quit);
+    if launcher {
+        // `open -W` returns when the app ends, whatever its status: without the marker that
+        // is a crash, and a failing `open` is a failed start.
+        return if marker {
+            RunEnd::Final(UiHostEnd::Quit)
+        } else {
+            RunEnd::Failed
+        };
     }
     let Some(status) = status else {
         return RunEnd::Failed;
     };
-    if launcher {
-        // `open -W` returns when the app ends, whatever its status: without the marker that
-        // is a crash, and a failing `open` is a failed start.
-        return RunEnd::Failed;
-    }
     if status.success() {
         return RunEnd::Final(UiHostEnd::Quit);
     }
@@ -770,12 +776,15 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn the_end_of_a_run_is_read_from_the_marker_then_the_status() {
+    fn the_end_of_a_run_is_read_from_the_status_and_behind_a_launcher_from_the_marker() {
         use std::os::unix::process::ExitStatusExt;
         let code = |c: i32| Some(ExitStatus::from_raw(c << 8));
         let signal = |s: i32| Some(ExitStatus::from_raw(s));
         assert_eq!(judge(code(0), false, false), RunEnd::Final(UiHostEnd::Quit));
-        assert_eq!(judge(code(1), true, false), RunEnd::Final(UiHostEnd::Quit));
+        // Where the status is the UI host's own, a marker does not turn a crash into a quit.
+        assert_eq!(judge(code(1), true, false), RunEnd::Failed);
+        assert_eq!(judge(signal(9), true, false), RunEnd::Failed);
+        assert_eq!(judge(code(0), true, false), RunEnd::Final(UiHostEnd::Quit));
         assert_eq!(judge(code(1), false, false), RunEnd::Failed);
         assert_eq!(judge(code(70), false, false), RunEnd::Failed);
         assert_eq!(

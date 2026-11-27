@@ -133,8 +133,14 @@ describe("the shortcut recorder", () => {
     expect(recordChord(key("Digit2", { altKey: true, shiftKey: true }, "€"), true)).toEqual({ kind: "refused", reason: "types" });
     expect(recordChord(key("KeyQ", { altKey: true }, "q"))).toEqual({ kind: "refused", reason: "types" });
     // Windows: Ctrl+Alt is AltGr, also with Shift; the Windows key makes it a shortcut.
-    expect(recordChord(key("KeyA", { ctrlKey: true, altKey: true }, "ą"))).toEqual({ kind: "refused", reason: "types" });
-    expect(recordChord(key("KeyA", { ctrlKey: true, altKey: true, shiftKey: true }, "Ą"))).toEqual({ kind: "refused", reason: "types" });
+    // Refused on every keyboard, also one without AltGr (where "a" is what the key gives), and
+    // the sentence says so.
+    expect(recordChord(key("KeyA", { ctrlKey: true, altKey: true }, "ą"))).toEqual({ kind: "refused", reason: "ctrl_alt" });
+    expect(recordChord(key("KeyA", { ctrlKey: true, altKey: true }, "a"))).toEqual({ kind: "refused", reason: "ctrl_alt" });
+    expect(recordChord(key("KeyA", { ctrlKey: true, altKey: true, shiftKey: true }, "Ą"))).toEqual({ kind: "refused", reason: "ctrl_alt" });
+    expect(recordChord(key("Digit5", { ctrlKey: true, altKey: true }, "5"))).toEqual({ kind: "refused", reason: "ctrl_alt" });
+    expect(refusedText("ctrl_alt", false)).toMatch(/Ctrl\+Alt with a letter or digit on any keyboard/);
+    expect(refusedText("ctrl_alt", false)).toMatch(/Use Ctrl\+Shift, or add the Windows key/);
     expect(recordChord(key("KeyK", { ctrlKey: true, altKey: true, metaKey: true }, "k"))).toEqual({ kind: "chord", chord: "Ctrl+Alt+Meta+K" });
     // macOS: Control+Option and a letter types nothing.
     expect(recordChord(key("KeyK", { ctrlKey: true, altKey: true }, "k"), true)).toEqual({ kind: "chord", chord: "Ctrl+Alt+K" });

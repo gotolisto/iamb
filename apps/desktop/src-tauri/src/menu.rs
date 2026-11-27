@@ -11,6 +11,7 @@
 //! | --- | --- | --- |
 //! | On | Iamb is on | "76 snippets" |
 //! | Paused | Iamb is paused | "Typed abbreviations do not expand. Search still works." |
+//! | Paused, kept from before the service started | Iamb is still paused | "Paused since before Iamb last started. Typed abbreviations do not expand." |
 //! | Needs you | Iamb cannot expand yet | "2 permissions are missing" |
 //! | Needs you | Iamb is not running | "Its background service stopped." |
 //!
@@ -39,7 +40,15 @@
 //! showed, or on nothing: it is refused while a newer capture is in flight, when the capture is
 //! older than the time limit (the item is then hidden), and when the item's text is not the
 //! label of the target kept with it.
+//!
+//! The capture sits behind one lock ([`SharedCapture`]), which is never held across a call to
+//! the native menu (the beta review's re-verification, N1): the menu's calls wait for the main
+//! thread, and the main thread takes the lock in the icon's pointer events, so holding it there
+//! could stop the UI host for good. The item is set from the capture afterwards
+//! ([`ExclusionItem::refresh`], on the main thread, in order); for the moment between, the
+//! click's label check covers the difference.
 
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -122,6 +131,17 @@ pub fn status(view: &StatusView, missing: u8) -> MenuStatus {
             detail: Some(permissions_missing(missing)),
             icon: IconState::NeedsYou,
             needs: Some(NeedsItem::FixPermissions),
+        },
+        // A pause that outlived a quit, a logout or a restart (the beta review's
+        // re-verification, N5): the user may not remember it.
+        (ConnectionState::Connected, Some(s)) if s.paused && s.paused_kept => MenuStatus {
+            title: "Iamb is still paused",
+            detail: Some(
+                "Paused since before Iamb last started. Typed abbreviations do not expand."
+                    .to_owned(),
+            ),
+            icon: IconState::Paused,
+            needs: None,
         },
         (ConnectionState::Connected, Some(s)) if s.paused => MenuStatus {
             title: "Iamb is paused",
@@ -327,6 +347,96 @@ impl ExclusionCapture {
     }
 }
 
+/// The menu's exclusion item, as [`SharedCapture`] drives it (`app/tray.rs` implements it over
+/// the native item). Either call may wait for the main thread.
+pub trait ExclusionItem {
+    /// The item's text as the menu has it now.
+    fn text(&self) -> Option<String>;
+    /// Has the item show what the capture holds when this runs ([`SharedCapture::shown`]):
+    /// text and visibility.
+    fn refresh(&self);
+}
+
+/// [`ExclusionCapture`] behind its lock (module docs): each call changes it under the lock,
+/// lets the lock go, and only then calls the item.
+#[derive(Debug, Default)]
+pub struct SharedCapture {
+    inner: Mutex<ExclusionCapture>,
+}
+
+impl SharedCapture {
+    fn lock(&self) -> MutexGuard<'_, ExclusionCapture> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// [`ExclusionCapture::begin`]. Only takes the lock: the main thread calls it.
+    pub fn begin(&self, entered: bool, now: Instant, ttl: Duration) -> Option<u64> {
+        self.lock().begin(entered, now, ttl)
+    }
+
+    /// What the item is to show now (`None`: hidden).
+    #[must_use]
+    pub fn shown(&self) -> Option<ExclusionTarget> {
+        self.lock().shown.as_ref().map(|(_, t)| t.clone())
+    }
+
+    /// [`ExclusionCapture::finish`], then the item is refreshed if it changed anything.
+    pub fn finish(
+        &self,
+        ticket: u64,
+        target: Option<ExclusionTarget>,
+        now: Instant,
+        item: &impl ExclusionItem,
+    ) {
+        let changed = self.lock().finish(ticket, target, now).is_some();
+        if changed {
+            item.refresh();
+        }
+    }
+
+    /// What a click at `now` acts on ([`ExclusionCapture::for_click`]), the item's text read
+    /// first, without the lock. A stale capture is forgotten and the item hidden.
+    ///
+    /// # Errors
+    ///
+    /// Why it acts on nothing.
+    pub fn for_click(
+        &self,
+        now: Instant,
+        ttl: Duration,
+        item: &impl ExclusionItem,
+    ) -> Result<ExclusionTarget, ExclusionRefusal> {
+        let text = item.text();
+        let result = {
+            let mut capture = self.lock();
+            let result = capture.for_click(text.as_deref(), now, ttl);
+            if result == Err(ExclusionRefusal::Stale) {
+                capture.clear();
+            }
+            result
+        };
+        if result == Err(ExclusionRefusal::Stale) {
+            item.refresh();
+        }
+        result
+    }
+
+    /// [`ExclusionCapture::toggled`], then the item is refreshed if the capture still holds
+    /// that application.
+    pub fn toggled(&self, app_id: &str, item: &impl ExclusionItem) {
+        let changed = self.lock().toggled(app_id).is_some();
+        if changed {
+            item.refresh();
+        }
+    }
+
+    /// [`ExclusionCapture::clear`], then the item is refreshed (hidden).
+    pub fn clear(&self, item: &impl ExclusionItem) {
+        self.lock().clear();
+        item.refresh();
+    }
+}
+
 /// The exclusion item for the application in front (`app_id`, `own` when it is part of Iamb),
 /// given the ids excluded now; `None` hides the item: no application, Iamb itself, or one that
 /// cannot be named.
@@ -432,6 +542,66 @@ mod tests {
             name: "Notes".to_owned(),
             excluded: false,
         }
+    }
+
+    /// An item whose every call waits, as the native menu's do, for a "main thread" that takes
+    /// the capture's lock first (`on_icon_event` does, for the pointer's events), with a limit
+    /// instead of forever. The "main thread" is left behind when it cannot get the lock, so a
+    /// held lock fails the test instead of hanging it.
+    struct MainThreadItem {
+        capture: &'static SharedCapture,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl MainThreadItem {
+        fn main_thread_round(&self) {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let capture = self.capture;
+            std::thread::spawn(move || {
+                let _ = capture.begin(false, Instant::now(), TTL);
+                let _ = tx.send(());
+            });
+            assert!(
+                rx.recv_timeout(Duration::from_secs(2)).is_ok(),
+                "the main thread waited for the capture's lock: the UI host would hang"
+            );
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    impl ExclusionItem for MainThreadItem {
+        fn text(&self) -> Option<String> {
+            self.main_thread_round();
+            self.capture.shown().map(|t| t.label())
+        }
+
+        fn refresh(&self) {
+            self.main_thread_round();
+        }
+    }
+
+    #[test]
+    fn the_capture_lock_is_never_held_while_the_menu_waits_for_the_main_thread() {
+        let capture: &'static SharedCapture = Box::leak(Box::default());
+        let item = MainThreadItem {
+            capture,
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let t0 = Instant::now();
+        let ticket = capture.begin(true, t0, TTL).expect("ticket");
+        capture.finish(ticket, Some(mail(false)), t0, &item);
+        assert_eq!(capture.shown(), Some(mail(false)));
+        assert_eq!(capture.for_click(t0, TTL, &item), Ok(mail(false)));
+        capture.toggled("com.apple.mail", &item);
+        assert_eq!(capture.shown(), Some(mail(true)));
+        assert_eq!(
+            capture.for_click(t0 + TTL, TTL, &item),
+            Err(ExclusionRefusal::Stale)
+        );
+        assert_eq!(capture.shown(), None, "a stale capture is forgotten");
+        capture.clear(&item);
+        // finish, text, toggled, text and refresh (stale), clear.
+        assert_eq!(item.calls.load(std::sync::atomic::Ordering::SeqCst), 6);
     }
 
     #[test]
@@ -577,6 +747,7 @@ mod tests {
             service: Some(ServiceView {
                 version: "0.1.0".into(),
                 paused,
+                paused_kept: false,
                 suspended: paused,
                 snippets,
                 revision: 1,
@@ -612,6 +783,19 @@ mod tests {
             Some("Typed abbreviations do not expand. Search still works.")
         );
         assert_eq!(paused.icon, IconState::Paused);
+
+        // A pause kept from before the service started says so.
+        let mut view = connected(true, true, 76);
+        if let Some(service) = view.service.as_mut() {
+            service.paused_kept = true;
+        }
+        let kept = status(&view, 0);
+        assert_eq!(kept.title, "Iamb is still paused");
+        assert_eq!(
+            kept.detail.as_deref(),
+            Some("Paused since before Iamb last started. Typed abbreviations do not expand.")
+        );
+        assert_eq!(kept.icon, IconState::Paused);
 
         let down = status(&bare(ConnectionState::Disconnected), 0);
         assert_eq!(down.title, "Iamb is not running");

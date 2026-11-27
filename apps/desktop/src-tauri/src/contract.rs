@@ -166,6 +166,10 @@ pub struct ServiceView {
     pub version: String,
     /// Global pause is on.
     pub paused: bool,
+    /// The pause was kept from before the worker started (it outlives a quit, a logout and a
+    /// restart of the machine) and nobody has paused or resumed since.
+    #[serde(default)]
+    pub paused_kept: bool,
     /// Typed keys are dropped right now (a secure field, an excluded app, pause, …).
     pub suspended: bool,
     /// Snippets in the current snapshot.
@@ -183,6 +187,7 @@ impl From<&ServiceStatus> for ServiceView {
         Self {
             version: s.version.clone(),
             paused: s.paused,
+            paused_kept: s.paused && s.paused_kept,
             suspended: s.suspended,
             snippets: s.snippets,
             revision: s.revision,
@@ -547,6 +552,7 @@ mod tests {
             version: "1".to_owned(),
             pid: 1,
             paused: true,
+            paused_kept: false,
             suspended: false,
             injection: iamb_ipc::InjectionStatus::Idle,
             snippets: 2,

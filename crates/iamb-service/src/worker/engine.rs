@@ -11,12 +11,14 @@
 //! *parked*. Delivering that `FocusChanged` forwards it, right behind the change (the engine
 //! then holds it for the verdict). A newer request replaces a parked one, a cancelled form
 //! drops its parked submit, and a request whose window never gets the focus is dropped after
-//! [`PARK_TIMEOUT`] with the diagnostic `request_focus_timeout`. A request without a token runs
-//! against whatever has the focus, with one exception: a `ReopenLastForm` that arrives while
-//! the last focus delivered here is one of Iamb's own windows (the tray menu on Windows, which
-//! takes the foreground; the UI host gives the focus back to the window the menu was for right
-//! before it sends the request) is parked until the next `FocusChanged` for a window that is not
-//! Iamb's, with the same time limit, instead of being refused with `refused_own_window` while the
+//! [`PARK_TIMEOUT`] with the diagnostic `request_focus_timeout`. `ReopenLastForm` carries the
+//! token too when the UI host knows the window (the tray's menu and the palette name the window
+//! they give the focus back to; the beta review's re-verification, N4): it then waits for that
+//! window alone, so neither the shell's taskbar reported last nor another window reported next
+//! decides it. A request without a token runs against whatever has the focus, with one
+//! exception: a `ReopenLastForm` that arrives while the last focus delivered here is one of
+//! Iamb's own windows is parked until the next `FocusChanged` for a window that is not Iamb's,
+//! with the same time limit, instead of being refused with `refused_own_window` while a
 //! hand-back is still on its way (the beta-gap review's finding 2).
 //!
 //! The "Fill in the last form again" shortcut reads the focus token at the press, as the
@@ -136,6 +138,15 @@
 //! resumes; a worker that starts with the file there starts paused. The file carries nothing; a
 //! process of the user that removes it does what it could do with `SetPaused`.
 //!
+//! Only a regular file counts, looked at without following a link (the beta review's
+//! re-verification, N5): anything else in its place (a link, a dangling one too, a directory, a
+//! FIFO) means "not paused" and is removed, when pausing, when resuming and at the start (a
+//! directory only when empty; one that is not stays, with a warning, and still means "not
+//! paused"). The status says when the pause was kept from before this worker
+//! ([`ServiceStatus::paused_kept`](iamb_ipc::ServiceStatus)), so that the menu, the library and
+//! "Why didn't it expand?" can say so: such a pause outlives a quit, a logout and a restart of
+//! the machine.
+//!
 //! # Why an injection stopped
 //!
 //! Every outcome but `Finished` becomes `InjectionCancelled`, whose diagnostic is
@@ -175,8 +186,85 @@ use super::{
     Shared, WakeCounters, coded,
 };
 
+/// The engine thread's global pause.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pause {
+    /// Not paused.
+    Off,
+    /// Paused in this worker.
+    On,
+    /// Paused, as kept from before this worker started (`run/paused`), and nobody has paused
+    /// or resumed since.
+    Kept,
+}
+
 /// The file in `run/` that says Iamb is paused (module docs, "Pause across a restart").
 pub const PAUSED_FILE: &str = "paused";
+
+/// Whether the pause file at `path` says "paused" (module docs, "Pause across a restart"): a
+/// regular file does; nothing there does not; anything else does not either and is removed.
+///
+/// # Errors
+///
+/// Something that is not a regular file is there and could not be removed (a directory that
+/// is not empty); it still means "not paused".
+pub(crate) fn pause_kept(path: &std::path::Path) -> std::io::Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_file() => Ok(true),
+        Ok(meta) => remove_entry(path, meta.file_type().is_dir()).map(|()| false),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+/// Creates (`on`) or removes the pause file at `path` (module docs, "Pause across a restart").
+/// Created new, so a link in its place is neither followed nor counted: anything there that is
+/// not a regular file is removed first.
+///
+/// # Errors
+///
+/// I/O errors; a directory that is not empty in its place.
+pub(crate) fn keep_pause_file(path: &std::path::Path, on: bool) -> std::io::Result<()> {
+    let create = || {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map(drop)
+    };
+    if on {
+        match create() {
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                if pause_kept(path)? {
+                    Ok(())
+                } else {
+                    create()
+                }
+            }
+            other => other,
+        }
+    } else {
+        match std::fs::symlink_metadata(path) {
+            Ok(meta) => remove_entry(path, meta.file_type().is_dir()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+/// Removes the entry at `path` itself (a link, not what it points to); `dir` when it is a
+/// directory, which must be empty.
+fn remove_entry(path: &std::path::Path, dir: bool) -> std::io::Result<()> {
+    let removed = if dir {
+        std::fs::remove_dir(path)
+    } else {
+        std::fs::remove_file(path)
+    };
+    match removed {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
+}
 
 /// How long a parked request waits for the focus change of its window: the UI host's
 /// `restore_focus` limit (500 ms) and some margin.
@@ -274,7 +362,8 @@ pub(crate) struct EngineThread {
     /// refusal yet: only the form it opens renews the answers' time (the beta-gap review's
     /// finding 8).
     reopen_waiting: bool,
-    paused: bool,
+    /// Global pause (module docs, "Pause across a restart").
+    pause: Pause,
     /// The code the next `injection_cancelled` diagnostic is given instead (module docs).
     cancel_code: Option<&'static str>,
     /// The focus watcher stopped by itself and is not running again yet (module docs).
@@ -332,7 +421,7 @@ impl EngineThread {
             values_touched: None,
             values_ttl,
             reopen_waiting: false,
-            paused: false,
+            pause: Pause::Off,
             cancel_code: None,
             watcher_down: false,
             elsewhere: None,
@@ -344,26 +433,11 @@ impl EngineThread {
         }
     }
 
-    /// Writes or removes `run/paused` (module docs, "Pause across a restart"). Created new, so
-    /// a link in its place is not followed.
+    /// Writes or removes `run/paused` (module docs, "Pause across a restart"): see
+    /// [`keep_pause_file`].
     fn keep_pause(&self, on: bool) {
         let path = self.shared.data_root.join("run").join(PAUSED_FILE);
-        let kept = if on {
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
-            {
-                Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => Err(e),
-                _ => Ok(()),
-            }
-        } else {
-            match std::fs::remove_file(&path) {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-                _ => Ok(()),
-            }
-        };
-        if let Err(e) = kept {
+        if let Err(e) = keep_pause_file(&path, on) {
             self.shared.logger.warn(format_args!(
                 "cannot keep the pause for a restart: {}",
                 e.kind()
@@ -373,12 +447,21 @@ impl EngineThread {
 
     /// The thread's loop.
     pub(crate) fn run(mut self, rx: &Receiver<EngineMsg>) {
-        if self.shared.data_root.join("run").join(PAUSED_FILE).exists() {
-            // Paused before this worker started (module docs, "Pause across a restart").
-            self.set_paused(true);
-            self.shared
-                .logger
-                .info(format_args!("paused, as the worker before was"));
+        let pause_file = self.shared.data_root.join("run").join(PAUSED_FILE);
+        match pause_kept(&pause_file) {
+            Ok(true) => {
+                // Paused before this worker started (module docs, "Pause across a restart").
+                self.set_paused(true);
+                self.pause = Pause::Kept;
+                self.shared
+                    .logger
+                    .info(format_args!("paused, as the worker before was"));
+            }
+            Ok(false) => {}
+            Err(e) => self.shared.logger.warn(format_args!(
+                "something that is not a file is in the pause file's place: {}",
+                e.kind()
+            )),
         }
         loop {
             let now = Instant::now();
@@ -676,7 +759,8 @@ impl EngineThread {
 
     fn status(&self) -> EngineStatus {
         EngineStatus {
-            paused: self.paused,
+            paused: self.pause != Pause::Off,
+            paused_kept: self.pause == Pause::Kept,
             suspended: self.engine.is_suspended(),
             injection: match self.engine.injection_state() {
                 InjectionState::Idle => InjectionStatus::Idle,
@@ -743,7 +827,7 @@ impl EngineThread {
                 }
             }
             // "Pause or resume" (§5.1).
-            Routed::Hotkey(id) if id == PAUSE_HOTKEY => self.set_paused(!self.paused),
+            Routed::Hotkey(id) if id == PAUSE_HOTKEY => self.set_paused(self.pause == Pause::Off),
             Routed::Hotkey(_) => {}
         }
     }
@@ -753,8 +837,10 @@ impl EngineThread {
     fn set_paused(&mut self, on: bool) {
         self.handoff.disturb();
         self.handle(Event::Paused(on));
-        if self.paused != on {
-            self.paused = on;
+        let was = self.pause;
+        // Paused or resumed now: no longer the pause kept from before.
+        self.pause = if on { Pause::On } else { Pause::Off };
+        if was != self.pause {
             self.keep_pause(on);
             let status = self.shared.status(self.status());
             self.shared

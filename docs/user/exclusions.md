@@ -55,3 +55,9 @@ list. Nothing expands there.
 To stop Iamb in every app at once, use the menu's **Pause Iamb**, turn off
 **Expand snippets as I type** in [Settings](settings.md#general), or choose **Pause Iamb** from the
 status line at the bottom of the library window's sidebar. Search still works while paused.
+
+A pause lasts until you resume. Iamb keeps it when it quits, when you log out and when the
+computer restarts, so it is still paused when it starts again. The menu then says **Iamb is still
+paused** ("Paused since before Iamb last started"), and so do the library window's status line and
+[Why didn't it expand?](troubleshooting.md#nothing-expands-at-all). If you hid the menu icon, look
+there.

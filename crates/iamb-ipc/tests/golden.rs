@@ -80,6 +80,7 @@ fn status() -> ServiceStatus {
         version: "0.0.0".to_owned(),
         pid: 4242,
         paused: false,
+        paused_kept: false,
         suspended: true,
         injection: InjectionStatus::Idle,
         snippets: 12,
@@ -231,7 +232,12 @@ fn requests() -> Vec<RequestBody> {
             values: values(),
         },
         RequestBody::FormCancel { session: 2 },
-        RequestBody::ReopenLastForm {},
+        RequestBody::ReopenLastForm {
+            focus: Some(FocusRef {
+                pid: 100,
+                window: 3,
+            }),
+        },
         RequestBody::PanelFocus {
             panel: PanelKind::Form,
             shown: true,
@@ -811,4 +817,16 @@ fn there_are_no_stale_golden_files() {
             "{file} has no sample; remove it or add one"
         );
     }
+}
+
+#[test]
+fn a_reopen_request_without_its_window_is_still_understood() {
+    // `focus` came later (the beta review's re-verification, N4) and is optional: a client that
+    // leaves it out sends what it always sent, and it reads as "the focused window".
+    let body: RequestBody = serde_json::from_str(r#"{"type":"reopen_last_form"}"#).expect("parses");
+    assert!(matches!(body, RequestBody::ReopenLastForm { focus: None }));
+    assert_eq!(
+        serde_json::to_string(&RequestBody::ReopenLastForm { focus: None }).expect("json"),
+        r#"{"type":"reopen_last_form"}"#
+    );
 }

@@ -141,7 +141,8 @@ Click the Iamb icon to open its menu. It has these items:
 
 - Two status lines at the top. The first says how Iamb is: **Iamb is on** (with the number of
   snippets under it), **Iamb is paused** ("Typed abbreviations do not expand. Search still
-  works."), **Iamb cannot expand yet** (for example "2 permissions are missing") or **Iamb is not
+  works."), **Iamb is still paused** (paused since before Iamb last started: a pause lasts across
+  a quit, a logout and a restart until you resume), **Iamb cannot expand yet** (for example "2 permissions are missing") or **Iamb is not
   running** ("Its background service stopped."). While Iamb starts, it says **Connecting…**.
 - **Set up Iamb…**, while setup is not finished. **Fix permissions…**, when a permission is missing
   on macOS.

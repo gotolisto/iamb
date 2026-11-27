@@ -50,7 +50,7 @@ use super::onboarding_commands::{self, MenuEntries};
 use super::{Ui, palette_panel, windows};
 use crate::bridge::Bridge;
 use crate::contract::{ConnectionState, StatusView};
-use crate::menu::{self, ExclusionCapture, ExclusionRefusal, ExclusionTarget, IconState};
+use crate::menu::{self, ExclusionItem, IconState, SharedCapture};
 use crate::palette::{LibraryRequest, LibraryView, TRAY_CAPTURE_TTL};
 use crate::settings;
 
@@ -157,8 +157,8 @@ pub struct Tray {
     search: MenuItem<Wry>,
     pause: CheckMenuItem<Wry>,
     exclusion: Optional,
-    /// What the exclusion item shows and when it was taken (`crate::menu::ExclusionCapture`).
-    capture: Mutex<ExclusionCapture>,
+    /// What the exclusion item shows and when it was taken (`crate::menu::SharedCapture`).
+    capture: SharedCapture,
     icon: TrayIcon<Wry>,
     icons: Option<Icons>,
     shown_icon: Mutex<Option<IconState>>,
@@ -166,6 +166,11 @@ pub struct Tray {
     last: Mutex<(StatusView, u8)>,
     /// Names the app in front for the exclusion item; none on Linux (development only).
     focus: Option<Arc<dyn FocusInspector>>,
+    /// To reach the main thread, where every change to the menu and the icon is made
+    /// ([`Tray::on_main`]).
+    app: AppHandle,
+    /// The main thread (the tray is built there, in `setup`).
+    main_thread: std::thread::ThreadId,
     /// "Set up Iamb…" and "Fix permissions…", added and removed as they apply (task 3.7).
     pub setup: MenuEntries,
 }
@@ -227,7 +232,7 @@ impl Tray {
             search,
             pause,
             exclusion: Optional::new(exclusion, PAUSE),
-            capture: Mutex::new(ExclusionCapture::default()),
+            capture: SharedCapture::default(),
             icon,
             icons,
             shown_icon: Mutex::new(Some(IconState::On)),
@@ -239,8 +244,29 @@ impl Tray {
                 0,
             )),
             focus,
+            app: app.clone(),
+            main_thread: std::thread::current().id(),
             setup,
         })
+    }
+
+    /// Runs `f` on the main thread: at once when called there, otherwise queued, in order
+    /// (the beta review's re-verification, N1). The menu's and the icon's calls wait for the
+    /// main thread, so no lock the main thread takes may be held across one; doing every change
+    /// there, from what the tray holds when it runs, keeps them in order without such a lock.
+    fn on_main(&self, f: fn(&Self)) {
+        if std::thread::current().id() == self.main_thread {
+            f(self);
+            return;
+        }
+        let app = self.app.clone();
+        let _ = self.app.run_on_main_thread(move || {
+            if let Some(ui) = app.try_state::<Arc<Ui>>()
+                && let Some(tray) = ui.tray.get()
+            {
+                f(tray);
+            }
+        });
     }
 
     /// Shows or hides the icon (Settings → General). The menu is still reachable from the
@@ -251,29 +277,29 @@ impl Tray {
 
     /// Shows the bridge's state.
     pub fn show(&self, view: &StatusView) {
-        let missing = {
-            let mut last = lock(&self.last);
-            last.0 = view.clone();
-            last.1
-        };
-        self.render(view, missing);
+        lock(&self.last).0 = view.clone();
+        if view.connection != ConnectionState::Connected {
+            self.capture.clear(self);
+        }
+        self.on_main(Self::render);
     }
 
     /// Shows that `missing` permissions are missing (0: none, or setup is not done yet).
     pub fn set_missing(&self, missing: u8) {
-        let view = {
+        {
             let mut last = lock(&self.last);
             if last.1 == missing {
                 return;
             }
             last.1 = missing;
-            last.0.clone()
-        };
-        self.render(&view, missing);
+        }
+        self.on_main(Self::render);
     }
 
-    fn render(&self, view: &StatusView, missing: u8) {
-        let status = menu::status(view, missing);
+    /// Shows the last status (main thread, [`Tray::on_main`]).
+    fn render(&self) {
+        let (view, missing) = lock(&self.last).clone();
+        let status = menu::status(&view, missing);
         let _ = self.status.set_text(status.title);
         if let Some(detail) = &status.detail {
             let _ = self.detail.item.set_text(detail);
@@ -284,17 +310,14 @@ impl Tray {
         let connected = view.connection == ConnectionState::Connected;
         let _ = self.pause.set_enabled(connected);
         let _ = self.pause.set_checked(view.paused());
-        if !connected {
-            let mut capture = lock(&self.capture);
-            capture.clear();
-            self.exclusion.follow(&self.menu, false);
-        }
-        let mut shown = lock(&self.shown_icon);
-        if *shown != Some(status.icon)
-            && let Some(icons) = &self.icons
-        {
-            let _ = self.icon.set_icon(Some(icons.get(status.icon)));
+        let changed = {
+            let mut shown = lock(&self.shown_icon);
+            let changed = *shown != Some(status.icon);
             *shown = Some(status.icon);
+            changed
+        };
+        if changed && let Some(icons) = &self.icons {
+            let _ = self.icon.set_icon(Some(icons.get(status.icon)));
         }
     }
 
@@ -309,9 +332,10 @@ impl Tray {
 
     /// The pointer reached the icon (`entered`) or moved over it: a ticket when the exclusion
     /// item's application is to be captured now (`crate::menu::ExclusionCapture::begin`).
-    /// Never blocks for long: one lock.
+    /// Never blocks for long: one lock, which nothing holds across a menu call.
     pub fn begin_exclusion_capture(&self, entered: bool) -> Option<u64> {
-        lock(&self.capture).begin(entered, Instant::now(), TRAY_CAPTURE_TTL)
+        self.capture
+            .begin(entered, Instant::now(), TRAY_CAPTURE_TTL)
     }
 
     /// Names the exclusion item for the app in front now, or hides it (Iamb itself, an app that
@@ -331,16 +355,14 @@ impl Tray {
                 excluded.iter().map(|e| e.app_id.as_str()),
             )
         });
-        let mut capture = lock(&self.capture);
-        if let Some(shown) = capture.finish(ticket, target, Instant::now()) {
-            self.show_exclusion(shown.as_ref());
-        }
+        self.capture.finish(ticket, target, Instant::now(), self);
     }
 
-    /// Sets the item's text and whether it is shown; called with the capture locked, so that
-    /// text and target change together.
-    fn show_exclusion(&self, target: Option<&ExclusionTarget>) {
-        if let Some(t) = target {
+    /// Sets the item's text and whether it is shown from the capture as it is now (main
+    /// thread, [`Tray::on_main`]).
+    fn show_exclusion(&self) {
+        let target = self.capture.shown();
+        if let Some(t) = &target {
             let _ = self.exclusion.item.set_text(t.label());
         }
         self.exclusion.follow(&self.menu, target.is_some());
@@ -355,27 +377,24 @@ impl Tray {
     ///
     /// The refusal's code, or the service's error code.
     pub fn toggle_exclusion(&self, bridge: &Bridge) -> Result<(), String> {
-        let target = {
-            let mut capture = lock(&self.capture);
-            let text = self.exclusion.item.text().ok();
-            match capture.for_click(text.as_deref(), Instant::now(), TRAY_CAPTURE_TTL) {
-                Ok(target) => target,
-                Err(refusal) => {
-                    if refusal == ExclusionRefusal::Stale {
-                        capture.clear();
-                        self.show_exclusion(None);
-                    }
-                    return Err(refusal.code().to_owned());
-                }
-            }
-        };
+        let target = self
+            .capture
+            .for_click(Instant::now(), TRAY_CAPTURE_TTL, self)
+            .map_err(|refusal| refusal.code().to_owned())?;
         settings::put_exclusion(bridge, &target.app_id, &target.name, !target.excluded)
             .map_err(|e| e.code)?;
-        let mut capture = lock(&self.capture);
-        if let Some(now) = capture.toggled(&target.app_id) {
-            self.show_exclusion(Some(&now));
-        }
+        self.capture.toggled(&target.app_id, self);
         Ok(())
+    }
+}
+
+impl ExclusionItem for Tray {
+    fn text(&self) -> Option<String> {
+        self.exclusion.item.text().ok()
+    }
+
+    fn refresh(&self) {
+        self.on_main(Self::show_exclusion);
     }
 }
 

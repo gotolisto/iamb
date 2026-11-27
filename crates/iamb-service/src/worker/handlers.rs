@@ -349,11 +349,11 @@ pub(crate) fn handle(shared: &Arc<Shared>, _role: Role, body: RequestBody) -> An
             shared,
             EngineMsg::FormCancel(FormSessionId::from_raw(session)),
         ),
-        RequestBody::ReopenLastForm {} => engine(
+        RequestBody::ReopenLastForm { focus } => engine(
             shared,
             EngineMsg::Request {
                 request: Explicit::Reopen,
-                focus: None,
+                focus: focus.map(Into::into),
             },
         ),
 

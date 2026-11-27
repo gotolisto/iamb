@@ -91,6 +91,7 @@ export function LibraryView() {
       onEvent,
       connection: status.connection,
       paused: status.service?.paused ?? false,
+      pausedKept: status.service?.pausedKept ?? false,
       guardClose,
       mac: isMac(),
       settings: settingsApi,
@@ -99,7 +100,7 @@ export function LibraryView() {
       quit: () => api.quit(),
       restartService: () => api.restartService(),
     }),
-    [status.connection, status.service?.paused],
+    [status.connection, status.service?.paused, status.service?.pausedKept],
   );
   return <Library env={env} />;
 }

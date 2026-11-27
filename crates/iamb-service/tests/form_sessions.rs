@@ -53,7 +53,8 @@ fn wait_expands(h: &Harness, window: FocusToken) {
 
 /// The form reopened by `ReopenLastForm` carries `Ada`.
 fn reopens_with_ada(ui: &mut Client) {
-    ui.call(RequestBody::ReopenLastForm {}).expect("sent");
+    ui.call(RequestBody::ReopenLastForm { focus: None })
+        .expect("sent");
     match wait_event(ui, |e| matches!(e, EventBody::FormRequested { .. })) {
         EventBody::FormRequested {
             session,

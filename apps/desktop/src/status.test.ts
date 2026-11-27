@@ -6,6 +6,7 @@ import { statusText } from "./status";
 const service: ServiceView = {
   version: "0.0.0",
   paused: false,
+  pausedKept: false,
   suspended: false,
   snippets: 3,
   revision: 1,

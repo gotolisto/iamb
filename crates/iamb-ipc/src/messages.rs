@@ -325,6 +325,11 @@ pub struct ServiceStatus {
     pub pid: u32,
     /// Global pause is on.
     pub paused: bool,
+    /// The pause was kept from before this worker started (it outlives a quit, a logout and a
+    /// restart of the machine) and nobody has paused or resumed since. Optional on the wire:
+    /// absent reads as `false`.
+    #[serde(default)]
+    pub paused_kept: bool,
     /// Typed keys are dropped unstored right now (focus not confirmed normal, composing, paused).
     pub suspended: bool,
     /// The injection protocol's state.
@@ -1005,7 +1010,18 @@ pub enum RequestBody {
         session: u64,
     },
     /// Shows the most recently submitted form again. → [`ResponseBody::Done`]
-    ReopenLastForm {},
+    ///
+    /// `focus` names the window it is for, as `ExpandSnippet`'s does: the request waits for that
+    /// window's focus change and runs under its verdict (the tray's menu and the palette send
+    /// the window they hand the focus back to; the beta review's re-verification, N4). Without
+    /// it the request runs against the focused window, and waits for the next window that is
+    /// not Iamb's when one of Iamb's own has the focus. Optional, so a client that leaves it out
+    /// is still understood (§6.1).
+    ReopenLastForm {
+        /// The window to show the form for; the focused one when absent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        focus: Option<FocusRef>,
+    },
     /// One of Iamb's panels has the keyboard (`shown: true`) or no longer has it (§4.5; the
     /// 2.8 review's finding 16). While a panel has it, keys typed are typed into Iamb's own
     /// window: never buffered, matched, expanded or handed off, whatever the focused
@@ -1332,7 +1348,7 @@ impl RequestBody {
             Self::FormAck { .. } => "form_ack",
             Self::FormSubmit { .. } => "form_submit",
             Self::FormCancel { .. } => "form_cancel",
-            Self::ReopenLastForm {} => "reopen_last_form",
+            Self::ReopenLastForm { .. } => "reopen_last_form",
             Self::PanelFocus { .. } => "panel_focus",
             Self::ParseTemplate { .. } => "parse_template",
             Self::RenderPreview { .. } => "render_preview",
@@ -1402,7 +1418,7 @@ impl RequestBody {
             Self::FormAck { .. }
             | Self::FormSubmit { .. }
             | Self::FormCancel { .. }
-            | Self::ReopenLastForm {}
+            | Self::ReopenLastForm { .. }
             | Self::PanelFocus { .. } => Group::Forms,
             Self::ParseTemplate { .. } | Self::RenderPreview { .. } => Group::Templates,
             Self::RecentDiagnostics {} => Group::Diagnostics,
