@@ -657,6 +657,14 @@ impl Server {
         if row.meta().updated_by == Some(user) {
             return true;
         }
+        // A live version was the row until it was replaced. A deleted one (the tombstone a
+        // restore replaced) was readable only for an access that began before that delete,
+        // which is the version's own revision (§5.4).
+        let replaced_by = if row.meta().deleted_at.is_some() {
+            replaced_by.min(row.meta().rev)
+        } else {
+            replaced_by
+        };
         let since = |f: Id| {
             self.st
                 .granted_rev

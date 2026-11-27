@@ -962,7 +962,7 @@ real machines:
 The architecture fixes the frame ([ADR-0016](decisions/0016-sync-frame.md)). Task 4.1 fills it in:
 [`sync-design.md`](sync-design.md) has the server's tables and policies, the protocol, the rules for
 every conflict (`C1` to `C25` on the server, `D1` to `D17` on the device), the threat model for
-sharing and 89 conflict scenarios with their outcomes, which are also in `spec/sync/scenarios.toml`
+sharing and 92 conflict scenarios with their outcomes, which are also in `spec/sync/scenarios.toml`
 for the simulation of task 4.4 ([ADR-0027](decisions/0027-sync-protocol-and-conflict-rules.md),
 [ADR-0028](decisions/0028-data-model-for-sync.md),
 [ADR-0029](decisions/0029-server-readable-content.md)). In short: the last write is the one the

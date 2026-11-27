@@ -52,7 +52,7 @@ pub use device::StoreDevice;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use iamb_core::model::{Id, Timestamp};
+use iamb_core::model::{Id, SyncMeta, Timestamp};
 use iamb_core::sync::{Access, AnyRow, RowKind, RowRef};
 use serde_json::{Value, json};
 
@@ -698,52 +698,96 @@ impl Server {
         self.can_read_with(user, key, &map)
     }
 
+    /// Whether `user` reads `meta`'s row through the access entry for `folder` (§5.4): the row
+    /// is live, or `user` deleted it, or it was deleted after that entry began. An entry of the
+    /// transaction under way has not begun and reads no tombstone but its user's own.
+    fn reads_through(&self, user: Id, folder: Id, meta: &SyncMeta) -> bool {
+        meta.deleted_at.is_none()
+            || meta.updated_by == Some(user)
+            || self
+                .st
+                .granted_rev
+                .get(&(user, folder))
+                .is_some_and(|since| meta.rev > *since)
+    }
+
+    /// Whether `user` reads a row of `profile` as its owner or as a member of the group: a
+    /// tombstone of a group only when the membership began before the delete (§5.13).
+    fn reads_in_profile(&self, user: Id, profile: Id, meta: &SyncMeta) -> bool {
+        if self.st.users.get(&user).is_some_and(|(p, _)| *p == profile) {
+            return true;
+        }
+        self.st.rows.values().any(|s| {
+            matches!(&s.row, AnyRow::Membership(m)
+                if m.profile_id == profile && m.user_id == user && m.meta.deleted_at.is_none())
+                && (meta.deleted_at.is_none() || s.created_rev < meta.rev)
+        })
+    }
+
     fn can_read_with(&self, user: Id, key: RowRef, map: &BTreeMap<Id, Grant>) -> bool {
         let Some(s) = self.st.rows.get(&key) else {
             return false;
         };
-        let snippet_readable = |sid: Id| {
-            self.snippet(sid)
-                .is_some_and(|sn| map.contains_key(&sn.folder_id))
-        };
-        let live_link_from_readable = |kind: RowKind, target: Id| {
-            self.st.rows.values().any(|x| match (&x.row, kind) {
-                (AnyRow::SnippetTag(l), RowKind::Tag) => {
-                    l.tag_id == target
-                        && l.meta.deleted_at.is_none()
-                        && self
-                            .snippet(l.snippet_id)
-                            .is_some_and(|sn| sn.meta.deleted_at.is_none())
-                        && snippet_readable(l.snippet_id)
-                }
-                (AnyRow::SnippetAttachment(l), RowKind::Attachment) => {
-                    l.attachment_id == target
-                        && l.meta.deleted_at.is_none()
-                        && self
-                            .snippet(l.snippet_id)
-                            .is_some_and(|sn| sn.meta.deleted_at.is_none())
-                        && snippet_readable(l.snippet_id)
-                }
-                _ => false,
+        let meta = s.row.meta();
+        // The folder of a snippet the user can read (a tombstone under the rule of §5.4).
+        let snippet_folder = |sid: Id| {
+            self.snippet(sid).and_then(|sn| {
+                (map.contains_key(&sn.folder_id)
+                    && self.reads_through(user, sn.folder_id, &sn.meta))
+                .then_some(sn.folder_id)
             })
         };
+        // A live link from a live snippet the user can read. It gives the row while the row is
+        // live: a deleted tag or attachment of someone else's profile is not read through a
+        // link (§5.13).
+        let live_link_from_readable = |kind: RowKind, target: Id| {
+            meta.deleted_at.is_none()
+                && self.st.rows.values().any(|x| match (&x.row, kind) {
+                    (AnyRow::SnippetTag(l), RowKind::Tag) => {
+                        l.tag_id == target
+                            && l.meta.deleted_at.is_none()
+                            && self
+                                .snippet(l.snippet_id)
+                                .is_some_and(|sn| sn.meta.deleted_at.is_none())
+                            && snippet_folder(l.snippet_id).is_some()
+                    }
+                    (AnyRow::SnippetAttachment(l), RowKind::Attachment) => {
+                        l.attachment_id == target
+                            && l.meta.deleted_at.is_none()
+                            && self
+                                .snippet(l.snippet_id)
+                                .is_some_and(|sn| sn.meta.deleted_at.is_none())
+                            && snippet_folder(l.snippet_id).is_some()
+                    }
+                    _ => false,
+                })
+        };
         match &s.row {
-            AnyRow::Folder(_) => map.contains_key(&key.id),
-            AnyRow::Snippet(sn) => map.contains_key(&sn.folder_id),
-            AnyRow::FolderShare(x) => {
-                map.get(&x.folder_id)
-                    .is_some_and(|g| g.access == Access::Manage)
-                    || (self.role(user, x.profile_id).is_some() && map.contains_key(&x.folder_id))
+            AnyRow::Folder(_) => {
+                map.contains_key(&key.id) && self.reads_through(user, key.id, meta)
             }
-            AnyRow::SnippetTag(l) => snippet_readable(l.snippet_id),
-            AnyRow::SnippetAttachment(l) => snippet_readable(l.snippet_id),
+            AnyRow::Snippet(sn) => {
+                map.contains_key(&sn.folder_id) && self.reads_through(user, sn.folder_id, meta)
+            }
+            AnyRow::FolderShare(x) => {
+                (map.get(&x.folder_id)
+                    .is_some_and(|g| g.access == Access::Manage)
+                    || (self.role(user, x.profile_id).is_some() && map.contains_key(&x.folder_id)))
+                    && self.reads_through(user, x.folder_id, meta)
+            }
+            AnyRow::SnippetTag(l) => {
+                snippet_folder(l.snippet_id).is_some_and(|f| self.reads_through(user, f, meta))
+            }
+            AnyRow::SnippetAttachment(l) => {
+                snippet_folder(l.snippet_id).is_some_and(|f| self.reads_through(user, f, meta))
+            }
             AnyRow::Tag(t) => {
-                self.own_profiles(user).contains(&t.profile_id)
+                self.reads_in_profile(user, t.profile_id, meta)
                     || live_link_from_readable(RowKind::Tag, t.meta.id)
                     || (t.meta.updated_by == Some(user) && self.has_edit_in(user, t.profile_id))
             }
             AnyRow::Attachment(a) => {
-                self.own_profiles(user).contains(&a.profile_id)
+                self.reads_in_profile(user, a.profile_id, meta)
                     || live_link_from_readable(RowKind::Attachment, a.meta.id)
                     || (a.meta.updated_by == Some(user) && self.has_edit_in(user, a.profile_id))
             }
@@ -783,7 +827,14 @@ impl Server {
         let mut row = s.row.clone();
         if let AnyRow::Folder(f) = &mut row
             && let Some(p) = f.parent_id
-            && !map.contains_key(&p)
+            && !self.can_read_with(
+                user,
+                RowRef {
+                    kind: RowKind::Folder,
+                    id: p,
+                },
+                &map,
+            )
         {
             f.parent_id = None;
         }
@@ -894,6 +945,39 @@ impl Server {
                     })
                     .cloned()
                     .unwrap_or_default();
+                tx.before.entry(k).or_insert(readers);
+            }
+        }
+        // So does a tag or an attachment row that is live after the write: who reads it through
+        // a link lost it, and its links with it, while it was deleted (§5.5, §5.13).
+        let targets: Vec<RowRef> = tx
+            .before
+            .keys()
+            .filter(|k| matches!(k.kind, RowKind::Tag | RowKind::Attachment))
+            .copied()
+            .filter(|k| {
+                self.st
+                    .rows
+                    .get(k)
+                    .is_some_and(|s| s.row.meta().deleted_at.is_none())
+            })
+            .collect();
+        for t in targets {
+            let links: Vec<RowRef> = self
+                .st
+                .rows
+                .values()
+                .filter(|s| match &s.row {
+                    AnyRow::SnippetTag(l) => l.tag_id == t.id && l.meta.deleted_at.is_none(),
+                    AnyRow::SnippetAttachment(l) => {
+                        l.attachment_id == t.id && l.meta.deleted_at.is_none()
+                    }
+                    _ => false,
+                })
+                .map(|s| s.row.key())
+                .collect();
+            for k in links {
+                let readers: BTreeSet<Id> = tx.before.get(&t).cloned().unwrap_or_default();
                 tx.before.entry(k).or_insert(readers);
             }
         }
@@ -1431,7 +1515,22 @@ impl Server {
     }
 
     fn visible_folders(&self, c: Caller) -> Value {
-        let folders: Vec<Id> = self.access_map(c.user).keys().copied().collect();
+        // A deleted folder is among them only where the caller may read its tombstone (§5.4).
+        let map = self.access_map(c.user);
+        let folders: Vec<Id> = map
+            .keys()
+            .copied()
+            .filter(|f| {
+                self.can_read_with(
+                    c.user,
+                    RowRef {
+                        kind: RowKind::Folder,
+                        id: *f,
+                    },
+                    &map,
+                )
+            })
+            .collect();
         json!({ "error": null, "epoch": self.epoch().id, "folders": folders })
     }
 
@@ -1439,7 +1538,18 @@ impl Server {
         let map = self.access_map(c.user);
         let roots: Vec<Value> = map
             .iter()
-            .filter(|(f, g)| g.root == **f && g.via != "own")
+            .filter(|(f, g)| {
+                g.root == **f
+                    && g.via != "own"
+                    && self.can_read_with(
+                        c.user,
+                        RowRef {
+                            kind: RowKind::Folder,
+                            id: **f,
+                        },
+                        &map,
+                    )
+            })
             .map(|(f, g)| {
                 json!({ "root": f, "profile": self.folder(*f).map(|x| x.profile_id),
                         "permission": g.access.as_str(), "via": g.via,
