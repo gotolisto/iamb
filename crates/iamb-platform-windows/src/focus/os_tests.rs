@@ -136,7 +136,11 @@ fn the_cached_window_handle_is_the_controls_own_and_none_for_an_item() {
         detail: Detail {
             has_focus: true,
             window_root: false,
-            framework: Framework::Win32,
+            // The item has no window of its own: the system describes it through the older
+            // accessibility interface, which reports no framework of the known ones (seen on
+            // the Windows runner). The framework only adds detail; what this test pins is the
+            // handle, the focus and "not a window's own".
+            framework: Framework::Other,
         },
     };
     assert_eq!(observed(&mut session, item), item);
