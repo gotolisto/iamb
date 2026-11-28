@@ -233,6 +233,19 @@ pub(crate) const BUILT_IN: &[BuiltIn] = &[
         why: "remote desktop: the clipboard syncs asynchronously and keys sent too quickly \
               are lost; type, slowly",
     },
+    // Windows 11 Notepad reads the character of a Unicode key event when it gets to the event,
+    // not when the event was queued. Sent as one batch, an expansion arrives faster than it
+    // is read, and a run of characters collapses into the last one queued: "g.mindri" typed
+    // as "iiiiiiii", ".com" as ".mmm". A short pause after each key lets it keep up.
+    BuiltIn {
+        apps: &["notepad"],
+        patch: Patch {
+            key_delay_ms: Some(5),
+            ..Patch::EMPTY
+        },
+        why: "Notepad: bursts of Unicode key events are read late and characters collapse \
+              into one; pace the keys",
+    },
     // Chat clients where Enter sends the message: a line break inside an expansion must not
     // send half of it.
     BuiltIn {
@@ -363,7 +376,7 @@ mod tests {
     #[test]
     fn unknown_and_absent_applications_get_the_default() {
         let table = StrategyTable::new();
-        assert_eq!(resolve(&table, "notepad.exe"), Strategy::DEFAULT);
+        assert_eq!(resolve(&table, "winword.exe"), Strategy::DEFAULT);
         assert_eq!(
             table.resolve(None, &InjectionOverrides::default()),
             Strategy::DEFAULT
@@ -425,6 +438,9 @@ mod tests {
         let rdp = resolve(&table, "mstsc.exe");
         assert_eq!(rdp.typing, Typing::Keys);
         assert!(rdp.batch_delay_ms > 0 && rdp.key_delay_ms > 0);
+        let notepad = resolve(&table, "C:\\Windows\\System32\\Notepad.exe");
+        assert_eq!(notepad.typing, Typing::Auto);
+        assert!(notepad.key_delay_ms > 0);
         for chat in ["slack.exe", "ms-teams.exe", "Discord.exe"] {
             let s = resolve(&table, chat);
             assert_eq!(s.line_break, LineBreak::ShiftEnter, "{chat}");
