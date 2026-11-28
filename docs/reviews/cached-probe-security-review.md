@@ -395,6 +395,24 @@ timings) and once more with every core kept busy by other processes (254 pass); 
 Not checked: anything on Windows; the four Windows tests added here and in section 5 run in CI's
 Windows leg.
 
+### 5.2 After the second re-verification (section 7)
+
+Made on top of `231b985`, not committed; run on Linux, the Windows code compiled and linted for
+Windows only.
+
+| Item | Fix | Test (fails without the fix) |
+| --- | --- | --- |
+| N4 (1), the void | The first look of a custom element is voided only on evidence: a late answer refused because a process off the focused control's line provided it. A timeout and a probe that could not open no longer void it: they are the same look still waiting, and the late answer that follows is the second look. Docs: `classify.rs` ("A control without a kind") | `secure`: `a_timeout_between_two_custom_looks_keeps_the_first_and_another_process_voids_it` (custom, timeout, late custom: `Normal`; custom, timeout, late from process 77: refused, then a first look again, then `Normal`) |
+| N4 (2), the double charge | `Settle::arrival(window, timer_pending)`: an arrival with a pause's timer pending reports in that timer's place (the timer is cancelled) and costs nothing more, since the timer's look was paid when it was set; without one it spends a look. The watcher calls it with `self.timer.is_some()`. Docs: `focus.rs` ("On the watcher's budget") | `rules`: `an_arrival_that_replaces_a_pending_pause_costs_nothing_more`, which plays all 4,096 patterns of twelve pauses and arrivals as the watcher plays them and finds at most five reports after a change in every one, and checks the pending and not-pending cases one by one |
+| N4 (3), the run | With the real limits and the watcher's part played as above: a custom element of the engine's framework with calls of 200 ms and of 400 ms is `Normal` within the budget; a password element in the same setup is `Secure`; the questions stay at most six and the calls no more than the questions. The test waits for an arrival up to the call plus 700 ms and does not wait out the pauses | `secure`: `a_custom_editor_of_a_slow_application_is_believed_within_the_budget` (fails with the void on a timeout) |
+| Optional: confirm a late `Normal` | **Not done.** For an application slower than 100 ms the confirming look itself times out, and its `Unknown(Timeout)` would replace a settled `Normal`: the engine would flip to unknown after every late `Normal`, and the confirmation's own late answer would ask for a confirmation again, until the budget ends, possibly on the timeout. Making it sound needs a confirmation that cannot be lowered by a timeout (two late answers that agree, as the custom rule does), which costs two more looks and does not fit the budget for calls of a second. The 1 s limit stands as the bound, documented | — |
+
+Checks: `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`;
+cross-target clippy (windows-msvc with and without `probe`, aarch64-apple-darwin with and without
+`probe`); `cargo xtask banned-terms` (0 hits); `cargo test -p iamb-platform-windows` three times
+in a row (256 unit tests each time, about 10 s, the same timings): all pass. Not checked:
+anything on Windows.
+
 ## 6. Re-verification
 
 Date: 2026-11-28 · Commit re-verified: `cd4b07d` ("Close the strict review's findings on the

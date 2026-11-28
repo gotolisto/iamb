@@ -115,10 +115,11 @@
 //!   refused): an answer is the field as the application read it somewhere inside its call, so
 //!   a late answer can be as old as its call took plus the quarter of a second it may wait. A
 //!   slower call's answer is dropped and the application asked afresh.
-//! - **On the watcher's budget.** The report a late answer's arrival makes counts as one of the
-//!   window's looks again (`rules::Settle`), like a pause's: after one focus change the window
-//!   is asked at most six times, whatever the application answers, and then stays unknown
-//!   until the next change. A slow application is not called back to back.
+//! - **On the watcher's budget.** The report a late answer's arrival makes takes the place of
+//!   the pending pause's report, whose look was paid for when the pause began, or else uses up
+//!   one of the window's looks again (`rules::Settle::arrival`): after one focus change the
+//!   window is asked at most six times, whatever the application answers, and then stays
+//!   unknown until the next change. A slow application is not called back to back.
 //! - The window must still be in front before and after (step 1), the answer is classified as
 //!   any other (a password element is `Secure`, a browser engine's shell is still not
 //!   believed), and without a running watcher no late answer is kept or used.

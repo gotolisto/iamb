@@ -160,10 +160,12 @@ pub(crate) fn judge<D: Desk, S: ProbeSource>(
                     let confirmed = inspector.custom_again(subject, candidate) && again;
                     classify(kind, observation, confirmed)
                 };
-                // Any answer that is not judged (a timeout, no probe, a late answer from a
-                // process off the control's line) voids a first look of a custom element: the
-                // next one is a first look again (the re-verification's N2).
-                let unjudged = |judgement| {
+                // A late answer from a process off the control's line is evidence that the focus
+                // was elsewhere: it voids a first look of a custom element (the
+                // re-verification's N2). A timeout or a probe that could not open is not: it is
+                // the same look still waiting, whose answer comes a moment later (the second
+                // re-verification's N4).
+                let elsewhere = |judgement| {
                     inspector.custom_again(subject, false);
                     judgement
                 };
@@ -177,13 +179,11 @@ pub(crate) fn judge<D: Desk, S: ProbeSource>(
                         }) {
                             judged(observation)
                         } else {
-                            unjudged(Judgement::passing(UnknownReason::NotInspectable))
+                            elsewhere(Judgement::passing(UnknownReason::NotInspectable))
                         }
                     }
-                    Answer::TimedOut => unjudged(Judgement::passing(UnknownReason::Timeout)),
-                    Answer::Unavailable => {
-                        unjudged(Judgement::passing(UnknownReason::NotInspectable))
-                    }
+                    Answer::TimedOut => Judgement::passing(UnknownReason::Timeout),
+                    Answer::Unavailable => Judgement::passing(UnknownReason::NotInspectable),
                 }
             }
         }
@@ -685,9 +685,10 @@ mod tests {
         while judgement.look_again {
             // `secure_state`: an unknown that may pass starts a pause, if any is left.
             let paused = settle.look_again(EDITOR.window).is_some();
-            // The watcher: an arrival reports at once on the budget; else the pause's report.
-            let report = match wakes.recv_timeout(call * 2 + Duration::from_secs(2)) {
-                Ok(()) => settle.spend(EDITOR.window) || paused,
+            // The watcher: an arrival reports at once, in the pause's place (`Settle::arrival`);
+            // else the pause's timer reports.
+            let report = match wakes.recv_timeout(call + Duration::from_millis(700)) {
+                Ok(()) => settle.arrival(EDITOR.window, paused),
                 Err(_) => paused,
             };
             if !report {
@@ -744,30 +745,33 @@ mod tests {
         assert_eq!((questions, calls), (1, 1));
     }
 
-    #[test]
-    fn an_unjudged_answer_between_two_looks_voids_the_first_custom_one() {
+    /// A focused custom element of the engine's framework, provided by `process`.
+    fn custom_from(process: u32) -> Observation {
         use super::super::classify::{Detail, Framework, control_type};
-        // The re-verification's N2: custom, then a look that saw nothing (a timeout), then
-        // custom: that is a first look again, not the second.
-        let custom = Observation::Element {
+        Observation::Element {
             password: false,
             control_type: control_type::CUSTOM,
-            process: ENGINE.pid,
+            process,
             detail: Detail {
                 has_focus: true,
                 window_root: false,
                 framework: Framework::Chrome,
             },
-        };
+        }
+    }
+
+    #[test]
+    fn a_timeout_between_two_custom_looks_keeps_the_first_and_another_process_voids_it() {
+        // The second re-verification's N4: custom, then a look that times out (the same look
+        // still waiting), then its late answer, custom: that is the second look, believed.
+        let custom = custom_from(ENGINE.pid);
         let source = FakeSource::answering(&[custom]);
         let (step, release) = hang(custom);
         source.0.push(step);
-        source.0.push(Step::Answer(custom));
-        source.0.push(Step::Answer(custom));
         let desk = FakeDesk::with(ENGINE);
         let inspector = Inspector::new(source.clone());
         inspector.wait_open();
-        let (woken, _wakes) = std::sync::mpsc::channel();
+        let (woken, wakes) = std::sync::mpsc::channel();
         let look = |again, limit| {
             judge(
                 &desk,
@@ -781,20 +785,98 @@ mod tests {
             look(false, LONG),
             Judgement::passing(UnknownReason::NotInspectable)
         );
-        // A look that times out: nothing judged.
         assert_eq!(
-            look(false, SHORT),
+            look(true, SHORT),
             Judgement::passing(UnknownReason::Timeout)
         );
         release.send(()).expect("the thread still waits");
-        // Its late answer, custom again, comes to the next look again: a first look, not the
-        // second.
+        wakes
+            .recv_timeout(LONG)
+            .expect("the arrival wakes the watcher");
+        assert_eq!(look(true, LONG), Judgement::settled(FieldSecurity::Normal));
+
+        // The re-verification's N2: a late answer from a process off the control's line, in
+        // between, is evidence that the focus was elsewhere: the next custom answer is a first
+        // look again.
+        let source = FakeSource::answering(&[custom]);
+        let (step, release) = hang(custom_from(77));
+        source.0.push(step);
+        source.0.push(Step::Answer(custom));
+        source.0.push(Step::Answer(custom));
+        let inspector = Inspector::new(source.clone());
+        inspector.wait_open();
+        let look = |again, limit| {
+            judge(
+                &desk,
+                &inspector,
+                &EDITOR.token(),
+                watching(3, again, &woken),
+                limit,
+            )
+        };
+        assert_eq!(
+            look(false, LONG),
+            Judgement::passing(UnknownReason::NotInspectable)
+        );
+        assert_eq!(
+            look(true, SHORT),
+            Judgement::passing(UnknownReason::Timeout)
+        );
+        release.send(()).expect("the thread still waits");
+        wakes
+            .recv_timeout(LONG)
+            .expect("the arrival wakes the watcher");
+        assert_eq!(
+            look(true, LONG),
+            Judgement::passing(UnknownReason::NotInspectable),
+            "refused by its process"
+        );
         assert_eq!(
             look(true, LONG),
             Judgement::passing(UnknownReason::NotInspectable),
             "a first look again"
         );
         assert_eq!(look(true, LONG), Judgement::settled(FieldSecurity::Normal));
+    }
+
+    #[test]
+    fn a_custom_editor_of_a_slow_application_is_believed_within_the_budget() {
+        // The second re-verification's N4, with the real limits: calls of 200 ms (slower than
+        // a look again, quicker than the first look) and of 400 ms (slower than both).
+        let budget = u32::try_from(super::super::rules::LOOK_AGAIN_MS.len()).expect("small");
+        for call in [Duration::from_millis(200), Duration::from_millis(400)] {
+            let (judgement, questions, calls) = one_change(call, custom_from(ENGINE.pid));
+            assert_eq!(
+                judgement,
+                Judgement::settled(FieldSecurity::Normal),
+                "{call:?}"
+            );
+            assert!(questions <= 1 + budget, "{call:?}: {questions} questions");
+            assert!(calls <= questions, "{call:?}: {calls} calls");
+            // A password element in the same setup is secure.
+            let Observation::Element {
+                control_type,
+                process,
+                detail,
+                ..
+            } = custom_from(ENGINE.pid)
+            else {
+                unreachable!("an element");
+            };
+            let password = Observation::Element {
+                password: true,
+                control_type,
+                process,
+                detail,
+            };
+            let (judgement, questions, _) = one_change(call, password);
+            assert_eq!(
+                judgement,
+                Judgement::settled(FieldSecurity::Secure),
+                "{call:?}"
+            );
+            assert!(questions <= 1 + budget, "{call:?}: {questions} questions");
+        }
     }
 
     #[test]

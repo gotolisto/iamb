@@ -42,6 +42,9 @@
 //! - and it is **not the first look**: the first custom answer for a window, its focused
 //!   control and the count of focus changes is `NotInspectable` and looked at again; the same
 //!   answer at a look again of the same subject, with no focus change counted between, settles.
+//!   A look that timed out in between does not void the first: it is the same look still
+//!   waiting, and its late answer is the second look. A late answer from a process off the
+//!   control's line does: it is evidence that the focus was elsewhere.
 //!   A placeholder an engine shows while its page is being built is what the looks again are
 //!   for: it is replaced by the field before the look after.
 //!

@@ -138,11 +138,12 @@ impl Watcher {
     /// is still the window in front and the one last reported.
     fn late_answer(&mut self, window: u64) {
         match os::foreground() {
-            // An arrival uses up one of the window's looks again (`rules::Settle::spend`).
+            // An arrival takes the place of a pending pause's report, or else uses up one of
+            // the window's looks again (`rules::Settle::arrival`).
             Some(front)
                 if front.window == window
                     && self.settle.window() == window
-                    && self.settle.spend(window) =>
+                    && self.settle.arrival(window, self.timer.is_some()) =>
             {
                 self.cancel_timer();
                 self.counts.mark_again(window);
