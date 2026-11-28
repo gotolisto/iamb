@@ -91,7 +91,7 @@
 //! - **Fresh.** It is used at most 250 ms after it arrived. The probe gets the element and its
 //!   properties in one call (`uia`), and the application reads them somewhere inside that call,
 //!   so the answer is as old as its call took plus that wait; with the call limited too (below)
-//!   that is at most half a second. An older one is dropped and the application asked afresh.
+//!   that is at most 1.25 s. An older one is dropped and the application asked afresh.
 //!   A field that turns into a password field without a focus change (a page that changes the
 //!   type of its field) in that time is the same race every answer has between the application
 //!   answering and the verdict arriving, widened by the call.
@@ -110,10 +110,15 @@
 //!   window on that control's line (its ancestors up to the window in front, its descendants);
 //!   otherwise the answer is `Unknown(NotInspectable)`. Process ancestry is not read: it cannot
 //!   be told reliably.
-//! - **Quick to answer.** The call that produced it took at most 250 ms: an answer is the field
-//!   as the application read it somewhere inside its call, so a late answer can be as old as
-//!   its call took plus the quarter of a second it may wait. A slower call's answer is dropped
-//!   and the application asked afresh.
+//! - **Quick enough.** The call that produced it took at most 1 s (`inspect::LATE_CALL_LIMIT`,
+//!   not lower than the 300 ms first look, or every late answer after a first look would be
+//!   refused): an answer is the field as the application read it somewhere inside its call, so
+//!   a late answer can be as old as its call took plus the quarter of a second it may wait. A
+//!   slower call's answer is dropped and the application asked afresh.
+//! - **On the watcher's budget.** The report a late answer's arrival makes counts as one of the
+//!   window's looks again (`rules::Settle`), like a pause's: after one focus change the window
+//!   is asked at most six times, whatever the application answers, and then stays unknown
+//!   until the next change. A slow application is not called back to back.
 //! - The window must still be in front before and after (step 1), the answer is classified as
 //!   any other (a password element is `Secure`, a browser engine's shell is still not
 //!   believed), and without a running watcher no late answer is kept or used.

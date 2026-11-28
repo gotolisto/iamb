@@ -373,6 +373,28 @@ iamb-desktop`; `pnpm typecheck` and `pnpm test` (550): all pass. Not checked: an
 Windows, in particular the two new Windows tests, which run in CI's Windows leg for the first
 time.
 
+### 5.1 After the re-verification (section 6)
+
+Made on top of `c4e0025`, not committed; run on Linux, the Windows code compiled and linted for
+Windows only.
+
+| Item | Fix | Test |
+| --- | --- | --- |
+| N1 (medium, function) | Both halves. **The loop:** the report a late answer's arrival makes now spends one of the window's looks again (`rules::Settle::spend`, called by the watcher before it reports for an arrival), like a pause does; the wake is still armed again after a refusal, but every report it causes comes out of the same budget of five, so after one focus change the window is asked at most six times and then stays `Unknown` until the next change. Counting was chosen over not re-arming because it bounds every path (pauses, arrivals, refusals of any kind) with one number, where not re-arming would leave the pause timer free to restart the cycle. **The limit:** `LATE_CALL_LIMIT` is 1 s, checked at compile time to be no lower than `FIRST_LOOK_TIMEOUT` (300 ms): a late answer only exists when its call outlasted its question, so a limit below the longest wait in time refused every late answer after a first look, while an answer in time is already believed with a call of up to 300 ms. One second keeps a late answer at most 1.25 s old when it is used (call plus wait), which `focus.rs`, `inspect.rs`, `secure.rs` and the §8 row now say; no measured call duration was available to set it from (the diagnostic now prints them). The overrides of `2c60590` (`with_late_call_limit(LONG)`) are removed: the tests run with the real limit, which is far from their calls | `rules`: `a_late_answer_spends_the_same_budget_as_a_pause`. `secure`, with the real limits and a fake whose every call sleeps (`Step::Slow`), the watcher played as `watch.rs` and `focus.rs` play it: `a_slow_application_is_judged_once_by_its_late_answer_with_the_real_limits` (calls of 600 ms: two questions, one call, `Normal`, and `Secure` for a password field; fails with the 250 ms limit), `a_too_slow_application_settles_unknown_on_the_budget` (calls of 1.6 s: `Unknown(Timeout)` after at most six questions, no more calls than questions), `a_fast_application_is_judged_at_the_first_look` (20 ms). The durations are at least 300 ms from every limit; the pauses are not waited for (a pause only lets the call finish, and the test waits for the arrival itself) |
+| N2 | A late answer refused by the process rule, a timeout and no probe now call `custom_again(subject, false)`: the next custom answer is a first look again | `secure`: `an_unjudged_answer_between_two_looks_voids_the_first_custom_one` (fails without the reset) |
+| N3 | `on_control_line` does not walk down when the focused control is the window in front itself: then only the window's own process and its ancestors count | Windows: `os_tests::the_line_reaches_down_into_a_control_with_children` (last two lines) |
+| L3 doc | `uia.rs`: "the application reads the element and its properties together, at one moment somewhere inside that call (the answer is as old as the call took, which `inspect` bounds)" | Docs only |
+| L7 | `HasKeyboardFocus` seen false: a test-only `Session::observe_window` (`ElementFromHandleBuildCache`, `IUIAutomation` slot 10, counted from the same generated tables and checked at compile time) reads the button while the text field has the focus. The downward walk runs its callback on a new combo box in the test window, whose edit box is its own child window | Windows: `os_tests::an_element_without_the_focus_says_so`, `os_tests::the_line_reaches_down_into_a_control_with_children` |
+
+Checks: `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`;
+cross-target clippy (windows-msvc with and without `probe`, aarch64-apple-darwin with and without
+`probe`, the testkit's Windows step); `cargo xtask banned-terms` (0 hits); `cargo test -p
+iamb-platform-windows` three times in a row (254 unit tests each time, about 7 s, the same
+timings) and once more with every core kept busy by other processes (254 pass); `cargo test
+--workspace --exclude iamb-desktop` (114 test binaries); `cargo test -p iamb-desktop`: all pass.
+Not checked: anything on Windows; the four Windows tests added here and in section 5 run in CI's
+Windows leg.
+
 ## 6. Re-verification
 
 Date: 2026-11-28 · Commit re-verified: `cd4b07d` ("Close the strict review's findings on the

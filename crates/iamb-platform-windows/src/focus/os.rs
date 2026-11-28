@@ -368,6 +368,12 @@ pub(super) fn on_control_line(front: Front, control: u64, pid: u32) -> bool {
     if above {
         return true;
     }
+    // A window in front that has the focus itself (no focused child: a browser's top-level
+    // window) has no line below it: its descendants are every window inside it, which is not
+    // what a line is (the re-verification's N3).
+    if control == front_window {
+        return false;
+    }
     // Down: the control's descendants.
     let mut search = Search { pid, found: false };
     // SAFETY: the callback is a function of this crate with the right signature, and the

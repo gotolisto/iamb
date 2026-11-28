@@ -94,6 +94,14 @@ impl Settle {
         self.asked += 1;
         Some(pause)
     }
+
+    /// A late answer about `window` arrived: true when the window may be reported again for it
+    /// now, which uses up one of its looks again like a pause does (the cached-probe
+    /// re-verification's N1: otherwise an application slower than the limit of a late answer's
+    /// call is asked back to back for as long as its window is in front).
+    pub(crate) fn spend(&mut self, window: u64) -> bool {
+        self.look_again(window).is_some()
+    }
 }
 
 /// The count of focus changes and the mark of a report again, shared by the watchers of one
@@ -233,6 +241,28 @@ mod tests {
         // Not so long that a window stays unknown for ever without saying so.
         assert!(total <= 10_000, "{total} ms");
         assert!(LOOK_AGAIN_MS[0] <= 200, "the first look comes soon");
+    }
+
+    #[test]
+    fn a_late_answer_spends_the_same_budget_as_a_pause() {
+        let mut settle = Settle::default();
+        settle.event(7);
+        let mut reports = 0;
+        // Pauses and arrivals, alternating as a slow application makes them: never more than
+        // the budget, whatever the mix.
+        for turn in 0..20 {
+            let reported = if turn % 2 == 0 {
+                settle.look_again(7).is_some()
+            } else {
+                settle.spend(7)
+            };
+            reports += u32::from(reported);
+        }
+        assert_eq!(reports, u32::try_from(LOOK_AGAIN_MS.len()).expect("small"));
+        // Another window's arrival spends nothing, and a real event starts again.
+        settle.event(8);
+        assert!(!settle.spend(7));
+        assert!(settle.spend(8));
     }
 
     #[test]

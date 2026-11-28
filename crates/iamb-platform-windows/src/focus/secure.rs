@@ -12,7 +12,7 @@
 //!    question names the window, its focused control and that control's kind, and the count of
 //!    focus changes (`epoch`). An answer that came too late for an earlier question about the
 //!    same subject serves a report the watcher made again ([`Watching::again`]) if it arrived
-//!    at most a quarter of a second ago and its call took at most a quarter of a second
+//!    at most a quarter of a second ago and its call took at most a second
 //!    (`inspect`, "A late answer"), and only when the element it describes is provided by the
 //!    window's process, by the process of its focused control's window, or by a process that
 //!    owns a window on that control's own line: one of its ancestors up to the window in front,
@@ -160,6 +160,13 @@ pub(crate) fn judge<D: Desk, S: ProbeSource>(
                     let confirmed = inspector.custom_again(subject, candidate) && again;
                     classify(kind, observation, confirmed)
                 };
+                // Any answer that is not judged (a timeout, no probe, a late answer from a
+                // process off the control's line) voids a first look of a custom element: the
+                // next one is a first look again (the re-verification's N2).
+                let unjudged = |judgement| {
+                    inspector.custom_again(subject, false);
+                    judgement
+                };
                 match inspector.observe(lateness, left) {
                     Answer::Observed(observation) => judged(observation),
                     Answer::Late(observation) => {
@@ -170,11 +177,13 @@ pub(crate) fn judge<D: Desk, S: ProbeSource>(
                         }) {
                             judged(observation)
                         } else {
-                            Judgement::passing(UnknownReason::NotInspectable)
+                            unjudged(Judgement::passing(UnknownReason::NotInspectable))
                         }
                     }
-                    Answer::TimedOut => Judgement::passing(UnknownReason::Timeout),
-                    Answer::Unavailable => Judgement::passing(UnknownReason::NotInspectable),
+                    Answer::TimedOut => unjudged(Judgement::passing(UnknownReason::Timeout)),
+                    Answer::Unavailable => {
+                        unjudged(Judgement::passing(UnknownReason::NotInspectable))
+                    }
                 }
             }
         }
@@ -304,7 +313,7 @@ mod tests {
             (ControlKind::PlainEdit, FieldSecurity::Normal),
         ] {
             let source = FakeSource::default();
-            let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
+            let inspector = Inspector::new(source.clone());
             let desk = FakeDesk::showing(control);
             // Even without any time to wait in.
             assert_eq!(
@@ -352,7 +361,7 @@ mod tests {
             ),
         ] {
             let source = FakeSource::answering(&[observation]);
-            let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
+            let inspector = Inspector::new(source.clone());
             let desk = FakeDesk::showing(control);
             assert_eq!(
                 judge(&desk, &inspector, &EDITOR.token(), None, LONG),
@@ -366,7 +375,7 @@ mod tests {
     #[test]
     fn the_answer_is_only_ever_about_the_window_asked_for() {
         let source = FakeSource::answering(&[element(false, 50004)]);
-        let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
+        let inspector = Inspector::new(source.clone());
 
         // Another window is in front: nothing is read, nothing is asked.
         let desk = FakeDesk::showing(ControlKind::Other).fronts(&[Some(OTHER)]);
@@ -404,7 +413,7 @@ mod tests {
         ] {
             // "Normal" from the probe, and "secure" from the control itself: neither counts.
             let source = FakeSource::answering(&[element(false, 50004)]);
-            let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
+            let inspector = Inspector::new(source.clone());
             let desk = FakeDesk::showing(ControlKind::Other).fronts(&[Some(EDITOR), after]);
             assert_eq!(
                 judge(&desk, &inspector, &EDITOR.token(), None, LONG),
@@ -427,7 +436,7 @@ mod tests {
             (Privilege::Unknown, UnknownReason::NotInspectable),
         ] {
             let source = FakeSource::answering(&[element(false, 50004)]);
-            let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
+            let inspector = Inspector::new(source.clone());
             let mut desk = FakeDesk::showing(ControlKind::PlainEdit);
             desk.privilege = privilege;
             assert_eq!(
@@ -444,7 +453,7 @@ mod tests {
         let source = FakeSource::default();
         let (step, release) = hang(element(false, 50004));
         source.0.push(step);
-        let inspector = Inspector::new(source).with_late_call_limit(LONG);
+        let inspector = Inspector::new(source);
         inspector.wait_open();
         let desk = FakeDesk::showing(ControlKind::Other);
 
@@ -462,7 +471,7 @@ mod tests {
     #[test]
     fn without_time_the_application_is_not_asked() {
         let source = FakeSource::answering(&[element(false, 50004)]);
-        let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
+        let inspector = Inspector::new(source.clone());
         let desk = FakeDesk::showing(ControlKind::Other);
         assert_eq!(
             judge(&desk, &inspector, &EDITOR.token(), None, Duration::ZERO),
@@ -497,7 +506,7 @@ mod tests {
     ) -> (Inspector<FakeSource>, std::sync::mpsc::Sender<()>) {
         let (step, release) = hang(observation);
         source.0.push(step);
-        let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
+        let inspector = Inspector::new(source.clone());
         inspector.wait_open();
         let (woken, wakes) = std::sync::mpsc::channel();
         assert_eq!(
@@ -554,9 +563,7 @@ mod tests {
         let (step, release) = hang(element(false, 50004));
         source.0.push(step);
         source.0.push(Step::Answer(element(true, 50004)));
-        let inspector = Inspector::new(source.clone())
-            .with_late_call_limit(LONG)
-            .with_late_fresh(SHORT);
+        let inspector = Inspector::new(source.clone()).with_late_fresh(SHORT);
         inspector.wait_open();
         let (woken, wakes) = std::sync::mpsc::channel();
         assert_eq!(
@@ -645,6 +652,151 @@ mod tests {
         }
     }
 
+    /// What one focus change came to when every call takes `call`, with the real limits and
+    /// the watcher played as `watch.rs` and `focus.rs` play it (the re-verification's N1): the
+    /// first look with `FIRST_LOOK_TIMEOUT`, then for an unknown that may pass a look again on
+    /// the budget of `rules::Settle`, made at once when a late answer arrives (and spending one
+    /// look, `Settle::spend`) or else after the pause. The pauses themselves are not waited
+    /// for: a pause only lets the application finish its call, and the wait for an arrival
+    /// below gives it more than that. Returns the last verdict, the questions and the calls.
+    fn one_change(call: Duration, observation: Observation) -> (Judgement, u32, u32) {
+        use iamb_platform::{FIRST_LOOK_TIMEOUT, SECURE_STATE_TIMEOUT};
+
+        use super::super::rules::Settle;
+
+        let source = FakeSource::default();
+        for _ in 0..20 {
+            source.0.push(Step::Slow(call, observation));
+        }
+        let desk = FakeDesk::with(ENGINE);
+        let inspector = Inspector::new(source.clone());
+        inspector.wait_open();
+        let (woken, wakes) = std::sync::mpsc::channel();
+        let mut settle = Settle::default();
+        settle.event(EDITOR.window);
+        let mut judgement = judge(
+            &desk,
+            &inspector,
+            &EDITOR.token(),
+            watching(1, false, &woken),
+            FIRST_LOOK_TIMEOUT,
+        );
+        let mut questions = 1;
+        while judgement.look_again {
+            // `secure_state`: an unknown that may pass starts a pause, if any is left.
+            let paused = settle.look_again(EDITOR.window).is_some();
+            // The watcher: an arrival reports at once on the budget; else the pause's report.
+            let report = match wakes.recv_timeout(call * 2 + Duration::from_secs(2)) {
+                Ok(()) => settle.spend(EDITOR.window) || paused,
+                Err(_) => paused,
+            };
+            if !report {
+                break;
+            }
+            questions += 1;
+            assert!(questions <= 20, "asked without end");
+            judgement = judge(
+                &desk,
+                &inspector,
+                &EDITOR.token(),
+                watching(1, true, &woken),
+                SECURE_STATE_TIMEOUT,
+            );
+        }
+        (judgement, questions, source.0.asked())
+    }
+
+    #[test]
+    fn a_slow_application_is_judged_once_by_its_late_answer_with_the_real_limits() {
+        // 600 ms: far above the first look (300 ms), far below the call limit (1 s).
+        let (judgement, questions, calls) =
+            one_change(Duration::from_millis(600), element(false, 50004));
+        assert_eq!(judgement, Judgement::settled(FieldSecurity::Normal));
+        assert_eq!((questions, calls), (2, 1));
+        // A password field the same.
+        let (judgement, ..) = one_change(Duration::from_millis(600), element(true, 50004));
+        assert_eq!(judgement, Judgement::settled(FieldSecurity::Secure));
+    }
+
+    #[test]
+    fn a_too_slow_application_settles_unknown_on_the_budget() {
+        // 1.6 s: far above the call limit. Every late answer is refused; the window is asked on
+        // the watcher's budget only, then stays unknown, without asking back to back for ever.
+        let (judgement, questions, calls) =
+            one_change(Duration::from_millis(1600), element(false, 50004));
+        assert_eq!(
+            judgement.field,
+            FieldSecurity::Unknown(UnknownReason::Timeout)
+        );
+        let budget = u32::try_from(super::super::rules::LOOK_AGAIN_MS.len()).expect("small");
+        assert!(questions <= 1 + budget, "{questions} questions");
+        assert!(
+            calls <= questions,
+            "{calls} calls for {questions} questions"
+        );
+    }
+
+    #[test]
+    fn a_fast_application_is_judged_at_the_first_look() {
+        let (judgement, questions, calls) =
+            one_change(Duration::from_millis(20), element(false, 50004));
+        assert_eq!(judgement, Judgement::settled(FieldSecurity::Normal));
+        assert_eq!((questions, calls), (1, 1));
+    }
+
+    #[test]
+    fn an_unjudged_answer_between_two_looks_voids_the_first_custom_one() {
+        use super::super::classify::{Detail, Framework, control_type};
+        // The re-verification's N2: custom, then a look that saw nothing (a timeout), then
+        // custom: that is a first look again, not the second.
+        let custom = Observation::Element {
+            password: false,
+            control_type: control_type::CUSTOM,
+            process: ENGINE.pid,
+            detail: Detail {
+                has_focus: true,
+                window_root: false,
+                framework: Framework::Chrome,
+            },
+        };
+        let source = FakeSource::answering(&[custom]);
+        let (step, release) = hang(custom);
+        source.0.push(step);
+        source.0.push(Step::Answer(custom));
+        source.0.push(Step::Answer(custom));
+        let desk = FakeDesk::with(ENGINE);
+        let inspector = Inspector::new(source.clone());
+        inspector.wait_open();
+        let (woken, _wakes) = std::sync::mpsc::channel();
+        let look = |again, limit| {
+            judge(
+                &desk,
+                &inspector,
+                &EDITOR.token(),
+                watching(3, again, &woken),
+                limit,
+            )
+        };
+        assert_eq!(
+            look(false, LONG),
+            Judgement::passing(UnknownReason::NotInspectable)
+        );
+        // A look that times out: nothing judged.
+        assert_eq!(
+            look(false, SHORT),
+            Judgement::passing(UnknownReason::Timeout)
+        );
+        release.send(()).expect("the thread still waits");
+        // Its late answer, custom again, comes to the next look again: a first look, not the
+        // second.
+        assert_eq!(
+            look(true, LONG),
+            Judgement::passing(UnknownReason::NotInspectable),
+            "a first look again"
+        );
+        assert_eq!(look(true, LONG), Judgement::settled(FieldSecurity::Normal));
+    }
+
     #[test]
     fn a_focused_custom_element_of_the_engine_is_believed_at_the_second_look_only() {
         use super::super::classify::{Detail, Framework, control_type};
@@ -663,7 +815,7 @@ mod tests {
         let (woken, _wakes) = std::sync::mpsc::channel();
         let desk = FakeDesk::with(ENGINE);
         let source = FakeSource::answering(&[custom; 6]);
-        let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
+        let inspector = Inspector::new(source.clone());
         let look = |epoch, again| {
             judge(
                 &desk,
@@ -766,7 +918,7 @@ mod tests {
     fn a_probe_that_cannot_be_opened_is_not_normal() {
         let source = FakeSource::answering(&[element(false, 50004)]);
         *source.0.refuse_open.lock().expect("not poisoned") = true;
-        let inspector = Inspector::new(source).with_late_call_limit(LONG);
+        let inspector = Inspector::new(source);
         let desk = FakeDesk::showing(ControlKind::Other);
         assert_eq!(
             judge(&desk, &inspector, &EDITOR.token(), None, LONG),

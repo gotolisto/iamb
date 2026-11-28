@@ -20,8 +20,8 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, SetFocus,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, CreateWindowExW, DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL,
-    ES_PASSWORD, GUITHREADINFO, GetForegroundWindow, GetGUIThreadInfo, GetMessageW,
+    BringWindowToTop, CBS_DROPDOWN, CreateWindowExW, DestroyWindow, DispatchMessageW,
+    ES_AUTOHSCROLL, ES_PASSWORD, GUITHREADINFO, GetForegroundWindow, GetGUIThreadInfo, GetMessageW,
     GetWindowThreadProcessId, LB_ADDSTRING, LB_SETCURSEL, LBS_NOTIFY, MSG, PostThreadMessageW,
     SW_SHOW, SendMessageW, SetForegroundWindow, ShowWindow, TranslateMessage, WM_QUIT, WS_BORDER,
     WS_CHILD, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
@@ -68,6 +68,8 @@ pub(crate) enum Field {
 pub(crate) struct TestWindow {
     window: usize,
     fields: [usize; 4],
+    /// A combo box with an edit box of its own: a control with a child window.
+    combo: usize,
     thread_id: u32,
     thread: Option<JoinHandle<()>>,
 }
@@ -115,7 +117,7 @@ impl TestWindow {
                     120,
                     120,
                     360,
-                    260,
+                    320,
                     ptr::null_mut(),
                     ptr::null_mut(),
                     ptr::null_mut(),
@@ -144,13 +146,21 @@ impl TestWindow {
                     list,
                 ]
             };
+            let combo = if window.is_null() {
+                ptr::null_mut()
+            } else {
+                child(window, "COMBOBOX", CBS_DROPDOWN.cast_unsigned(), 4)
+            };
             // SAFETY: the call takes no arguments.
             let thread_id = unsafe { GetCurrentThreadId() };
-            let created = !window.is_null() && fields.iter().all(|field| !field.is_null());
+            let created = !window.is_null()
+                && fields.iter().all(|field| !field.is_null())
+                && !combo.is_null();
             let _ = ready.send(created.then(|| {
                 (
                     window as usize,
                     fields.map(|field| field as usize),
+                    combo as usize,
                     thread_id,
                 )
             }));
@@ -175,10 +185,11 @@ impl TestWindow {
             // child controls.
             unsafe { DestroyWindow(window) };
         });
-        if let Ok(Some((window, fields, thread_id))) = announced.recv() {
+        if let Ok(Some((window, fields, combo, thread_id))) = announced.recv() {
             Some(Self {
                 window,
                 fields,
+                combo,
                 thread_id,
                 thread: Some(thread),
             })
@@ -200,6 +211,11 @@ impl TestWindow {
             Field::List => 3,
         };
         self.fields[index] as HWND
+    }
+
+    /// The combo box's handle, as a number: a control with a child window of its own.
+    pub(crate) fn combo_number(&self) -> u64 {
+        self.combo as u64
     }
 
     /// The handle of `field`'s control, as a number.

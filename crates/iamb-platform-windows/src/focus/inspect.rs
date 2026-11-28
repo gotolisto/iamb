@@ -42,8 +42,8 @@
 //! the answer arrived ([`Probed::chosen`]): the probe gets the element and its properties in one
 //! call (`uia`, "One call into the application"), and the application reads them somewhere
 //! inside that call, so the answer is as old as its call took plus that wait. The call is
-//! limited too: a late answer whose call took more than [`LATE_CALL_LIMIT`] is not taken, so a
-//! late answer is at most half a second old when it is used. A question about another
+//! limited too: a late answer whose call took more than [`LATE_CALL_LIMIT`] (1 s) is not taken,
+//! so a late answer is at most 1.25 s old when it is used. A question about another
 //! window or control, after another focus change, or that may not take one, drops it: the late
 //! answer then goes nowhere, as before. The caller also checks which process provided the
 //! element ([`Answer::Late`]).
@@ -52,6 +52,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
+
+use iamb_platform::FIRST_LOOK_TIMEOUT;
 
 use super::classify::{ControlKind, Observation};
 
@@ -64,7 +66,17 @@ pub(crate) const MAX_WORKERS: usize = 4;
 pub(crate) const LATE_ANSWER_FRESH: Duration = Duration::from_millis(250);
 
 /// The longest call whose late answer may serve a question (module docs).
-pub(crate) const LATE_CALL_LIMIT: Duration = Duration::from_millis(250);
+///
+/// Not lower than the longest wait in time ([`FIRST_LOOK_TIMEOUT`], 300 ms): a late answer only
+/// exists when its call outlasted its question, so a lower limit refuses every late answer after
+/// a first look (the cached-probe re-verification's N1), while an answer in time is already
+/// believed with a call of up to 300 ms. One second keeps a late answer at most 1.25 s old when
+/// it is used (its call, then at most [`LATE_ANSWER_FRESH`] of waiting) and covers applications
+/// that answer in a few hundred milliseconds while busy, the case the late answer is for; an
+/// application slower than that is asked again on the watcher's budget and stays `Unknown`.
+pub(crate) const LATE_CALL_LIMIT: Duration = Duration::from_secs(1);
+
+const _: () = assert!(LATE_CALL_LIMIT.as_millis() >= FIRST_LOOK_TIMEOUT.as_millis());
 
 /// What a probe saw, and when it chose the element it describes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -622,6 +634,8 @@ pub(crate) mod fake {
         /// Chooses the element at once, then waits until the test lets go before it answers:
         /// an application slow to give the element's properties.
         ChooseThenHang(Receiver<()>, Observation),
+        /// Takes this long, then answers: an application whose every call is slow.
+        Slow(std::time::Duration, Observation),
     }
 
     /// A step that chooses the element at once and answers when the test lets go.
@@ -706,6 +720,10 @@ pub(crate) mod fake {
                         took: started.elapsed(),
                     }
                 }
+                Some(Step::Slow(took, observation)) => {
+                    std::thread::sleep(took);
+                    now(observation)
+                }
                 None => now(Observation::Failed),
             }
         }
@@ -769,7 +787,7 @@ mod tests {
     #[test]
     fn answers_come_back_in_order_from_one_thread() {
         let source = FakeSource::answering(&[PLAIN, PASSWORD, Observation::NoElement]);
-        let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
+        let inspector = Inspector::new(source.clone());
         assert_eq!(
             inspector.workers(),
             0,
@@ -798,7 +816,7 @@ mod tests {
         let (step, release) = hang(PASSWORD);
         source.0.push(step);
         source.0.push(Step::Answer(PLAIN));
-        let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
+        let inspector = Inspector::new(source.clone());
         inspector.wait_open();
 
         let started = Instant::now();
@@ -830,7 +848,7 @@ mod tests {
             releases.push(release);
         }
         source.0.push(Step::Answer(PASSWORD));
-        let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
+        let inspector = Inspector::new(source.clone());
         for _ in 0..MAX_WORKERS {
             inspector.wait_open();
             assert_eq!(inspector.observe(Lateness::NONE, SHORT), Answer::TimedOut);
@@ -860,7 +878,7 @@ mod tests {
         let source = FakeSource::answering(&[PLAIN, PASSWORD]);
         let (open, gate) = mpsc::channel();
         *source.0.open_gate.lock().expect("not poisoned") = Some(gate);
-        let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
+        let inspector = Inspector::new(source.clone());
 
         assert_eq!(inspector.observe(Lateness::NONE, SHORT), Answer::TimedOut);
         assert_eq!(inspector.workers(), 1);
@@ -880,7 +898,7 @@ mod tests {
     #[test]
     fn warming_starts_the_thread_before_the_first_question() {
         let source = FakeSource::answering(&[PLAIN]);
-        let inspector = Inspector::new(source).with_late_call_limit(LONG);
+        let inspector = Inspector::new(source);
         inspector.warm();
         inspector.warm();
         assert_eq!(inspector.workers(), 1);
@@ -895,7 +913,7 @@ mod tests {
     fn a_probe_that_cannot_be_opened_is_unavailable_not_normal() {
         let source = FakeSource::answering(&[PLAIN]);
         *source.0.refuse_open.lock().expect("not poisoned") = true;
-        let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
+        let inspector = Inspector::new(source.clone());
         assert_eq!(inspector.observe(Lateness::NONE, LONG), Answer::Unavailable);
         wait_for_workers(&inspector, 0);
         assert_eq!(source.0.asked(), 0);
@@ -913,7 +931,7 @@ mod tests {
         let source = FakeSource::default();
         let (step, _release) = hang(PLAIN);
         source.0.push(step);
-        let inspector = Inspector::new(source).with_late_call_limit(LONG);
+        let inspector = Inspector::new(source);
         assert_eq!(
             inspector.observe(Lateness::NONE, Duration::ZERO),
             Answer::TimedOut
@@ -922,7 +940,7 @@ mod tests {
 
     #[test]
     fn a_limit_too_large_for_the_clock_is_accepted() {
-        let inspector = Inspector::new(FakeSource::answering(&[PLAIN])).with_late_call_limit(LONG);
+        let inspector = Inspector::new(FakeSource::answering(&[PLAIN]));
         assert_eq!(
             inspector.observe(Lateness::NONE, Duration::MAX),
             Answer::Observed(PLAIN)
@@ -963,7 +981,7 @@ mod tests {
         let (step, release) = hang(PASSWORD);
         source.0.push(step);
         source.0.push(Step::Answer(PLAIN));
-        let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
+        let inspector = Inspector::new(source.clone());
         inspector.wait_open();
         let (woken, wakes) = mpsc::channel();
 
@@ -999,9 +1017,7 @@ mod tests {
         let (step, release) = hang(PLAIN);
         source.0.push(step);
         source.0.push(Step::Answer(PASSWORD));
-        let inspector = Inspector::new(source.clone())
-            .with_late_call_limit(LONG)
-            .with_late_fresh(SHORT);
+        let inspector = Inspector::new(source.clone()).with_late_fresh(SHORT);
         inspector.wait_open();
         let (woken, wakes) = mpsc::channel();
         assert_eq!(
@@ -1029,9 +1045,7 @@ mod tests {
         let (step, release) = super::fake::choose_then_hang(PLAIN);
         source.0.push(step);
         source.0.push(Step::Answer(PASSWORD));
-        let inspector = Inspector::new(source.clone())
-            .with_late_call_limit(LONG)
-            .with_late_fresh(SHORT * 3);
+        let inspector = Inspector::new(source.clone()).with_late_fresh(SHORT * 3);
         inspector.wait_open();
         let (woken, wakes) = mpsc::channel();
         assert_eq!(
@@ -1056,9 +1070,7 @@ mod tests {
         let source = FakeSource::default();
         let (step, release) = hang(PLAIN);
         source.0.push(step);
-        let inspector = Inspector::new(source.clone())
-            .with_late_call_limit(LONG)
-            .with_late_fresh(SHORT * 3);
+        let inspector = Inspector::new(source.clone()).with_late_fresh(SHORT * 3);
         inspector.wait_open();
         let (woken, _wakes) = mpsc::channel();
         assert_eq!(
@@ -1085,7 +1097,7 @@ mod tests {
         let source = FakeSource::default();
         let (step, release) = hang(PLAIN);
         source.0.push(step);
-        let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
+        let inspector = Inspector::new(source.clone());
         inspector.wait_open();
         let (woken, _wakes) = mpsc::channel();
 
@@ -1143,7 +1155,7 @@ mod tests {
             let (step, release) = hang(PLAIN);
             source.0.push(step);
             source.0.push(Step::Answer(PASSWORD));
-            let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
+            let inspector = Inspector::new(source.clone());
             inspector.wait_open();
             assert_eq!(
                 inspector.observe(first(SUBJECT, &woken), SHORT),
@@ -1174,7 +1186,7 @@ mod tests {
         let (step, release) = hang(PLAIN);
         source.0.push(step);
         source.0.push(Step::Answer(PASSWORD));
-        let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
+        let inspector = Inspector::new(source.clone());
         inspector.wait_open();
         assert_eq!(inspector.observe(Lateness::NONE, SHORT), Answer::TimedOut);
         release.send(()).expect("the thread still waits");
@@ -1221,7 +1233,7 @@ mod tests {
         source.0.push(Step::Answer(PLAIN));
         let (step, release) = hang(PASSWORD);
         source.0.push(step);
-        let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
+        let inspector = Inspector::new(source.clone());
         let (heard, events) = mpsc::channel();
         inspector.set_tracer(Arc::new(move |event| {
             let _ = heard.send(event);
@@ -1278,7 +1290,7 @@ mod tests {
 
     #[test]
     fn the_debug_form_shows_a_count_only() {
-        let inspector = Inspector::new(FakeSource::default()).with_late_call_limit(LONG);
+        let inspector = Inspector::new(FakeSource::default());
         assert_eq!(format!("{inspector:?}"), "Inspector { workers: 0, .. }");
     }
 }
