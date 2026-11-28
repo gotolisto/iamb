@@ -570,3 +570,129 @@ a refusal (N1). The test asked for under N1 should use the real limits.
 - What the measured application's single call takes. N1 says what happens above 250 ms; whether
   that application is above or below it I do not know.
 - The watcher's side of N1 was read, not run: the run plays the watcher by its code.
+
+## 7. Second re-verification
+
+Date: 2026-11-28 · Commit re-verified: `8105176` ("Bound the looks after a late answer and close
+the re-verification items"), read as `git show HEAD`, against N1 to N3, the doc sentence of
+finding 3 and the rest of finding 7. Same reviewer, judged from the code.
+
+Run on Linux from an exported copy with a build folder outside the tree: the 67 unit tests of
+`focus::` pass. Two scratch tests were added outside the tree. One plays a whole focus change
+with the real limits and the real pauses, the watcher as `watch.rs` writes it (a pause's timer,
+an arrival that cancels it if `Settle::spend` allows, a timer that fires); the watcher itself
+was read. CI for this commit had not finished; nothing was run on Windows by me.
+
+### 7.1 Verdict
+
+The loop is gone on every path, and the one-second limit is acceptable. One of the fixes goes
+further than section 6 asked and takes away, for slow applications, the thing `b632eb4` was
+written for. It fails closed:
+
+- **Medium (function, not confidentiality), shown by a run:** a timeout now voids the first
+  look of a custom element. In an application whose calls take longer than the 100 ms of a
+  look again, every look again times out, so the custom editor never gets its second look and
+  stays `Unknown` (N4 below). With calls of 20 ms it is `Normal` at the second look; with 200,
+  400 or 900 ms it never is.
+
+### 7.2 The items
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| N1, the loop | **Closed** | `watch.rs:139-150`: an arrival reports only if `Settle::spend` grants a look (`rules.rs:102`); a pause's timer was already paid for when it was set (`watch.rs:109-115`). Run, plain field, real limits and pauses: calls of 1.1 s and of 1.6 s end after 5 questions and 3 calls, about 5.5 s after the change, with two arrivals that found the budget spent and reported nothing |
+| N1, the limit | **Closed** | `inspect.rs:77-79`: 1 s, and a compile-time check that it is not below the first look. Run: calls of 400 ms and 900 ms are judged by their late answer (2 and 3 questions, one call). The tests run with the real limit again |
+| N2 | **Closed, and overshot (N4)** | `secure.rs:166-186`: a late answer refused by its process voids the first custom look, which is what was asked. So do a timeout and a probe that could not be opened, which was not |
+| N3 | **Closed** | `os.rs:371-376`: no walk down when the control is the window in front; the upward walk still covers the window's own process |
+| Finding 3, doc | **Closed** | `uia.rs:35-37` now says the application reads the element somewhere inside the call |
+| Finding 7, rest | **Closed as far as one process can** | `HasKeyboardFocus` is read as false on the button while the text field has the focus, through `ElementFromHandleBuildCache`; I counted its slot (10) from the same definitions and the signature matches. The downward walk now runs its callback on a combo box's own edit box. Both tests are Windows only and had not run when this was written. Still not possible in one process: a sibling window of another process, and an engine's element |
+
+### 7.3 The points asked about
+
+**Is the loop bounded on every path?** Yes, by reading and by the run. After one counted
+change the window is reported at most five more times:
+
+- *a pause* costs a look when its timer is set;
+- *an arrival* costs a look before it reports, and reports nothing when none is left;
+- *a refusal* (too slow, too old) asks afresh inside a question that was already paid for; the
+  new call's answer arms the wake again, but that wake needs a look like any other.
+
+The count starts again only in `changed()` (`watch.rs:74-80`): a window event that passes the
+watcher's rule, the timer finding another window in front, and the catch-up after an event
+that could not be handled. A report again does not go through it.
+
+**Does anything still loop?** Nothing in this code. What I could not rule out from Linux: an
+application that raises a focus event of its own each time it is asked would start the count
+again each time. That path is as old as the looks again and is not touched by this series;
+the diagnostic would show it as a `focus` line after every `uia` line.
+
+**Is one second acceptable, with a late answer up to 1.25 s old?** Yes, with one remark.
+
+- Run: a call of 950 ms answered "plain field"; the answer was used 1,190 ms after the call
+  began, verdict `Normal`, where a call at that moment would have said "password field". That
+  is the bound as documented (`focus.rs`, `inspect.rs`, the limits row at
+  `docs/architecture.md:982`).
+- What the bound limits is the time in which a field can change with no counted focus event
+  and the change then stays unseen. An answer in time has 0.3 s of it; a late one had no limit
+  at `b632eb4`, 0.5 s at `cd4b07d` at the price of N1, and has 1.25 s now. The changes that fit
+  in it are a "show password" switch right after the field was focused, and a move inside a
+  page whose engine is still switching its accessibility on and raises no event for it. Once
+  the engine raises focus events, a move is counted and the stale answer is dropped by its
+  subject.
+- The second look of finding 1 does not make this worse or better. A custom element needs two
+  calls a pause apart and each may be this old; an ordinary field is settled by one. Custom is
+  never the weaker case.
+- Section 2 proposed "one or two seconds" without data, and section 5.1 says no measured
+  duration was available either. So the number is a guess in the right range, mine as much as
+  the fixer's. When the diagnostic's `call N ms` lines from the measured application exist, set
+  the limit just above them: if they are under 400 ms, half a second gives the same function
+  with less than half the window.
+- If the window should not depend on the limit at all, there is a cheap way: let a `Normal`
+  that comes from a late answer ask for one more look (`Judgement` already carries the field
+  and `look_again` separately). The next look is a fresh call a pause later and either agrees
+  or says `Secure`. It costs one look of the budget. Optional; I would not hold the release
+  for it.
+
+**N4. Medium (function): a custom editor in an application slower than 100 ms is never
+believed.** `secure.rs:166-169`, `secure.rs:183`, `watch.rs:139-150`. Shown by a run with the
+real limits and pauses.
+
+Section 6's N2 asked for one thing: a late answer refused because another process provided it
+should void the first custom look, because it is evidence that the focus was elsewhere. The fix
+also voids on a timeout. A timeout is not an answer between two looks; it is the same look
+waiting, and its answer comes a moment later as the late answer. Voiding at the timeout throws
+the first look away just before the second arrives, and the second is then counted as a first.
+
+Run, custom element of the engine's framework, one focus change:
+
+| Every call takes | Verdicts | Result |
+| --- | --- | --- |
+| 20 ms | `NotInspectable`, `Normal` | believed at the second look, 170 ms after the change |
+| 200 ms | `NotInspectable`, `Timeout`, `NotInspectable`, `Timeout`, `Timeout` | never; budget spent after 6.7 s |
+| 400 ms | `Timeout`, `NotInspectable`, `Timeout`, `NotInspectable` | never |
+| 900 ms | `Timeout`, `Timeout`, `NotInspectable`, `Timeout`, `Timeout` | never |
+
+Scenario: the chat application on the system's web view that this series is about. Its message
+box is a custom element. The one sample line in the tree (the diagnostic's test: a call of
+180 ms, late by 82 ms) is in this band; whether it is that application's real figure I do not
+know. If it is, every look again, with 100 ms, times out, each timeout voids the look before,
+and the box stays `Unknown`: nothing expands there, as before `b632eb4`.
+
+A second thing makes it tight even without the void: an arrival pays a look, and the pause set
+after its verdict pays another, so a slow application has two or three real looks, not five.
+
+Fix: (1) void the first custom look only on evidence: a late answer refused by its process,
+and a probe that cannot be opened if wanted; not on a timeout. I checked the sequences by hand
+for that rule: 200 ms and 400 ms calls are then believed at the late answer of the second
+call; 900 ms is not, because of the budget. (2) Do not charge an arrival twice: when it cancels
+a pending timer, that timer's look is already paid; charge only when no timer is pending. The
+bound stays five reports. (3) Add the run above as a test: a custom element with calls of
+200 ms is `Normal` within the budget.
+
+### 7.4 Not checked
+
+- Anything on Windows: the four new Windows tests (two here, two in section 5) had not finished
+  in CI when this was written.
+- Whether any application raises a focus event in answer to a question (7.3).
+- The measured application's call durations, which decide both the limit and how much N4
+  matters for it.
+- The fix proposed for N4 was reasoned through, not run.
