@@ -285,6 +285,11 @@ impl Element {
 
     /// Whether the element is a window's own: its cached `NativeWindowHandle` is not 0.
     fn window_root(&self) -> Result<bool, ()> {
+        self.native_window().map(|window| window != 0)
+    }
+
+    /// The cached `NativeWindowHandle`, as a number (0: none).
+    fn native_window(&self) -> Result<u64, ()> {
         let mut window = ptr::null_mut();
         // SAFETY: the method is called on its own object with a valid place for a handle.
         let result = unsafe {
@@ -293,7 +298,7 @@ impl Element {
         if result < 0 {
             Err(())
         } else {
-            Ok(!window.is_null())
+            Ok(window as usize as u64)
         }
     }
 
@@ -441,6 +446,21 @@ impl Session {
             observation,
             ..probed
         }
+    }
+}
+
+#[cfg(test)]
+impl Session {
+    /// The focused element's cached `NativeWindowHandle`, for the Windows test that pins its
+    /// slot against the real handle (`os_tests`). `None` when there is none to read.
+    pub(super) fn focused_native_window(&self) -> Option<u64> {
+        let (automation, request) = (self.automation.as_ref()?, self.request.as_ref()?);
+        automation
+            .focused_element(request)
+            .ok()
+            .flatten()?
+            .native_window()
+            .ok()
     }
 }
 

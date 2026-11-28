@@ -101,6 +101,74 @@ fn ui_automation_tells_a_password_field_from_a_text_field() {
     }
 }
 
+/// The control type of a list item (`UIA_ListItemControlTypeId`).
+const LIST_ITEM: i32 = 50007;
+
+#[test]
+fn the_cached_window_handle_is_the_controls_own_and_none_for_an_item() {
+    // The cached-probe review's L7: pins `get_CachedNativeWindowHandle` (slot 68) against
+    // the real handle, both ways, and `HasKeyboardFocus` on an element that is not a window.
+    let _alone = alone();
+    let Some(window) = open(Field::Plain) else {
+        return;
+    };
+    let mut session = Session::open().expect("UI Automation is part of Windows");
+    let plain = Observation::Element {
+        password: false,
+        control_type: control_type::EDIT,
+        process: std::process::id(),
+        detail: OWN_EDIT,
+    };
+    assert_eq!(observed(&mut session, plain), plain);
+    assert_eq!(
+        session.focused_native_window(),
+        Some(window.field_number(Field::Plain))
+    );
+
+    if !window.focus(Field::List) {
+        skip("the test window lost the foreground");
+        return;
+    }
+    let item = Observation::Element {
+        password: false,
+        control_type: LIST_ITEM,
+        process: std::process::id(),
+        detail: Detail {
+            has_focus: true,
+            window_root: false,
+            framework: Framework::Win32,
+        },
+    };
+    assert_eq!(observed(&mut session, item), item);
+    assert_eq!(session.focused_native_window(), Some(0));
+}
+
+#[test]
+fn the_line_of_the_focused_control_is_its_own_window_tree() {
+    // The cached-probe review's L7, for `on_control_line` (finding L4).
+    let _alone = alone();
+    let Some(window) = open(Field::Plain) else {
+        return;
+    };
+    let front = os::foreground().expect("a window is in front");
+    let control = SystemDesk.control(front).window;
+    assert_eq!(control, window.field_number(Field::Plain));
+    let own = std::process::id();
+    assert!(SystemDesk.on_control_line(front, control, own));
+    // Process ids are multiples of four: no process owns a window here.
+    assert!(!SystemDesk.on_control_line(front, control, 0xFFFF_FFF1));
+    // No control, or no window in front: no line (never the whole desktop).
+    assert!(!SystemDesk.on_control_line(front, 0, own));
+    assert!(!SystemDesk.on_control_line(
+        Front {
+            window: 0,
+            pid: own
+        },
+        control,
+        own
+    ));
+}
+
 #[test]
 fn a_session_can_be_opened_and_closed_repeatedly() {
     for _ in 0..3 {

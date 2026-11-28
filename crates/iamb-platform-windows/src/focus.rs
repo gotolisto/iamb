@@ -88,12 +88,13 @@
 //! application answered**, not what a call made at the later question would say. Why it is
 //! safe to use:
 //!
-//! - **Fresh.** It is used within a quarter of a second, counted from when the probe obtained
-//!   the focused element, which it does together with the element's properties in one call
-//!   (`uia`); an older one is dropped and the application asked afresh. A
-//!   field that turns into a password field without a focus change (a page that changes the
-//!   type of its field) in that quarter of a second is the same race every answer has between
-//!   the application answering and the verdict arriving.
+//! - **Fresh.** It is used at most 250 ms after it arrived. The probe gets the element and its
+//!   properties in one call (`uia`), and the application reads them somewhere inside that call,
+//!   so the answer is as old as its call took plus that wait; with the call limited too (below)
+//!   that is at most half a second. An older one is dropped and the application asked afresh.
+//!   A field that turns into a password field without a focus change (a page that changes the
+//!   type of its field) in that time is the same race every answer has between the application
+//!   answering and the verdict arriving, widened by the call.
 //! - **Only for a report again.** Only a question for a report the watcher made again of the
 //!   same window (after a pause, or for the arrival) may take it: the watcher marks such a
 //!   report, with the count of focus changes, just before it makes it. Every change, the
@@ -104,9 +105,15 @@
 //!   seen yet is the race every answer has: its own report follows and is judged afresh.)
 //! - **About the same control.** The question names the window, the control with the keyboard
 //!   focus in it and that control's kind; a late answer serves only the same three.
-//! - **About this window.** The element must be provided by the window's process or by the
-//!   process of the focused control's window (an embedded engine's); otherwise the answer is
-//!   `Unknown(NotInspectable)`. Process ancestry is not read: it cannot be told reliably.
+//! - **About this window.** The element must be provided by the window's process, by the
+//!   process of the focused control's window (an embedded engine's), or by one that owns a
+//!   window on that control's line (its ancestors up to the window in front, its descendants);
+//!   otherwise the answer is `Unknown(NotInspectable)`. Process ancestry is not read: it cannot
+//!   be told reliably.
+//! - **Quick to answer.** The call that produced it took at most 250 ms: an answer is the field
+//!   as the application read it somewhere inside its call, so a late answer can be as old as
+//!   its call took plus the quarter of a second it may wait. A slower call's answer is dropped
+//!   and the application asked afresh.
 //! - The window must still be in front before and after (step 1), the answer is classified as
 //!   any other (a password element is `Secure`, a browser engine's shell is still not
 //!   believed), and without a running watcher no late answer is kept or used.
@@ -157,9 +164,11 @@
 //! - **Editable regions a browser engine reports as the page itself** (an editable `body`
 //!   in a frame, as some older web editors use) are `Unknown`, because the page as a whole
 //!   is also what the engine shows before its tree exists. Nothing expands there. An editable
-//!   region the engine reports as a *custom* element is believed once the engine says it has
-//!   the keyboard focus and is not a window's own element (`classify`, "A control without a
-//!   kind"); one reported as the document or the window itself is not.
+//!   region the engine reports as a *custom* element is believed only when its framework is
+//!   the engine's own, it has the keyboard focus, it names no window, and the same answer comes
+//!   at a second look (`classify`, "A control without a kind"); one reported as the document or
+//!   the window itself is not. A password box a page draws itself with such a role and no
+//!   `IsPassword` is then an ordinary field: a listed limit (architecture §8).
 //! - **Focus events of lists that follow typing.** An application that moves the
 //!   accessibility focus to an entry of a suggestion list while the user types raises focus
 //!   events, each of which is reported and clears what the engine holds. Dropping them

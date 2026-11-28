@@ -25,16 +25,32 @@
 //!
 //! Before its tree exists an engine shows two things as focused: its window (a pane, or the
 //! window the system makes up for a window that says nothing) and the root of the page (a
-//! document). Neither is ever anything else, so those stay not believed. A **custom** element,
-//! a control the engine gives no standard kind, is not one of them: it is a node of the page,
-//! and the page's nodes exist only in the built tree. It is believed when the engine also says
-//! that it has the keyboard focus (`HasKeyboardFocus`) and that it is not the root of a window
-//! (its `NativeWindowHandle` is 0: a window's own element names its window), facts the engine
-//! gives for a node of its tree. A custom element without them stays not believed. Editors of
-//! web pages that give their editable region an unusual role are such elements; a password
-//! field is never one: an `<input type="password">` reports `IsPassword`, whatever its kind,
-//! and that is `Secure` before any kind is looked at.
+//! document). Those stay not believed, whatever else they say. A **custom** element, a control
+//! the engine gives no standard kind, is believed only under every one of these conditions
+//! ([`custom_candidate`], and `secure` for the last):
 //!
+//! - its framework is the browser engine's own (`FrameworkId` "Chrome", which the system's web
+//!   view reports too): the case that was measured, a chat application's editable message box
+//!   on the system's web view. Another engine family, and an element the system translated
+//!   from the older accessibility interface (where a role it does not know becomes custom), stay
+//!   not believed until there is data for them;
+//! - the engine says it has the keyboard focus (`HasKeyboardFocus`);
+//! - it does not name a window of its own: a `NativeWindowHandle` that is not 0, or one that
+//!   could not be read, refuses it. This can only refuse. It is no evidence of a built page:
+//!   a handle that is absent reads as 0, like a page node's, and the root of an unbuilt page
+//!   gives the same 0 and the same focus;
+//! - and it is **not the first look**: the first custom answer for a window, its focused
+//!   control and the count of focus changes is `NotInspectable` and looked at again; the same
+//!   answer at a look again of the same subject, with no focus change counted between, settles.
+//!   A placeholder an engine shows while its page is being built is what the looks again are
+//!   for: it is replaced by the field before the look after.
+//!
+//! None of these proves that the tree is built: the two facts tell a node from a window, the
+//! framework narrows the rule to what was measured, and the second look gives a transient
+//! answer the time to change. A password field reports `IsPassword`, and that is `Secure`
+//! before any kind is looked at; a password box a page draws itself with an unusual role and
+//! no `IsPassword` is not one, and is a listed limit (architecture §8, "Detection limits").
+
 //! Everywhere else the element is believed. An application that draws its own fields and
 //! tells the system nothing about them (see the limits in the module docs of `focus`) cannot
 //! be told apart from an editor that does the same, and refusing all of them would stop Iamb
@@ -118,7 +134,8 @@ impl Framework {
 pub(crate) struct Detail {
     /// `HasKeyboardFocus`.
     pub(crate) has_focus: bool,
-    /// `NativeWindowHandle` is not 0: the element is a window's own.
+    /// `NativeWindowHandle` is not 0, or could not be read: the element may be a window's
+    /// own. Can only refuse (module docs).
     pub(crate) window_root: bool,
     /// `FrameworkId`.
     pub(crate) framework: Framework,
@@ -220,14 +237,35 @@ pub(crate) const fn is_shell(control_type: i32) -> bool {
     )
 }
 
-/// True for a custom element the engine describes as a node of its built tree (module docs,
-/// "A control without a kind").
-const fn is_built_custom(control_type: i32, detail: Detail) -> bool {
-    control_type == control_type::CUSTOM && detail.has_focus && !detail.window_root
+/// True for a focused custom element of the browser engine's own framework that names no
+/// window: one that may be believed at a second look (module docs, "A control without a
+/// kind").
+pub(crate) const fn custom_candidate(kind: ControlKind, observation: Observation) -> bool {
+    match observation {
+        Observation::Element {
+            password: false,
+            control_type,
+            detail,
+            ..
+        } => {
+            matches!(kind, ControlKind::WebEngine)
+                && control_type == control_type::CUSTOM
+                && matches!(detail.framework, Framework::Chrome)
+                && detail.has_focus
+                && !detail.window_root
+        }
+        _ => false,
+    }
 }
 
-/// What `observation`, made in a control of kind `kind`, says about the field.
-pub(crate) const fn classify(kind: ControlKind, observation: Observation) -> Judgement {
+/// What `observation`, made in a control of kind `kind`, says about the field. `confirmed`:
+/// the observation is a [`custom_candidate`] seen at a second look of the same subject (the
+/// caller keeps that), which believes it.
+pub(crate) const fn classify(
+    kind: ControlKind,
+    observation: Observation,
+    confirmed: bool,
+) -> Judgement {
     match observation {
         Observation::Failed | Observation::NoElement => {
             Judgement::passing(UnknownReason::NotInspectable)
@@ -236,12 +274,10 @@ pub(crate) const fn classify(kind: ControlKind, observation: Observation) -> Jud
         Observation::Element {
             password: false,
             control_type,
-            detail,
             ..
         } => {
-            if matches!(kind, ControlKind::WebEngine)
-                && is_shell(control_type)
-                && !is_built_custom(control_type, detail)
+            let believed_custom = confirmed && custom_candidate(kind, observation);
+            if matches!(kind, ControlKind::WebEngine) && is_shell(control_type) && !believed_custom
             {
                 Judgement::passing(UnknownReason::NotInspectable)
             } else {
@@ -269,7 +305,7 @@ mod tests {
     }
 
     #[test]
-    fn a_custom_element_of_a_built_page_is_believed() {
+    fn a_custom_element_of_the_engine_is_believed_only_at_a_second_look() {
         // The real-machine data of a chat application on the system's web view: an editable
         // region with a kind the engine reports as custom, focused, inside the page.
         let node = Detail {
@@ -277,23 +313,39 @@ mod tests {
             window_root: false,
             framework: Framework::Chrome,
         };
+        let custom = with(false, control_type::CUSTOM, node);
+        assert!(custom_candidate(ControlKind::WebEngine, custom));
         assert_eq!(
-            classify(
-                ControlKind::WebEngine,
-                with(false, control_type::CUSTOM, node)
-            ),
+            classify(ControlKind::WebEngine, custom, true),
             Judgement::settled(FieldSecurity::Normal)
         );
-        // And a password field is secure whatever its kind and detail.
+        // The first look: looked at again.
         assert_eq!(
-            classify(
-                ControlKind::WebEngine,
-                with(true, control_type::CUSTOM, node)
-            ),
-            Judgement::settled(FieldSecurity::Secure)
+            classify(ControlKind::WebEngine, custom, false),
+            Judgement::passing(UnknownReason::NotInspectable)
         );
-        // Without focus, or as a window's own element: not believed.
+        // And a password field is secure whatever its kind, detail and look.
+        for confirmed in [false, true] {
+            assert_eq!(
+                classify(
+                    ControlKind::WebEngine,
+                    with(true, control_type::CUSTOM, node),
+                    confirmed
+                ),
+                Judgement::settled(FieldSecurity::Secure)
+            );
+        }
+        // The cached-probe review's M1: another framework (another engine family, the system's
+        // translation of the older interface), no focus, a window's own: never, at any look.
         for detail in [
+            Detail {
+                framework: Framework::Other,
+                ..node
+            },
+            Detail {
+                framework: Framework::Win32,
+                ..node
+            },
             Detail {
                 has_focus: false,
                 ..node
@@ -304,11 +356,10 @@ mod tests {
             },
             Detail::NONE,
         ] {
+            let element = with(false, control_type::CUSTOM, detail);
+            assert!(!custom_candidate(ControlKind::WebEngine, element));
             assert_eq!(
-                classify(
-                    ControlKind::WebEngine,
-                    with(false, control_type::CUSTOM, detail)
-                ),
+                classify(ControlKind::WebEngine, element, true),
                 Judgement::passing(UnknownReason::NotInspectable),
                 "{detail:?}"
             );
@@ -319,8 +370,10 @@ mod tests {
             control_type::WINDOW,
             control_type::DOCUMENT,
         ] {
+            let element = with(false, control_type, node);
+            assert!(!custom_candidate(ControlKind::WebEngine, element));
             assert_eq!(
-                classify(ControlKind::WebEngine, with(false, control_type, node)),
+                classify(ControlKind::WebEngine, element, true),
                 Judgement::passing(UnknownReason::NotInspectable),
                 "{control_type}"
             );
@@ -429,7 +482,7 @@ mod tests {
                 0,
             ] {
                 assert_eq!(
-                    classify(kind, element(true, control_type)),
+                    classify(kind, element(true, control_type), false),
                     Judgement::settled(FieldSecurity::Secure)
                 );
             }
@@ -451,7 +504,7 @@ mod tests {
             (ControlKind::WebEngine, 50003), // a combo box: a search field with suggestions
         ] {
             assert_eq!(
-                classify(kind, element(false, control_type)),
+                classify(kind, element(false, control_type), false),
                 Judgement::settled(FieldSecurity::Normal),
                 "{kind:?} {control_type}"
             );
@@ -468,7 +521,7 @@ mod tests {
         ] {
             assert!(is_shell(control_type));
             assert_eq!(
-                classify(ControlKind::WebEngine, element(false, control_type)),
+                classify(ControlKind::WebEngine, element(false, control_type), false),
                 Judgement::passing(UnknownReason::NotInspectable),
                 "{control_type}"
             );
@@ -486,7 +539,7 @@ mod tests {
             ControlKind::PasswordEdit,
         ] {
             for observation in [Observation::Failed, Observation::NoElement] {
-                let judgement = classify(kind, observation);
+                let judgement = classify(kind, observation, false);
                 assert_eq!(
                     judgement.field,
                     FieldSecurity::Unknown(UnknownReason::NotInspectable)

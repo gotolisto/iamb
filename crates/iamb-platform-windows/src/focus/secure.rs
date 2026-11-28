@@ -12,14 +12,17 @@
 //!    question names the window, its focused control and that control's kind, and the count of
 //!    focus changes (`epoch`). An answer that came too late for an earlier question about the
 //!    same subject serves a report the watcher made again ([`Watching::again`]) if it arrived
-//!    at most a quarter of a second ago (`inspect`, "A late answer"), and only when the element
-//!    it describes is provided by the window's process, by the process of its focused
-//!    control's window, or by a process that owns some other window inside it (an embedded
-//!    browser engine runs several processes, and the one that answers for the page need not own
-//!    the control the system names as focused); any other element is
-//!    `Unknown(NotInspectable)`. Process ancestry is not looked at: it cannot be read reliably
-//!    (a parent may have ended and its id been given to another process), so the processes are
-//!    the ones the system names as owners of windows inside the window asked about.
+//!    at most a quarter of a second ago and its call took at most a quarter of a second
+//!    (`inspect`, "A late answer"), and only when the element it describes is provided by the
+//!    window's process, by the process of its focused control's window, or by a process that
+//!    owns a window on that control's own line: one of its ancestors up to the window in front,
+//!    or one of its descendants (an embedded browser engine runs several processes, and the one
+//!    that answers for the page need not own the control the system names as focused). A
+//!    process with a window elsewhere inside the window in front (a preview pane, a plug-in
+//!    beside the page) is not accepted; any element it provides is `Unknown(NotInspectable)`.
+//!    Process ancestry is not looked at: it cannot be read reliably (a parent may have ended
+//!    and its id been given to another process), so the processes are the ones the system
+//!    names as owners of those windows.
 //! 5. The window must still be in front. If it is not, the answer just obtained may be about
 //!    another window and is thrown away: `Unknown(FocusMoved)`.
 //!
@@ -30,7 +33,7 @@ use std::time::{Duration, Instant};
 
 use iamb_platform::{FieldSecurity, FocusToken, UnknownReason};
 
-use super::classify::{ControlKind, Judgement, Observation, classify};
+use super::classify::{ControlKind, Judgement, Observation, classify, custom_candidate};
 use super::inspect::{Answer, Inspector, Lateness, ProbeSource, Subject, Wake};
 
 /// The window in front.
@@ -79,9 +82,10 @@ pub(crate) trait Desk {
     fn privilege(&self, pid: u32) -> Privilege;
     /// The control that has the keyboard focus in `front`.
     fn control(&self, front: Front) -> Control;
-    /// True when process `pid` owns a window inside `front` (a child window, at any depth):
-    /// a web view's engine process does, for the window it draws the page in.
-    fn has_window_in(&self, front: Front, pid: u32) -> bool;
+    /// True when process `pid` owns a window on the line of `control`, the focused control's
+    /// window in `front`: one of its ancestors up to `front`, or one of its descendants. A web
+    /// view's engine process does, for the window it draws the page in.
+    fn on_control_line(&self, front: Front, control: u64, pid: u32) -> bool;
 }
 
 /// What the running watcher tells a question (`None` to [`judge`] without one).
@@ -137,25 +141,34 @@ pub(crate) fn judge<D: Desk, S: ProbeSource>(
                 // The caller gave no time to ask in; asking again would be no different.
                 unknown(UnknownReason::Timeout)
             } else {
+                let subject = watching.as_ref().map(|watching| Subject {
+                    window: target.window(),
+                    control: control.window,
+                    kind,
+                    epoch: watching.epoch,
+                });
+                let again = watching.as_ref().is_some_and(|watching| watching.again);
                 let lateness = watching.map_or(Lateness::NONE, |watching| Lateness {
-                    subject: Some(Subject {
-                        window: target.window(),
-                        control: control.window,
-                        kind,
-                        epoch: watching.epoch,
-                    }),
+                    subject,
                     may_take: watching.again,
                     wake: watching.wake,
                 });
+                // A custom element is believed at a second look of the same subject only
+                // (`classify`, "A control without a kind").
+                let judged = |observation| {
+                    let candidate = custom_candidate(kind, observation);
+                    let confirmed = inspector.custom_again(subject, candidate) && again;
+                    classify(kind, observation, confirmed)
+                };
                 match inspector.observe(lateness, left) {
-                    Answer::Observed(observation) => classify(kind, observation),
+                    Answer::Observed(observation) => judged(observation),
                     Answer::Late(observation) => {
                         if provided_by(observation, |process| {
                             process == front.pid
                                 || process == control.pid
-                                || desk.has_window_in(front, process)
+                                || desk.on_control_line(front, control.window, process)
                         }) {
-                            classify(kind, observation)
+                            judged(observation)
                         } else {
                             Judgement::passing(UnknownReason::NotInspectable)
                         }
@@ -229,7 +242,7 @@ mod tests {
         privilege: Privilege,
         control: Cell<Control>,
         controls_read: Cell<u32>,
-        /// Processes that own windows inside `EDITOR`.
+        /// Processes that own windows on the focused control's line.
         inner: Vec<u32>,
     }
 
@@ -273,7 +286,7 @@ mod tests {
             self.control.get()
         }
 
-        fn has_window_in(&self, _front: Front, pid: u32) -> bool {
+        fn on_control_line(&self, _front: Front, _control: u64, pid: u32) -> bool {
             self.inner.contains(&pid)
         }
     }
@@ -629,9 +642,69 @@ mod tests {
     }
 
     #[test]
+    fn a_focused_custom_element_of_the_engine_is_believed_at_the_second_look_only() {
+        use super::super::classify::{Detail, Framework, control_type};
+        // The cached-probe review's M1: the first custom answer for a subject is looked at
+        // again; the same answer at the watcher's look again settles.
+        let custom = Observation::Element {
+            password: false,
+            control_type: control_type::CUSTOM,
+            process: ENGINE.pid,
+            detail: Detail {
+                has_focus: true,
+                window_root: false,
+                framework: Framework::Chrome,
+            },
+        };
+        let (woken, _wakes) = std::sync::mpsc::channel();
+        let desk = FakeDesk::with(ENGINE);
+        let source = FakeSource::answering(&[custom; 6]);
+        let inspector = Inspector::new(source.clone());
+        let look = |epoch, again| {
+            judge(
+                &desk,
+                &inspector,
+                &EDITOR.token(),
+                watching(epoch, again, &woken),
+                LONG,
+            )
+        };
+        assert_eq!(
+            look(3, false),
+            Judgement::passing(UnknownReason::NotInspectable),
+            "the first look"
+        );
+        assert_eq!(
+            look(3, true),
+            Judgement::settled(FieldSecurity::Normal),
+            "the look again"
+        );
+        // After a counted change it starts again.
+        assert_eq!(
+            look(4, false),
+            Judgement::passing(UnknownReason::NotInspectable)
+        );
+        // A question that is not a look again (a re-judge) does not settle it.
+        assert_eq!(
+            look(4, false),
+            Judgement::passing(UnknownReason::NotInspectable)
+        );
+        // Without a watcher, never.
+        assert_eq!(
+            judge(&desk, &inspector, &EDITOR.token(), None, LONG),
+            Judgement::passing(UnknownReason::NotInspectable)
+        );
+        assert_eq!(
+            judge(&desk, &inspector, &EDITOR.token(), None, LONG),
+            Judgement::passing(UnknownReason::NotInspectable)
+        );
+    }
+
+    #[test]
     fn a_late_answer_from_another_process_with_a_window_inside_is_believed() {
         // The page's process of a web view need not be the one that owns the focused control:
-        // one that owns some window inside the window asked about is accepted.
+        // one that owns a window on the focused control's line is accepted (and the fake desk's
+        // `inner` stands for those; the real line is tested on Windows, `os_tests`).
         let source = FakeSource::default();
         let mut desk = FakeDesk::with(ENGINE);
         desk.inner = vec![77];

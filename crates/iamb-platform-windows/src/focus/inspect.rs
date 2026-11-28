@@ -38,11 +38,12 @@
 //! A late answer is the field **as it was when the application answered**, not what a call made
 //! at the later question would say: a field that turned into a password field in between, with
 //! no focus change, is not in it. The freshness bound keeps "in between" to a quarter of a
-//! second, the window of every answer's own race with such a change. It is counted from the
-//! moment the probe **obtained the focused element** ([`Probed::chosen`]). The probe obtains the
-//! element and its properties in one call (`uia`, "One call into the application"), so that
-//! moment is when the answer arrives: an answer that comes late is fresh when it comes, and the
-//! watcher's report for it, made at once, uses it. A question about another
+//! second, the window of every answer's own race with such a change. It is counted from when
+//! the answer arrived ([`Probed::chosen`]): the probe gets the element and its properties in one
+//! call (`uia`, "One call into the application"), and the application reads them somewhere
+//! inside that call, so the answer is as old as its call took plus that wait. The call is
+//! limited too: a late answer whose call took more than [`LATE_CALL_LIMIT`] is not taken, so a
+//! late answer is at most half a second old when it is used. A question about another
 //! window or control, after another focus change, or that may not take one, drops it: the late
 //! answer then goes nowhere, as before. The caller also checks which process provided the
 //! element ([`Answer::Late`]).
@@ -61,6 +62,9 @@ pub(crate) const MAX_WORKERS: usize = 4;
 /// How long after its element was chosen a late answer may still serve a question (module
 /// docs).
 pub(crate) const LATE_ANSWER_FRESH: Duration = Duration::from_millis(250);
+
+/// The longest call whose late answer may serve a question (module docs).
+pub(crate) const LATE_CALL_LIMIT: Duration = Duration::from_millis(250);
 
 /// What a probe saw, and when it chose the element it describes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,6 +96,8 @@ pub(crate) enum TraceEvent {
     LateTaken(Duration),
     /// A late answer was refused as too old, this long after its element was chosen.
     LateTooOld(Duration),
+    /// A late answer was refused because its call took this long.
+    LateTooSlow(Duration),
 }
 
 /// Where an inspector reports what it does (`diagnose`).
@@ -139,8 +145,8 @@ struct Mailbox {
 
 #[derive(Default)]
 struct Mail {
-    /// The answer and when its element was chosen.
-    answer: Option<(Observation, Instant)>,
+    /// The answer, when its element was chosen, and how long its call took.
+    answer: Option<(Observation, Instant, Duration)>,
     /// The thread dropped the question (skipped it, or ended).
     closed: bool,
     /// Called once, when the answer arrives (module docs).
@@ -151,7 +157,7 @@ struct Mail {
 
 /// How a wait for a mailbox ended.
 enum Waited {
-    Arrived(Observation, Instant),
+    Arrived(Observation, Instant, Duration),
     Closed,
     TimedOut,
 }
@@ -166,7 +172,7 @@ impl Mailbox {
     fn deliver(&self, probed: Probed) -> Option<Instant> {
         let (wake, gave_up) = {
             let mut mail = self.mail();
-            mail.answer = Some((probed.observation, probed.chosen));
+            mail.answer = Some((probed.observation, probed.chosen, probed.took));
             (mail.wake.take(), mail.gave_up)
         };
         self.arrived.notify_all();
@@ -193,8 +199,8 @@ impl Mailbox {
     fn wait(&self, deadline: Instant) -> Waited {
         let mut mail = self.mail();
         loop {
-            if let Some((observation, at)) = mail.answer {
-                return Waited::Arrived(observation, at);
+            if let Some((observation, at, took)) = mail.answer {
+                return Waited::Arrived(observation, at, took);
             }
             if mail.closed {
                 return Waited::Closed;
@@ -300,8 +306,13 @@ pub(crate) struct Inspector<S: ProbeSource> {
     live: Arc<AtomicUsize>,
     /// [`LATE_ANSWER_FRESH`], other in tests.
     late_fresh: Duration,
+    /// [`LATE_CALL_LIMIT`], other in tests.
+    late_call_limit: Duration,
     /// Told what the inspection does, for `--diagnose-focus`; none normally.
     tracer: Arc<Mutex<Option<Tracer>>>,
+    /// The subject of the last answer that was a custom element that may be believed at a
+    /// second look (`classify`, "A control without a kind").
+    custom: Mutex<Option<Subject>>,
 }
 
 /// What a question may do with the answer of an earlier one (module docs).
@@ -332,8 +343,20 @@ impl<S: ProbeSource> Inspector<S> {
             slot: Mutex::new(Slot::default()),
             live: Arc::new(AtomicUsize::new(0)),
             late_fresh: LATE_ANSWER_FRESH,
+            late_call_limit: LATE_CALL_LIMIT,
             tracer: Arc::new(Mutex::new(None)),
+            custom: Mutex::new(None),
         }
+    }
+
+    /// Notes the answer for `subject`: `candidate` when it is a custom element that may be
+    /// believed at a second look. True when it is, and the answer before for the same subject
+    /// was one too. Any other answer, or another subject, starts again.
+    pub(crate) fn custom_again(&self, subject: Option<Subject>, candidate: bool) -> bool {
+        let mut seen = self.custom.lock().unwrap_or_else(PoisonError::into_inner);
+        let before = *seen;
+        *seen = subject.filter(|_| candidate);
+        candidate && subject.is_some() && before == subject
     }
 
     /// Reports from now on what the inspection does to `tracer` (`diagnose`).
@@ -350,6 +373,13 @@ impl<S: ProbeSource> Inspector<S> {
         if let Some(tracer) = tracer {
             tracer(event);
         }
+    }
+
+    /// The same inspector with another limit of a late answer's call.
+    #[cfg(test)]
+    pub(crate) const fn with_late_call_limit(mut self, limit: Duration) -> Self {
+        self.late_call_limit = limit;
+        self
     }
 
     /// The same inspector with another freshness bound of a late answer.
@@ -396,12 +426,17 @@ impl<S: ProbeSource> Inspector<S> {
             && Some(late.subject) == subject
         {
             match late.mailbox.wait(deadline) {
-                Waited::Arrived(observation, chosen) if chosen.elapsed() <= self.late_fresh => {
+                // A call that took too long: the application may have read the field long
+                // before it answered. Ask afresh.
+                Waited::Arrived(_, _, took) if took > self.late_call_limit => {
+                    self.trace(TraceEvent::LateTooSlow(took));
+                }
+                Waited::Arrived(observation, chosen, _) if chosen.elapsed() <= self.late_fresh => {
                     self.trace(TraceEvent::LateTaken(chosen.elapsed()));
                     return Answer::Late(observation);
                 }
                 // Too old: the field may have changed since. Ask afresh.
-                Waited::Arrived(_, chosen) => {
+                Waited::Arrived(_, chosen, _) => {
                     self.trace(TraceEvent::LateTooOld(chosen.elapsed()));
                 }
                 Waited::Closed => {}
@@ -427,7 +462,7 @@ impl<S: ProbeSource> Inspector<S> {
             Err(answer) => return answer,
         };
         match mailbox.wait(deadline) {
-            Waited::Arrived(observation, _) => Answer::Observed(observation),
+            Waited::Arrived(observation, ..) => Answer::Observed(observation),
             Waited::TimedOut => {
                 mailbox.give_up();
                 if opened.load(Ordering::SeqCst) {
@@ -1142,6 +1177,34 @@ mod tests {
         );
         assert_eq!(source.0.asked(), 2);
         assert!(wakes.try_recv().is_err(), "no wake for an answer in time");
+    }
+
+    #[test]
+    fn a_late_answer_whose_call_took_too_long_is_not_taken() {
+        // The cached-probe review's L3: the application may have read the field early in a
+        // long call, so the answer is as old as the call, however new it looks.
+        let source = FakeSource::default();
+        let (step, release) = hang(PLAIN);
+        source.0.push(step);
+        source.0.push(Step::Answer(PASSWORD));
+        let inspector = Inspector::new(source.clone()).with_late_call_limit(SHORT * 2);
+        inspector.wait_open();
+        let (woken, wakes) = mpsc::channel();
+        assert_eq!(
+            inspector.observe(first(SUBJECT, &woken), SHORT),
+            Answer::TimedOut
+        );
+        std::thread::sleep(SHORT * 3);
+        release.send(()).expect("the thread still waits");
+        wakes
+            .recv_timeout(LONG)
+            .expect("the arrival wakes the watcher");
+        // Fresh by its arrival, but its call took four times the limit: asked afresh.
+        assert_eq!(
+            inspector.observe(again(SUBJECT, &woken), LONG),
+            Answer::Observed(PASSWORD)
+        );
+        assert_eq!(source.0.asked(), 2);
     }
 
     #[test]

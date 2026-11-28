@@ -126,6 +126,25 @@ first. How a password field is detected, and what is not, is in the module docs 
       ...> VALUES ('windowsterminal.exe', 'Windows Terminal', 0);
    ```
 
+### Focus diagnosis (Windows)
+
+When a window stays "unknown focus" or a field is judged wrongly, the user can record what the
+secure-field check sees, beside the running service (it sends no key and needs no stop), in
+PowerShell:
+
+```powershell
+& "$env:LOCALAPPDATA\Iamb\iamb-service.exe" --diagnose-focus 60 | Out-Host
+```
+
+For 60 seconds (1 to 600) it writes, for each focus change, the application in front, the window
+classes, what UI Automation answered (kind, `IsPassword`, focus, framework, process, how long the
+call took, whether the answer came late) and the verdict. No text, no window title, nothing typed.
+The lines go to the console and to `%APPDATA%\Iamb\logs\focus-diagnosis-<unix ms>.txt`; the path
+is printed at the start on standard output and standard error. The last five such files are kept,
+each stops at 2 MB, and the first line of each says that it names the applications that were in
+front and when (`crates/iamb-service/src/diagnosis.rs`). Without `| Out-Host` nothing shows,
+because a release build has no console window; the file is written either way.
+
 ## macOS
 
 1. Open Terminal in the repository folder.

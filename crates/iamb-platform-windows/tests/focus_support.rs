@@ -14,7 +14,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use windows_sys::Win32::Foundation::HWND;
+use windows_sys::Win32::Foundation::{HWND, LPARAM};
 use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, SetFocus,
@@ -22,8 +22,9 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, CreateWindowExW, DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL,
     ES_PASSWORD, GUITHREADINFO, GetForegroundWindow, GetGUIThreadInfo, GetMessageW,
-    GetWindowThreadProcessId, MSG, PostThreadMessageW, SW_SHOW, SetForegroundWindow, ShowWindow,
-    TranslateMessage, WM_QUIT, WS_BORDER, WS_CHILD, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
+    GetWindowThreadProcessId, LB_ADDSTRING, LB_SETCURSEL, LBS_NOTIFY, MSG, PostThreadMessageW,
+    SW_SHOW, SendMessageW, SetForegroundWindow, ShowWindow, TranslateMessage, WM_QUIT, WS_BORDER,
+    WS_CHILD, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
 };
 
 /// A key no keyboard has and no application reacts to.
@@ -57,13 +58,16 @@ pub(crate) enum Field {
     Password,
     /// A push button: not an edit control, so only UI Automation can say what it is.
     Button,
+    /// A list box with one item, selected: when it has the focus, the focused element is the
+    /// item, an element that is not a window.
+    List,
 }
 
 /// A visible dialog-class window with the three [`Field`]s as child controls, on a thread
 /// of its own with a message loop. Nothing is ever typed into it.
 pub(crate) struct TestWindow {
     window: usize,
-    fields: [usize; 3],
+    fields: [usize; 4],
     thread_id: u32,
     thread: Option<JoinHandle<()>>,
 }
@@ -111,7 +115,7 @@ impl TestWindow {
                     120,
                     120,
                     360,
-                    220,
+                    260,
                     ptr::null_mut(),
                     ptr::null_mut(),
                     ptr::null_mut(),
@@ -119,14 +123,25 @@ impl TestWindow {
                 )
             };
             let fields = if window.is_null() {
-                [ptr::null_mut(); 3]
+                [ptr::null_mut(); 4]
             } else {
                 let edit = WS_BORDER | ES_AUTOHSCROLL.cast_unsigned();
+                let list = child(window, "LISTBOX", WS_BORDER | LBS_NOTIFY.cast_unsigned(), 3);
+                if !list.is_null() {
+                    let item = wide("item");
+                    // SAFETY: `list` is this thread's list box; the string is NUL-terminated
+                    // and outlives the call, which copies it.
+                    unsafe {
+                        SendMessageW(list, LB_ADDSTRING, 0, item.as_ptr() as LPARAM);
+                        SendMessageW(list, LB_SETCURSEL, 0, 0);
+                    }
+                }
                 [
                     child(window, "EDIT", edit, 0),
                     child(window, "EDIT", edit | ES_PASSWORD.cast_unsigned(), 1),
                     // A push button is style 0 of its class.
                     child(window, "BUTTON", 0, 2),
+                    list,
                 ]
             };
             // SAFETY: the call takes no arguments.
@@ -182,8 +197,14 @@ impl TestWindow {
             Field::Plain => 0,
             Field::Password => 1,
             Field::Button => 2,
+            Field::List => 3,
         };
         self.fields[index] as HWND
+    }
+
+    /// The handle of `field`'s control, as a number.
+    pub(crate) fn field_number(&self, field: Field) -> u64 {
+        self.field(field) as u64
     }
 
     /// The window's handle as the number a focus token holds.
