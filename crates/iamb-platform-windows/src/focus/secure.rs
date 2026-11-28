@@ -204,6 +204,8 @@ mod tests {
 
     const LONG: Duration = Duration::from_secs(10);
     const SHORT: Duration = Duration::from_millis(30);
+    // The call limit (`LATE_CALL_LIMIT`) is set to `LONG` here: the fake's waits are counted in
+    // `SHORT`s, and a slow runner stretches them past 250 ms; `inspect` tests the limit.
 
     const EDITOR: Front = Front {
         window: 0x1_0000_0A10,
@@ -302,7 +304,7 @@ mod tests {
             (ControlKind::PlainEdit, FieldSecurity::Normal),
         ] {
             let source = FakeSource::default();
-            let inspector = Inspector::new(source.clone());
+            let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
             let desk = FakeDesk::showing(control);
             // Even without any time to wait in.
             assert_eq!(
@@ -350,7 +352,7 @@ mod tests {
             ),
         ] {
             let source = FakeSource::answering(&[observation]);
-            let inspector = Inspector::new(source.clone());
+            let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
             let desk = FakeDesk::showing(control);
             assert_eq!(
                 judge(&desk, &inspector, &EDITOR.token(), None, LONG),
@@ -364,7 +366,7 @@ mod tests {
     #[test]
     fn the_answer_is_only_ever_about_the_window_asked_for() {
         let source = FakeSource::answering(&[element(false, 50004)]);
-        let inspector = Inspector::new(source.clone());
+        let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
 
         // Another window is in front: nothing is read, nothing is asked.
         let desk = FakeDesk::showing(ControlKind::Other).fronts(&[Some(OTHER)]);
@@ -402,7 +404,7 @@ mod tests {
         ] {
             // "Normal" from the probe, and "secure" from the control itself: neither counts.
             let source = FakeSource::answering(&[element(false, 50004)]);
-            let inspector = Inspector::new(source.clone());
+            let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
             let desk = FakeDesk::showing(ControlKind::Other).fronts(&[Some(EDITOR), after]);
             assert_eq!(
                 judge(&desk, &inspector, &EDITOR.token(), None, LONG),
@@ -425,7 +427,7 @@ mod tests {
             (Privilege::Unknown, UnknownReason::NotInspectable),
         ] {
             let source = FakeSource::answering(&[element(false, 50004)]);
-            let inspector = Inspector::new(source.clone());
+            let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
             let mut desk = FakeDesk::showing(ControlKind::PlainEdit);
             desk.privilege = privilege;
             assert_eq!(
@@ -442,7 +444,7 @@ mod tests {
         let source = FakeSource::default();
         let (step, release) = hang(element(false, 50004));
         source.0.push(step);
-        let inspector = Inspector::new(source);
+        let inspector = Inspector::new(source).with_late_call_limit(LONG);
         inspector.wait_open();
         let desk = FakeDesk::showing(ControlKind::Other);
 
@@ -460,7 +462,7 @@ mod tests {
     #[test]
     fn without_time_the_application_is_not_asked() {
         let source = FakeSource::answering(&[element(false, 50004)]);
-        let inspector = Inspector::new(source.clone());
+        let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
         let desk = FakeDesk::showing(ControlKind::Other);
         assert_eq!(
             judge(&desk, &inspector, &EDITOR.token(), None, Duration::ZERO),
@@ -495,7 +497,7 @@ mod tests {
     ) -> (Inspector<FakeSource>, std::sync::mpsc::Sender<()>) {
         let (step, release) = hang(observation);
         source.0.push(step);
-        let inspector = Inspector::new(source.clone());
+        let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
         inspector.wait_open();
         let (woken, wakes) = std::sync::mpsc::channel();
         assert_eq!(
@@ -552,7 +554,9 @@ mod tests {
         let (step, release) = hang(element(false, 50004));
         source.0.push(step);
         source.0.push(Step::Answer(element(true, 50004)));
-        let inspector = Inspector::new(source.clone()).with_late_fresh(SHORT);
+        let inspector = Inspector::new(source.clone())
+            .with_late_call_limit(LONG)
+            .with_late_fresh(SHORT);
         inspector.wait_open();
         let (woken, wakes) = std::sync::mpsc::channel();
         assert_eq!(
@@ -659,7 +663,7 @@ mod tests {
         let (woken, _wakes) = std::sync::mpsc::channel();
         let desk = FakeDesk::with(ENGINE);
         let source = FakeSource::answering(&[custom; 6]);
-        let inspector = Inspector::new(source.clone());
+        let inspector = Inspector::new(source.clone()).with_late_call_limit(LONG);
         let look = |epoch, again| {
             judge(
                 &desk,
@@ -762,7 +766,7 @@ mod tests {
     fn a_probe_that_cannot_be_opened_is_not_normal() {
         let source = FakeSource::answering(&[element(false, 50004)]);
         *source.0.refuse_open.lock().expect("not poisoned") = true;
-        let inspector = Inspector::new(source);
+        let inspector = Inspector::new(source).with_late_call_limit(LONG);
         let desk = FakeDesk::showing(ControlKind::Other);
         assert_eq!(
             judge(&desk, &inspector, &EDITOR.token(), None, LONG),
