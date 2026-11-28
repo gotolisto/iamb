@@ -22,6 +22,7 @@
 
 pub mod clock;
 pub mod crash;
+pub mod diagnosis;
 pub mod library;
 pub mod log;
 pub mod paths;

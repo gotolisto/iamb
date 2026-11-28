@@ -24,8 +24,8 @@ use windows_sys::Win32::System::Threading::{
 use windows_sys::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, DispatchMessageW, EVENT_OBJECT_FOCUS, EVENT_SYSTEM_FOREGROUND,
-    EnumChildWindows, FindWindowExW, GA_ROOTOWNER, GUITHREADINFO, GWL_STYLE, GetAncestor,
-    GetClassNameW, GetForegroundWindow, GetGUIThreadInfo, GetMessageW, GetWindowLongW,
+    EnumChildWindows, FindWindowExW, GA_PARENT, GA_ROOTOWNER, GUITHREADINFO, GWL_STYLE,
+    GetAncestor, GetClassNameW, GetForegroundWindow, GetGUIThreadInfo, GetMessageW, GetWindowLongW,
     GetWindowThreadProcessId, IsIconic, IsWindow, KillTimer, MSG, PM_NOREMOVE, PeekMessageW,
     PostThreadMessageW, RealGetWindowClassW, SW_RESTORE, SetForegroundWindow, SetTimer,
     ShowWindowAsync, WINEVENT_OUTOFCONTEXT, WM_APP, WM_QUIT, WM_TIMER, WM_USER,
@@ -319,36 +319,68 @@ impl Desk for SystemDesk {
         }
     }
 
-    fn has_window_in(&self, front: Front, pid: u32) -> bool {
-        /// What the enumeration looks for, and whether it found it.
-        struct Search {
-            pid: u32,
-            found: bool,
-        }
-        unsafe extern "system" fn visit(window: HWND, search: LPARAM) -> BOOL {
-            // SAFETY: `search` is the `Search` passed below, alive for the whole enumeration,
-            // and only this callback uses it, on this thread.
-            let search = unsafe { &mut *(search as *mut Search) };
-            if owner(window).is_some_and(|(_, pid)| pid == search.pid) {
-                search.found = true;
-                // Stop: found.
-                return 0;
-            }
-            1
-        }
-        let mut search = Search { pid, found: false };
-        // SAFETY: the callback is a function of this crate with the right signature, and the
-        // parameter is a pointer to `search`, which outlives the call. The enumeration walks
-        // the system's list of windows and sends none of them a message.
-        unsafe {
-            EnumChildWindows(
-                handle(front.window),
-                Some(visit),
-                (&raw mut search) as LPARAM,
-            )
-        };
-        search.found
+    fn on_control_line(&self, front: Front, control: u64, pid: u32) -> bool {
+        on_control_line(front, control, pid)
     }
+}
+
+/// True when process `pid` owns a window on the line of `control` inside `front`: one of its
+/// ancestors up to `front`, or one of its descendants (`Desk::on_control_line`). Reads the
+/// system's window tree; sends no window a message.
+pub(super) fn on_control_line(front: Front, control: u64, pid: u32) -> bool {
+    /// What the enumeration looks for, and whether it found it.
+    struct Search {
+        pid: u32,
+        found: bool,
+    }
+    unsafe extern "system" fn visit(window: HWND, search: LPARAM) -> BOOL {
+        // SAFETY: `search` is the `Search` passed below, alive for the whole enumeration,
+        // and only this callback uses it, on this thread.
+        let search = unsafe { &mut *(search as *mut Search) };
+        if owner(window).is_some_and(|(_, pid)| pid == search.pid) {
+            search.found = true;
+            // Stop: found.
+            return 0;
+        }
+        1
+    }
+    let (front_window, control) = (handle(front.window), handle(control));
+    // A null parent would enumerate every top-level window of the desktop.
+    if front_window.is_null() || control.is_null() {
+        return false;
+    }
+    let owned = |window: HWND| owner(window).is_some_and(|(_, owner)| owner == pid);
+    // Up: the control and its ancestors, to the window in front (a control outside it has no
+    // line inside it).
+    let mut window = control;
+    let mut above = false;
+    loop {
+        if window.is_null() {
+            return false;
+        }
+        above |= owned(window);
+        if window == front_window {
+            break;
+        }
+        // SAFETY: a stale handle is answered with null. The call walks the window tree.
+        window = unsafe { GetAncestor(window, GA_PARENT) };
+    }
+    if above {
+        return true;
+    }
+    // A window in front that has the focus itself (no focused child: a browser's top-level
+    // window) has no line below it: its descendants are every window inside it, which is not
+    // what a line is (the re-verification's N3).
+    if control == front_window {
+        return false;
+    }
+    // Down: the control's descendants.
+    let mut search = Search { pid, found: false };
+    // SAFETY: the callback is a function of this crate with the right signature, and the
+    // parameter is a pointer to `search`, which outlives the call. `control` is not null, so
+    // only its own descendants are walked; no window is sent a message.
+    unsafe { EnumChildWindows(control, Some(visit), (&raw mut search) as LPARAM) };
+    search.found
 }
 
 /// The process whose application `front` shows. For the frame the system puts around an

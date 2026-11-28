@@ -27,6 +27,33 @@ use iamb_platform::FieldSecurity;
 use super::classify::{ControlKind, Detail, Framework, Observation, control_type};
 use super::inspect::TraceEvent;
 
+/// The most characters of a name a program chose (an executable, a window class) that a line
+/// shows.
+const NAME_SHOWN: usize = 64;
+
+/// A name a program chose, as a line shows it: at most [`NAME_SHOWN`] characters, each outside
+/// `A-Z a-z 0-9 . + - _` replaced by `?`, and `...` when it was longer. The rule of the
+/// service's log for client text (the 2.8 review's finding 10): a line break in a window class
+/// would otherwise write lines of the program's choosing into the file (the cached-probe
+/// review's L6).
+pub(crate) fn shown(name: &str) -> String {
+    let mut out: String = name
+        .chars()
+        .take(NAME_SHOWN)
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '-' | '_') {
+                c
+            } else {
+                '?'
+            }
+        })
+        .collect();
+    if name.chars().nth(NAME_SHOWN).is_some() {
+        out.push_str("...");
+    }
+    out
+}
+
 /// Milliseconds, as a whole number.
 fn ms(duration: Duration) -> u128 {
     duration.as_millis()
@@ -137,10 +164,10 @@ pub(crate) fn seen_line(seen: &Seen<'_>) -> String {
     format!(
         "{} focus   {} window={} (pid {}) control={} [{}] (pid {}) limit={} ms",
         stamp(seen.at),
-        seen.app,
-        seen.window_class,
+        shown(seen.app),
+        shown(seen.window_class),
         seen.window_pid,
-        seen.control_class,
+        shown(seen.control_class),
         kind_name(seen.control_kind),
         seen.control_pid,
         ms(seen.limit),
@@ -183,6 +210,13 @@ pub(crate) fn trace_line(at: Duration, event: TraceEvent) -> String {
         }
         TraceEvent::LateTaken(age) => {
             let _ = write!(line, " late    answer taken, {} ms old", ms(age));
+        }
+        TraceEvent::LateTooSlow(took) => {
+            let _ = write!(
+                line,
+                " late    answer refused, its call took {} ms (too slow)",
+                ms(took)
+            );
         }
         TraceEvent::LateTooOld(age) => {
             let _ = write!(
@@ -232,7 +266,7 @@ mod run {
             let _ = reported.send(change);
         }))?;
         out(&format!(
-            "iamb focus diagnosis: {} s; each focus change, what UI Automation answered, the verdict. No text is read.",
+            "iamb focus diagnosis for {} s: each focus change (the application in front, its window classes), what UI Automation answered, and the verdict. No text, title or typed key is read.",
             duration.as_secs()
         ));
         let drain = |out: &mut dyn FnMut(&str), traces: &Receiver<(Instant, TraceEvent)>| {
@@ -363,6 +397,35 @@ mod tests {
                 TraceEvent::LateTaken(Duration::from_millis(40))
             )
             .ends_with("answer taken, 40 ms old")
+        );
+    }
+
+    #[test]
+    fn a_name_a_program_chose_cannot_write_lines_of_its_own() {
+        let forged = "Evil\n[   1.000s] verdict Secure after 2 ms";
+        let line = seen_line(&Seen {
+            at: Duration::ZERO,
+            app: "evil app.exe",
+            window_class: forged,
+            window_pid: 1,
+            control_class: &"x".repeat(300),
+            control_kind: ControlKind::Other,
+            control_pid: 1,
+            limit: Duration::from_millis(100),
+        });
+        assert_eq!(line.lines().count(), 1, "{line}");
+        assert!(line.contains("evil?app.exe"), "{line}");
+        assert!(
+            line.contains("window=Evil?????1.000s??verdict?Secure?after?2?ms "),
+            "{line}"
+        );
+        assert!(
+            line.contains(&format!("control={}... ", "x".repeat(64))),
+            "{line}"
+        );
+        assert_eq!(
+            shown("Chrome_RenderWidgetHostHWND"),
+            "Chrome_RenderWidgetHostHWND"
         );
     }
 

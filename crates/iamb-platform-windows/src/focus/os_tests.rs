@@ -101,6 +101,122 @@ fn ui_automation_tells_a_password_field_from_a_text_field() {
     }
 }
 
+/// The control type of a list item (`UIA_ListItemControlTypeId`).
+const LIST_ITEM: i32 = 50007;
+
+#[test]
+fn the_cached_window_handle_is_the_controls_own_and_none_for_an_item() {
+    // The cached-probe review's L7: pins `get_CachedNativeWindowHandle` (slot 68) against
+    // the real handle, both ways, and `HasKeyboardFocus` on an element that is not a window.
+    let _alone = alone();
+    let Some(window) = open(Field::Plain) else {
+        return;
+    };
+    let mut session = Session::open().expect("UI Automation is part of Windows");
+    let plain = Observation::Element {
+        password: false,
+        control_type: control_type::EDIT,
+        process: std::process::id(),
+        detail: OWN_EDIT,
+    };
+    assert_eq!(observed(&mut session, plain), plain);
+    assert_eq!(
+        session.focused_native_window(),
+        Some(window.field_number(Field::Plain))
+    );
+
+    if !window.focus(Field::List) {
+        skip("the test window lost the foreground");
+        return;
+    }
+    let item = Observation::Element {
+        password: false,
+        control_type: LIST_ITEM,
+        process: std::process::id(),
+        detail: Detail {
+            has_focus: true,
+            window_root: false,
+            // The item has no window of its own: the system describes it through the older
+            // accessibility interface, which reports no framework of the known ones (seen on
+            // the Windows runner). The framework only adds detail; what this test pins is the
+            // handle, the focus and "not a window's own".
+            framework: Framework::Other,
+        },
+    };
+    assert_eq!(observed(&mut session, item), item);
+    assert_eq!(session.focused_native_window(), Some(0));
+}
+
+#[test]
+fn the_line_of_the_focused_control_is_its_own_window_tree() {
+    // The cached-probe review's L7, for `on_control_line` (finding L4).
+    let _alone = alone();
+    let Some(window) = open(Field::Plain) else {
+        return;
+    };
+    let front = os::foreground().expect("a window is in front");
+    let control = SystemDesk.control(front).window;
+    assert_eq!(control, window.field_number(Field::Plain));
+    let own = std::process::id();
+    assert!(SystemDesk.on_control_line(front, control, own));
+    // Process ids are multiples of four: no process owns a window here.
+    assert!(!SystemDesk.on_control_line(front, control, 0xFFFF_FFF1));
+    // No control, or no window in front: no line (never the whole desktop).
+    assert!(!SystemDesk.on_control_line(front, 0, own));
+    assert!(!SystemDesk.on_control_line(
+        Front {
+            window: 0,
+            pid: own
+        },
+        control,
+        own
+    ));
+}
+
+#[test]
+fn an_element_without_the_focus_says_so() {
+    // The re-verification's L7: `HasKeyboardFocus` (slot 58) seen false, on the button while
+    // the text field has the focus, and its window handle its own.
+    let _alone = alone();
+    let Some(window) = open(Field::Plain) else {
+        return;
+    };
+    let session = Session::open().expect("UI Automation is part of Windows");
+    let seen = session.observe_window(window.field_number(Field::Button));
+    let Observation::Element {
+        password,
+        control_type,
+        process,
+        detail,
+    } = seen
+    else {
+        panic!("{seen:?}");
+    };
+    assert!(!password);
+    assert_eq!(control_type, BUTTON);
+    assert_eq!(process, std::process::id());
+    assert!(!detail.has_focus, "{seen:?}");
+    assert!(detail.window_root, "{seen:?}");
+}
+
+#[test]
+fn the_line_reaches_down_into_a_control_with_children() {
+    // The re-verification's L7: the downward walk of `on_control_line` runs its callback (the
+    // combo box has an edit box of its own) and finds nothing for a process that owns no
+    // window; this process owns the combo box itself.
+    let _alone = alone();
+    let Some(window) = open(Field::Plain) else {
+        return;
+    };
+    let front = os::foreground().expect("a window is in front");
+    let combo = window.combo_number();
+    assert!(os::on_control_line(front, combo, std::process::id()));
+    assert!(!os::on_control_line(front, combo, 0xFFFF_FFF1));
+    // The window in front as the control: no walk down, only the window itself (N3).
+    assert!(!os::on_control_line(front, front.window, 0xFFFF_FFF1));
+    assert!(os::on_control_line(front, front.window, std::process::id()));
+}
+
 #[test]
 fn a_session_can_be_opened_and_closed_repeatedly() {
     for _ in 0..3 {

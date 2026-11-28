@@ -10,6 +10,7 @@
 //! | Interface | Slot | Method |
 //! | --- | --- | --- |
 //! | all three | 2 | `Release` |
+//! | `IUIAutomation` | 10 | `ElementFromHandleBuildCache` (the Windows tests only) |
 //! | `IUIAutomation` | 12 | `GetFocusedElementBuildCache` |
 //! | `IUIAutomation` | 20 | `CreateCacheRequest` |
 //! | `IUIAutomationCacheRequest` | 3 | `AddProperty` |
@@ -32,9 +33,10 @@
 //! The focused element and its properties come in **one** request: a cache request that names
 //! them ([`PROPERTIES`]), passed to `GetFocusedElementBuildCache`. UI Automation fetches the
 //! element and the properties together, in one round trip to the application that provides
-//! it, and the `Cached` getters then read them inside this process. So the element is chosen
-//! when the answer arrives, and an application that takes long over each call takes long
-//! once, not four times (the real-machine data of the late-answer work: an answer that took
+//! it, and the `Cached` getters then read them inside this process. The application reads the
+//! element and its properties together, at one moment somewhere inside that call (the answer
+//! is as old as the call took, which `inspect` bounds), and an application that takes long
+//! over each call takes long once, not four times (the real-machine data of the late-answer work: an answer that took
 //! four round trips arrived older than its freshness bound, every time).
 //!
 //! # Privacy
@@ -93,10 +95,21 @@ struct AutomationMethods {
     _unknown: [usize; 2],
     /// Slot 2.
     release: Release,
-    /// Slots 3 to 11: `CompareElements`, `CompareRuntimeIds`, `GetRootElement`,
+    /// Slots 3 to 9: `CompareElements`, `CompareRuntimeIds`, `GetRootElement`,
     /// `ElementFromHandle`, `ElementFromPoint`, `GetFocusedElement`,
-    /// `GetRootElementBuildCache`, `ElementFromHandleBuildCache`, `ElementFromPointBuildCache`.
-    _before_focused: [usize; 9],
+    /// `GetRootElementBuildCache`.
+    _before_from_handle: [usize; 7],
+    /// Slot 10, `ElementFromHandleBuildCache`: only the Windows tests call it, to see an
+    /// element that does not have the focus (`Session::observe_window`).
+    #[cfg_attr(not(test), allow(dead_code))]
+    element_from_handle_build_cache: unsafe extern "system" fn(
+        this: *mut c_void,
+        window: *mut c_void,
+        cache_request: *mut c_void,
+        element: *mut *mut c_void,
+    ) -> i32,
+    /// Slot 11: `ElementFromPointBuildCache`.
+    _before_focused: [usize; 1],
     /// Slot 12.
     get_focused_element_build_cache: unsafe extern "system" fn(
         this: *mut c_void,
@@ -161,6 +174,7 @@ struct ElementMethods {
 
 const _: () = {
     assert!(offset_of!(AutomationMethods, release) == 2 * SLOT);
+    assert!(offset_of!(AutomationMethods, element_from_handle_build_cache) == 10 * SLOT);
     assert!(offset_of!(AutomationMethods, get_focused_element_build_cache) == 12 * SLOT);
     assert!(offset_of!(AutomationMethods, create_cache_request) == 20 * SLOT);
     assert!(offset_of!(CacheRequestMethods, release) == 2 * SLOT);
@@ -285,6 +299,11 @@ impl Element {
 
     /// Whether the element is a window's own: its cached `NativeWindowHandle` is not 0.
     fn window_root(&self) -> Result<bool, ()> {
+        self.native_window().map(|window| window != 0)
+    }
+
+    /// The cached `NativeWindowHandle`, as a number (0: none).
+    fn native_window(&self) -> Result<u64, ()> {
         let mut window = ptr::null_mut();
         // SAFETY: the method is called on its own object with a valid place for a handle.
         let result = unsafe {
@@ -293,7 +312,7 @@ impl Element {
         if result < 0 {
             Err(())
         } else {
-            Ok(!window.is_null())
+            Ok(window as usize as u64)
         }
     }
 
@@ -441,6 +460,49 @@ impl Session {
             observation,
             ..probed
         }
+    }
+}
+
+#[cfg(test)]
+impl Session {
+    /// What the cache request gives for the element of `window`, focused or not: for the
+    /// Windows test that sees `HasKeyboardFocus` false (`os_tests`).
+    pub(super) fn observe_window(&self, window: u64) -> Observation {
+        let (Some(automation), Some(request)) = (&self.automation, &self.request) else {
+            return Observation::Failed;
+        };
+        let mut element = ptr::null_mut();
+        // SAFETY: the method is called on its own object with a window handle (a stale one is
+        // refused), a live cache request and a valid place for the result, which on success
+        // is an `IUIAutomationElement` whose reference belongs to the caller.
+        let result = unsafe {
+            (automation.methods().element_from_handle_build_cache)(
+                automation.0.as_ptr(),
+                usize::try_from(window).unwrap_or(0) as *mut c_void,
+                request.0.as_ptr(),
+                &raw mut element,
+            )
+        };
+        match NonNull::new(element) {
+            Some(element) if result >= 0 => Element(element).observation(),
+            Some(element) => {
+                drop(Element(element));
+                Observation::Failed
+            }
+            None => Observation::Failed,
+        }
+    }
+
+    /// The focused element's cached `NativeWindowHandle`, for the Windows test that pins its
+    /// slot against the real handle (`os_tests`). `None` when there is none to read.
+    pub(super) fn focused_native_window(&self) -> Option<u64> {
+        let (automation, request) = (self.automation.as_ref()?, self.request.as_ref()?);
+        automation
+            .focused_element(request)
+            .ok()
+            .flatten()?
+            .native_window()
+            .ok()
     }
 }
 

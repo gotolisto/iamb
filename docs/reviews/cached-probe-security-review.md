@@ -347,3 +347,475 @@ Windows test of `has_window_in` with a window's own child and with a process tha
 - Where, inside a slow call, an engine reads the focus (finding 3): the run shows what the
   bound counts, not what a real engine does within the call.
 - The diagnostic's run on Windows: its lines were tested as formatting; the loop was read.
+
+## 5. Fixes
+
+Made after the review, on top of `7eb13e2`, not committed. Run on Linux; the Windows code was
+compiled and linted for Windows (`clippy --target x86_64-pc-windows-msvc`, with and without
+`probe`), not run. "Fails without the fix" was checked by taking each fix out again in the tree
+and running the test.
+
+| Finding | Fix | Test (fails without the fix) |
+| --- | --- | --- |
+| 1 (medium) | A custom element under a browser-engine control is believed only when **all** hold (`classify::custom_candidate`): its framework is the engine's own (`FrameworkId` "Chrome", which the system's web view reports too; `Mozilla*` controls and translated older-interface elements stay `Unknown`), it has the keyboard focus, it names no window, and it is **not the first look**: the first such answer for a subject (window, focused control, kind, count) is `NotInspectable` and looked at again; only the same answer at a report the watcher made again, with no change counted between, settles (`Inspector::custom_again`, `Watching::again`). The window handle can now only refuse: a non-zero handle, or one that cannot be read, refuses; its absence is not relied on as evidence. The module docs of `classify.rs` say that none of the facts proves a built tree: two tell a node from a window, the framework keeps the rule to what was measured, the second look gives a placeholder time to change. `focus.rs`'s limit on editable regions says the same. The manual cases per engine family (cold start into a password field, a cross-origin frame, a reload) are not added to `docs/compatibility-run.md` beyond the diagnostic's section: they need an engine to write the pass/fail lines against | `classify`: `a_custom_element_of_the_engine_is_believed_only_at_a_second_look` (another framework, the system's own, no focus, a window's own: never; the first look: not believed). `secure`: `a_focused_custom_element_of_the_engine_is_believed_at_the_second_look_only` (first look `NotInspectable`, look again `Normal`, a counted change starts again, a re-judge does not settle, no watcher never) |
+| 2 | A row in architecture §8's detection limits: a password box a page draws itself, with an unusual role and no `IsPassword`, is an ordinary field at the second look inside an engine window; the remedy is the exclusion list | Docs only |
+| 3 | A late answer is taken only when its call took at most `LATE_CALL_LIMIT` (250 ms) as well as arriving at most 250 ms before; the mailbox keeps the call's duration, and a refused one is traced (`LateTooSlow`) and shown by the diagnostic. The docs of `focus.rs`, `inspect.rs` and the §8 row say what the age is: as long as its call took plus the wait after it, at most half a second | `inspect`: `a_late_answer_whose_call_took_too_long_is_not_taken` |
+| 4 | `Desk::has_window_in` is replaced by `on_control_line(front, control, pid)`: a process is accepted when it owns the focused control's window, one of its ancestors up to the window in front, or one of its descendants (`EnumChildWindows` of the control, not of the top-level window). A control outside the window in front has no line; a null control or a null window in front gives `false`, so the enumeration can never walk the desktop | Fake: `a_late_answer_from_another_process_with_a_window_inside_is_believed` (renamed in spirit, the fake's set stands for the line). Windows: `os_tests::the_line_of_the_focused_control_is_its_own_window_tree` |
+| 5 | `iamb_service::diagnosis`: before a run, older `focus-diagnosis-*.txt` files are removed so that five remain with the new one; a file stops at 2 MB and its last line says so; its first line says that it names the applications that were in front, their window classes and the times, and holds no text. The path is printed at the start on standard output and standard error. `docs/compatibility-run.md` has a section saying where the file goes and how to run it. Masking excluded applications was not done: the diagnostic exists to show what the check sees, and an excluded application is decided before the check | `diagnosis`: `the_oldest_files_go_and_others_stay`, `a_file_says_what_it_holds_and_stops_at_its_limit` (new module) |
+| 6 | The application name and both class names pass through the log's rule for client text (`diagnose::shown`): at most 64 characters, each outside `A-Z a-z 0-9 . + - _` replaced by `?`, `...` when cut | `diagnose`: `a_name_a_program_chose_cannot_write_lines_of_its_own` (a class with a line break and a forged verdict stays one line) |
+| 7 | Windows tests: `the_cached_window_handle_is_the_controls_own_and_none_for_an_item` compares the cached `NativeWindowHandle` with the test control's real handle, then focuses the item of a new list box in the test window (an element that is not a window) and expects list item, focus yes, a window's own no, handle 0; `the_line_of_the_focused_control_is_its_own_window_tree` tests `on_control_line` with the test's own process, a process that owns none, no control and no window in front. A real engine's custom element through the probe is still not tested: no engine on the build machines | Windows only (CI's Windows leg); compiled here |
+
+Checks: `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`;
+the lint job's cross-target clippy steps (windows-msvc with and without `probe`,
+aarch64-apple-darwin with and without `probe`, the testkit's); `cargo xtask banned-terms`
+(0 hits); `cargo test --workspace --exclude iamb-desktop` (114 test binaries); `cargo test -p
+iamb-desktop`; `pnpm typecheck` and `pnpm test` (550): all pass. Not checked: anything on
+Windows, in particular the two new Windows tests, which run in CI's Windows leg for the first
+time.
+
+### 5.1 After the re-verification (section 6)
+
+Made on top of `c4e0025`, not committed; run on Linux, the Windows code compiled and linted for
+Windows only.
+
+| Item | Fix | Test |
+| --- | --- | --- |
+| N1 (medium, function) | Both halves. **The loop:** the report a late answer's arrival makes now spends one of the window's looks again (`rules::Settle::spend`, called by the watcher before it reports for an arrival), like a pause does; the wake is still armed again after a refusal, but every report it causes comes out of the same budget of five, so after one focus change the window is asked at most six times and then stays `Unknown` until the next change. Counting was chosen over not re-arming because it bounds every path (pauses, arrivals, refusals of any kind) with one number, where not re-arming would leave the pause timer free to restart the cycle. **The limit:** `LATE_CALL_LIMIT` is 1 s, checked at compile time to be no lower than `FIRST_LOOK_TIMEOUT` (300 ms): a late answer only exists when its call outlasted its question, so a limit below the longest wait in time refused every late answer after a first look, while an answer in time is already believed with a call of up to 300 ms. One second keeps a late answer at most 1.25 s old when it is used (call plus wait), which `focus.rs`, `inspect.rs`, `secure.rs` and the §8 row now say; no measured call duration was available to set it from (the diagnostic now prints them). The overrides of `2c60590` (`with_late_call_limit(LONG)`) are removed: the tests run with the real limit, which is far from their calls | `rules`: `a_late_answer_spends_the_same_budget_as_a_pause`. `secure`, with the real limits and a fake whose every call sleeps (`Step::Slow`), the watcher played as `watch.rs` and `focus.rs` play it: `a_slow_application_is_judged_once_by_its_late_answer_with_the_real_limits` (calls of 600 ms: two questions, one call, `Normal`, and `Secure` for a password field; fails with the 250 ms limit), `a_too_slow_application_settles_unknown_on_the_budget` (calls of 1.6 s: `Unknown(Timeout)` after at most six questions, no more calls than questions), `a_fast_application_is_judged_at_the_first_look` (20 ms). The durations are at least 300 ms from every limit; the pauses are not waited for (a pause only lets the call finish, and the test waits for the arrival itself) |
+| N2 | A late answer refused by the process rule, a timeout and no probe now call `custom_again(subject, false)`: the next custom answer is a first look again | `secure`: `an_unjudged_answer_between_two_looks_voids_the_first_custom_one` (fails without the reset) |
+| N3 | `on_control_line` does not walk down when the focused control is the window in front itself: then only the window's own process and its ancestors count | Windows: `os_tests::the_line_reaches_down_into_a_control_with_children` (last two lines) |
+| L3 doc | `uia.rs`: "the application reads the element and its properties together, at one moment somewhere inside that call (the answer is as old as the call took, which `inspect` bounds)" | Docs only |
+| L7 | `HasKeyboardFocus` seen false: a test-only `Session::observe_window` (`ElementFromHandleBuildCache`, `IUIAutomation` slot 10, counted from the same generated tables and checked at compile time) reads the button while the text field has the focus. The downward walk runs its callback on a new combo box in the test window, whose edit box is its own child window | Windows: `os_tests::an_element_without_the_focus_says_so`, `os_tests::the_line_reaches_down_into_a_control_with_children` |
+
+Checks: `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`;
+cross-target clippy (windows-msvc with and without `probe`, aarch64-apple-darwin with and without
+`probe`, the testkit's Windows step); `cargo xtask banned-terms` (0 hits); `cargo test -p
+iamb-platform-windows` three times in a row (254 unit tests each time, about 7 s, the same
+timings) and once more with every core kept busy by other processes (254 pass); `cargo test
+--workspace --exclude iamb-desktop` (114 test binaries); `cargo test -p iamb-desktop`: all pass.
+Not checked: anything on Windows; the four Windows tests added here and in section 5 run in CI's
+Windows leg.
+
+### 5.2 After the second re-verification (section 7)
+
+Made on top of `231b985`, not committed; run on Linux, the Windows code compiled and linted for
+Windows only.
+
+| Item | Fix | Test (fails without the fix) |
+| --- | --- | --- |
+| N4 (1), the void | The first look of a custom element is voided only on evidence: a late answer refused because a process off the focused control's line provided it. A timeout and a probe that could not open no longer void it: they are the same look still waiting, and the late answer that follows is the second look. Docs: `classify.rs` ("A control without a kind") | `secure`: `a_timeout_between_two_custom_looks_keeps_the_first_and_another_process_voids_it` (custom, timeout, late custom: `Normal`; custom, timeout, late from process 77: refused, then a first look again, then `Normal`) |
+| N4 (2), the double charge | `Settle::arrival(window, timer_pending)`: an arrival with a pause's timer pending reports in that timer's place (the timer is cancelled) and costs nothing more, since the timer's look was paid when it was set; without one it spends a look. The watcher calls it with `self.timer.is_some()`. Docs: `focus.rs` ("On the watcher's budget") | `rules`: `an_arrival_that_replaces_a_pending_pause_costs_nothing_more`, which plays all 4,096 patterns of twelve pauses and arrivals as the watcher plays them and finds at most five reports after a change in every one, and checks the pending and not-pending cases one by one |
+| N4 (3), the run | With the real limits and the watcher's part played as above: a custom element of the engine's framework with calls of 200 ms and of 400 ms is `Normal` within the budget; a password element in the same setup is `Secure`; the questions stay at most six and the calls no more than the questions. The test waits for an arrival up to the call plus 700 ms and does not wait out the pauses | `secure`: `a_custom_editor_of_a_slow_application_is_believed_within_the_budget` (fails with the void on a timeout) |
+| Optional: confirm a late `Normal` | **Not done.** For an application slower than 100 ms the confirming look itself times out, and its `Unknown(Timeout)` would replace a settled `Normal`: the engine would flip to unknown after every late `Normal`, and the confirmation's own late answer would ask for a confirmation again, until the budget ends, possibly on the timeout. Making it sound needs a confirmation that cannot be lowered by a timeout (two late answers that agree, as the custom rule does), which costs two more looks and does not fit the budget for calls of a second. The 1 s limit stands as the bound, documented | — |
+
+Checks: `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`;
+cross-target clippy (windows-msvc with and without `probe`, aarch64-apple-darwin with and without
+`probe`); `cargo xtask banned-terms` (0 hits); `cargo test -p iamb-platform-windows` three times
+in a row (256 unit tests each time, about 10 s, the same timings): all pass. Not checked:
+anything on Windows.
+
+## 6. Re-verification
+
+Date: 2026-11-28 · Commit re-verified: `cd4b07d` ("Close the strict review's findings on the
+cached probe"), read as `git show cd4b07d`. While this was written the checkout moved on by two
+commits that change tests only, and both were read: `c38b51d` (one expectation of a Windows
+test) and `2c60590` (the tests of late answers set the call limit out of reach). Same reviewer,
+same rule: judged from the code, not from the commit message or from section 5.
+
+What was run, all on Linux from an exported copy with a build folder outside the tree: the 62
+unit tests of `focus::` and the two of `iamb_service::diagnosis` pass; four scratch tests were
+added outside the tree (three on the fakes of `secure`, one on `diagnosis`). CI was read for
+the Windows side: on `cd4b07d` the Windows leg failed in one of the two new tests, on an
+expectation about the framework name that `c38b51d` then corrected, and the macOS leg failed in
+a test of late answers (6.3, "CI"); the run for `2c60590` had not finished when this was
+written. Nothing was run on Windows by me, and there was still no browser engine.
+
+### 6.1 Verdict
+
+Every finding of section 2 was acted on, and the fences asked for in finding 1 are in. I could
+not make a password field or another application's field `Normal` through the new second-look
+rule: one call can never serve as both looks, a counted change starts the count again, and a
+real password field at the second look is `Secure`.
+
+One of the fixes brings a new problem that should be fixed before this ships. It fails closed,
+so it is not a way to a wrong `Normal`:
+
+- **Medium (function, not confidentiality), shown by a run:** the 250 ms limit on a late
+  answer's call is below the 300 ms the first look waits, and a refused late answer asks
+  afresh with the wake armed again. An application whose calls take longer than 250 ms is
+  never judged by a late answer, and it is asked again the moment each answer arrives, for as
+  long as its window is in front (6.3, N1). This undoes, for such applications, what `b632eb4`
+  was written for.
+
+Two low notes besides (N2, N3), and what is still open in findings 4 and 7.
+
+### 6.2 The findings
+
+| Finding | Status | Evidence |
+| --- | --- | --- |
+| 1 (medium) custom-element premise | **Closed in code; the manual engine cases are still open** | `classify.rs:243-260`: a custom element is a candidate only with the engine's own framework, the focus and no window handle; `secure.rs:158-162` believes a candidate only at a look again whose answer before, for the same subject, was a candidate too. Run: custom then custom at a look again: `Unknown`, `Normal`. A custom element of another framework or of the system's own, three times: `Unknown` every time. The docs no longer call the two facts evidence of a built tree. Not done, and said so in section 5: the manual cases per engine family. They are the only thing that can test the premise itself; the diagnostic is there to run them with |
+| 2 page-drawn password box | **Closed** | The limits table has the row (`docs/architecture.md:981`), with the exclusion list as the remedy; `focus.rs` and `classify.rs` say the same |
+| 3 age leaves out the call | **Closed as found; the fix has a new problem (N1)** | `inspect.rs:67`, `inspect.rs:431-433`: a late answer whose call took more than 250 ms is not taken. `focus.rs`, `inspect.rs` and the limits row now say what the age is (call plus wait, at most half a second). One sentence was missed: `uia.rs:35-36` still says "the element is chosen when the answer arrives" |
+| 4 process rule | **Closed for the case described; unchanged when the focused control is the window in front** | `os.rs:330-378`: the control, its ancestors up to the window in front, its descendants. A sibling window's process (the preview pane beside the web view) is no longer accepted. A null control or null window gives `false` before any enumeration. See N3 for the case where the line is the whole window again |
+| 5 diagnostic files | **Closed** | `diagnosis.rs:41-59` removes the oldest files so that five remain with the new one; `diagnosis.rs:113-125` stops at 2 MB and says so; the first line says the file names applications and times; the path goes to both output streams and `docs/compatibility-run.md:129` says how to run it. Run: the two module tests pass; 2,991 lines of 700 bytes wrote 2,096,939 bytes against a limit of 2,097,152. Masking excluded applications was declined with a reason I accept: the diagnostic exists to show what the check sees |
+| 6 unescaped names | **Closed** | `diagnose.rs:39-55`: the application name and both class names are cut to 64 characters and everything outside letters, digits and `. + - _` becomes `?`. The module's test feeds the forged class of my scratch run and gets one line |
+| 7 Windows tests | **Partly closed** | The cached window handle is now compared with the control's real handle and with 0 for a list item, which pins slot 68 both ways; on `cd4b07d`'s Windows run the first of these comparisons passed before the test failed further down on the framework name (expected `Win32`, got none of the known names; `c38b51d` changes the expectation). `HasKeyboardFocus` is still only ever seen as yes, which is all the focused element can show. `on_control_line` is tested with the test's own process, a process that owns no window, no control and no window in front; the downward enumeration never reaches its callback in that test (an edit control has no children), and "a sibling is not on the line" cannot be tested in one process. No engine element goes through the probe |
+
+### 6.3 The points asked about, and what is new
+
+**The second look for custom elements.**
+
+- *Can one answer be both looks?* No. An answer in time is delivered to one question. A late
+  answer is removed from its slot when it is looked at (`inspect.rs:423`) and is not put back
+  once taken. Run: a late custom answer, then two more looks again: `Unknown` (the first
+  candidate), then a second call was made and its answer, a password field, gave `Secure`.
+- *Can the second look be a stale answer?* It can be a late answer of a second call, like any
+  look again: at most 250 ms of call plus 250 ms of wait. Run: custom in time, a look again
+  that timed out, its answer (call 200 ms) taken 200 ms after it came: `Normal`, where the
+  next scripted answer was a password field. That is the documented window of every late
+  answer, not a way round the rule; it is half a second and no longer unbounded.
+- *Across a change the watcher missed?* The subject carries the count, and a missed change by
+  definition does not move it, so the first look survives it. The second look is then a new
+  question about whatever has the focus now. Run: custom, then a password field: `Secure`;
+  custom, then the page root: `Unknown`, and the count starts again (the next custom is a first
+  look). It comes out `Normal` only if the newly focused thing is itself a focused custom
+  element of the engine twice, a pause apart: a page-drawn box (finding 2's limit) or a
+  placeholder that lasts longer than the pause. The two looks are always at least one pause
+  of the watcher apart (150 ms or more), because the second must be a report again.
+- *Another count, another control, a look that is not a report again, no watcher:* none
+  confirms (run, and the module's own test).
+
+**N1. Medium (function): a call over 250 ms is never used and is asked for ever.**
+`inspect.rs:67`, `inspect.rs:431-433`, `inspect.rs:470-475`, `watch.rs:139-150`,
+`crates/iamb-platform/src/focus.rs:25,38`. Shown by a run on the fakes with the real limits,
+with the watcher's part played as `watch.rs` and `focus.rs` write it; the watcher itself by
+reading.
+
+A late answer exists only when a call outlasted its question: 100 ms, or 300 ms for the first
+look at a window. With the limit at 250 ms:
+
+- after a first look, every late answer took more than 300 ms, so every one is refused;
+- a refused answer asks afresh inside the same question, with 100 ms, which times out again,
+  keeps the new call's answer for later and arms the wake again;
+- the wake reports the window again at once and is not counted against the five looks again
+  (`watch.rs:139-150` does not go through `Settle`), so the new answer is refused the same way.
+
+Run, every call 400 ms, change asked with 300 ms: `Unknown(Timeout)`, then six wakes, each
+"late TOO SLOW 400 ms", each asking again, 7 calls in 2.5 s, and nothing that ends it. The same
+with calls of 280 ms after a move inside a window (100 ms): never judged, although the first
+look at that window, with 300 ms, had believed the same application in time. Calls of 200 ms
+work as before: one wake, late answer taken, `Normal`.
+
+Scenario: a chat or mail application built on an engine answers in 350 ms while it is busy.
+At `b632eb4` its field was judged by the late answer after one call. Now nothing expands there
+at all, and for as long as its window is in front the service has a call into it running
+back to back, each one followed by a focus report to the worker. The slow application is made
+slower by the tool that waits for it.
+
+It also buys nothing: an answer in time at the first look is believed with a call of up to
+300 ms, so a late one of 260 ms is not the older answer.
+
+Fix: (1) end the cycle whatever the limit: a wake's report counts against the looks again
+(`Settle`), or a refused late answer asks afresh without arming another wake; (2) set
+`LATE_CALL_LIMIT` no lower than the longest wait in time, and from the measured data rather
+than by symmetry (the diagnostic prints `call N ms`; section 2 suggested one to two seconds),
+then state the resulting bound in the docs; (3) a test on the fakes: with every call slower
+than the limit, the number of questions after one change is bounded.
+
+**N2. Low: an answer between the two looks that says the focus was elsewhere does not start
+the count again.** `secure.rs:158-175`, `inspect.rs:355-360`. Shown by a run.
+
+`custom_again` is called for answers that are judged. A late answer refused by the process rule,
+a timeout and a refused late answer are not judged, so they leave the first look standing. Run:
+custom, a look again that timed out, its late answer about an element of process 77 (refused,
+`Unknown`), custom: `Normal`. The answer in the middle is the one piece of evidence the code
+ever gets that the focus was in another process with no change counted, which is when the
+first look should be void. The commit message says "the same answer comes again at the next
+look"; the code says "a candidate again at some later look again".
+
+Scenario: an engine window shows a custom placeholder; the focus goes to another process's
+window and back with neither change counted; the placeholder is still there. Two looks agree
+and the look between, which saw the other process, is ignored. It needs two missed changes
+and a placeholder that outlasts both, so it is low.
+
+Fix: in the branch that refuses a late answer by its process, call
+`custom_again(subject, false)`; say "a later look again" in the docs.
+
+**N3. Low, note: when the focused control is the window in front, its line is the whole
+window.** `os.rs:308-311` (no focused child: the window itself), `os.rs:371-377`.
+By reading.
+
+A browser keeps the keyboard focus on its top-level window, and so does any window the system
+names no focused child for. Then "the control's descendants" are all windows inside the window
+in front, which is the rule finding 4 was about. Nothing known needs it there: the element's
+process is the window's own and passes on that alone. Fix: skip the downward walk when the
+control is the window in front, or say in the docs that the line is the whole window in that
+case.
+
+**The 250 ms call limit.** It does what finding 3 asked: the staleness of a late answer is now
+bounded and documented. Its value is the problem (N1).
+
+**`on_control_line`.** Read line by line: the upward walk ends at the window in front or
+returns `false` when it runs off the top (a control outside the window has no line); it
+cannot loop; neither enumeration can start from a null window, so the desktop is never walked.
+A hostile child window made under the focused control still passes, as before and for the same
+reason it did not matter before (finding 4).
+
+**The diagnosis files.** Pruning looks only at regular files named `focus-diagnosis-<number>.txt`
+and leaves everything else (run: a folder and a link with such names, and other files, stay).
+Files stamped in the future, from a clock that was wrong once, are never the oldest, so they
+stay and each real run then displaces the real run before it; cosmetic. A run that reaches
+2 MB goes on printing and stops writing. Two runs at once can leave six files until the next
+run. None of this is a finding.
+
+**CI.** On `cd4b07d`, besides the Windows failure above, the macOS leg failed in
+`inspect::tests::the_bound_counts_from_the_choice_not_from_the_question`: expected the late
+answer, got a fresh question. That test ran with the real call limit, its fake call is held
+for about 180 ms, and on a loaded runner the call passed 250 ms and was refused as too slow
+(the reason `2c60590` gives; the 90 ms freshness bound of that test could fail the same way).
+So the new limit met the project's own tests before it met an application. `2c60590` answers
+by setting the limit to 10 s in every test that does not test it. That stops the failures;
+it also means that no test of `secure` or `inspect` now runs a late answer against the real
+limit (the one written for the limit sets its own, 60 ms), and none covers what happens after
+a refusal (N1). The test asked for under N1 should use the real limits.
+
+### 6.4 Not checked
+
+- Everything on Windows, again: the two new Windows tests have not yet passed anywhere I could
+  see (the run for `2c60590` was in progress).
+- The premise of finding 1 on a real engine, for the measured family as much as for the other:
+  whether a placeholder with the engine's own framework can stay custom and focused for longer
+  than one pause.
+- What the measured application's single call takes. N1 says what happens above 250 ms; whether
+  that application is above or below it I do not know.
+- The watcher's side of N1 was read, not run: the run plays the watcher by its code.
+
+## 7. Second re-verification
+
+Date: 2026-11-28 · Commit re-verified: `8105176` ("Bound the looks after a late answer and close
+the re-verification items"), read as `git show HEAD`, against N1 to N3, the doc sentence of
+finding 3 and the rest of finding 7. Same reviewer, judged from the code.
+
+Run on Linux from an exported copy with a build folder outside the tree: the 67 unit tests of
+`focus::` pass. Two scratch tests were added outside the tree. One plays a whole focus change
+with the real limits and the real pauses, the watcher as `watch.rs` writes it (a pause's timer,
+an arrival that cancels it if `Settle::spend` allows, a timer that fires); the watcher itself
+was read. CI for this commit had not finished; nothing was run on Windows by me.
+
+### 7.1 Verdict
+
+The loop is gone on every path, and the one-second limit is acceptable. One of the fixes goes
+further than section 6 asked and takes away, for slow applications, the thing `b632eb4` was
+written for. It fails closed:
+
+- **Medium (function, not confidentiality), shown by a run:** a timeout now voids the first
+  look of a custom element. In an application whose calls take longer than the 100 ms of a
+  look again, every look again times out, so the custom editor never gets its second look and
+  stays `Unknown` (N4 below). With calls of 20 ms it is `Normal` at the second look; with 200,
+  400 or 900 ms it never is.
+
+### 7.2 The items
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| N1, the loop | **Closed** | `watch.rs:139-150`: an arrival reports only if `Settle::spend` grants a look (`rules.rs:102`); a pause's timer was already paid for when it was set (`watch.rs:109-115`). Run, plain field, real limits and pauses: calls of 1.1 s and of 1.6 s end after 5 questions and 3 calls, about 5.5 s after the change, with two arrivals that found the budget spent and reported nothing |
+| N1, the limit | **Closed** | `inspect.rs:77-79`: 1 s, and a compile-time check that it is not below the first look. Run: calls of 400 ms and 900 ms are judged by their late answer (2 and 3 questions, one call). The tests run with the real limit again |
+| N2 | **Closed, and overshot (N4)** | `secure.rs:166-186`: a late answer refused by its process voids the first custom look, which is what was asked. So do a timeout and a probe that could not be opened, which was not |
+| N3 | **Closed** | `os.rs:371-376`: no walk down when the control is the window in front; the upward walk still covers the window's own process |
+| Finding 3, doc | **Closed** | `uia.rs:35-37` now says the application reads the element somewhere inside the call |
+| Finding 7, rest | **Closed as far as one process can** | `HasKeyboardFocus` is read as false on the button while the text field has the focus, through `ElementFromHandleBuildCache`; I counted its slot (10) from the same definitions and the signature matches. The downward walk now runs its callback on a combo box's own edit box. Both tests are Windows only and had not run when this was written. Still not possible in one process: a sibling window of another process, and an engine's element |
+
+### 7.3 The points asked about
+
+**Is the loop bounded on every path?** Yes, by reading and by the run. After one counted
+change the window is reported at most five more times:
+
+- *a pause* costs a look when its timer is set;
+- *an arrival* costs a look before it reports, and reports nothing when none is left;
+- *a refusal* (too slow, too old) asks afresh inside a question that was already paid for; the
+  new call's answer arms the wake again, but that wake needs a look like any other.
+
+The count starts again only in `changed()` (`watch.rs:74-80`): a window event that passes the
+watcher's rule, the timer finding another window in front, and the catch-up after an event
+that could not be handled. A report again does not go through it.
+
+**Does anything still loop?** Nothing in this code. What I could not rule out from Linux: an
+application that raises a focus event of its own each time it is asked would start the count
+again each time. That path is as old as the looks again and is not touched by this series;
+the diagnostic would show it as a `focus` line after every `uia` line.
+
+**Is one second acceptable, with a late answer up to 1.25 s old?** Yes, with one remark.
+
+- Run: a call of 950 ms answered "plain field"; the answer was used 1,190 ms after the call
+  began, verdict `Normal`, where a call at that moment would have said "password field". That
+  is the bound as documented (`focus.rs`, `inspect.rs`, the limits row at
+  `docs/architecture.md:982`).
+- What the bound limits is the time in which a field can change with no counted focus event
+  and the change then stays unseen. An answer in time has 0.3 s of it; a late one had no limit
+  at `b632eb4`, 0.5 s at `cd4b07d` at the price of N1, and has 1.25 s now. The changes that fit
+  in it are a "show password" switch right after the field was focused, and a move inside a
+  page whose engine is still switching its accessibility on and raises no event for it. Once
+  the engine raises focus events, a move is counted and the stale answer is dropped by its
+  subject.
+- The second look of finding 1 does not make this worse or better. A custom element needs two
+  calls a pause apart and each may be this old; an ordinary field is settled by one. Custom is
+  never the weaker case.
+- Section 2 proposed "one or two seconds" without data, and section 5.1 says no measured
+  duration was available either. So the number is a guess in the right range, mine as much as
+  the fixer's. When the diagnostic's `call N ms` lines from the measured application exist, set
+  the limit just above them: if they are under 400 ms, half a second gives the same function
+  with less than half the window.
+- If the window should not depend on the limit at all, there is a cheap way: let a `Normal`
+  that comes from a late answer ask for one more look (`Judgement` already carries the field
+  and `look_again` separately). The next look is a fresh call a pause later and either agrees
+  or says `Secure`. It costs one look of the budget. Optional; I would not hold the release
+  for it.
+
+**N4. Medium (function): a custom editor in an application slower than 100 ms is never
+believed.** `secure.rs:166-169`, `secure.rs:183`, `watch.rs:139-150`. Shown by a run with the
+real limits and pauses.
+
+Section 6's N2 asked for one thing: a late answer refused because another process provided it
+should void the first custom look, because it is evidence that the focus was elsewhere. The fix
+also voids on a timeout. A timeout is not an answer between two looks; it is the same look
+waiting, and its answer comes a moment later as the late answer. Voiding at the timeout throws
+the first look away just before the second arrives, and the second is then counted as a first.
+
+Run, custom element of the engine's framework, one focus change:
+
+| Every call takes | Verdicts | Result |
+| --- | --- | --- |
+| 20 ms | `NotInspectable`, `Normal` | believed at the second look, 170 ms after the change |
+| 200 ms | `NotInspectable`, `Timeout`, `NotInspectable`, `Timeout`, `Timeout` | never; budget spent after 6.7 s |
+| 400 ms | `Timeout`, `NotInspectable`, `Timeout`, `NotInspectable` | never |
+| 900 ms | `Timeout`, `Timeout`, `NotInspectable`, `Timeout`, `Timeout` | never |
+
+Scenario: the chat application on the system's web view that this series is about. Its message
+box is a custom element. The one sample line in the tree (the diagnostic's test: a call of
+180 ms, late by 82 ms) is in this band; whether it is that application's real figure I do not
+know. If it is, every look again, with 100 ms, times out, each timeout voids the look before,
+and the box stays `Unknown`: nothing expands there, as before `b632eb4`.
+
+A second thing makes it tight even without the void: an arrival pays a look, and the pause set
+after its verdict pays another, so a slow application has two or three real looks, not five.
+
+Fix: (1) void the first custom look only on evidence: a late answer refused by its process,
+and a probe that cannot be opened if wanted; not on a timeout. I checked the sequences by hand
+for that rule: 200 ms and 400 ms calls are then believed at the late answer of the second
+call; 900 ms is not, because of the budget. (2) Do not charge an arrival twice: when it cancels
+a pending timer, that timer's look is already paid; charge only when no timer is pending. The
+bound stays five reports. (3) Add the run above as a test: a custom element with calls of
+200 ms is `Normal` within the budget.
+
+### 7.4 Not checked
+
+- Anything on Windows: the four new Windows tests (two here, two in section 5) had not finished
+  in CI when this was written.
+- Whether any application raises a focus event in answer to a question (7.3).
+- The measured application's call durations, which decide both the limit and how much N4
+  matters for it.
+- The fix proposed for N4 was reasoned through, not run.
+
+## 8. Third re-verification
+
+Date: 2026-11-28 · Commit re-verified: `9b262c6` ("Believe a slow application's custom editor
+within the look budget"), read as `git show HEAD`, against N4 of section 7. Same reviewer,
+judged from the code.
+
+Run on Linux from an exported copy with a build folder outside the tree: the 69 unit tests of
+`focus::` pass. The scratch run of section 7 (one focus change with the real limits and the
+real pauses) was repeated with the watcher's new rule, and one scratch test was added for the
+pairing question. CI was read: on the commit before, `8105176`, the Windows leg passed with a
+desktop required, and all nine `focus::os_tests` ran, the four new ones among them; `9b262c6`
+changes none of the Windows-only code or tests. Its own CI run had not finished.
+
+### 8.1 N4
+
+**Closed**, both halves.
+
+- *The void.* `secure.rs:163-171`: only a late answer refused by its process voids the first
+  custom look; a timeout (`secure.rs:185`) and a probe that cannot open do not.
+- *The double charge.* `rules.rs:112-117`, `watch.rs:139-150`: an arrival that finds a pause's
+  timer pending reports in its place, free; without one it spends a look.
+
+Run, one focus change, custom element of the engine's framework:
+
+| Every call takes | Section 7 | Now |
+| --- | --- | --- |
+| 20 ms | `Normal`, 2 questions | the same |
+| 150 ms, 200 ms | never | `Normal` at the third question, about half a second after the change, 2 calls |
+| 400 ms | never | `Normal` at the fourth question, 1.2 s, 2 calls |
+| 700 ms, 900 ms | never | `Normal` at the fifth question, 2.4 s and 2.8 s, 2 calls |
+| 1.1 s, 1.6 s | `Unknown`, bounded | `Unknown`: 6 questions, 4 calls, then an arrival that reports nothing |
+
+A plain field is as in section 7: judged by its late answer up to a call of 1 s.
+
+### 8.2 Is the bound of five reports intact on every path?
+
+Yes, by reading, by the module's own test of all patterns, and by the run (no case exceeded one
+change plus five reports).
+
+Every report after a change is tied to one look of the budget, and no look serves twice:
+
+- a timer that fires: its look was paid when it was set, and firing clears it;
+- an arrival with a timer pending: free, but it cancels that timer, so the timer's look is the
+  one it uses. A timer message already queued when it is cancelled is ignored, because the
+  handler compares the id with the pending one (`watch.rs:117-123`);
+- an arrival with no timer pending: pays a look, or reports nothing;
+- a refusal inside a question starts no report of its own.
+
+After a free arrival's report, the next pause needs a new look, so there is no free cycle. A
+new pause while one is pending replaces the timer and pays again, which only loses a look. The
+budget restarts where it did before (`changed()`), nowhere else.
+
+### 8.3 Can a timeout let a stale first custom look pair with a later answer across a missed change?
+
+Yes, in the sense that the code cannot tell. It is not a new kind of gap, it is a longer one,
+and it needs the same thing to go wrong as finding 1.
+
+- The first look stands until a counted change, a judged answer that is not a candidate, or a
+  late answer of another process. Timeouts no longer end it. Run: custom, two looks again that
+  time out, a late custom answer one second after the first: `Normal`. The two answers carry no
+  identity of the element, so "the same answer again" means "a candidate again for the same
+  window, control and count". With every look again timing out and the last one answering, the
+  two can be the whole budget apart, about eight seconds.
+- This existed since `cd4b07d` for two looks one pause apart: an uncounted move inside the page
+  between them pairs the same way. `8105176` closed it for timeouts at the price of N4;
+  `9b262c6` reopens that part. Timeouts make the gap longer, and they come when a page is busy,
+  which is also when a page changes.
+- What it takes for a wrong `Normal`: a change the watcher did not count (a move inside the
+  page, or away and back, with no event), *and* the second answer being a focused custom
+  element of the engine with no `IsPassword`. Same run with a password field as the second
+  answer: `Secure`. With the page root: `Unknown`, and the count starts again. So the field
+  must be a page-drawn box (the listed limit of finding 2) or a placeholder standing in for a
+  password field (the unverified premise of finding 1). A real password field is never paired
+  into `Normal`.
+
+So: low, the same class as what is already open under finding 1, and not something this
+commit should be held for. If it is wanted narrowed cheaply: let the first look expire after
+about three seconds. The cases of 8.1 all fit inside that; in the slowest (calls of 900 ms) the
+two answers are 1.9 s apart.
+
+### 8.4 Is the pull request (gotolisto/iamb#30) safe to merge?
+
+Yes, from this review's side, once CI for `9b262c6` is green.
+
+What that rests on: no path found, across four rounds, that makes a password field or another
+application's field `Normal` through the slots, the cache, the late answers, the process rule
+or the second look; every function problem the fixes brought (N1, N4) is closed and shown
+closed by a run; the Windows-only tests pass on the real library.
+
+What stays open, all low, all written down above, none a reason to wait:
+
+- Finding 1's premise has never been tried on a real engine. The framework fence and the
+  second look narrow it; only the manual cases can test it. Run them, with the diagnostic,
+  before the custom rule is relied on in a release.
+- A late answer can be 1.25 s old (documented). Set the limit from the measured application's
+  `call N ms` lines when they exist.
+- The pairing of 8.3.
+- The page-drawn password box (a listed limit, remedy: the exclusion list).
+
+### 8.5 Not checked
+
+- CI for `9b262c6` itself, in progress when this was written.
+- Anything on a real engine, and the measured application's call durations.
+- The watcher's side of 8.2 was read; the run plays the watcher by its code.

@@ -15,7 +15,9 @@
 //! and writes for each focus change what the secure-field check saw and decided, to standard
 //! output and to `logs/focus-diagnosis-<unix ms>.txt` in the data root
 //! (`iamb_platform_windows::diagnose_focus`, which says what a line holds: no text, no window
-//! title). It runs beside the running service and changes nothing: no keyboard hook, no key
+//! title, but the applications in front and when). The last five such files are kept, each at
+//! most 2 MB, and the first line of each says what it holds (`iamb_service::diagnosis`); the
+//! path is printed at the start on standard output and standard error. It runs beside the running service and changes nothing: no keyboard hook, no key
 //! sent, no endpoint. A release build has no console window, so standard output is seen only
 //! when it is redirected, as PowerShell does with `| Out-Host`; the file is written either way.
 //!
@@ -150,25 +152,30 @@ fn parse(args: impl Iterator<Item = OsString>) -> Result<Option<Args>, String> {
     Ok(Some(out))
 }
 
-/// `--diagnose-focus SECONDS` (module docs).
+/// `--diagnose-focus SECONDS` (module docs; the files: `iamb_service::diagnosis`).
 #[cfg(windows)]
 fn diagnose_focus(dirs: &DataDirs, seconds: u64) -> ExitCode {
+    use iamb_service::diagnosis;
     let logs = dirs.logs();
     if let Err(e) = std::fs::create_dir_all(&logs) {
         return fail(&format!("cannot create the logs folder: {e}"));
     }
+    diagnosis::prune(&logs);
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis());
-    let path = logs.join(format!("focus-diagnosis-{stamp}.txt"));
-    let mut file = match std::fs::File::create_new(&path) {
+    let path = diagnosis::path_for(&logs, stamp);
+    let mut file = match diagnosis::Capped::create(&path) {
         Ok(file) => file,
         Err(e) => return fail(&format!("cannot create {}: {e}", path.display())),
     };
-    say(&format!("writing to {}", path.display()));
+    // On both streams: whichever the person sees (a release build has no console).
+    let start = format!("writing to {}", path.display());
+    say(&start);
+    eprintln!("iamb-service: {start}");
     let mut out = |line: &str| {
         say(line);
-        let _ = writeln!(file, "{line}");
+        file.line(line);
     };
     match iamb_platform_windows::diagnose_focus(std::time::Duration::from_secs(seconds), &mut out) {
         Ok(()) => {

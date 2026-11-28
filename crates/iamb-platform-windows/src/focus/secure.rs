@@ -12,14 +12,17 @@
 //!    question names the window, its focused control and that control's kind, and the count of
 //!    focus changes (`epoch`). An answer that came too late for an earlier question about the
 //!    same subject serves a report the watcher made again ([`Watching::again`]) if it arrived
-//!    at most a quarter of a second ago (`inspect`, "A late answer"), and only when the element
-//!    it describes is provided by the window's process, by the process of its focused
-//!    control's window, or by a process that owns some other window inside it (an embedded
-//!    browser engine runs several processes, and the one that answers for the page need not own
-//!    the control the system names as focused); any other element is
-//!    `Unknown(NotInspectable)`. Process ancestry is not looked at: it cannot be read reliably
-//!    (a parent may have ended and its id been given to another process), so the processes are
-//!    the ones the system names as owners of windows inside the window asked about.
+//!    at most a quarter of a second ago and its call took at most a second
+//!    (`inspect`, "A late answer"), and only when the element it describes is provided by the
+//!    window's process, by the process of its focused control's window, or by a process that
+//!    owns a window on that control's own line: one of its ancestors up to the window in front,
+//!    or one of its descendants (an embedded browser engine runs several processes, and the one
+//!    that answers for the page need not own the control the system names as focused). A
+//!    process with a window elsewhere inside the window in front (a preview pane, a plug-in
+//!    beside the page) is not accepted; any element it provides is `Unknown(NotInspectable)`.
+//!    Process ancestry is not looked at: it cannot be read reliably (a parent may have ended
+//!    and its id been given to another process), so the processes are the ones the system
+//!    names as owners of those windows.
 //! 5. The window must still be in front. If it is not, the answer just obtained may be about
 //!    another window and is thrown away: `Unknown(FocusMoved)`.
 //!
@@ -30,7 +33,7 @@ use std::time::{Duration, Instant};
 
 use iamb_platform::{FieldSecurity, FocusToken, UnknownReason};
 
-use super::classify::{ControlKind, Judgement, Observation, classify};
+use super::classify::{ControlKind, Judgement, Observation, classify, custom_candidate};
 use super::inspect::{Answer, Inspector, Lateness, ProbeSource, Subject, Wake};
 
 /// The window in front.
@@ -79,9 +82,10 @@ pub(crate) trait Desk {
     fn privilege(&self, pid: u32) -> Privilege;
     /// The control that has the keyboard focus in `front`.
     fn control(&self, front: Front) -> Control;
-    /// True when process `pid` owns a window inside `front` (a child window, at any depth):
-    /// a web view's engine process does, for the window it draws the page in.
-    fn has_window_in(&self, front: Front, pid: u32) -> bool;
+    /// True when process `pid` owns a window on the line of `control`, the focused control's
+    /// window in `front`: one of its ancestors up to `front`, or one of its descendants. A web
+    /// view's engine process does, for the window it draws the page in.
+    fn on_control_line(&self, front: Front, control: u64, pid: u32) -> bool;
 }
 
 /// What the running watcher tells a question (`None` to [`judge`] without one).
@@ -137,27 +141,45 @@ pub(crate) fn judge<D: Desk, S: ProbeSource>(
                 // The caller gave no time to ask in; asking again would be no different.
                 unknown(UnknownReason::Timeout)
             } else {
+                let subject = watching.as_ref().map(|watching| Subject {
+                    window: target.window(),
+                    control: control.window,
+                    kind,
+                    epoch: watching.epoch,
+                });
+                let again = watching.as_ref().is_some_and(|watching| watching.again);
                 let lateness = watching.map_or(Lateness::NONE, |watching| Lateness {
-                    subject: Some(Subject {
-                        window: target.window(),
-                        control: control.window,
-                        kind,
-                        epoch: watching.epoch,
-                    }),
+                    subject,
                     may_take: watching.again,
                     wake: watching.wake,
                 });
+                // A custom element is believed at a second look of the same subject only
+                // (`classify`, "A control without a kind").
+                let judged = |observation| {
+                    let candidate = custom_candidate(kind, observation);
+                    let confirmed = inspector.custom_again(subject, candidate) && again;
+                    classify(kind, observation, confirmed)
+                };
+                // A late answer from a process off the control's line is evidence that the focus
+                // was elsewhere: it voids a first look of a custom element (the
+                // re-verification's N2). A timeout or a probe that could not open is not: it is
+                // the same look still waiting, whose answer comes a moment later (the second
+                // re-verification's N4).
+                let elsewhere = |judgement| {
+                    inspector.custom_again(subject, false);
+                    judgement
+                };
                 match inspector.observe(lateness, left) {
-                    Answer::Observed(observation) => classify(kind, observation),
+                    Answer::Observed(observation) => judged(observation),
                     Answer::Late(observation) => {
                         if provided_by(observation, |process| {
                             process == front.pid
                                 || process == control.pid
-                                || desk.has_window_in(front, process)
+                                || desk.on_control_line(front, control.window, process)
                         }) {
-                            classify(kind, observation)
+                            judged(observation)
                         } else {
-                            Judgement::passing(UnknownReason::NotInspectable)
+                            elsewhere(Judgement::passing(UnknownReason::NotInspectable))
                         }
                     }
                     Answer::TimedOut => Judgement::passing(UnknownReason::Timeout),
@@ -191,6 +213,8 @@ mod tests {
 
     const LONG: Duration = Duration::from_secs(10);
     const SHORT: Duration = Duration::from_millis(30);
+    // The call limit (`LATE_CALL_LIMIT`) is set to `LONG` here: the fake's waits are counted in
+    // `SHORT`s, and a slow runner stretches them past 250 ms; `inspect` tests the limit.
 
     const EDITOR: Front = Front {
         window: 0x1_0000_0A10,
@@ -229,7 +253,7 @@ mod tests {
         privilege: Privilege,
         control: Cell<Control>,
         controls_read: Cell<u32>,
-        /// Processes that own windows inside `EDITOR`.
+        /// Processes that own windows on the focused control's line.
         inner: Vec<u32>,
     }
 
@@ -273,7 +297,7 @@ mod tests {
             self.control.get()
         }
 
-        fn has_window_in(&self, _front: Front, pid: u32) -> bool {
+        fn on_control_line(&self, _front: Front, _control: u64, pid: u32) -> bool {
             self.inner.contains(&pid)
         }
     }
@@ -628,10 +652,297 @@ mod tests {
         }
     }
 
+    /// What one focus change came to when every call takes `call`, with the real limits and
+    /// the watcher played as `watch.rs` and `focus.rs` play it (the re-verification's N1): the
+    /// first look with `FIRST_LOOK_TIMEOUT`, then for an unknown that may pass a look again on
+    /// the budget of `rules::Settle`, made at once when a late answer arrives (and spending one
+    /// look, `Settle::spend`) or else after the pause. The pauses themselves are not waited
+    /// for: a pause only lets the application finish its call, and the wait for an arrival
+    /// below gives it more than that. Returns the last verdict, the questions and the calls.
+    fn one_change(call: Duration, observation: Observation) -> (Judgement, u32, u32) {
+        use iamb_platform::{FIRST_LOOK_TIMEOUT, SECURE_STATE_TIMEOUT};
+
+        use super::super::rules::Settle;
+
+        let source = FakeSource::default();
+        for _ in 0..20 {
+            source.0.push(Step::Slow(call, observation));
+        }
+        let desk = FakeDesk::with(ENGINE);
+        let inspector = Inspector::new(source.clone());
+        inspector.wait_open();
+        let (woken, wakes) = std::sync::mpsc::channel();
+        let mut settle = Settle::default();
+        settle.event(EDITOR.window);
+        let mut judgement = judge(
+            &desk,
+            &inspector,
+            &EDITOR.token(),
+            watching(1, false, &woken),
+            FIRST_LOOK_TIMEOUT,
+        );
+        let mut questions = 1;
+        while judgement.look_again {
+            // `secure_state`: an unknown that may pass starts a pause, if any is left.
+            let paused = settle.look_again(EDITOR.window).is_some();
+            // The watcher: an arrival reports at once, in the pause's place (`Settle::arrival`);
+            // else the pause's timer reports.
+            let report = match wakes.recv_timeout(call + Duration::from_millis(700)) {
+                Ok(()) => settle.arrival(EDITOR.window, paused),
+                Err(_) => paused,
+            };
+            if !report {
+                break;
+            }
+            questions += 1;
+            assert!(questions <= 20, "asked without end");
+            judgement = judge(
+                &desk,
+                &inspector,
+                &EDITOR.token(),
+                watching(1, true, &woken),
+                SECURE_STATE_TIMEOUT,
+            );
+        }
+        (judgement, questions, source.0.asked())
+    }
+
+    #[test]
+    fn a_slow_application_is_judged_once_by_its_late_answer_with_the_real_limits() {
+        // 600 ms: far above the first look (300 ms), far below the call limit (1 s).
+        let (judgement, questions, calls) =
+            one_change(Duration::from_millis(600), element(false, 50004));
+        assert_eq!(judgement, Judgement::settled(FieldSecurity::Normal));
+        assert_eq!((questions, calls), (2, 1));
+        // A password field the same.
+        let (judgement, ..) = one_change(Duration::from_millis(600), element(true, 50004));
+        assert_eq!(judgement, Judgement::settled(FieldSecurity::Secure));
+    }
+
+    #[test]
+    fn a_too_slow_application_settles_unknown_on_the_budget() {
+        // 1.6 s: far above the call limit. Every late answer is refused; the window is asked on
+        // the watcher's budget only, then stays unknown, without asking back to back for ever.
+        let (judgement, questions, calls) =
+            one_change(Duration::from_millis(1600), element(false, 50004));
+        assert_eq!(
+            judgement.field,
+            FieldSecurity::Unknown(UnknownReason::Timeout)
+        );
+        let budget = u32::try_from(super::super::rules::LOOK_AGAIN_MS.len()).expect("small");
+        assert!(questions <= 1 + budget, "{questions} questions");
+        assert!(
+            calls <= questions,
+            "{calls} calls for {questions} questions"
+        );
+    }
+
+    #[test]
+    fn a_fast_application_is_judged_at_the_first_look() {
+        let (judgement, questions, calls) =
+            one_change(Duration::from_millis(20), element(false, 50004));
+        assert_eq!(judgement, Judgement::settled(FieldSecurity::Normal));
+        assert_eq!((questions, calls), (1, 1));
+    }
+
+    /// A focused custom element of the engine's framework, provided by `process`.
+    fn custom_from(process: u32) -> Observation {
+        use super::super::classify::{Detail, Framework, control_type};
+        Observation::Element {
+            password: false,
+            control_type: control_type::CUSTOM,
+            process,
+            detail: Detail {
+                has_focus: true,
+                window_root: false,
+                framework: Framework::Chrome,
+            },
+        }
+    }
+
+    #[test]
+    fn a_timeout_between_two_custom_looks_keeps_the_first_and_another_process_voids_it() {
+        // The second re-verification's N4: custom, then a look that times out (the same look
+        // still waiting), then its late answer, custom: that is the second look, believed.
+        let custom = custom_from(ENGINE.pid);
+        let source = FakeSource::answering(&[custom]);
+        let (step, release) = hang(custom);
+        source.0.push(step);
+        let desk = FakeDesk::with(ENGINE);
+        let inspector = Inspector::new(source.clone());
+        inspector.wait_open();
+        let (woken, wakes) = std::sync::mpsc::channel();
+        let look = |again, limit| {
+            judge(
+                &desk,
+                &inspector,
+                &EDITOR.token(),
+                watching(3, again, &woken),
+                limit,
+            )
+        };
+        assert_eq!(
+            look(false, LONG),
+            Judgement::passing(UnknownReason::NotInspectable)
+        );
+        assert_eq!(
+            look(true, SHORT),
+            Judgement::passing(UnknownReason::Timeout)
+        );
+        release.send(()).expect("the thread still waits");
+        wakes
+            .recv_timeout(LONG)
+            .expect("the arrival wakes the watcher");
+        assert_eq!(look(true, LONG), Judgement::settled(FieldSecurity::Normal));
+
+        // The re-verification's N2: a late answer from a process off the control's line, in
+        // between, is evidence that the focus was elsewhere: the next custom answer is a first
+        // look again.
+        let source = FakeSource::answering(&[custom]);
+        let (step, release) = hang(custom_from(77));
+        source.0.push(step);
+        source.0.push(Step::Answer(custom));
+        source.0.push(Step::Answer(custom));
+        let inspector = Inspector::new(source.clone());
+        inspector.wait_open();
+        let look = |again, limit| {
+            judge(
+                &desk,
+                &inspector,
+                &EDITOR.token(),
+                watching(3, again, &woken),
+                limit,
+            )
+        };
+        assert_eq!(
+            look(false, LONG),
+            Judgement::passing(UnknownReason::NotInspectable)
+        );
+        assert_eq!(
+            look(true, SHORT),
+            Judgement::passing(UnknownReason::Timeout)
+        );
+        release.send(()).expect("the thread still waits");
+        wakes
+            .recv_timeout(LONG)
+            .expect("the arrival wakes the watcher");
+        assert_eq!(
+            look(true, LONG),
+            Judgement::passing(UnknownReason::NotInspectable),
+            "refused by its process"
+        );
+        assert_eq!(
+            look(true, LONG),
+            Judgement::passing(UnknownReason::NotInspectable),
+            "a first look again"
+        );
+        assert_eq!(look(true, LONG), Judgement::settled(FieldSecurity::Normal));
+    }
+
+    #[test]
+    fn a_custom_editor_of_a_slow_application_is_believed_within_the_budget() {
+        // The second re-verification's N4, with the real limits: calls of 200 ms (slower than
+        // a look again, quicker than the first look) and of 400 ms (slower than both).
+        let budget = u32::try_from(super::super::rules::LOOK_AGAIN_MS.len()).expect("small");
+        for call in [Duration::from_millis(200), Duration::from_millis(400)] {
+            let (judgement, questions, calls) = one_change(call, custom_from(ENGINE.pid));
+            assert_eq!(
+                judgement,
+                Judgement::settled(FieldSecurity::Normal),
+                "{call:?}"
+            );
+            assert!(questions <= 1 + budget, "{call:?}: {questions} questions");
+            assert!(calls <= questions, "{call:?}: {calls} calls");
+            // A password element in the same setup is secure.
+            let Observation::Element {
+                control_type,
+                process,
+                detail,
+                ..
+            } = custom_from(ENGINE.pid)
+            else {
+                unreachable!("an element");
+            };
+            let password = Observation::Element {
+                password: true,
+                control_type,
+                process,
+                detail,
+            };
+            let (judgement, questions, _) = one_change(call, password);
+            assert_eq!(
+                judgement,
+                Judgement::settled(FieldSecurity::Secure),
+                "{call:?}"
+            );
+            assert!(questions <= 1 + budget, "{call:?}: {questions} questions");
+        }
+    }
+
+    #[test]
+    fn a_focused_custom_element_of_the_engine_is_believed_at_the_second_look_only() {
+        use super::super::classify::{Detail, Framework, control_type};
+        // The cached-probe review's M1: the first custom answer for a subject is looked at
+        // again; the same answer at the watcher's look again settles.
+        let custom = Observation::Element {
+            password: false,
+            control_type: control_type::CUSTOM,
+            process: ENGINE.pid,
+            detail: Detail {
+                has_focus: true,
+                window_root: false,
+                framework: Framework::Chrome,
+            },
+        };
+        let (woken, _wakes) = std::sync::mpsc::channel();
+        let desk = FakeDesk::with(ENGINE);
+        let source = FakeSource::answering(&[custom; 6]);
+        let inspector = Inspector::new(source.clone());
+        let look = |epoch, again| {
+            judge(
+                &desk,
+                &inspector,
+                &EDITOR.token(),
+                watching(epoch, again, &woken),
+                LONG,
+            )
+        };
+        assert_eq!(
+            look(3, false),
+            Judgement::passing(UnknownReason::NotInspectable),
+            "the first look"
+        );
+        assert_eq!(
+            look(3, true),
+            Judgement::settled(FieldSecurity::Normal),
+            "the look again"
+        );
+        // After a counted change it starts again.
+        assert_eq!(
+            look(4, false),
+            Judgement::passing(UnknownReason::NotInspectable)
+        );
+        // A question that is not a look again (a re-judge) does not settle it.
+        assert_eq!(
+            look(4, false),
+            Judgement::passing(UnknownReason::NotInspectable)
+        );
+        // Without a watcher, never.
+        assert_eq!(
+            judge(&desk, &inspector, &EDITOR.token(), None, LONG),
+            Judgement::passing(UnknownReason::NotInspectable)
+        );
+        assert_eq!(
+            judge(&desk, &inspector, &EDITOR.token(), None, LONG),
+            Judgement::passing(UnknownReason::NotInspectable)
+        );
+    }
+
     #[test]
     fn a_late_answer_from_another_process_with_a_window_inside_is_believed() {
         // The page's process of a web view need not be the one that owns the focused control:
-        // one that owns some window inside the window asked about is accepted.
+        // one that owns a window on the focused control's line is accepted (and the fake desk's
+        // `inner` stands for those; the real line is tested on Windows, `os_tests`).
         let source = FakeSource::default();
         let mut desk = FakeDesk::with(ENGINE);
         desk.inner = vec![77];

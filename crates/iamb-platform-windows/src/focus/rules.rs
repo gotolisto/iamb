@@ -94,6 +94,27 @@ impl Settle {
         self.asked += 1;
         Some(pause)
     }
+
+    /// A late answer about `window` arrived: true when the window may be reported again for it
+    /// now, which uses up one of its looks again like a pause does (the cached-probe
+    /// re-verification's N1: otherwise an application slower than the limit of a late answer's
+    /// call is asked back to back for as long as its window is in front).
+    pub(crate) fn spend(&mut self, window: u64) -> bool {
+        self.look_again(window).is_some()
+    }
+
+    /// A late answer about `window` arrived, with a pause's timer pending or not: true when
+    /// the window may be reported again for it now. A pending timer's look was paid for when
+    /// the timer was set, and the arrival's report takes its place (the timer is cancelled),
+    /// so it costs nothing more; without one the arrival spends a look (the second
+    /// re-verification's N4: charging both left a slow application two or three real looks of
+    /// its five). Either way at most [`LOOK_AGAIN_MS`]`.len()` reports follow a change.
+    pub(crate) fn arrival(&mut self, window: u64, timer_pending: bool) -> bool {
+        if window != self.window {
+            return false;
+        }
+        timer_pending || self.spend(window)
+    }
 }
 
 /// The count of focus changes and the mark of a report again, shared by the watchers of one
@@ -233,6 +254,74 @@ mod tests {
         // Not so long that a window stays unknown for ever without saying so.
         assert!(total <= 10_000, "{total} ms");
         assert!(LOOK_AGAIN_MS[0] <= 200, "the first look comes soon");
+    }
+
+    #[test]
+    fn a_late_answer_spends_the_same_budget_as_a_pause() {
+        let mut settle = Settle::default();
+        settle.event(7);
+        let mut reports = 0;
+        // Pauses and arrivals, alternating as a slow application makes them: never more than
+        // the budget, whatever the mix.
+        for turn in 0..20 {
+            let reported = if turn % 2 == 0 {
+                settle.look_again(7).is_some()
+            } else {
+                settle.spend(7)
+            };
+            reports += u32::from(reported);
+        }
+        assert_eq!(reports, u32::try_from(LOOK_AGAIN_MS.len()).expect("small"));
+        // Another window's arrival spends nothing, and a real event starts again.
+        settle.event(8);
+        assert!(!settle.spend(7));
+        assert!(settle.spend(8));
+    }
+
+    #[test]
+    fn an_arrival_that_replaces_a_pending_pause_costs_nothing_more() {
+        // Every pattern of pauses and arrivals a change can bring, as the watcher plays them:
+        // a pause sets a timer; an arrival reports at once, in the timer's place if one is
+        // pending; a timer that is still pending when the next pause or arrival comes is the
+        // look of that one. Five reports at most, whatever the pattern.
+        for pattern in 0_u32..(1 << 12) {
+            let mut settle = Settle::default();
+            settle.event(7);
+            let mut timer = false;
+            let mut reports = 0;
+            for step in 0..12 {
+                if pattern & (1 << step) == 0 {
+                    // A verdict that may pass: a pause, if any is left.
+                    if !timer {
+                        timer = settle.look_again(7).is_some();
+                    }
+                    // The pause ends: the timer reports.
+                    if timer && step % 3 == 2 {
+                        timer = false;
+                        reports += 1;
+                    }
+                } else if settle.arrival(7, timer) {
+                    timer = false;
+                    reports += 1;
+                }
+            }
+            reports += u32::from(timer);
+            assert!(
+                reports <= u32::try_from(LOOK_AGAIN_MS.len()).expect("small"),
+                "{pattern:#b}: {reports} reports"
+            );
+        }
+        // An arrival with a pending timer reports without spending; one without spends one.
+        let mut settle = Settle::default();
+        settle.event(7);
+        assert!(settle.look_again(7).is_some());
+        assert!(settle.arrival(7, true));
+        for _ in 1..LOOK_AGAIN_MS.len() {
+            assert!(settle.arrival(7, false));
+        }
+        assert!(!settle.arrival(7, false), "the budget is spent");
+        assert!(settle.arrival(7, true), "a pending timer was paid for");
+        assert!(!settle.arrival(8, true), "another window");
     }
 
     #[test]
