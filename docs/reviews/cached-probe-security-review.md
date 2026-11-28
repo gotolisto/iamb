@@ -714,3 +714,108 @@ bound stays five reports. (3) Add the run above as a test: a custom element with
 - The measured application's call durations, which decide both the limit and how much N4
   matters for it.
 - The fix proposed for N4 was reasoned through, not run.
+
+## 8. Third re-verification
+
+Date: 2026-11-28 · Commit re-verified: `9b262c6` ("Believe a slow application's custom editor
+within the look budget"), read as `git show HEAD`, against N4 of section 7. Same reviewer,
+judged from the code.
+
+Run on Linux from an exported copy with a build folder outside the tree: the 69 unit tests of
+`focus::` pass. The scratch run of section 7 (one focus change with the real limits and the
+real pauses) was repeated with the watcher's new rule, and one scratch test was added for the
+pairing question. CI was read: on the commit before, `8105176`, the Windows leg passed with a
+desktop required, and all nine `focus::os_tests` ran, the four new ones among them; `9b262c6`
+changes none of the Windows-only code or tests. Its own CI run had not finished.
+
+### 8.1 N4
+
+**Closed**, both halves.
+
+- *The void.* `secure.rs:163-171`: only a late answer refused by its process voids the first
+  custom look; a timeout (`secure.rs:185`) and a probe that cannot open do not.
+- *The double charge.* `rules.rs:112-117`, `watch.rs:139-150`: an arrival that finds a pause's
+  timer pending reports in its place, free; without one it spends a look.
+
+Run, one focus change, custom element of the engine's framework:
+
+| Every call takes | Section 7 | Now |
+| --- | --- | --- |
+| 20 ms | `Normal`, 2 questions | the same |
+| 150 ms, 200 ms | never | `Normal` at the third question, about half a second after the change, 2 calls |
+| 400 ms | never | `Normal` at the fourth question, 1.2 s, 2 calls |
+| 700 ms, 900 ms | never | `Normal` at the fifth question, 2.4 s and 2.8 s, 2 calls |
+| 1.1 s, 1.6 s | `Unknown`, bounded | `Unknown`: 6 questions, 4 calls, then an arrival that reports nothing |
+
+A plain field is as in section 7: judged by its late answer up to a call of 1 s.
+
+### 8.2 Is the bound of five reports intact on every path?
+
+Yes, by reading, by the module's own test of all patterns, and by the run (no case exceeded one
+change plus five reports).
+
+Every report after a change is tied to one look of the budget, and no look serves twice:
+
+- a timer that fires: its look was paid when it was set, and firing clears it;
+- an arrival with a timer pending: free, but it cancels that timer, so the timer's look is the
+  one it uses. A timer message already queued when it is cancelled is ignored, because the
+  handler compares the id with the pending one (`watch.rs:117-123`);
+- an arrival with no timer pending: pays a look, or reports nothing;
+- a refusal inside a question starts no report of its own.
+
+After a free arrival's report, the next pause needs a new look, so there is no free cycle. A
+new pause while one is pending replaces the timer and pays again, which only loses a look. The
+budget restarts where it did before (`changed()`), nowhere else.
+
+### 8.3 Can a timeout let a stale first custom look pair with a later answer across a missed change?
+
+Yes, in the sense that the code cannot tell. It is not a new kind of gap, it is a longer one,
+and it needs the same thing to go wrong as finding 1.
+
+- The first look stands until a counted change, a judged answer that is not a candidate, or a
+  late answer of another process. Timeouts no longer end it. Run: custom, two looks again that
+  time out, a late custom answer one second after the first: `Normal`. The two answers carry no
+  identity of the element, so "the same answer again" means "a candidate again for the same
+  window, control and count". With every look again timing out and the last one answering, the
+  two can be the whole budget apart, about eight seconds.
+- This existed since `cd4b07d` for two looks one pause apart: an uncounted move inside the page
+  between them pairs the same way. `8105176` closed it for timeouts at the price of N4;
+  `9b262c6` reopens that part. Timeouts make the gap longer, and they come when a page is busy,
+  which is also when a page changes.
+- What it takes for a wrong `Normal`: a change the watcher did not count (a move inside the
+  page, or away and back, with no event), *and* the second answer being a focused custom
+  element of the engine with no `IsPassword`. Same run with a password field as the second
+  answer: `Secure`. With the page root: `Unknown`, and the count starts again. So the field
+  must be a page-drawn box (the listed limit of finding 2) or a placeholder standing in for a
+  password field (the unverified premise of finding 1). A real password field is never paired
+  into `Normal`.
+
+So: low, the same class as what is already open under finding 1, and not something this
+commit should be held for. If it is wanted narrowed cheaply: let the first look expire after
+about three seconds. The cases of 8.1 all fit inside that; in the slowest (calls of 900 ms) the
+two answers are 1.9 s apart.
+
+### 8.4 Is the pull request (gotolisto/iamb#30) safe to merge?
+
+Yes, from this review's side, once CI for `9b262c6` is green.
+
+What that rests on: no path found, across four rounds, that makes a password field or another
+application's field `Normal` through the slots, the cache, the late answers, the process rule
+or the second look; every function problem the fixes brought (N1, N4) is closed and shown
+closed by a run; the Windows-only tests pass on the real library.
+
+What stays open, all low, all written down above, none a reason to wait:
+
+- Finding 1's premise has never been tried on a real engine. The framework fence and the
+  second look narrow it; only the manual cases can test it. Run them, with the diagnostic,
+  before the custom rule is relied on in a release.
+- A late answer can be 1.25 s old (documented). Set the limit from the measured application's
+  `call N ms` lines when they exist.
+- The pairing of 8.3.
+- The page-drawn password box (a listed limit, remedy: the exclusion list).
+
+### 8.5 Not checked
+
+- CI for `9b262c6` itself, in progress when this was written.
+- Anything on a real engine, and the measured application's call durations.
+- The watcher's side of 8.2 was read; the run plays the watcher by its code.
